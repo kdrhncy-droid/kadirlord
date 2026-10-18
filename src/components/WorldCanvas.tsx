@@ -12,13 +12,26 @@ import {
   getTotalTroops,
 } from '../game/rules';
 import {
-  CONTINENTAL_LANDMARKS,
-  MAP_HALF_EXTENT,
+   CONTINENTAL_LANDMARKS,
+  MAP_HEIGHT,
+  MAP_WIDTH,
+  clampCameraFocus,
   computeBannerlordCameraTransform,
   getPartySpeedInfo,
   groundHeightAt,
-  riverCenterZ,
 } from '../game/mapGen';
+import {
+  computeLandPath,
+  computeLordPatrolPos,
+  snapToNearestLand,
+  stepAlongLandOnly,
+} from '../game/navigation';
+import type {
+  BattleTelemetry,
+  CameraControlActions,
+  MapCameraTelemetry,
+  ProjectedMapLabel,
+} from '../game/types';
 import {
   WarriorMeshHandles,
   createContinentalBridgesGroup,
@@ -31,6 +44,13 @@ import {
 } from '../game/proceduralModels';
 import { sound } from '../game/sound';
 
+export type {
+  BattleTelemetry,
+  CameraControlActions,
+  MapCameraTelemetry,
+  ProjectedMapLabel,
+};
+
 // Pre-allocated module-scope math helpers (Zero GC in requestAnimationFrame)
 const _v1 = new THREE.Vector3();
 const _projVec = new THREE.Vector3();
@@ -38,66 +58,6 @@ const _camTarget = new THREE.Vector3();
 const _camDesired = new THREE.Vector3();
 const _dummy = new THREE.Object3D();
 const _color = new THREE.Color();
-
-export interface BattleTelemetry {
-  playerHp: number;
-  playerMaxHp: number;
-  playerStamina: number;
-  alliesAlive: number;
-  alliesTotal: number;
-  enemiesAlive: number;
-  enemiesTotal: number;
-  enemyCommanderName: string;
-  activeOrder: TacticalOrder;
-  comboCount: number;
-}
-
-export interface ProjectedMapLabel {
-  id: string;
-  kind: 'settlement' | 'lord' | 'player_party' | 'landmark';
-  name: string;
-  sublabel: string;
-  color: string;
-  glyph?: string;
-  troopCount?: number;
-  woundedCount?: number;
-  ownerName?: string;
-  factionName?: string;
-  speed?: number;
-  infantry?: number;
-  ranged?: number;
-  cavalry?: number;
-  prisoners?: number;
-  settlementType?: 'CASTLE' | 'TOWN' | 'VILLAGE';
-  prosperity?: number;
-  screenX: number;
-  screenY: number;
-  worldX: number;
-  worldZ: number;
-  visible: boolean;
-}
-
-export interface MapCameraTelemetry {
-  focusX: number;
-  focusZ: number;
-  zoomDist: number;
-  yawDeg: number;
-  isFollowingPlayer: boolean;
-  biomeLabel: string;
-  partySpeed: number;
-  onRoad: boolean;
-  isMoving: boolean;
-  labels: ProjectedMapLabel[];
-}
-
-export interface CameraControlActions {
-  focusOnPlayer: () => void;
-  focusOnCoords: (x: number, z: number, zoom?: number) => void;
-  adjustZoom: (delta: number) => void;
-  rotateYaw: (deltaRad: number) => void;
-  resetNorth: () => void;
-  commandMarchTo: (x: number, z: number) => void;
-}
 
 interface WorldCanvasProps {
   gameState: 'title' | 'playing' | 'paused' | 'gameover';
@@ -252,16 +212,16 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     container.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const skyColor = new THREE.Color(0x1b2738);
+    const skyColor = new THREE.Color(0x1e384b);
     scene.background = skyColor;
-    scene.fog = new THREE.FogExp2(0x1b2738, 0.00058);
+    scene.fog = new THREE.FogExp2(0x1e384b, 0.00014);
 
     const camera = new THREE.PerspectiveCamera(
       46,
       (container.clientWidth || window.innerWidth) /
         (container.clientHeight || window.innerHeight),
-      0.8,
-      1400,
+      3.0,
+      2800,
     );
 
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
@@ -298,21 +258,18 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     const { albedoTex, bumpTex } = createTerrainTextures(maxAniso);
     const stoneTex = createStoneTextures(maxAniso);
 
-    // 1. 1200x900 High-Res Slope-Shaded Continental Terrain Mesh
+    // 1. 2400x1800 High-Res Slope-Shaded Continental Terrain Mesh (Zero Void Borders & Smooth Water Surface)
     const terrainMesh = createContinentalTerrainMesh(albedoTex, bumpTex);
     scene.add(terrainMesh);
 
-    // 2. Smooth Deep Sea, Fjord, Lake & River Water Plane at y = -0.18
-    const waterGeo = new THREE.PlaneGeometry(1200, 900, 1, 1);
+    // 2. Deep Abyssal Backdrop Skirt at y = -18.0 (Zero Z-Fighting with Terrain Water Surface at y = -0.25)
+    const waterGeo = new THREE.PlaneGeometry(MAP_WIDTH * 1.5, MAP_HEIGHT * 1.5, 1, 1);
     waterGeo.rotateX(-Math.PI / 2);
-    const waterMat = new THREE.MeshStandardMaterial({
-      color: 0x1b465e,
-      roughness: 0.22,
-      metalness: 0.35,
+    const waterMat = new THREE.MeshBasicMaterial({
+      color: 0x0f2c40,
     });
     const waterMesh = new THREE.Mesh(waterGeo, waterMat);
-    waterMesh.position.y = -0.18;
-    waterMesh.receiveShadow = true;
+    waterMesh.position.y = -18.0;
     scene.add(waterMesh);
 
     // 3. Weathered Stone Arch Bridges
@@ -473,40 +430,76 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     let playerOverworldFacing = 0;
     let walkPhase = 0;
     let overworldTargetPos: { x: number; z: number } | null = null;
+    let overworldWaypoints: Array<{ x: number; z: number }> = [];
 
-    let camFocusX = playerOverworldX;
-    let camFocusZ = playerOverworldZ;
-    let targetCamFocusX = playerOverworldX;
-    let targetCamFocusZ = playerOverworldZ;
+    const initContinentView =
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('view') === 'continent';
+
+    let camFocusX = initContinentView ? -75 : playerOverworldX;
+    let camFocusZ = initContinentView ? -8 : playerOverworldZ;
+    let targetCamFocusX = camFocusX;
+    let targetCamFocusZ = camFocusZ;
     let camYaw = 0;
     let targetCamYaw = 0;
-    let camZoomDist = 48;
-    let targetCamZoomDist = 48;
-    let isFollowingPlayer = true;
+    let camZoomDist = initContinentView ? 860 : 48;
+    let targetCamZoomDist = camZoomDist;
+    let isFollowingPlayer = !initContinentView;
 
     function setMarchDestination(tx: number, tz: number) {
       const clampedX = THREE.MathUtils.clamp(tx, -520, 520);
       const clampedZ = THREE.MathUtils.clamp(tz, -390, 390);
-      overworldTargetPos = { x: clampedX, z: clampedZ };
-      const dy = Math.max(0.0, groundHeightAt(clampedX, clampedZ)) + 0.12;
-      destRing.position.set(clampedX, dy, clampedZ);
+      const safeGoal = snapToNearestLand(clampedX, clampedZ);
+      overworldWaypoints = computeLandPath(
+        playerOverworldX,
+        playerOverworldZ,
+        safeGoal.x,
+        safeGoal.z,
+      );
+      const finalWp =
+        overworldWaypoints.length > 0
+          ? overworldWaypoints[overworldWaypoints.length - 1]
+          : safeGoal;
+      overworldTargetPos = { x: finalWp.x, z: finalWp.z };
+      const dy = Math.max(0.0, groundHeightAt(finalWp.x, finalWp.z)) + 0.14;
+      destRing.position.set(finalWp.x, dy, finalWp.z);
       (destRing.material as THREE.MeshBasicMaterial).opacity = 0.95;
     }
 
     function updateMarchPathGeometry() {
       const posAttr = marchPathLine.geometry.attributes.position as THREE.BufferAttribute;
-      if (!overworldTargetPos) {
+      if (!overworldTargetPos || overworldWaypoints.length === 0) {
         for (let i = 0; i < 24; i++) {
           posAttr.setXYZ(i, 0, -50, 0);
         }
         posAttr.needsUpdate = true;
         return;
       }
+      const chain = [{ x: playerOverworldX, z: playerOverworldZ }, ...overworldWaypoints];
+      // Compute cumulative length along waypoint chain
+      const segLengths: number[] = [];
+      let totalLen = 0;
+      for (let i = 0; i < chain.length - 1; i++) {
+        const d = Math.hypot(chain[i + 1].x - chain[i].x, chain[i + 1].z - chain[i].z);
+        segLengths.push(d);
+        totalLen += d;
+      }
       for (let i = 0; i < 24; i++) {
-        const t = i / 23;
-        const px = THREE.MathUtils.lerp(playerOverworldX, overworldTargetPos.x, t);
-        const pz = THREE.MathUtils.lerp(playerOverworldZ, overworldTargetPos.z, t);
-        const py = Math.max(0.05, groundHeightAt(px, pz)) + 0.28;
+        const targetDist = (i / 23) * Math.max(0.001, totalLen);
+        let acc = 0;
+        let px = chain[chain.length - 1].x;
+        let pz = chain[chain.length - 1].z;
+        for (let s = 0; s < segLengths.length; s++) {
+          const sl = segLengths[s];
+          if (acc + sl >= targetDist || s === segLengths.length - 1) {
+            const localT = sl > 0.0001 ? Math.min(1, Math.max(0, (targetDist - acc) / sl)) : 1;
+            px = THREE.MathUtils.lerp(chain[s].x, chain[s + 1].x, localT);
+            pz = THREE.MathUtils.lerp(chain[s].z, chain[s + 1].z, localT);
+            break;
+          }
+          acc += sl;
+        }
+        const py = Math.max(0.25, groundHeightAt(px, pz)) + 0.32;
         posAttr.setXYZ(i, px, py, pz);
       }
       posAttr.needsUpdate = true;
@@ -516,19 +509,30 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     cameraActionsRef.current = {
       focusOnPlayer: () => {
         isFollowingPlayer = true;
-        targetCamFocusX = playerOverworldX;
-        targetCamFocusZ = playerOverworldZ;
+        const safe = clampCameraFocus(playerOverworldX, playerOverworldZ, targetCamZoomDist);
+        targetCamFocusX = safe.x;
+        targetCamFocusZ = safe.z;
+        camFocusX = safe.x;
+        camFocusZ = safe.z;
       },
       focusOnCoords: (x: number, z: number, zoom?: number) => {
         isFollowingPlayer = false;
-        targetCamFocusX = THREE.MathUtils.clamp(x, -520, 520);
-        targetCamFocusZ = THREE.MathUtils.clamp(z, -390, 390);
         if (zoom !== undefined) {
-          targetCamZoomDist = THREE.MathUtils.clamp(zoom, 16, 510);
+          const czoom = THREE.MathUtils.clamp(zoom, 16, 940);
+          targetCamZoomDist = czoom;
+          camZoomDist = czoom;
         }
+        const safe = clampCameraFocus(x, z, targetCamZoomDist);
+        targetCamFocusX = safe.x;
+        targetCamFocusZ = safe.z;
+        camFocusX = safe.x;
+        camFocusZ = safe.z;
       },
       adjustZoom: (delta: number) => {
-        targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + delta, 16, 510);
+        targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + delta, 16, 940);
+        const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
+        targetCamFocusX = safe.x;
+        targetCamFocusZ = safe.z;
       },
       rotateYaw: (deltaRad: number) => {
         targetCamYaw += deltaRad;
@@ -574,28 +578,41 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           isFollowingPlayer = false;
           const worldTapX = tapX * Math.cos(camYaw) + tapZ * Math.sin(camYaw);
           const worldTapZ = -tapX * Math.sin(camYaw) + tapZ * Math.cos(camYaw);
-          targetCamFocusX = THREE.MathUtils.clamp(
+          const safe = clampCameraFocus(
             targetCamFocusX + worldTapX * stepDist,
-            -520,
-            520,
-          );
-          targetCamFocusZ = THREE.MathUtils.clamp(
             targetCamFocusZ + worldTapZ * stepDist,
-            -390,
-            390,
+            targetCamZoomDist,
           );
+          targetCamFocusX = safe.x;
+          targetCamFocusZ = safe.z;
         } else if (e.code === 'KeyQ') {
           targetCamYaw += 0.25;
         } else if (e.code === 'KeyE') {
           targetCamYaw -= 0.25;
         } else if (e.code === 'KeyZ' || e.code === 'Equal') {
-          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist - 32, 16, 510);
+          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist - 36, 16, 940);
+          const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
+          targetCamFocusX = safe.x;
+          targetCamFocusZ = safe.z;
         } else if (e.code === 'KeyX' || e.code === 'Minus') {
-          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + 32, 16, 510);
+          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + 36, 16, 940);
+          const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
+          targetCamFocusX = safe.x;
+          targetCamFocusZ = safe.z;
         } else if (e.code === 'KeyC' || e.code === 'Home') {
           isFollowingPlayer = true;
-          targetCamFocusX = playerOverworldX;
-          targetCamFocusZ = playerOverworldZ;
+          const safe = clampCameraFocus(playerOverworldX, playerOverworldZ, targetCamZoomDist);
+          targetCamFocusX = safe.x;
+          targetCamFocusZ = safe.z;
+        } else if (e.code === 'KeyV' || e.code === 'End') {
+          isFollowingPlayer = false;
+          targetCamZoomDist = 860;
+          camZoomDist = 860;
+          const safe = clampCameraFocus(-75, -8, 860);
+          targetCamFocusX = safe.x;
+          targetCamFocusZ = safe.z;
+          camFocusX = safe.x;
+          camFocusZ = safe.z;
         }
       }
     };
@@ -693,7 +710,10 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       if (mouseRightHeld) {
         // Bannerlord Right-Click + Drag rotates camera yaw & adjusts zoom slightly with vertical drag
         targetCamYaw -= dx * 0.0065;
-        targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + dy * 0.24, 16, 510);
+        targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + dy * 0.28, 16, 940);
+        const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
+        targetCamFocusX = safe.x;
+        targetCamFocusZ = safe.z;
       } else if (mouseMiddleHeld) {
         // Middle-Click + Drag pans map focus directly
         isFollowingPlayer = false;
@@ -702,16 +722,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         const rightZ = -Math.sin(camYaw);
         const fwdX = -Math.sin(camYaw);
         const fwdZ = -Math.cos(camYaw);
-        targetCamFocusX = THREE.MathUtils.clamp(
+        const safe = clampCameraFocus(
           targetCamFocusX - (dx * rightX - dy * fwdX) * panScale,
-          -520,
-          520,
-        );
-        targetCamFocusZ = THREE.MathUtils.clamp(
           targetCamFocusZ - (dx * rightZ - dy * fwdZ) * panScale,
-          -390,
-          390,
+          targetCamZoomDist,
         );
+        targetCamFocusX = safe.x;
+        targetCamFocusZ = safe.z;
       }
     };
 
@@ -725,8 +742,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         return;
       }
       e.preventDefault();
-      const zoomStep = e.deltaY * 0.09;
-      targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + zoomStep, 16, 510);
+      const zoomStep = e.deltaY * 0.12;
+      targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + zoomStep, 16, 940);
+      const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
+      targetCamFocusX = safe.x;
+      targetCamFocusZ = safe.z;
     };
 
     const handleContextMenu = (e: MouseEvent) => e.preventDefault();
@@ -1059,20 +1079,16 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           const len = Math.hypot(panInputX, panInputZ);
           const nx = panInputX / len;
           const nz = panInputZ / len;
-          // Rotate pan vector by current camera yaw
           const worldPanX = nx * Math.cos(camYaw) + nz * Math.sin(camYaw);
           const worldPanZ = -nx * Math.sin(camYaw) + nz * Math.cos(camYaw);
           const panSpeed = Math.max(32, camZoomDist * 1.15);
-          targetCamFocusX = THREE.MathUtils.clamp(
+          const safe = clampCameraFocus(
             targetCamFocusX + worldPanX * panSpeed * dt,
-            -520,
-            520,
-          );
-          targetCamFocusZ = THREE.MathUtils.clamp(
             targetCamFocusZ + worldPanZ * panSpeed * dt,
-            -390,
-            390,
+            targetCamZoomDist,
           );
+          targetCamFocusX = safe.x;
+          targetCamFocusZ = safe.z;
         }
 
         // B. Q / E Orbit Rotation
@@ -1084,10 +1100,16 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
         // C. Z / X or +/- Zoom
         if (keysHeld.has('KeyZ') || keysHeld.has('Equal')) {
-          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist - 65 * dt, 16, 510);
+          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist - 85 * dt, 16, 940);
+          const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
+          targetCamFocusX = safe.x;
+          targetCamFocusZ = safe.z;
         }
         if (keysHeld.has('KeyX') || keysHeld.has('Minus')) {
-          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + 65 * dt, 16, 510);
+          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + 85 * dt, 16, 940);
+          const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
+          targetCamFocusX = safe.x;
+          targetCamFocusZ = safe.z;
         }
 
         // D. Center / Follow Player Party on KeyC or Home
@@ -1104,41 +1126,52 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         const worldSimDt = dt * (timeScale === 0 ? 0 : timeScale);
 
         let isPartyMoving = false;
-        if (overworldTargetPos && worldSimDt > 0) {
-          const dx = overworldTargetPos.x - playerOverworldX;
-          const dz = overworldTargetPos.z - playerOverworldZ;
+        if (overworldTargetPos && overworldWaypoints.length > 0 && worldSimDt > 0) {
+          const wp = overworldWaypoints[0];
+          const dx = wp.x - playerOverworldX;
+          const dz = wp.z - playerOverworldZ;
           const dist = Math.hypot(dx, dz);
-          if (dist > 0.75) {
-            isPartyMoving = true;
+          if (dist > 0.85) {
             const step = Math.min(dist, effectivePartySpeed * worldSimDt);
-            const nx = dx / dist;
-            const nz = dz / dist;
-            playerOverworldX = THREE.MathUtils.clamp(
-              playerOverworldX + nx * step,
-              -MAP_HALF_EXTENT + 25,
-              MAP_HALF_EXTENT - 25,
+            const moveRes = stepAlongLandOnly(
+              playerOverworldX,
+              playerOverworldZ,
+              wp.x,
+              wp.z,
+              step,
             );
-            playerOverworldZ = THREE.MathUtils.clamp(
-              playerOverworldZ + nz * step,
-              -MAP_HALF_EXTENT + 25,
-              MAP_HALF_EXTENT - 25,
-            );
-            playerOverworldFacing = Math.atan2(nx, nz);
-            walkPhase += worldSimDt * 10 * speedInfo.multiplier;
+            if (!moveRes.blocked) {
+              isPartyMoving = true;
+              playerOverworldX = THREE.MathUtils.clamp(moveRes.x, -520, 520);
+              playerOverworldZ = THREE.MathUtils.clamp(moveRes.z, -390, 390);
+              playerOverworldFacing = moveRes.facing;
+              walkPhase += worldSimDt * 10 * speedInfo.multiplier;
+            } else {
+              // Re-route around coastal obstruction or stop at shoreline
+              overworldWaypoints.shift();
+              if (overworldWaypoints.length === 0) {
+                overworldTargetPos = null;
+                (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+              }
+            }
           } else {
-            overworldTargetPos = null;
-            (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+            overworldWaypoints.shift();
+            if (overworldWaypoints.length === 0) {
+              overworldTargetPos = null;
+              (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+            }
           }
         }
 
         if (isFollowingPlayer) {
-          targetCamFocusX = playerOverworldX;
-          targetCamFocusZ = playerOverworldZ;
+          const safe = clampCameraFocus(playerOverworldX, playerOverworldZ, targetCamZoomDist);
+          targetCamFocusX = safe.x;
+          targetCamFocusZ = safe.z;
         }
 
         updateMarchPathGeometry();
 
-        const py = Math.max(0.0, groundHeightAt(playerOverworldX, playerOverworldZ));
+        const py = Math.max(0.15, groundHeightAt(playerOverworldX, playerOverworldZ));
         overworldPlayer.root.position.set(playerOverworldX, py, playerOverworldZ);
         overworldPlayer.root.rotation.y = playerOverworldFacing;
         overworldPlayer.bodyGroup.position.y = isPartyMoving
@@ -1159,16 +1192,17 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
         });
 
-        // Animate Patrolling Lord Armies (respecting campaignTimeScale)
+        // Animate Patrolling Lord Armies Strictly on Dry Land (never stepping into sea/lakes)
         const patrolTime = elapsedTotal * (timeScale === 0 ? 0.05 : timeScale * 0.2);
         camp.lords.forEach((l, idx) => {
           const lMesh = lordMeshes.get(l.id);
           const lProxy = lordProxies.get(l.id);
           if (lMesh) {
             const patrolAng = patrolTime + idx * 1.7;
-            const lx = l.x + Math.cos(patrolAng) * 8.5;
-            const lz = l.z + Math.sin(patrolAng) * 8.5;
-            const ly = Math.max(0.0, groundHeightAt(lx, lz));
+            const safePatrol = computeLordPatrolPos(l.x, l.z, patrolAng, 7.2);
+            const lx = safePatrol.x;
+            const lz = safePatrol.z;
+            const ly = Math.max(0.25, groundHeightAt(lx, lz));
             lMesh.root.position.set(lx, ly, lz);
             lMesh.root.rotation.y = -patrolAng;
             lMesh.bodyGroup.position.y = Math.abs(Math.sin(elapsedTotal * 5 + idx)) * 0.1;
@@ -1224,7 +1258,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
         }
 
-        // Project 3D Settlement, Lord, and Regional Landmark Labels to 2D Screen Space
+        // Project 3D Settlement (Towns, Castles, Villages), Lord, and Landmark Labels to 2D Screen Space
         hudSyncTimer += dt;
         if (hudSyncTimer >= 0.08) {
           hudSyncTimer = 0;
@@ -1233,7 +1267,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           const projectedLabels: ProjectedMapLabel[] = [];
 
           camp.settlements.forEach((s) => {
-            const sy = groundHeightAt(s.x, s.z) + (s.type === 'VILLAGE' ? 4.2 : 6.0);
+            const sy = groundHeightAt(s.x, s.z) + (s.type === 'VILLAGE' ? 3.8 : 5.8);
             _projVec.set(s.x, sy, s.z).project(camera);
             const visible =
               _projVec.z >= -1 &&

@@ -10,11 +10,11 @@ import {
   calculatePartyStrength,
   getTotalTroops,
 } from '../game/rules';
-import {
+import type {
   BattleTelemetry,
   CameraControlActions,
   MapCameraTelemetry,
-} from './WorldCanvas';
+} from '../game/types';
 
 interface GameHudProps {
   subMode: 'overworld' | 'battle';
@@ -177,8 +177,8 @@ export const GameHud: React.FC<GameHudProps> = ({
           {mapTelemetry.labels.map((lbl) => {
             if (!lbl.visible) return null;
             const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
-            const bottomClearance = activeTab !== 'none' && !dockCollapsed ? 380 : 88;
-            if (lbl.screenY < 72 || lbl.screenY > vh - bottomClearance) return null;
+            const bottomClearance = activeTab !== 'none' && !dockCollapsed ? 360 : 54;
+            if (lbl.screenY < 16 || lbl.screenY > vh - bottomClearance) return null;
 
             // Hide landmark text at full continental zoom so the 36 settlement banners shine cleanly like Image 1 & 4
             if (lbl.kind === 'landmark') {
@@ -240,8 +240,47 @@ export const GameHud: React.FC<GameHudProps> = ({
               );
             }
 
-            // 2. SETTLEMENT HERALDIC SHIELD + SMOKY TRANSLUCENT PENNANT BANNER (Matching Image 1, 2, 3, 4!)
+            // 2. SETTLEMENT HERALDIC SHIELD + SMOKY TRANSLUCENT PENNANT BANNER (Towns, Castles, Villages from Image 4!)
             const isContinentalZoom = mapTelemetry.zoomDist > 220;
+            const isVillage = lbl.settlementType === 'VILLAGE';
+            const isCastle = lbl.settlementType === 'CASTLE';
+
+            if (isContinentalZoom && isVillage) {
+              return (
+                <div
+                  key={lbl.id}
+                  style={{
+                    transform: `translate3d(${lbl.screenX}px, ${lbl.screenY}px, 0) translate(-50%, -100%)`,
+                  }}
+                  className="absolute top-0 left-0 pointer-events-auto flex flex-col items-center"
+                >
+                  <button
+                    type="button"
+                    data-testid={`map-label-${lbl.id}`}
+                    onMouseEnter={() => setHoveredLabelId(lbl.id)}
+                    onMouseLeave={() =>
+                      setHoveredLabelId((prev) => (prev === lbl.id ? null : prev))
+                    }
+                    onClick={() => {
+                      cameraActionsRef.current?.commandMarchTo(lbl.worldX, lbl.worldZ);
+                    }}
+                    onDoubleClick={() => {
+                      cameraActionsRef.current?.focusOnCoords(lbl.worldX, lbl.worldZ, 38);
+                    }}
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120f]/75 border border-[#c6a15b]/25 hover:scale-110 transition-transform cursor-pointer whitespace-nowrap"
+                  >
+                    <span
+                      style={{ backgroundColor: lbl.color }}
+                      className="w-2 h-2 rounded-full border border-[#fde68a]/80 shrink-0"
+                    />
+                    <span className="text-[9px] font-medium text-[#e2d6c1]/95 hud-stroke">
+                      {lbl.name}
+                    </span>
+                  </button>
+                </div>
+              );
+            }
+
             return (
               <div
                 key={lbl.id}
@@ -272,10 +311,14 @@ export const GameHud: React.FC<GameHudProps> = ({
                       clipPath: 'polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%)',
                     }}
                     className={`${
-                      isContinentalZoom ? 'w-5 h-6' : 'w-6 h-7'
+                      isContinentalZoom
+                        ? isCastle
+                          ? 'w-4 h-4.5'
+                          : 'w-5 h-6'
+                        : 'w-6 h-7'
                     } flex items-center justify-center border border-[#d4af37] z-10 shrink-0 shadow`}
                   >
-                    <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 fill-[#fde68a]">
+                    <svg viewBox="0 0 16 16" className="w-3 h-3 fill-[#fde68a]">
                       {lbl.settlementType === 'TOWN' ? (
                         <path d="M8 1.5L9.8 5.2H13.8L10.6 7.8L11.8 12.2L8 9.5L4.2 12.2L5.4 7.8L2.2 5.2H6.2L8 1.5Z" />
                       ) : lbl.settlementType === 'CASTLE' ? (
@@ -286,27 +329,28 @@ export const GameHud: React.FC<GameHudProps> = ({
                     </svg>
                   </div>
 
-                  {/* Right Smoky Translucent Pointed Pennant Ribbon (like Image 1, 2, 3, 4!) */}
+                  {/* Right Smoky Translucent Pointed Pennant Ribbon */}
                   <div
                     style={{
                       background:
-                        'linear-gradient(90deg, rgba(24, 22, 19, 0.80) 0%, rgba(34, 31, 27, 0.68) 84%, rgba(34, 31, 27, 0.25) 100%)',
+                        'linear-gradient(90deg, rgba(24, 22, 19, 0.82) 0%, rgba(34, 31, 27, 0.70) 84%, rgba(34, 31, 27, 0.25) 100%)',
                       clipPath: 'polygon(0% 0%, 89% 0%, 100% 50%, 89% 100%, 0% 100%)',
                     }}
-                    className={`-ml-1 pl-2 pr-3.5 ${
+                    className={`-ml-1 pl-2 pr-3 ${
                       isContinentalZoom ? 'py-0' : 'py-0.5'
-                    } border-y border-[#c6a15b]/35 flex items-center gap-1.5`}
+                    } border-y border-[#c6a15b]/35 flex items-center gap-1`}
                   >
                     <span
                       className={`font-display font-semibold ${
-                        isContinentalZoom ? 'text-[11px]' : 'text-[12px]'
-                      } text-[#f5efe2] tracking-wide hud-stroke`}
+                        isContinentalZoom
+                          ? isCastle
+                            ? 'text-[10px] text-[#e5dccb]'
+                            : 'text-[11px] text-[#fff8eb]'
+                          : 'text-[12px] text-[#f5efe2]'
+                      } tracking-wide hud-stroke`}
                     >
                       {lbl.name}
                     </span>
-                    {lbl.settlementType === 'CASTLE' && (
-                      <span className="w-2 h-2 rounded-xs bg-[#d4af37]/80 inline-block" />
-                    )}
                   </div>
                 </button>
               </div>
@@ -378,79 +422,86 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
       )}
 
-      {/* TOP ROW: Left Commander & Realm Cluster + Center Camera/Battle Bar + Right Utility Controls */}
+      {/* TOP ROW: Uncluttered on Overworld (only compact right camera/utility pill); Full Battle Counter in Battle Mode */}
       <div className="relative z-20 flex items-start justify-between gap-2">
-        {/* Top-Left Perimeter Cluster */}
-        <div className="hud-panel rounded-lg px-3.5 py-2 pointer-events-auto flex items-center gap-3 whitespace-nowrap">
-          <div className="flex items-center gap-2.5">
-            <div className="flex flex-col">
-              <span className="text-[11px] uppercase tracking-wider text-[#c6a15b] font-semibold">
-                {campaign.playerName}
-              </span>
-              <div className="flex items-center gap-1 mt-1">{renderVitalityPips()}</div>
+        {subMode === 'battle' ? (
+          <>
+            <div className="hud-panel rounded-lg px-3.5 py-2 pointer-events-auto flex items-center gap-3 whitespace-nowrap">
+              <div className="flex items-center gap-2.5">
+                <div className="flex flex-col">
+                  <span className="text-[11px] uppercase tracking-wider text-[#c6a15b] font-semibold">
+                    {campaign.playerName}
+                  </span>
+                  <div className="flex items-center gap-1 mt-1">{renderVitalityPips()}</div>
+                </div>
+                <div className="font-mono-tabular text-lg font-bold text-[#f8f0df] hud-stroke">
+                  {Math.round(currentHp)}
+                  <span className="text-xs text-[#a89b84] font-normal ml-0.5">/{maxHp} HP</span>
+                </div>
+              </div>
+              <div className="h-7 w-px bg-[#c6a15b]/25" />
+              <div>
+                <span className="text-[10px] uppercase tracking-wider text-[#a89b84] block">
+                  Sancak Ordusu
+                </span>
+                <span className="text-base font-bold font-mono-tabular text-[#f3ead8]">
+                  {battleTelemetry.alliesAlive}
+                  <span className="text-xs font-normal text-[#c6a15b] ml-1">
+                    Asker ({partyStrength})
+                  </span>
+                </span>
+              </div>
             </div>
-            <div className="font-mono-tabular text-lg font-bold text-[#f8f0df] hud-stroke">
-              {Math.round(currentHp)}
-              <span className="text-xs text-[#a89b84] font-normal ml-0.5">/{maxHp} HP</span>
+
+            <div className="hud-panel rounded-lg px-5 py-2.5 pointer-events-auto flex items-center gap-6 whitespace-nowrap">
+              <div className="text-right">
+                <span className="text-[10px] uppercase tracking-wider text-[#6ee7b7] block">
+                  Sancak Kuvvetleri
+                </span>
+                <span className="text-xl font-bold font-mono-tabular text-[#34d399]">
+                  {battleTelemetry.alliesAlive} / {battleTelemetry.alliesTotal}
+                </span>
+              </div>
+
+              <div className="text-center px-2">
+                <span className="text-xs font-display font-bold text-[#fbbf24] block">
+                  MEYDAN SAVAŞI
+                </span>
+                <span className="text-[11px] text-[#d1c5b0]">
+                  Emir:{' '}
+                  {activeOrder === 'CHARGE'
+                    ? 'Hücum'
+                    : activeOrder === 'SHIELD_WALL'
+                      ? 'Kalkan Duvarı'
+                      : activeOrder === 'FOLLOW_ME'
+                        ? 'Takip Et'
+                        : 'Ok Yağmuru'}
+                </span>
+              </div>
+
+              <div className="text-left">
+                <span className="text-[10px] uppercase tracking-wider text-[#fca5a5] block">
+                  {battleTelemetry.enemyCommanderName}
+                </span>
+                <span className="text-xl font-bold font-mono-tabular text-[#f87171]">
+                  {battleTelemetry.enemiesAlive} / {battleTelemetry.enemiesTotal}
+                </span>
+              </div>
             </div>
-          </div>
+          </>
+        ) : (
+          <div />
+        )}
 
-          <div className="h-7 w-px bg-[#c6a15b]/25" />
-
-          <div>
-            <span className="text-[10px] uppercase tracking-wider text-[#a89b84] block">
-              Hazine
-            </span>
-            <span className="text-base font-bold font-mono-tabular text-[#fbbf24]">
-              {Math.round(campaign.gold)}
-              <span className="text-xs font-normal text-[#d1c5b0] ml-1">Dinar</span>
-            </span>
-          </div>
-
-          <div>
-            <span className="text-[10px] uppercase tracking-wider text-[#a89b84] block">
-              Sancak Ordusu
-            </span>
-            <span className="text-base font-bold font-mono-tabular text-[#f3ead8]">
-              {subMode === 'battle' ? battleTelemetry.alliesAlive : totalTroops}
-              <span className="text-xs font-normal text-[#c6a15b] ml-1">
-                Asker ({partyStrength})
-              </span>
-            </span>
-          </div>
-
+        {/* Top-Right Compact Camera & Utility Controls */}
+        <div className="flex items-center gap-1.5 pointer-events-auto">
           {subMode === 'overworld' && (
-            <div className="hidden xl:block">
-              <span className="text-[10px] uppercase tracking-wider text-[#a89b84] block">
-                Bölge · Harita Hızı
-              </span>
-              <span className="text-xs font-semibold font-mono-tabular text-[#6ee7b7]">
-                {mapTelemetry.biomeLabel} · {mapTelemetry.partySpeed} Hız
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Center Banner: Bannerlord Camera & Region Presets on Overworld OR Battle Counter */}
-        {subMode === 'overworld' ? (
-          <div className="hud-panel rounded-lg px-3 py-2 pointer-events-auto flex items-center gap-2 whitespace-nowrap">
-            <div className="text-xs">
-              <span className="text-[10px] uppercase tracking-wider text-[#c6a15b] block font-semibold">
-                {mapTelemetry.isFollowingPlayer ? 'Kamera: Sancak Takibi' : 'Kamera: Serbest Kıta (WASD)'}
-              </span>
-              <span className="font-mono-tabular text-[11px] text-[#d1c5b0]">
-                ({mapTelemetry.focusX}, {mapTelemetry.focusZ}) · İrtifa {mapTelemetry.zoomDist}m
-              </span>
-            </div>
-
-            <div className="h-6 w-px bg-[#c6a15b]/25" />
-
-            <div className="flex items-center gap-1">
+            <div className="hud-panel-subtle rounded px-2 py-1 flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => {
                   cameraActionsRef.current?.focusOnPlayer();
-                  cameraActionsRef.current?.adjustZoom(-500);
+                  cameraActionsRef.current?.adjustZoom(-800);
                   cameraActionsRef.current?.adjustZoom(32);
                 }}
                 className={`px-2 py-1 rounded text-xs font-semibold transition-colors ${
@@ -459,87 +510,18 @@ export const GameHud: React.FC<GameHudProps> = ({
                     : 'bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]'
                 }`}
               >
-                Odakla [C]
+                Sancak [C]
               </button>
               <button
                 type="button"
-                onClick={() => cameraActionsRef.current?.focusOnCoords(145, -275, 76)}
-                className="px-2 py-1 rounded text-xs font-semibold bg-[#1c1914] text-[#93c5fd] hover:bg-[#2b261e]"
-              >
-                Kuzey Kar
-              </button>
-              <button
-                type="button"
-                onClick={() => cameraActionsRef.current?.focusOnCoords(215, -75, 138)}
-                className="px-2 py-1 rounded text-xs font-semibold bg-[#1c1914] text-[#5eead4] hover:bg-[#2b261e]"
-              >
-                Doğu Göl
-              </button>
-              <button
-                type="button"
-                onClick={() => cameraActionsRef.current?.focusOnCoords(-35, -15, 425)}
+                onClick={() => cameraActionsRef.current?.focusOnCoords(-75, -8, 860)}
                 className="px-2 py-1 rounded text-xs font-semibold bg-[#1c1914] text-[#fde68a] hover:bg-[#2b261e] border border-[#c6a15b]/35"
               >
-                Tam Kıta
-              </button>
-              <button
-                type="button"
-                aria-label="Haritayı yakınlaştır [Z]"
-                onClick={() => cameraActionsRef.current?.adjustZoom(-45)}
-                className="px-2 py-1 rounded text-xs font-mono-tabular bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]"
-              >
-                +
-              </button>
-              <button
-                type="button"
-                aria-label="Kıta haritasına uzaklaştır [X]"
-                onClick={() => cameraActionsRef.current?.adjustZoom(65)}
-                className="px-2 py-1 rounded text-xs font-mono-tabular bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]"
-              >
-                -
+                Tam Kıta [V]
               </button>
             </div>
-          </div>
-        ) : (
-          <div className="hud-panel rounded-lg px-5 py-2.5 pointer-events-auto flex items-center gap-6 whitespace-nowrap">
-            <div className="text-right">
-              <span className="text-[10px] uppercase tracking-wider text-[#6ee7b7] block">
-                Sancak Kuvvetleri
-              </span>
-              <span className="text-xl font-bold font-mono-tabular text-[#34d399]">
-                {battleTelemetry.alliesAlive} / {battleTelemetry.alliesTotal}
-              </span>
-            </div>
+          )}
 
-            <div className="text-center px-2">
-              <span className="text-xs font-display font-bold text-[#fbbf24] block">
-                MEYDAN SAVAŞI
-              </span>
-              <span className="text-[11px] text-[#d1c5b0]">
-                Emir:{' '}
-                {activeOrder === 'CHARGE'
-                  ? 'Hücum'
-                  : activeOrder === 'SHIELD_WALL'
-                    ? 'Kalkan Duvarı'
-                    : activeOrder === 'FOLLOW_ME'
-                      ? 'Takip Et'
-                      : 'Ok Yağmuru'}
-              </span>
-            </div>
-
-            <div className="text-left">
-              <span className="text-[10px] uppercase tracking-wider text-[#fca5a5] block">
-                {battleTelemetry.enemyCommanderName}
-              </span>
-              <span className="text-xl font-bold font-mono-tabular text-[#f87171]">
-                {battleTelemetry.enemiesAlive} / {battleTelemetry.enemiesTotal}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Top-Right Compact Utility Controls: Mute [M], Pause [P], Restart [R] */}
-        <div className="flex items-center gap-2 pointer-events-auto">
           <button
             type="button"
             tabIndex={-1}
@@ -548,14 +530,14 @@ export const GameHud: React.FC<GameHudProps> = ({
               e.currentTarget.blur();
               onToggleMute();
             }}
-            className="hud-panel-subtle w-10 h-10 rounded flex items-center justify-center text-[#f3ead8] hover:border-[#fbbf24] transition-colors"
+            className="hud-panel-subtle w-9 h-9 rounded flex items-center justify-center text-[#f3ead8] hover:border-[#fbbf24] transition-colors"
           >
             {muted ? (
-              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M11 5L6 9H2v6h4l5 4V5zM23 9l-6 6M17 9l6 6" />
               </svg>
             ) : (
-              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M11 5L6 9H2v6h4l5 4V5zM19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07" />
               </svg>
             )}
@@ -569,9 +551,9 @@ export const GameHud: React.FC<GameHudProps> = ({
               e.currentTarget.blur();
               onPause();
             }}
-            className="hud-panel-subtle w-10 h-10 rounded flex items-center justify-center text-[#f3ead8] hover:border-[#fbbf24] transition-colors"
+            className="hud-panel-subtle w-9 h-9 rounded flex items-center justify-center text-[#f3ead8] hover:border-[#fbbf24] transition-colors"
           >
-            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
               <rect x="6" y="4" width="4" height="16" rx="1" />
               <rect x="14" y="4" width="4" height="16" rx="1" />
             </svg>
@@ -585,9 +567,9 @@ export const GameHud: React.FC<GameHudProps> = ({
               e.currentTarget.blur();
               onRestart();
             }}
-            className="hud-panel-subtle w-10 h-10 rounded flex items-center justify-center text-[#f3ead8] hover:border-[#fbbf24] transition-colors"
+            className="hud-panel-subtle w-9 h-9 rounded flex items-center justify-center text-[#f3ead8] hover:border-[#fbbf24] transition-colors"
           >
-            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8" />
               <path d="M3 3v5h5" />
             </svg>
@@ -819,7 +801,7 @@ export const GameHud: React.FC<GameHudProps> = ({
             <div className="w-full flex items-end justify-between gap-2 pointer-events-auto">
               {subMode === 'overworld' ? (
                 <>
-                  {/* 1. Bottom-Left: Bannerlord Bronze-Gold Menu Rim */}
+                  {/* 1. Bottom-Left: Clean Bannerlord Bronze-Gold Menu Rim */}
                   <div className="hud-panel rounded-t-xl rounded-bl-lg px-3 py-2 flex items-center gap-1.5 border-t-2 border-t-[#c6a15b]">
                     <button
                       type="button"
@@ -842,20 +824,6 @@ export const GameHud: React.FC<GameHudProps> = ({
                       }`}
                     >
                       Ordum ({totalTroops})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onOpenSettlement(campaign.settlements[0])}
-                      className="px-2.5 py-1.5 rounded text-xs font-semibold bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e] border border-[#c6a15b]/30 transition-colors whitespace-nowrap"
-                    >
-                      Asker Topla
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onOpenDiplomacy(campaign.lords[0])}
-                      className="px-2.5 py-1.5 rounded text-xs font-semibold bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e] border border-[#c6a15b]/30 transition-colors whitespace-nowrap"
-                    >
-                      Diplomasi
                     </button>
                     <button
                       type="button"

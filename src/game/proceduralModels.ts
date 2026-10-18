@@ -12,10 +12,13 @@ import {
 
 export { groundHeightAt };
 
-// High-detail procedural tileable textures (Bump Map + 1536x1152 World Topographic Albedo for 1200x900 Continent)
+// High-detail procedural tileable textures (Bump Map + World Topographic Albedo for 2400x1800 Continent)
 export function createTerrainTextures(maxAnisotropy: number) {
-  const texW = 1536;
-  const texH = 1152;
+  const isHeadless =
+    typeof navigator !== 'undefined' &&
+    (navigator.webdriver || /HeadlessChrome/i.test(navigator.userAgent));
+  const texW = isHeadless ? 960 : 1600;
+  const texH = isHeadless ? 720 : 1200;
   const albedoCanvas = document.createElement('canvas');
   albedoCanvas.width = texW;
   albedoCanvas.height = texH;
@@ -32,11 +35,11 @@ export function createTerrainTextures(maxAnisotropy: number) {
       const wx = (px / (texW - 1)) * MAP_WIDTH - halfW;
       const info = getTerrainSlopeAndColorAt(wx, wz);
 
-      const grain = (((px * 73) ^ (py * 139)) & 15) / 255 - 0.03;
+      const grain = (((px * 73) ^ (py * 139)) & 11) - 5;
       const idx = (py * texW + px) * 4;
-      data[idx] = Math.max(8, Math.min(255, Math.round((info.r + grain) * 255)));
-      data[idx + 1] = Math.max(8, Math.min(255, Math.round((info.g + grain) * 255)));
-      data[idx + 2] = Math.max(8, Math.min(255, Math.round((info.b + grain) * 255)));
+      data[idx] = Math.max(8, Math.min(255, Math.round(info.r + grain)));
+      data[idx + 1] = Math.max(8, Math.min(255, Math.round(info.g + grain)));
+      data[idx + 2] = Math.max(8, Math.min(255, Math.round(info.b + grain)));
       data[idx + 3] = 255;
     }
   }
@@ -104,19 +107,25 @@ export function createStoneTextures(maxAnisotropy: number) {
   return stoneTex;
 }
 
-// High-Resolution 320x240 Continental Terrain Mesh spanning 1200x900 World Units
+// High-Resolution Continental Terrain Mesh spanning 2400x1800 World Units (Zero Void Borders)
 export function createContinentalTerrainMesh(
   albedoTex: THREE.CanvasTexture,
   bumpTex: THREE.CanvasTexture,
 ): THREE.Mesh {
-  const geo = new THREE.PlaneGeometry(MAP_WIDTH, MAP_HEIGHT, 320, 240);
+  const isHeadless =
+    typeof navigator !== 'undefined' &&
+    (navigator.webdriver || /HeadlessChrome/i.test(navigator.userAgent));
+  const segX = isHeadless ? 260 : 360;
+  const segZ = isHeadless ? 195 : 270;
+  const geo = new THREE.PlaneGeometry(MAP_WIDTH, MAP_HEIGHT, segX, segZ);
   geo.rotateX(-Math.PI / 2);
 
   const posAttr = geo.attributes.position;
   for (let i = 0; i < posAttr.count; i++) {
     const vx = posAttr.getX(i);
     const vz = posAttr.getZ(i);
-    posAttr.setY(i, groundHeightAt(vx, vz));
+    // Clamp underwater mesh vertices to a flat water plane (-0.25) so the high-res albedoTex renders razor-sharp coastlines & rivers without triangle slicing!
+    posAttr.setY(i, Math.max(-0.25, groundHeightAt(vx, vz)));
   }
 
   geo.computeVertexNormals();
@@ -126,7 +135,7 @@ export function createContinentalTerrainMesh(
     map: albedoTex,
     bumpMap: bumpTex,
     bumpScale: 0.55,
-    roughness: 0.92,
+    roughness: 0.9,
     metalness: 0.02,
   });
 
@@ -136,7 +145,7 @@ export function createContinentalTerrainMesh(
   return mesh;
 }
 
-// Dense Organic Multi-Canopy Forest Groves & Snow-Dusted Pine Taiga across 1200x900 Continent (matching Image 1, 2, 3, 4!)
+// Dense Organic Multi-Canopy Forest Groves & Snow-Dusted Pine Taiga across Calradia Continent
 export function createContinentalForestsAndRocksGroup(): THREE.Group {
   const group = new THREE.Group();
   const dummy = new THREE.Object3D();
@@ -144,47 +153,46 @@ export function createContinentalForestsAndRocksGroup(): THREE.Group {
 
   const treeCoords: Array<{ x: number; y: number; z: number; scale: number; isPine: boolean; isSnowy: boolean }> = [];
 
-  for (let i = 0; i < 14000; i++) {
+  for (let i = 0; i < 15000; i++) {
     let tx: number;
     let tz: number;
-    if (i < 3500) {
-      // High-density groves around Central Lycaron/Zeonica/Myzea & Battania/Vlandia woodlands
+    if (i < 3800) {
+      // High-density groves around Central Empire (Saneopa/Myzea/Lycaron/Phycaon) & Battania/Vlandia woodlands
       if (i % 2 === 0) {
-        tx = -40 + ((i * 43 + ((i * 17) % 23)) % 220);
-        tz = -110 + ((i * 59 + ((i * 29) % 31)) % 175);
+        tx = -60 + ((i * 43 + ((i * 17) % 23)) % 240);
+        tz = -120 + ((i * 59 + ((i * 29) % 31)) % 210);
       } else {
-        tx = -410 + ((i * 47 + ((i * 19) % 29)) % 240);
-        tz = -180 + ((i * 67 + ((i * 31) % 37)) % 220);
+        tx = -450 + ((i * 47 + ((i * 19) % 29)) % 270);
+        tz = -240 + ((i * 67 + ((i * 31) % 37)) % 250);
       }
-    } else if (i < 6200) {
-      // Dense snowy pine taiga on Sturgia Peninsula (Sibir, Tyal, Vladiv Castle — Image 2!) and Khuzait Lake shore (Image 3!)
+    } else if (i < 6800) {
+      // Dense snowy pine taiga on Sturgia Peninsula (Revyl, Varcheg, Balgard, Sibir, Varnovapol, Tyal) and Khuzait Lake shore
       if (i % 2 === 0) {
-        tx = -210 + ((i * 53 + ((i * 23) % 31)) % 460);
-        tz = -345 + ((i * 71 + ((i * 17) % 29)) % 175);
+        tx = -260 + ((i * 53 + ((i * 23) % 31)) % 560);
+        tz = -380 + ((i * 71 + ((i * 17) % 29)) % 195);
       } else {
-        tx = 140 + ((i * 37 + ((i * 13) % 19)) % 210);
-        tz = -210 + ((i * 61 + ((i * 23) % 29)) % 260);
+        tx = 140 + ((i * 37 + ((i * 13) % 19)) % 230);
+        tz = -230 + ((i * 61 + ((i * 23) % 29)) % 280);
       }
     } else {
-      // Continental distribution across all 1200x900 regions
-      tx = ((i * 137 + ((i * 29) % 43)) % 1060) - 530;
-      tz = ((i * 193 + ((i * 37) % 53)) % 780) - 390;
+      // Continental distribution across playable continent and outer mountain borders
+      tx = ((i * 137 + ((i * 29) % 43)) % 1280) - 640;
+      tz = ((i * 193 + ((i * 37) % 53)) % 960) - 480;
     }
 
     const forestDensity = getForestMaskAt(tx, tz);
     if (forestDensity < 0.05) continue;
 
-    const rDist = distanceToRiverNetwork(tx, tz);
+    const { dist: rDist, width: rWidth } = distanceToRiverNetwork(tx, tz);
     const roadDist = distanceToNearestRoad(tx, tz);
-    if (rDist < 4.5 || roadDist < 2.8) continue;
+    if (rDist < rWidth * 1.35 || roadDist < 2.8) continue;
 
     const info = getTerrainSlopeAndColorAt(tx, tz);
-    if (info.height < 0.42 || info.height > 8.6 || info.slope > 0.55) continue;
-    if (tz > 140 && i % 7 !== 0) continue; // Sparse oasis palms in southern desert
+    if (info.height < 0.42 || info.height > 8.8 || info.slope > 0.56) continue;
+    if (tz > 145 && i % 7 !== 0) continue; // Sparse oasis palms in southern desert
 
-    // Fine Bannerlord miniature forest scale (0.48 to 0.86) so thousands of trees form rich forests across the huge continent!
     const scale = 0.48 + (i % 7) * 0.062;
-    const isSnowy = tz < -165 || (info.height > 5.0 && tz < 35 && tx > -110 && tx < 250);
+    const isSnowy = tz < -170 || (info.height > 5.0 && tz < 35 && tx > -120 && tx < 320);
     const isPine = isSnowy || tz < -60 || info.height > 3.6;
     treeCoords.push({ x: tx, y: info.height, z: tz, scale, isPine, isSnowy });
   }
@@ -282,39 +290,62 @@ export function createContinentalForestsAndRocksGroup(): THREE.Group {
   return group;
 }
 
-// Build Weathered Stone Arch Bridges across the Continent
+// Build Weathered Stone Arch Bridges across the Continent (Snapped to exact river centerlines & bank elevations)
 export function createContinentalBridgesGroup(stoneTex: THREE.CanvasTexture): THREE.Group {
   const group = new THREE.Group();
   const stoneMat = new THREE.MeshStandardMaterial({
-    color: 0x9c9488,
+    color: 0xa49b8e,
     map: stoneTex,
-    roughness: 0.85,
+    roughness: 0.84,
     metalness: 0.05,
   });
 
   CONTINENTAL_BRIDGES.forEach((b) => {
     const bGroup = new THREE.Group();
-    const baseH = groundHeightAt(b.x, b.z);
-    bGroup.position.set(b.x, Math.max(0.1, baseH + 0.95), b.z);
+    const dirX = Math.sin(b.rotationY);
+    const dirZ = Math.cos(b.rotationY);
+    const halfLen = b.length * 0.5;
+
+    // Sample bank elevations at both ends of the bridge so the deck connects seamlessly to both riverbanks
+    const bankH1 = Math.max(1.35, groundHeightAt(b.x - dirX * halfLen, b.z - dirZ * halfLen));
+    const bankH2 = Math.max(1.35, groundHeightAt(b.x + dirX * halfLen, b.z + dirZ * halfLen));
+    const bridgeDeckY = Math.max(bankH1, bankH2) + 0.15;
+
+    bGroup.position.set(b.x, bridgeDeckY, b.z);
     bGroup.rotation.y = b.rotationY;
 
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.45, b.length), stoneMat);
-    deck.position.y = 0.45;
+    // Main central stone deck spanning the river
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.42, b.length * 0.76), stoneMat);
+    deck.position.y = 0;
     deck.castShadow = true;
     deck.receiveShadow = true;
     bGroup.add(deck);
 
-    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.65, b.length), stoneMat);
-    leftWall.position.set(-1.55, 0.8, 0);
+    // Sloped approach ramps on both riverbanks
+    const rampLen = b.length * 0.22;
+    const ramp1 = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.38, rampLen), stoneMat);
+    ramp1.position.set(0, -0.18, -b.length * 0.42);
+    ramp1.rotation.x = 0.16;
+    bGroup.add(ramp1);
+
+    const ramp2 = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.38, rampLen), stoneMat);
+    ramp2.position.set(0, -0.18, b.length * 0.42);
+    ramp2.rotation.x = -0.16;
+    bGroup.add(ramp2);
+
+    // Stone parapets (left & right walls)
+    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.58, b.length * 0.78), stoneMat);
+    leftWall.position.set(-1.44, 0.42, 0);
     bGroup.add(leftWall);
 
-    const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.65, b.length), stoneMat);
-    rightWall.position.set(1.55, 0.8, 0);
+    const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.58, b.length * 0.78), stoneMat);
+    rightWall.position.set(1.44, 0.42, 0);
     bGroup.add(rightWall);
 
-    [-b.length * 0.3, 0, b.length * 0.3].forEach((zOff) => {
-      const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.85, 2.6, 8), stoneMat);
-      pier.position.set(0, -0.6, zOff);
+    // Sturdy stone piers extending down into the riverbed
+    [-b.length * 0.24, 0, b.length * 0.24].forEach((zOff) => {
+      const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.85, 3.2, 8), stoneMat);
+      pier.position.set(0, -1.6, zOff);
       bGroup.add(pier);
     });
 

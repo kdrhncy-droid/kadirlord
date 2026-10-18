@@ -13,12 +13,12 @@ import {
   recruitUnit,
   resolveBattleOutcome,
 } from './game/rules';
-import {
+import type {
   BattleTelemetry,
   CameraControlActions,
   MapCameraTelemetry,
-  WorldCanvas,
-} from './components/WorldCanvas';
+} from './game/types';
+import { WorldCanvas } from './components/WorldCanvas';
 import { GameHud } from './components/GameHud';
 import { SettlementModal } from './components/SettlementModal';
 import { DiplomacyModal } from './components/DiplomacyModal';
