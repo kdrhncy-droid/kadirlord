@@ -1,0 +1,6 @@
+{
+  "name": "Sancak-ı Kalradya: Taht ve Kılıç",
+  "description": "3D strateji, yaşayan politik dünya, Gemini destekli lord diplomasisi ve gerçek zamanlı meydan savaşlarını birleştiren aksiyon-RPG deneyimi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
