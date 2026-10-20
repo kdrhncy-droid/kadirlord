@@ -9,23 +9,34 @@ import {
   TacticalOrder,
   TroopRoster,
   computeMeleeDamage,
+  getSettlementArrivalRadius,
   getTotalTroops,
 } from '../game/rules';
 import {
-   CONTINENTAL_LANDMARKS,
+  CONTINENTAL_LANDMARKS,
   MAP_HEIGHT,
   MAP_WIDTH,
+  OVERWORLD_BASE_MARCH_SPEED,
+  OVERWORLD_LORD_PATROL_SPEED,
   clampCameraFocus,
   computeBannerlordCameraTransform,
   getPartySpeedInfo,
   groundHeightAt,
+  isSettlementLabelVisible,
 } from '../game/mapGen';
 import {
   computeLandPath,
-  computeLordPatrolPos,
   snapToNearestLand,
   stepAlongLandOnly,
 } from '../game/navigation';
+import {
+  type LordLiveRouteState,
+  calculateBannerlordPartySpeed,
+  computePlayerSpottingRange,
+  getLordDetailedIntel,
+  isWithinSpottingRange,
+  stepLordCampaignRoute,
+} from '../game/campaignSystem';
 import type {
   BattleTelemetry,
   CameraControlActions,
@@ -67,7 +78,10 @@ interface WorldCanvasProps {
   activeOrder: TacticalOrder;
   battleTargetLordId: string | null;
   battleTargetSettlementId: string | null;
+  activeDiplomacyLordId?: string | null;
+  activeSettlementModalId?: string | null;
   cameraActionsRef: React.MutableRefObject<CameraControlActions | null>;
+  onSetTimeScale?: (timeScale: 0 | 1 | 2 | 4) => void;
   onUpdatePlayerPos: (
     x: number,
     z: number,
@@ -134,7 +148,10 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   activeOrder,
   battleTargetLordId,
   battleTargetSettlementId,
+  activeDiplomacyLordId,
+  activeSettlementModalId,
   cameraActionsRef,
+  onSetTimeScale,
   onUpdatePlayerPos,
   onOpenSettlement,
   onOpenDiplomacy,
@@ -151,6 +168,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     activeOrder,
     battleTargetLordId,
     battleTargetSettlementId,
+    activeDiplomacyLordId,
+    activeSettlementModalId,
+    onSetTimeScale,
     onUpdatePlayerPos,
     onOpenSettlement,
     onOpenDiplomacy,
@@ -167,6 +187,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       activeOrder,
       battleTargetLordId,
       battleTargetSettlementId,
+      activeDiplomacyLordId,
+      activeSettlementModalId,
+      onSetTimeScale,
       onUpdatePlayerPos,
       onOpenSettlement,
       onOpenDiplomacy,
@@ -181,6 +204,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     activeOrder,
     battleTargetLordId,
     battleTargetSettlementId,
+    activeDiplomacyLordId,
+    activeSettlementModalId,
+    onSetTimeScale,
     onUpdatePlayerPos,
     onOpenSettlement,
     onOpenDiplomacy,
@@ -255,11 +281,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     scene.add(rimLight);
 
     const maxAniso = renderer.capabilities.getMaxAnisotropy();
-    const { albedoTex, bumpTex } = createTerrainTextures(maxAniso);
+    const { albedoTex, bumpTex, detailTex } = createTerrainTextures(maxAniso);
     const stoneTex = createStoneTextures(maxAniso);
 
-    // 1. 2400x1800 High-Res Slope-Shaded Continental Terrain Mesh (Zero Void Borders & Smooth Water Surface)
-    const terrainMesh = createContinentalTerrainMesh(albedoTex, bumpTex);
+    // 1. 2400x1800 High-Res Slope-Shaded Continental Terrain Mesh with Multi-Scale Close-Up Detail Shader
+    const terrainMesh = createContinentalTerrainMesh(albedoTex, bumpTex, detailTex);
     scene.add(terrainMesh);
 
     // 2. Deep Abyssal Backdrop Skirt at y = -18.0 (Zero Z-Fighting with Terrain Water Surface at y = -0.25)
@@ -429,8 +455,22 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     let playerOverworldZ = stateRef.current.campaign.playerZ;
     let playerOverworldFacing = 0;
     let walkPhase = 0;
+    let lordWalkPhase = 0;
     let overworldTargetPos: { x: number; z: number } | null = null;
     let overworldWaypoints: Array<{ x: number; z: number }> = [];
+
+    // Live route state for each Lord (moves along land routes at party-size-dependent speed)
+    const lordLiveRoutes = new Map<string, LordLiveRouteState>();
+    stateRef.current.campaign.lords.forEach((l) => {
+      lordLiveRoutes.set(l.id, {
+        x: l.x,
+        z: l.z,
+        rotY: 0,
+        targetSettlementId: null,
+        waypoints: computeLandPath(l.x, l.z, l.targetX, l.targetZ),
+        currentAction: l.currentAction,
+      });
+    });
 
     const initContinentView =
       typeof window !== 'undefined' &&
@@ -446,7 +486,34 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     let targetCamZoomDist = camZoomDist;
     let isFollowingPlayer = !initContinentView;
 
-    function setMarchDestination(tx: number, tz: number) {
+    let pendingTarget: { type: 'settlement' | 'lord'; id: string } | null = null;
+    let followingLordId: string | null = null;
+    let followRepathTimer = 0;
+
+    function setMarchDestination(
+      tx: number,
+      tz: number,
+      target?: { type: 'settlement' | 'lord'; id: string },
+    ) {
+      let resolvedTarget = target ?? null;
+      if (!resolvedTarget) {
+        // Automatically detect if coordinates match a settlement so Atlas "Sefer Yürüt" also auto-enters on arrival
+        const nearS = stateRef.current.campaign.settlements.find(
+          (s) => Math.hypot(s.x - tx, s.z - tz) < 7.5,
+        );
+        if (nearS) {
+          resolvedTarget = { type: 'settlement', id: nearS.id };
+        }
+      }
+
+      pendingTarget = resolvedTarget;
+      followingLordId = resolvedTarget?.type === 'lord' ? resolvedTarget.id : null;
+      followRepathTimer = 0;
+
+      if (stateRef.current.campaignTimeScale === 0) {
+        stateRef.current.onSetTimeScale?.(1);
+      }
+
       const clampedX = THREE.MathUtils.clamp(tx, -520, 520);
       const clampedZ = THREE.MathUtils.clamp(tz, -390, 390);
       const safeGoal = snapToNearestLand(clampedX, clampedZ);
@@ -505,6 +572,297 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       posAttr.needsUpdate = true;
     }
 
+    // 0ms Latency Hardware-Accelerated Overworld Label Overlay (Pinned 100% to 3D terrain on every frame)
+    const labelOverlay = document.createElement('div');
+    labelOverlay.className = 'absolute inset-0 pointer-events-none overflow-hidden z-10';
+    container.appendChild(labelOverlay);
+
+    // Single dynamic Bannerlord dark-green / gold hover inspection card
+    const tooltipCard = document.createElement('div');
+    tooltipCard.setAttribute('data-testid', 'overworld-hover-tooltip');
+    tooltipCard.className =
+      'absolute top-0 left-0 z-30 w-60 rounded border border-[#c6a15b]/70 border-t-2 border-t-[#f59e0b] px-3 py-2.5 text-center shadow-2xl pointer-events-none hidden';
+    tooltipCard.style.background =
+      'linear-gradient(180deg, rgba(16, 26, 18, 0.97) 0%, rgba(12, 18, 13, 0.99) 100%)';
+    labelOverlay.appendChild(tooltipCard);
+
+    function showLordTooltip(lord: LordAgent, anchorX: number, anchorY: number) {
+      const route = lordLiveRoutes.get(lord.id);
+      const lx = route ? route.x : lord.x;
+      const lz = route ? route.z : lord.z;
+      const intel = getLordDetailedIntel(
+        lord,
+        lx,
+        lz,
+        stateRef.current.campaign.settlements,
+        route?.currentAction,
+      );
+      const fac = FACTION_INFO[lord.faction];
+      const statusBadge = lord.isAtWarWithPlayer
+        ? '<span class="px-1.5 py-0.5 rounded bg-[#7f1d1d] text-[#fecaca] text-[9px] font-bold">DÜŞMAN</span>'
+        : '<span class="px-1.5 py-0.5 rounded bg-[#1e293b] text-[#fde68a] text-[9px] font-bold">TARAFSIZ</span>';
+
+      tooltipCard.innerHTML = `
+        <div class="flex items-center justify-center gap-1.5 font-display font-bold text-xs text-[#fbbf24] border-b border-[#c6a15b]/30 pb-1 mb-1">
+          <span>${lord.title} ${lord.name}</span>
+          ${statusBadge}
+        </div>
+        <div class="text-[10px] text-[#a3b19b]">
+          Krallık: <span class="font-semibold text-[#fde68a]">${fac.name}</span>
+        </div>
+        <div class="text-[9px] text-[#86efac] mt-0.5 italic">
+          ${intel.currentAction}
+        </div>
+        <div class="my-1.5 border-t border-[#c6a15b]/25 pt-1 text-[10px] text-[#c6a15b] font-semibold">
+          Askerler: <span class="text-[#86efac]">${intel.totalHealthy} Sağlam</span>${
+            intel.wounded > 0 ? ` <span class="text-[#fb923c]">+ ${intel.wounded} Yaralı</span>` : ''
+          }
+        </div>
+        <div class="text-[9px] text-[#e2e8f0] font-mono">
+          Piyade: ${intel.roster.militia} · Okçu: ${intel.roster.archer} · Süvari: ${intel.roster.cavalry} · Muhafız: ${intel.roster.guard}
+        </div>
+        <div class="mt-1 pt-1 border-t border-[#c6a15b]/20 flex items-center justify-between text-[9px] text-[#fde68a] font-mono">
+          <span>Esirler: ${intel.prisoners} Asker</span>
+          <span>Hız: ${intel.speedInfo.finalSpeed}</span>
+        </div>
+        <div class="text-[8px] text-[#9ca3af] mt-0.5">
+          Moral: ${intel.morale} · Erzak: ${intel.foodDays} Gün · Sol Tık: Takip Et
+        </div>
+      `;
+      const clampedX = Math.max(130, Math.min(window.innerWidth - 130, Math.round(anchorX)));
+      const clampedY = Math.max(150, Math.round(anchorY - 10));
+      tooltipCard.style.transform = `translate3d(${clampedX}px, ${clampedY}px, 0) translate(-50%, -100%)`;
+      tooltipCard.classList.remove('hidden');
+    }
+
+    const settlementLabelEls = new Map<string, HTMLDivElement>();
+    stateRef.current.campaign.settlements.forEach((s) => {
+      const el = document.createElement('div');
+      el.className =
+        'absolute top-0 left-0 pointer-events-auto flex items-center cursor-pointer select-none group transition-transform hover:scale-105';
+      el.setAttribute('data-testid', `map-label-${s.id}`);
+      el.setAttribute('data-settlement-type', s.type);
+
+      const fac = FACTION_INFO[s.faction];
+      const isTown = s.type === 'TOWN';
+      const isCastle = s.type === 'CASTLE';
+      const isVillage = s.type === 'VILLAGE';
+
+      el.innerHTML = `
+        <div style="background-color: ${fac.color}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
+             class="${isVillage ? 'w-4 h-5' : isCastle ? 'w-5 h-6' : 'w-6 h-7'} flex items-center justify-center border border-[#d4af37] z-10 shrink-0 shadow">
+          <svg viewBox="0 0 16 16" class="w-3 h-3 fill-[#fde68a]">
+            ${
+              isTown
+                ? '<path d="M8 1.5L9.8 5.2H13.8L10.6 7.8L11.8 12.2L8 9.5L4.2 12.2L5.4 7.8L2.2 5.2H6.2L8 1.5Z"/>'
+                : isCastle
+                  ? '<path d="M3 2H5V4H7V2H9V4H11V2H13V14H3V2Z"/>'
+                  : '<path d="M8 2L14 7V14H2V7L8 2Z"/>'
+            }
+          </svg>
+        </div>
+        <div style="background: linear-gradient(90deg, rgba(24, 22, 19, 0.86) 0%, rgba(34, 31, 27, 0.74) 84%, rgba(34, 31, 27, 0.28) 100%); clip-path: polygon(0% 0%, 89% 0%, 100% 50%, 89% 100%, 0% 100%);"
+             class="-ml-1 pl-2 pr-3 py-0.5 border-y border-[#c6a15b]/35 flex items-center gap-1.5 shadow">
+          <span class="font-display font-semibold ${isVillage ? 'text-[10px]' : isCastle ? 'text-[11px]' : 'text-[12px]'} text-[#fff8eb] tracking-wide hud-stroke">
+            ${s.name}
+          </span>
+          <span data-role="garrison-count" class="text-[9px] text-[#c6a15b] font-mono">
+            ${s.garrison}
+          </span>
+        </div>
+      `;
+
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        tooltipCard.classList.add('hidden');
+        const liveS =
+          stateRef.current.campaign.settlements.find((item) => item.id === s.id) ?? s;
+        const currentDist = Math.hypot(liveS.x - playerOverworldX, liveS.z - playerOverworldZ);
+        const arrivalRadius = getSettlementArrivalRadius(liveS.type);
+        setMarchDestination(liveS.x, liveS.z + 1.2, { type: 'settlement', id: liveS.id });
+        if (currentDist <= arrivalRadius) {
+          stateRef.current.onSetTimeScale?.(0);
+          stateRef.current.onOpenSettlement(liveS);
+        }
+      });
+
+      el.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        isFollowingPlayer = false;
+        targetCamZoomDist = 38;
+        const safe = clampCameraFocus(s.x, s.z, 38);
+        targetCamFocusX = safe.x;
+        targetCamFocusZ = safe.z;
+      });
+
+      el.addEventListener('mouseenter', () => {
+        const liveS =
+          stateRef.current.campaign.settlements.find((item) => item.id === s.id) ?? s;
+        const liveFac = FACTION_INFO[liveS.faction];
+        const spotRange = computePlayerSpottingRange(
+          playerOverworldX,
+          playerOverworldZ,
+          stateRef.current.campaign.roster,
+        );
+        const isScouted =
+          liveS.faction === 'player' ||
+          isWithinSpottingRange(
+            playerOverworldX,
+            playerOverworldZ,
+            liveS.x,
+            liveS.z,
+            spotRange * 1.15,
+          );
+
+        const boundVillages =
+          liveS.type !== 'VILLAGE'
+            ? stateRef.current.campaign.settlements
+                .filter((v) => v.type === 'VILLAGE' && v.boundSettlementId === liveS.id)
+                .map((v) => v.name)
+            : [];
+        const fiefLine =
+          liveS.type === 'VILLAGE' && liveS.boundSettlementName
+            ? `<div class="text-[9px] text-[#fde68a]/90 mt-0.5">Bağlı Mülk: <span class="font-semibold">${liveS.boundSettlementName}</span></div>`
+            : boundVillages.length > 0
+              ? `<div class="text-[9px] text-[#fde68a]/90 mt-0.5">Bağlı Köyler (${boundVillages.length}): <span class="font-semibold">${boundVillages.join(', ')}</span></div>`
+              : '';
+
+        const intelHtml = isScouted
+          ? `
+            <div class="my-1 border-t border-[#c6a15b]/25 pt-1 text-[10px] text-[#c6a15b] font-semibold">
+              Refah: ${liveS.prosperity} · Garnizon: ${liveS.garrison} · Erzak: ${liveS.foodStock}
+            </div>
+            <div class="text-[9px] text-[#d1d5db]">
+              Piyade: ${liveS.recruitPool.militia + liveS.recruitPool.guard} · Okçu: ${liveS.recruitPool.archer} · Süvari: ${liveS.recruitPool.cavalry}
+            </div>
+          `
+          : `
+            <div class="my-1 border-t border-[#c6a15b]/25 pt-1 text-[10px] text-[#9ca3af] italic">
+              Garnizon ve Erzak: ? (Görüş Menzili Dışında)
+            </div>
+            <div class="text-[9px] text-[#fde68a]/80">
+              Detaylı istihbarat için yerleşime yaklaşın veya tıklayıp yürüyün
+            </div>
+          `;
+
+        tooltipCard.innerHTML = `
+          <div class="font-display font-bold text-xs text-[#fbbf24] border-b border-[#c6a15b]/30 pb-1 mb-1.5">
+            ${liveS.name} (${liveS.type === 'CASTLE' ? 'Kale' : liveS.type === 'TOWN' ? 'Şehir' : 'Köy'})
+          </div>
+          <div class="text-[10px] text-[#a3b19b]">
+            Krallık: <span class="font-semibold text-[#fde68a]">${liveFac.name}</span>
+          </div>
+          ${fiefLine}
+          ${intelHtml}
+        `;
+        const rect = el.getBoundingClientRect();
+        tooltipCard.style.transform = `translate3d(${Math.round(rect.left + rect.width / 2)}px, ${Math.round(rect.top - 8)}px, 0) translate(-50%, -100%)`;
+        tooltipCard.classList.remove('hidden');
+      });
+
+      el.addEventListener('mouseleave', () => {
+        tooltipCard.classList.add('hidden');
+      });
+
+      labelOverlay.appendChild(el);
+      settlementLabelEls.set(s.id, el);
+    });
+
+    // Under-Foot Lord Coat-of-Arms + Troop & Wounded Nameplates (Directly underneath each Lord's horse!)
+    const lordLabelEls = new Map<string, HTMLDivElement>();
+    stateRef.current.campaign.lords.forEach((l) => {
+      const el = document.createElement('div');
+      el.className =
+        'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120e]/85 border border-[#c6a15b]/45 cursor-pointer select-none group transition-transform hover:scale-110 shadow-md';
+      el.setAttribute('data-testid', `map-label-${l.id}`);
+      const intel = getLordDetailedIntel(l);
+      el.innerHTML = `
+        <span style="background-color: ${l.bannerColor}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
+              class="w-4 h-5 flex items-center justify-center border border-[#fcd34d]/90 shadow shrink-0">
+          <span class="text-[9px] leading-none">${FACTION_INFO[l.faction].glyph}</span>
+        </span>
+        <span data-role="lord-troops" class="font-display font-extrabold text-[12px] ${
+          l.isAtWarWithPlayer ? 'text-[#fca5a5]' : 'text-[#86efac]'
+        } hud-stroke tracking-tight">
+          ${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#fb923c]">+${intel.wounded}</span>` : ''}
+        </span>
+      `;
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        tooltipCard.classList.add('hidden');
+        const route = lordLiveRoutes.get(l.id);
+        const lx = route ? route.x : l.x;
+        const lz = route ? route.z : l.z;
+        const currentDist = Math.hypot(lx - playerOverworldX, lz - playerOverworldZ);
+        setMarchDestination(lx, lz, { type: 'lord', id: l.id });
+        if (currentDist <= 3.2) {
+          stateRef.current.onSetTimeScale?.(0);
+          stateRef.current.onOpenDiplomacy(l);
+        }
+      });
+      el.addEventListener('mouseenter', () => {
+        const rect = el.getBoundingClientRect();
+        showLordTooltip(l, rect.left + rect.width / 2, rect.top);
+      });
+      el.addEventListener('mouseleave', () => {
+        tooltipCard.classList.add('hidden');
+      });
+      labelOverlay.appendChild(el);
+      lordLabelEls.set(l.id, el);
+    });
+
+    // Under-Foot Player Party Coat-of-Arms + Troop Count Nameplate (Directly underneath Player's horse!)
+    const playerPartyEl = document.createElement('div');
+    playerPartyEl.setAttribute('data-testid', 'map-label-player-party');
+    playerPartyEl.className =
+      'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120e]/90 border border-[#fbbf24]/65 cursor-pointer select-none shadow-md';
+    playerPartyEl.innerHTML = `
+      <span style="background-color: ${FACTION_INFO.player.color}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
+            class="w-4 h-5 flex items-center justify-center border border-[#fcd34d] shadow shrink-0">
+        <span class="text-[9px] leading-none">${FACTION_INFO.player.glyph}</span>
+      </span>
+      <span id="player-party-count" class="font-display font-extrabold text-[12px] text-[#fef08a] hud-stroke tracking-tight">
+        ${getTotalTroops(stateRef.current.campaign.roster)}
+      </span>
+    `;
+    playerPartyEl.addEventListener('mouseenter', () => {
+      const camp = stateRef.current.campaign;
+      const totalHealthy = getTotalTroops(camp.roster);
+      const pSpeed = calculateBannerlordPartySpeed({
+        x: playerOverworldX,
+        z: playerOverworldZ,
+        totalHealthy,
+        cavalryCount: camp.roster.cavalry,
+        prisonerCount: camp.prisoners,
+        foodUnits: camp.food,
+        morale: camp.morale,
+      });
+      tooltipCard.innerHTML = `
+        <div class="font-display font-bold text-xs text-[#fbbf24] border-b border-[#c6a15b]/30 pb-1 mb-1">
+          ${camp.playerName} Sancağı
+        </div>
+        <div class="text-[10px] text-[#a3b19b]">
+          ${FACTION_INFO.player.emblemName}
+        </div>
+        <div class="my-1 border-t border-[#c6a15b]/25 pt-1 text-[10px] text-[#86efac] font-semibold">
+          Toplam Asker: ${totalHealthy} · Esirler: ${camp.prisoners}
+        </div>
+        <div class="text-[9px] text-[#e2e8f0] font-mono">
+          Piyade: ${camp.roster.militia} · Okçu: ${camp.roster.archer} · Süvari: ${camp.roster.cavalry} · Muhafız: ${camp.roster.guard}
+        </div>
+        <div class="mt-1 pt-1 border-t border-[#c6a15b]/20 text-[9px] text-[#fde68a] font-mono">
+          Hız: ${pSpeed.finalSpeed} (${pSpeed.terrainLabel})
+        </div>
+      `;
+      const rect = playerPartyEl.getBoundingClientRect();
+      tooltipCard.style.transform = `translate3d(${Math.round(rect.left + rect.width / 2)}px, ${Math.round(rect.top - 8)}px, 0) translate(-50%, -100%)`;
+      tooltipCard.classList.remove('hidden');
+    });
+    playerPartyEl.addEventListener('mouseleave', () => {
+      tooltipCard.classList.add('hidden');
+    });
+    labelOverlay.appendChild(playerPartyEl);
+
     // Expose programmatic camera & march actions to HUD buttons
     cameraActionsRef.current = {
       focusOnPlayer: () => {
@@ -540,8 +898,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       resetNorth: () => {
         targetCamYaw = 0;
       },
-      commandMarchTo: (x: number, z: number) => {
-        setMarchDestination(x, z);
+      commandMarchTo: (
+        x: number,
+        z: number,
+        target?: { type: 'settlement' | 'lord'; id: string },
+      ) => {
+        setMarchDestination(x, z, target);
       },
     };
 
@@ -636,6 +998,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     // Raycaster & Mouse Controls (Bannerlord Right-Click Orbit, Middle-Click Pan, Wheel Zoom, Left-Click March)
     const raycaster = new THREE.Raycaster();
     const pointerNdc = new THREE.Vector2();
+    let hovered3DLordId: string | null = null;
 
     const handlePointerDown = (e: PointerEvent) => {
       if (stateRef.current.gameState !== 'playing') return;
@@ -670,8 +1033,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         if (hitData.kind === 'settlement') {
           const found = stateRef.current.campaign.settlements.find((s) => s.id === hitData.id);
           if (found) {
-            setMarchDestination(found.x, found.z + 3.6);
-            if (Math.hypot(found.x - playerOverworldX, found.z - playerOverworldZ) < 12.0) {
+            const currentDist = Math.hypot(found.x - playerOverworldX, found.z - playerOverworldZ);
+            const arrivalRadius = getSettlementArrivalRadius(found.type);
+            setMarchDestination(found.x, found.z + 1.2, { type: 'settlement', id: found.id });
+            if (currentDist <= arrivalRadius) {
+              stateRef.current.onSetTimeScale?.(0);
               stateRef.current.onOpenSettlement(found);
             }
             return;
@@ -679,11 +1045,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         } else if (hitData.kind === 'lord') {
           const foundLord = stateRef.current.campaign.lords.find((l) => l.id === hitData.id);
           if (foundLord) {
-            const lMesh = lordMeshes.get(foundLord.id);
-            const lx = lMesh ? lMesh.root.position.x : foundLord.x;
-            const lz = lMesh ? lMesh.root.position.z : foundLord.z;
-            setMarchDestination(lx, lz);
-            if (Math.hypot(lx - playerOverworldX, lz - playerOverworldZ) < 12.0) {
+            const route = lordLiveRoutes.get(foundLord.id);
+            const lx = route ? route.x : foundLord.x;
+            const lz = route ? route.z : foundLord.z;
+            const currentDist = Math.hypot(lx - playerOverworldX, lz - playerOverworldZ);
+            setMarchDestination(lx, lz, { type: 'lord', id: foundLord.id });
+            if (currentDist <= 3.2) {
+              stateRef.current.onSetTimeScale?.(0);
               stateRef.current.onOpenDiplomacy(foundLord);
             }
             return;
@@ -714,7 +1082,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
         targetCamFocusX = safe.x;
         targetCamFocusZ = safe.z;
-      } else if (mouseMiddleHeld) {
+        return;
+      }
+      if (mouseMiddleHeld) {
         // Middle-Click + Drag pans map focus directly
         isFollowingPlayer = false;
         const panScale = targetCamZoomDist * 0.0022;
@@ -729,6 +1099,31 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         );
         targetCamFocusX = safe.x;
         targetCamFocusZ = safe.z;
+        return;
+      }
+
+      // 3D Raycast Hover Check on Lord Meshes so hovering over a 3D Lord on the map shows their Bannerlord Tooltip!
+      if (e.target === renderer.domElement) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(pointerNdc, camera);
+        const lordProxyList = Array.from(lordProxies.values());
+        const hits = raycaster.intersectObjects(lordProxyList, false);
+        if (hits.length > 0) {
+          const hitId = hits[0].object.userData?.id as string | undefined;
+          const hoveredLord = stateRef.current.campaign.lords.find((l) => l.id === hitId);
+          const lMesh = hitId ? lordMeshes.get(hitId) : undefined;
+          if (hoveredLord && lMesh?.root.visible) {
+            hovered3DLordId = hoveredLord.id;
+            showLordTooltip(hoveredLord, e.clientX, e.clientY - 14);
+            return;
+          }
+        }
+        if (hovered3DLordId) {
+          hovered3DLordId = null;
+          tooltipCard.classList.add('hidden');
+        }
       }
     };
 
@@ -742,7 +1137,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         return;
       }
       e.preventDefault();
-      const zoomStep = e.deltaY * 0.12;
+      // Fast exponential zoom: distance-proportional step so 6-8 wheel notches traverse entire zoom range smoothly!
+      const zoomFactor = Math.max(0.42, targetCamZoomDist * 0.0036);
+      const zoomStep = e.deltaY * zoomFactor;
       targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + zoomStep, 16, 940);
       const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
       targetCamFocusX = safe.x;
@@ -1117,14 +1514,137 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           isFollowingPlayer = true;
         }
 
-        // E. Advance Player Party Movement along March Path (scaled by campaignTimeScale & terrain/road speed)
+        // E. Compute Player Spotting Range (Fog of War) & Bannerlord Party Speed
         const totalTroops = Math.max(1, getTotalTroops(camp.roster));
+        const playerSpottingRange = computePlayerSpottingRange(
+          playerOverworldX,
+          playerOverworldZ,
+          camp.roster,
+        );
+        const bannerlordSpeed = calculateBannerlordPartySpeed({
+          x: playerOverworldX,
+          z: playerOverworldZ,
+          totalHealthy: totalTroops,
+          cavalryCount: camp.roster.cavalry,
+          prisonerCount: camp.prisoners,
+          foodUnits: camp.food,
+          morale: camp.morale,
+        });
         const cavRatio = camp.roster.cavalry / totalTroops;
         const speedInfo = getPartySpeedInfo(playerOverworldX, playerOverworldZ, cavRatio);
-        const basePartySpeed = 10.5;
-        const effectivePartySpeed = basePartySpeed * speedInfo.multiplier;
-        const worldSimDt = dt * (timeScale === 0 ? 0 : timeScale);
+        const effectivePartySpeed = bannerlordSpeed.worldUnitsPerSecAt1x;
 
+        const isDialogueOpen = Boolean(stateRef.current.activeDiplomacyLordId);
+        const isSettlementModalOpen = Boolean(stateRef.current.activeSettlementModalId);
+        const activeTalkingLordId = stateRef.current.activeDiplomacyLordId;
+        const isWorldEffectivelyPaused =
+          timeScale === 0 || isDialogueOpen || isSettlementModalOpen;
+
+        const worldSimDt = dt * (isWorldEffectivelyPaused ? 0 : timeScale);
+
+        // F. Advance Lord Parties Along Authentic Land Routes (Frozen if paused or in dialogue)
+        if (!isWorldEffectivelyPaused) {
+          lordWalkPhase += worldSimDt * 4.8;
+        }
+
+        camp.lords.forEach((l, idx) => {
+          let route = lordLiveRoutes.get(l.id);
+          if (!route) {
+            route = {
+              x: l.x,
+              z: l.z,
+              rotY: 0,
+              targetSettlementId: null,
+              waypoints: computeLandPath(l.x, l.z, l.targetX, l.targetZ),
+              currentAction: l.currentAction,
+            };
+            lordLiveRoutes.set(l.id, route);
+          }
+
+          const isThisLordTalking = activeTalkingLordId === l.id;
+          if (!isWorldEffectivelyPaused && !isThisLordTalking && timeScale > 0) {
+            stepLordCampaignRoute(l, route, dt, timeScale, camp.settlements);
+          }
+
+          const lx = route.x;
+          const lz = route.z;
+          const ly = Math.max(0.25, groundHeightAt(lx, lz));
+          const inSight = isWithinSpottingRange(
+            playerOverworldX,
+            playerOverworldZ,
+            lx,
+            lz,
+            playerSpottingRange,
+          );
+
+          const lMesh = lordMeshes.get(l.id);
+          const lProxy = lordProxies.get(l.id);
+          if (lMesh) {
+            lMesh.root.visible = inSight;
+            lMesh.root.position.set(lx, ly, lz);
+            lMesh.root.rotation.y = route.rotY;
+            lMesh.bodyGroup.position.y =
+              !isWorldEffectivelyPaused && !isThisLordTalking
+                ? Math.abs(Math.sin(lordWalkPhase + idx * 1.3)) * 0.11
+                : 0;
+          }
+          if (lProxy) {
+            lProxy.position.set(lx, ly + 2.5, lz);
+          }
+        });
+
+        // G. Continuous Unbreakable Lord Pursuit (Never drops pursuit until caught up OR Lord leaves spottingRange!)
+        if (followingLordId) {
+          const pursuedLord = camp.lords.find((item) => item.id === followingLordId);
+          const pursuedRoute = lordLiveRoutes.get(followingLordId);
+          if (!pursuedLord || !pursuedRoute) {
+            followingLordId = null;
+            pendingTarget = null;
+          } else {
+            const lx = pursuedRoute.x;
+            const lz = pursuedRoute.z;
+            const stillVisible = isWithinSpottingRange(
+              playerOverworldX,
+              playerOverworldZ,
+              lx,
+              lz,
+              playerSpottingRange,
+            );
+
+            if (!stillVisible) {
+              // Target Lord escaped beyond player's vision range (Fog of War) -> end pursuit
+              followingLordId = null;
+              pendingTarget = null;
+              overworldTargetPos = null;
+              overworldWaypoints = [];
+              (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+            } else {
+              followRepathTimer += dt;
+              const targetMovedDist = overworldTargetPos
+                ? Math.hypot(lx - overworldTargetPos.x, lz - overworldTargetPos.z)
+                : 999;
+              if (
+                overworldWaypoints.length === 0 ||
+                (followRepathTimer >= 0.25 && targetMovedDist > 1.2)
+              ) {
+                followRepathTimer = 0;
+                const safeGoal = snapToNearestLand(lx, lz);
+                overworldWaypoints = computeLandPath(
+                  playerOverworldX,
+                  playerOverworldZ,
+                  safeGoal.x,
+                  safeGoal.z,
+                );
+                overworldTargetPos = { x: safeGoal.x, z: safeGoal.z };
+                const dy = Math.max(0.0, groundHeightAt(safeGoal.x, safeGoal.z)) + 0.14;
+                destRing.position.set(safeGoal.x, dy, safeGoal.z);
+                (destRing.material as THREE.MeshBasicMaterial).opacity = 0.95;
+              }
+            }
+          }
+        }
+
+        // H. Advance Player Party Movement along March Path
         let isPartyMoving = false;
         if (overworldTargetPos && overworldWaypoints.length > 0 && worldSimDt > 0) {
           const wp = overworldWaypoints[0];
@@ -1145,21 +1665,72 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               playerOverworldX = THREE.MathUtils.clamp(moveRes.x, -520, 520);
               playerOverworldZ = THREE.MathUtils.clamp(moveRes.z, -390, 390);
               playerOverworldFacing = moveRes.facing;
-              walkPhase += worldSimDt * 10 * speedInfo.multiplier;
+              walkPhase += worldSimDt * 5.8 * bannerlordSpeed.terrainMultiplier;
             } else {
-              // Re-route around coastal obstruction or stop at shoreline
               overworldWaypoints.shift();
-              if (overworldWaypoints.length === 0) {
-                overworldTargetPos = null;
-                (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
-              }
             }
           } else {
             overworldWaypoints.shift();
-            if (overworldWaypoints.length === 0) {
-              overworldTargetPos = null;
-              (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+          }
+
+          // Handle completion of static waypoint chain (for non-Lord targets)
+          if (overworldWaypoints.length === 0 && !followingLordId) {
+            overworldTargetPos = null;
+            (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+            if (pendingTarget?.type === 'settlement') {
+              const s = stateRef.current.campaign.settlements.find(
+                (item) => item.id === pendingTarget!.id,
+              );
+              if (s) {
+                const arrivalRadius = getSettlementArrivalRadius(s.type);
+                const dist = Math.hypot(s.x - playerOverworldX, s.z - playerOverworldZ);
+                if (dist <= arrivalRadius + 1.2) {
+                  stateRef.current.onSetTimeScale?.(0);
+                  stateRef.current.onOpenSettlement(s);
+                }
+              }
+              pendingTarget = null;
             }
+          }
+        }
+
+        // I. Proximity Arrival Check for Automatic Settlement Entry & Lord Encounter
+        if (pendingTarget) {
+          let reached = false;
+          if (pendingTarget.type === 'settlement') {
+            const s = stateRef.current.campaign.settlements.find(
+              (item) => item.id === pendingTarget!.id,
+            );
+            if (s) {
+              const arrivalRadius = getSettlementArrivalRadius(s.type);
+              const dist = Math.hypot(s.x - playerOverworldX, s.z - playerOverworldZ);
+              if (dist <= arrivalRadius) {
+                reached = true;
+                stateRef.current.onOpenSettlement(s);
+              }
+            }
+          } else if (pendingTarget.type === 'lord') {
+            const l = stateRef.current.campaign.lords.find(
+              (item) => item.id === pendingTarget!.id,
+            );
+            if (l) {
+              const route = lordLiveRoutes.get(l.id);
+              const lx = route ? route.x : l.x;
+              const lz = route ? route.z : l.z;
+              const dist = Math.hypot(lx - playerOverworldX, lz - playerOverworldZ);
+              if (dist <= 3.2) {
+                reached = true;
+                stateRef.current.onOpenDiplomacy(l);
+              }
+            }
+          }
+          if (reached) {
+            stateRef.current.onSetTimeScale?.(0);
+            followingLordId = null;
+            pendingTarget = null;
+            overworldTargetPos = null;
+            overworldWaypoints = [];
+            (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
           }
         }
 
@@ -1192,26 +1763,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
         });
 
-        // Animate Patrolling Lord Armies Strictly on Dry Land (never stepping into sea/lakes)
-        const patrolTime = elapsedTotal * (timeScale === 0 ? 0.05 : timeScale * 0.2);
-        camp.lords.forEach((l, idx) => {
-          const lMesh = lordMeshes.get(l.id);
-          const lProxy = lordProxies.get(l.id);
-          if (lMesh) {
-            const patrolAng = patrolTime + idx * 1.7;
-            const safePatrol = computeLordPatrolPos(l.x, l.z, patrolAng, 7.2);
-            const lx = safePatrol.x;
-            const lz = safePatrol.z;
-            const ly = Math.max(0.25, groundHeightAt(lx, lz));
-            lMesh.root.position.set(lx, ly, lz);
-            lMesh.root.rotation.y = -patrolAng;
-            lMesh.bodyGroup.position.y = Math.abs(Math.sin(elapsedTotal * 5 + idx)) * 0.1;
-            if (lProxy) {
-              lProxy.position.set(lx, ly + 2.5, lz);
-            }
-          }
-        });
-
         // Smooth Exponential Damping for Bannerlord Strategic Map Camera
         const camDamp = 1 - Math.exp(-8.5 * dt);
         camFocusX = THREE.MathUtils.lerp(camFocusX, targetCamFocusX, camDamp);
@@ -1233,9 +1784,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         camera.lookAt(_camTarget);
         camera.updateMatrixWorld();
 
-        // Check proximity to settlements & lords
+        // Check proximity to settlements & visible lords
         let nearestSettlement: Settlement | null = null;
-        let minSettleDist = 11.5;
+        let minSettleDist = 13.0;
         for (const s of camp.settlements) {
           const d = Math.hypot(s.x - playerOverworldX, s.z - playerOverworldZ);
           if (d < minSettleDist) {
@@ -1245,12 +1796,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         }
 
         let nearestLord: LordAgent | null = null;
-        let minLordDist = 10.5;
+        let minLordDist = 11.5;
         for (let i = 0; i < camp.lords.length; i++) {
           const l = camp.lords[i];
-          const lMesh = lordMeshes.get(l.id);
-          const lx = lMesh ? lMesh.root.position.x : l.x;
-          const lz = lMesh ? lMesh.root.position.z : l.z;
+          const route = lordLiveRoutes.get(l.id);
+          const lx = route ? route.x : l.x;
+          const lz = route ? route.z : l.z;
           const d = Math.hypot(lx - playerOverworldX, lz - playerOverworldZ);
           if (d < minLordDist) {
             minLordDist = d;
@@ -1258,134 +1809,129 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
         }
 
-        // Project 3D Settlement (Towns, Castles, Villages), Lord, and Landmark Labels to 2D Screen Space
+        // 60 FPS Zero-Lag Direct DOM Label Updates (Pinned 100% to 3D terrain on every frame with 0ms lag)
+        labelOverlay.style.display = 'block';
+        const cw = renderer.domElement.clientWidth || window.innerWidth;
+        const ch = renderer.domElement.clientHeight || window.innerHeight;
+
+        camp.settlements.forEach((s) => {
+          const sMesh = settlementMeshes.get(s.id);
+          if (sMesh && s.type === 'VILLAGE') {
+            sMesh.visible = camZoomDist <= 230;
+          }
+          const el = settlementLabelEls.get(s.id);
+          if (!el) return;
+          // Settlement LOD: Hide villages at mid zoom (>190) and hide castles at far/max zoom (>380) so only city (TOWN) names are visible at max distance!
+          if (!isSettlementLabelVisible(s.type, camZoomDist)) {
+            el.style.display = 'none';
+            return;
+          }
+          const worldY =
+            groundHeightAt(s.x, s.z) +
+            (s.type === 'VILLAGE' ? 4.4 : s.type === 'CASTLE' ? 6.8 : 7.4);
+          _projVec.set(s.x, worldY, s.z).project(camera);
+          if (
+            _projVec.z < -1 ||
+            _projVec.z > 1 ||
+            Math.abs(_projVec.x) > 1.05 ||
+            Math.abs(_projVec.y) > 1.05
+          ) {
+            el.style.display = 'none';
+            return;
+          }
+
+          // Information Restriction: Show exact garrison only when within scouting range (or player-owned)
+          const gSpan = el.querySelector('[data-role="garrison-count"]');
+          if (gSpan) {
+            const scouted =
+              s.faction === 'player' ||
+              isWithinSpottingRange(
+                playerOverworldX,
+                playerOverworldZ,
+                s.x,
+                s.z,
+                playerSpottingRange * 1.15,
+              );
+            const expectedText = scouted ? String(s.garrison) : '?';
+            if (gSpan.textContent !== expectedText) {
+              gSpan.textContent = expectedText;
+            }
+          }
+
+          const sx = Math.round(((_projVec.x + 1) / 2) * cw);
+          const screenY = Math.round(((-_projVec.y + 1) / 2) * ch);
+          el.style.display = 'flex';
+          el.style.transform = `translate3d(${sx}px, ${screenY}px, 0) translate(-50%, -100%)`;
+        });
+
+        // Project Lord Coat-of-Arms & Troop Count DIRECTLY UNDERNEATH (tam altında) each visible Lord's horse!
+        camp.lords.forEach((l) => {
+          const el = lordLabelEls.get(l.id);
+          if (!el) return;
+          const route = lordLiveRoutes.get(l.id);
+          const lx = route ? route.x : l.x;
+          const lz = route ? route.z : l.z;
+          const inSight = isWithinSpottingRange(
+            playerOverworldX,
+            playerOverworldZ,
+            lx,
+            lz,
+            playerSpottingRange,
+          );
+          if (camZoomDist > 260 || !inSight) {
+            el.style.display = 'none';
+            return;
+          }
+          const ly = groundHeightAt(lx, lz) - 0.15;
+          _projVec.set(lx, ly, lz).project(camera);
+          if (
+            _projVec.z < -1 ||
+            _projVec.z > 1 ||
+            Math.abs(_projVec.x) > 1.05 ||
+            Math.abs(_projVec.y) > 1.05
+          ) {
+            el.style.display = 'none';
+            return;
+          }
+          const sx = Math.round(((_projVec.x + 1) / 2) * cw);
+          const sy = Math.round(((-_projVec.y + 1) / 2) * ch);
+          el.style.display = 'flex';
+          el.style.transform = `translate3d(${sx}px, ${sy}px, 0) translate(-50%, 6px)`;
+        });
+
+        // Project Player Coat-of-Arms & Troop Count DIRECTLY UNDERNEATH (tam altında) the Player's horse!
+        const ppy = groundHeightAt(playerOverworldX, playerOverworldZ) - 0.15;
+        _projVec.set(playerOverworldX, ppy, playerOverworldZ).project(camera);
+        if (
+          _projVec.z >= -1 &&
+          _projVec.z <= 1 &&
+          Math.abs(_projVec.x) <= 1.05 &&
+          Math.abs(_projVec.y) <= 1.05
+        ) {
+          const sx = Math.round(((_projVec.x + 1) / 2) * cw);
+          const sy = Math.round(((-_projVec.y + 1) / 2) * ch);
+          playerPartyEl.style.display = 'flex';
+          playerPartyEl.style.transform = `translate3d(${sx}px, ${sy}px, 0) translate(-50%, 6px)`;
+          const countSpan = playerPartyEl.querySelector('#player-party-count');
+          if (countSpan) {
+            countSpan.textContent =
+              camp.prisoners > 0 ? `${totalTroops} ★${camp.prisoners}` : String(totalTroops);
+          }
+        } else {
+          playerPartyEl.style.display = 'none';
+        }
+
+        // Sync campaign HUD telemetry for bottom dock
         hudSyncTimer += dt;
         if (hudSyncTimer >= 0.08) {
           hudSyncTimer = 0;
-          const cw = renderer.domElement.clientWidth || window.innerWidth;
-          const ch = renderer.domElement.clientHeight || window.innerHeight;
-          const projectedLabels: ProjectedMapLabel[] = [];
-
-          camp.settlements.forEach((s) => {
-            const sy = groundHeightAt(s.x, s.z) + (s.type === 'VILLAGE' ? 3.8 : 5.8);
-            _projVec.set(s.x, sy, s.z).project(camera);
-            const visible =
-              _projVec.z >= -1 &&
-              _projVec.z <= 1 &&
-              Math.abs(_projVec.x) <= 0.96 &&
-              Math.abs(_projVec.y) <= 0.92;
-            const fac = FACTION_INFO[s.faction];
-            projectedLabels.push({
-              id: s.id,
-              kind: 'settlement',
-              name: s.name,
-              sublabel: `${s.type === 'CASTLE' ? 'Kale' : s.type === 'TOWN' ? 'Şehir' : 'Köy'} · ${s.garrison}`,
-              color: fac.color,
-              glyph: fac.glyph,
-              troopCount: s.garrison,
-              ownerName: fac.ruler,
-              factionName: fac.name,
-              settlementType: s.type,
-              prosperity: s.prosperity,
-              infantry: s.recruitPool.militia + s.recruitPool.guard,
-              ranged: s.recruitPool.archer,
-              cavalry: s.recruitPool.cavalry,
-              screenX: Math.round(((_projVec.x + 1) / 2) * cw),
-              screenY: Math.round(((-_projVec.y + 1) / 2) * ch),
-              worldX: s.x,
-              worldZ: s.z,
-              visible,
-            });
-          });
-
-          // Project Player Party Badge (like Smith's Party 28 in Image 2 & 3!)
-          const ppy = groundHeightAt(playerOverworldX, playerOverworldZ) + 2.8;
-          _projVec.set(playerOverworldX, ppy, playerOverworldZ).project(camera);
-          if (_projVec.z >= -1 && _projVec.z <= 1 && Math.abs(_projVec.x) <= 0.95 && Math.abs(_projVec.y) <= 0.9) {
-            projectedLabels.push({
-              id: 'player-party-badge',
-              kind: 'player_party',
-              name: `${camp.playerName} Birliği`,
-              sublabel: `${totalTroops} Asker`,
-              color: FACTION_INFO.player.color,
-              glyph: FACTION_INFO.player.glyph,
-              troopCount: totalTroops,
-              woundedCount: 1,
-              ownerName: camp.playerName,
-              factionName: FACTION_INFO.player.name,
-              speed: Math.round(5.0 * speedInfo.multiplier * 10) / 10,
-              infantry: camp.roster.militia + camp.roster.guard,
-              ranged: camp.roster.archer,
-              cavalry: camp.roster.cavalry,
-              prisoners: camp.prisoners,
-              screenX: Math.round(((_projVec.x + 1) / 2) * cw),
-              screenY: Math.round(((-_projVec.y + 1) / 2) * ch),
-              worldX: playerOverworldX,
-              worldZ: playerOverworldZ,
-              visible: true,
-            });
-          }
-
-          camp.lords.forEach((l) => {
-            const lMesh = lordMeshes.get(l.id);
-            const lx = lMesh ? lMesh.root.position.x : l.x;
-            const lz = lMesh ? lMesh.root.position.z : l.z;
-            const ly = groundHeightAt(lx, lz) + 3.2;
-            _projVec.set(lx, ly, lz).project(camera);
-            const visible =
-              _projVec.z >= -1 &&
-              _projVec.z <= 1 &&
-              Math.abs(_projVec.x) <= 0.95 &&
-              Math.abs(_projVec.y) <= 0.9;
-            const fac = FACTION_INFO[l.faction];
-            projectedLabels.push({
-              id: l.id,
-              kind: 'lord',
-              name: `${l.title} ${l.name} Birliği`,
-              sublabel: `${l.armySize}`,
-              color: l.bannerColor,
-              glyph: fac.glyph,
-              troopCount: l.armySize,
-              woundedCount: Math.max(1, Math.floor(l.armySize * 0.08)),
-              ownerName: `${l.title} ${l.name}`,
-              factionName: fac.name,
-              speed: Number((4.8 + (l.roster.cavalry / Math.max(1, l.armySize)) * 1.1).toFixed(1)),
-              infantry: l.roster.militia + l.roster.guard,
-              ranged: l.roster.archer,
-              cavalry: l.roster.cavalry,
-              prisoners: Math.max(1, Math.floor(l.armySize * 0.12)),
-              screenX: Math.round(((_projVec.x + 1) / 2) * cw),
-              screenY: Math.round(((-_projVec.y + 1) / 2) * ch),
-              worldX: lx,
-              worldZ: lz,
-              visible,
-            });
-          });
-
-          // Show regional geographic landmarks when zoomed out (camZoomDist > 58)
-          if (camZoomDist > 58) {
-            CONTINENTAL_LANDMARKS.forEach((lm) => {
-              const ly = groundHeightAt(lm.x, lm.z) + 10;
-              _projVec.set(lm.x, ly, lm.z).project(camera);
-              const visible =
-                _projVec.z >= -1 &&
-                _projVec.z <= 1 &&
-                Math.abs(_projVec.x) <= 0.92 &&
-                Math.abs(_projVec.y) <= 0.88;
-              projectedLabels.push({
-                id: lm.id,
-                kind: 'landmark',
-                name: lm.name,
-                sublabel: lm.region,
-                color: '#c6a15b',
-                screenX: Math.round(((_projVec.x + 1) / 2) * cw),
-                screenY: Math.round(((-_projVec.y + 1) / 2) * ch),
-                worldX: lm.x,
-                worldZ: lm.z,
-                visible,
-              });
-            });
-          }
+          const followedLordObj = followingLordId
+            ? camp.lords.find((item) => item.id === followingLordId)
+            : null;
+          const targetSettleObj =
+            pendingTarget?.type === 'settlement'
+              ? camp.settlements.find((item) => item.id === pendingTarget!.id)
+              : null;
 
           stateRef.current.onUpdatePlayerPos(
             playerOverworldX,
@@ -1398,15 +1944,21 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               zoomDist: Math.round(camZoomDist),
               yawDeg: Math.round(((camYaw * 180) / Math.PI) % 360),
               isFollowingPlayer,
-              biomeLabel: speedInfo.statusLabel,
-              partySpeed: Math.round(5.0 * speedInfo.multiplier * 10) / 10,
-              onRoad: speedInfo.onRoad,
+              biomeLabel: bannerlordSpeed.terrainLabel || speedInfo.statusLabel,
+              partySpeed: bannerlordSpeed.finalSpeed,
+              spottingRange: playerSpottingRange,
+              followingLordName: followedLordObj
+                ? `${followedLordObj.title} ${followedLordObj.name}`
+                : null,
+              targetSettlementName: targetSettleObj ? targetSettleObj.name : null,
+              onRoad: bannerlordSpeed.onRoad,
               isMoving: isPartyMoving,
-              labels: projectedLabels,
+              labels: [],
             },
           );
         }
       } else {
+        labelOverlay.style.display = 'none';
         // 3. 3D REAL-TIME TACTICAL BATTLE SIMULATION
         if (hitstopTimer > 0) {
           hitstopTimer -= dt;
@@ -1855,6 +2407,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       renderer.domElement.removeEventListener('wheel', handleWheel);
       renderer.domElement.removeEventListener('contextmenu', handleContextMenu);
       renderer.dispose();
+      if (container.contains(labelOverlay)) {
+        container.removeChild(labelOverlay);
+      }
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }

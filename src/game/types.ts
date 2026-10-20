@@ -46,6 +46,9 @@ export interface MapCameraTelemetry {
   isFollowingPlayer: boolean;
   biomeLabel: string;
   partySpeed: number;
+  spottingRange?: number;
+  followingLordName?: string | null;
+  targetSettlementName?: string | null;
   onRoad: boolean;
   isMoving: boolean;
   labels: ProjectedMapLabel[];
@@ -57,5 +60,9 @@ export interface CameraControlActions {
   adjustZoom: (delta: number) => void;
   rotateYaw: (deltaRad: number) => void;
   resetNorth: () => void;
-  commandMarchTo: (x: number, z: number) => void;
+  commandMarchTo: (
+    x: number,
+    z: number,
+    target?: { type: 'settlement' | 'lord'; id: string },
+  ) => void;
 }

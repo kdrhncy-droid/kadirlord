@@ -1,17 +1,48 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AttributeId,
+  BannerlordSkillId,
+  BuildingProjectId,
   CampaignState,
   LordAgent,
   Settlement,
+  SettlementDailyDefault,
+  SiegeEngineType,
   TacticalOrder,
   TroopRoster,
   UnitTierId,
+  WorkshopTypeId,
   advanceDailyEconomyAndWorld,
+  allocateAttributePoint,
+  allocateFocusPoint,
+  attemptLordPersuasionStep,
+  bombardSettlementWalls,
   buyFoodAtSettlement,
+  buyOrChangeWorkshop,
+  buyTavernRound,
+  constructSiegeEngine,
   createInitialCampaignState,
+  deployReservedSiegeEngines,
+  equipInventoryItem,
+  executeLordBarterOffer,
+  forcePeasantsRecruits,
+  forcePeasantsSupplies,
+  forgeCustomWeaponAtSmithy,
   getTotalTroops,
+  hireMercenariesAtTavern,
+  joinArenaTournament,
+  manageGarrisonTransfer,
+  participateInArenaPractice,
+  raidAndPillageVillage,
+  ransomPrisonersAtTavern,
+  recruitCapturedPrisoners,
   recruitUnit,
   resolveBattleOutcome,
+  restAndRecoverAtSettlement,
+  sellSurplusLootAtMarket,
+  setSettlementDailyDefault,
+  upgradeSettlementBuilding,
+  upgradeTroopTier,
 } from './game/rules';
 import type {
   BattleTelemetry,
@@ -22,6 +53,8 @@ import { WorldCanvas } from './components/WorldCanvas';
 import { GameHud } from './components/GameHud';
 import { SettlementModal } from './components/SettlementModal';
 import { DiplomacyModal } from './components/DiplomacyModal';
+import { BannerlordMarketModal } from './components/BannerlordMarketModal';
+import { CharacterArenaView } from './components/CharacterArenaView';
 import { sound } from './game/sound';
 
 export default function App() {
@@ -48,6 +81,8 @@ export default function App() {
   const [nearLord, setNearLord] = useState<LordAgent | null>(null);
   const [activeSettlementModal, setActiveSettlementModal] = useState<Settlement | null>(null);
   const [activeDiplomacyLord, setActiveDiplomacyLord] = useState<LordAgent | null>(null);
+  const [isMarketModalOpen, setIsMarketModalOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'campaign' | 'character_arena'>('campaign');
 
   const [mapTelemetry, setMapTelemetry] = useState<MapCameraTelemetry>({
     focusX: -24,
@@ -56,7 +91,7 @@ export default function App() {
     yawDeg: 0,
     isFollowingPlayer: true,
     biomeLabel: 'İmparatorluk Ovaları',
-    partySpeed: 5.4,
+    partySpeed: 4.2,
     onRoad: true,
     isMoving: false,
     labels: [],
@@ -259,6 +294,170 @@ export default function App() {
     [],
   );
 
+  const handleHireMercenaries = useCallback((settlementId: string): string | null => {
+    let err: string | null = null;
+    setCampaign((prev) => {
+      const res = hireMercenariesAtTavern(prev, settlementId);
+      if (!res.success) {
+        err = res.reason || 'Paralı asker kiralanamadı.';
+        return prev;
+      }
+      sound.playCoinChime();
+      return res.nextState;
+    });
+    return err;
+  }, []);
+
+  const handleRansomPrisoners = useCallback((settlementId: string): string | null => {
+    let err: string | null = null;
+    setCampaign((prev) => {
+      const res = ransomPrisonersAtTavern(prev, settlementId);
+      if (!res.success) {
+        err = res.reason || 'Esir teslim edilemedi.';
+        return prev;
+      }
+      sound.playCoinChime();
+      return res.nextState;
+    });
+    return err;
+  }, []);
+
+  const handleBuyTavernRound = useCallback((_settlementId: string): string | null => {
+    let err: string | null = null;
+    setCampaign((prev) => {
+      const res = buyTavernRound(prev);
+      if (!res.success) {
+        err = res.reason || 'İçki ısmarlanamadı.';
+        return prev;
+      }
+      sound.playCoinChime();
+      return res.nextState;
+    });
+    return err;
+  }, []);
+
+  const handleArenaPractice = useCallback((settlementId: string): string | null => {
+    setCampaign((prev) => {
+      const res = participateInArenaPractice(prev, settlementId);
+      return res.nextState;
+    });
+    return null;
+  }, []);
+
+  const handleArenaTournament = useCallback(
+    (settlementId: string): { victory: boolean; message: string } => {
+      let outcome = { victory: false, message: '' };
+      setCampaign((prev) => {
+        const res = joinArenaTournament(prev, settlementId);
+        if (res.victory) {
+          outcome = {
+            victory: true,
+            message: `3 tur boyunca tüm gladyatörleri dize getirerek turnuva şampiyonu oldunuz! Kazanılan ödül: +${res.goldEarned} Dinar, +${res.renownEarned} Nam ve ${res.prizeName}!`,
+          };
+        } else {
+          outcome = {
+            victory: false,
+            message:
+              'Turnuvanın çekişmeli yarı finalinde elendiniz. Yine de sergilediğiniz cesaretle +2 Nam kazandınız.',
+          };
+        }
+        return res.nextState;
+      });
+      return outcome;
+    },
+    [],
+  );
+
+  const handleSellLoot = useCallback((settlementId: string): string | null => {
+    setCampaign((prev) => {
+      const res = sellSurplusLootAtMarket(prev, settlementId);
+      sound.playCoinChime();
+      return res.nextState;
+    });
+    return null;
+  }, []);
+
+  const handleManageGarrison = useCallback(
+    (
+      settlementId: string,
+      unitId: UnitTierId,
+      direction: 'deposit' | 'withdraw',
+      amount: number,
+    ): string | null => {
+      let err: string | null = null;
+      setCampaign((prev) => {
+        const res = manageGarrisonTransfer(prev, settlementId, unitId, direction, amount);
+        if (!res.success) {
+          err = res.reason || 'İşlem gerçekleştirilemedi.';
+          return prev;
+        }
+        sound.playCoinChime();
+        setActiveSettlementModal(
+          res.nextState.settlements.find((s) => s.id === settlementId) || null,
+        );
+        return res.nextState;
+      });
+      return err;
+    },
+    [],
+  );
+
+  const handleRestAndRecover = useCallback((settlementId: string): string | null => {
+    setCampaign((prev) => {
+      const res = restAndRecoverAtSettlement(prev, settlementId);
+      return res.nextState;
+    });
+    return null;
+  }, []);
+
+  const handleRaidVillage = useCallback((villageId: string): string | null => {
+    let err: string | null = null;
+    setCampaign((prev) => {
+      const res = raidAndPillageVillage(prev, villageId);
+      if (!res.success) {
+        err = res.reason || 'Köy yağmalanamadı.';
+        return prev;
+      }
+      setActiveSettlementModal(
+        res.nextState.settlements.find((s) => s.id === villageId) || null,
+      );
+      return res.nextState;
+    });
+    return err;
+  }, []);
+
+  const handleForceSupplies = useCallback((villageId: string): string | null => {
+    let err: string | null = null;
+    setCampaign((prev) => {
+      const res = forcePeasantsSupplies(prev, villageId);
+      if (!res.success) {
+        err = res.reason || 'Erzak temin edilemedi.';
+        return prev;
+      }
+      setActiveSettlementModal(
+        res.nextState.settlements.find((s) => s.id === villageId) || null,
+      );
+      return res.nextState;
+    });
+    return err;
+  }, []);
+
+  const handleForceRecruits = useCallback((villageId: string): string | null => {
+    let err: string | null = null;
+    setCampaign((prev) => {
+      const res = forcePeasantsRecruits(prev, villageId);
+      if (!res.success) {
+        err = res.reason || 'Asker devşirilemedi.';
+        return prev;
+      }
+      setActiveSettlementModal(
+        res.nextState.settlements.find((s) => s.id === villageId) || null,
+      );
+      return res.nextState;
+    });
+    return err;
+  }, []);
+
   const handleApplyDiplomacyResult = useCallback(
     (
       lordId: string,
@@ -296,7 +495,7 @@ export default function App() {
             {
               id: `dip-${Date.now()}`,
               day: prev.day,
-              category: 'DIPLOMACY',
+              category: 'DIPLOMACY' as const,
               text: chronicleEntry,
             },
             ...prev.chronicle,
@@ -382,9 +581,18 @@ export default function App() {
         battleTargetLordId={battleTargetLordId}
         battleTargetSettlementId={battleTargetSettlementId}
         cameraActionsRef={cameraActionsRef}
+        activeDiplomacyLordId={activeDiplomacyLord?.id ?? null}
+        activeSettlementModalId={activeSettlementModal?.id ?? null}
+        onSetTimeScale={setCampaignTimeScale}
         onUpdatePlayerPos={handleUpdatePlayerPos}
-        onOpenSettlement={(s) => setActiveSettlementModal(s)}
-        onOpenDiplomacy={(l) => setActiveDiplomacyLord(l)}
+        onOpenSettlement={(s) => {
+          setCampaignTimeScale(0);
+          setActiveSettlementModal(s);
+        }}
+        onOpenDiplomacy={(l) => {
+          setCampaignTimeScale(0);
+          setActiveDiplomacyLord(l);
+        }}
         onBattleTelemetry={setBattleTelemetry}
         onBattleComplete={handleBattleComplete}
       />
@@ -514,7 +722,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 data-start="true"
@@ -522,6 +730,17 @@ export default function App() {
                 className="px-7 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fbbf24]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 SEFERİ BAŞLAT [ENTER]
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode('character_arena');
+                  sound.playWarhorn();
+                }}
+                className="px-5 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#221a12] hover:bg-[#34271a] text-[#fbbf24] border border-[#f59e0b]/50 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-2"
+              >
+                <span>⚔️</span>
+                <span>SAVAŞ & KARAKTER ARENASI TEST ET</span>
               </button>
             </div>
           </div>
@@ -556,38 +775,143 @@ export default function App() {
             setActiveOrder(ord);
             sound.playWarhorn();
           }}
-          onOpenSettlement={(s) => setActiveSettlementModal(s)}
-          onOpenDiplomacy={(l) => setActiveDiplomacyLord(l)}
+          onOpenSettlement={(s) => {
+            setCampaignTimeScale(0);
+            setActiveSettlementModal(s);
+          }}
+          onOpenDiplomacy={(l) => {
+            setCampaignTimeScale(0);
+            setActiveDiplomacyLord(l);
+          }}
           onStartQuickBattle={handleStartQuickBattle}
           onRetreatBattle={() => setSubMode('overworld')}
           onAdvanceDay={() => {
             sound.playCoinChime();
             setCampaign((prev) => advanceDailyEconomyAndWorld(prev));
           }}
+          onAllocateAttribute={(attrId) => {
+            const res = allocateAttributePoint(campaign, attrId);
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
+          onAllocateFocus={(skillId) => {
+            const res = allocateFocusPoint(campaign, skillId);
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
+          onEquipItem={(itemId) => {
+            const res = equipInventoryItem(campaign, itemId);
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
+          onUpgradeTroop={(fromTier, toTier) => {
+            const res = upgradeTroopTier(campaign, fromTier, toTier, 1);
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
+          onRecruitPrisoners={() => {
+            const res = recruitCapturedPrisoners(campaign, 1);
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
+          onOpenMarketModal={() => setIsMarketModalOpen(true)}
+          onOpenCharacterArena={() => setViewMode('character_arena')}
         />
       )}
 
       {/* 3. SETTLEMENT & RECRUITMENT MODAL */}
       {gameState === 'playing' && activeSettlementModal && (
         <SettlementModal
-          settlement={activeSettlementModal}
+          settlement={
+            campaign.settlements.find((s) => s.id === activeSettlementModal.id) ??
+            activeSettlementModal
+          }
           campaign={campaign}
           onClose={() => setActiveSettlementModal(null)}
+          onOpenFullMarket={() => setIsMarketModalOpen(true)}
+          onOpenCharacterArena={() => setViewMode('character_arena')}
           onRecruit={handleRecruit}
           onBuyFood={handleBuyFood}
           onStartSiegeBattle={handleStartSiegeBattle}
+          onHireMercenaries={handleHireMercenaries}
+          onRansomPrisoners={handleRansomPrisoners}
+          onBuyTavernRound={handleBuyTavernRound}
+          onArenaPractice={handleArenaPractice}
+          onArenaTournament={handleArenaTournament}
+          onSellLoot={handleSellLoot}
+          onManageGarrison={handleManageGarrison}
+          onRestAndRecover={handleRestAndRecover}
+          onRaidVillage={handleRaidVillage}
+          onForceSupplies={handleForceSupplies}
+          onForceRecruits={handleForceRecruits}
+          onUpgradeBuilding={(settlementId, buildingId) => {
+            const res = upgradeSettlementBuilding(campaign, settlementId, buildingId);
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
+          onSetDailyDefault={(settlementId, defaultType) => {
+            const res = setSettlementDailyDefault(campaign, settlementId, defaultType);
+            if (res.success) setCampaign(res.nextState);
+            return null;
+          }}
+          onBuyWorkshop={(settlementId, workshopType) => {
+            const res = buyOrChangeWorkshop(campaign, settlementId, workshopType);
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
+          onForgeWeapon={(settlementId, blueprintId) => {
+            const res = forgeCustomWeaponAtSmithy(campaign, settlementId, blueprintId);
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
+          onBuildSiegeEngine={(settlementId, engineType, moveToReserve) => {
+            const res = constructSiegeEngine(
+              campaign,
+              settlementId,
+              engineType,
+              Boolean(moveToReserve),
+            );
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
+          onDeployReserveEngines={(settlementId) => {
+            const res = deployReservedSiegeEngines(campaign, settlementId);
+            if (res.success) setCampaign(res.nextState);
+            return null;
+          }}
+          onBombardWalls={(settlementId) => {
+            const res = bombardSettlementWalls(campaign, settlementId);
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
         />
       )}
 
       {/* 4. GEMINI LORD DIPLOMACY MODAL */}
       {gameState === 'playing' && activeDiplomacyLord && (
         <DiplomacyModal
-          selectedLord={activeDiplomacyLord}
+          selectedLord={
+            campaign.lords.find((l) => l.id === activeDiplomacyLord.id) ?? activeDiplomacyLord
+          }
           campaign={campaign}
           onClose={() => setActiveDiplomacyLord(null)}
           onSelectLord={(l) => setActiveDiplomacyLord(l)}
           onApplyDiplomacyResult={handleApplyDiplomacyResult}
           onStartFieldBattle={handleStartFieldBattle}
+          onPersuadeStep={(lordId, argumentType) => {
+            const res = attemptLordPersuasionStep(campaign, lordId, argumentType);
+            if (res.success) setCampaign(res.nextState);
+            return {
+              replyText: res.replyText,
+              totalPips: res.totalPips,
+              convinced: res.convinced,
+            };
+          }}
+          onBarterOffer={(lordId, goldOffered, prisonersOffered) => {
+            const res = executeLordBarterOffer(campaign, lordId, goldOffered, prisonersOffered);
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
         />
       )}
 
@@ -726,6 +1050,29 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* 7. FULL-SCREEN BANNERLORD MARKETPLACE & INVENTORY MODAL */}
+      {isMarketModalOpen && (
+        <BannerlordMarketModal
+          settlement={activeSettlementModal || nearSettlement}
+          campaign={campaign}
+          onClose={() => setIsMarketModalOpen(false)}
+          onUpdateCampaign={(next) => setCampaign(next)}
+          onOpenArenaTest={() => {
+            setIsMarketModalOpen(false);
+            setViewMode('character_arena');
+          }}
+        />
+      )}
+
+      {/* 8. 3D LOW-POLY CHARACTER & COMBAT TEST ARENA */}
+      {viewMode === 'character_arena' && (
+        <CharacterArenaView
+          onReturnToMap={() => setViewMode('campaign')}
+          onOpenMarket={() => setIsMarketModalOpen(true)}
+        />
+      )}
     </main>
   );
 }
+

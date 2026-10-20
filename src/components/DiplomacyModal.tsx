@@ -20,6 +20,11 @@ interface DiplomacyModalProps {
     chronicleEntry: string,
   ) => void;
   onStartFieldBattle: (lord: LordAgent) => void;
+  onPersuadeStep?: (
+    lordId: string,
+    argumentType: 'HONOR' | 'VALOR' | 'CALCULATING' | 'MERCY',
+  ) => { replyText: string; totalPips: number; convinced: boolean };
+  onBarterOffer?: (lordId: string, goldOffered: number, prisonersOffered: number) => string | null;
 }
 
 export const DiplomacyModal: React.FC<DiplomacyModalProps> = ({
@@ -29,6 +34,8 @@ export const DiplomacyModal: React.FC<DiplomacyModalProps> = ({
   onSelectLord,
   onApplyDiplomacyResult,
   onStartFieldBattle,
+  onPersuadeStep,
+  onBarterOffer,
 }) => {
   const [customMessage, setCustomMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -322,6 +329,98 @@ export const DiplomacyModal: React.FC<DiplomacyModalProps> = ({
                 >
                   Kervan Ticaret Anlaşması
                 </button>
+              </div>
+
+              {/* Bannerlord 4-Pip Persuasion Check & Barter System */}
+              <div className="mb-3 p-3 rounded bg-[#1d1811] border border-[#c6a15b]/30 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-bold text-[#fef08a] flex items-center gap-2">
+                    <span>🗣️ 4 Aşamalı İkna Müzakeresi (Cazibe: {campaign.skills?.charm?.level ?? 105}):</span>
+                    <div className="flex items-center gap-1" aria-label="İkna İlerlemesi">
+                      {[1, 2, 3, 4].map((pip) => {
+                        const filled = (selectedLord.persuasionPips ?? 0) >= pip;
+                        return (
+                          <span
+                            key={pip}
+                            className={`w-3 h-3 rounded-full inline-block border ${
+                              filled
+                                ? 'bg-[#34d399] border-[#a7f3d0] shadow-[0_0_6px_#34d399]'
+                                : 'bg-[#14110d] border-[#c6a15b]/50'
+                            }`}
+                          />
+                        );
+                      })}
+                    </div>
+                    <span className="font-mono-tabular text-[#34d399]">
+                      ({selectedLord.persuasionPips ?? 0}/4)
+                    </span>
+                  </div>
+
+                  {onBarterOffer && (
+                    <button
+                      type="button"
+                      disabled={campaign.gold < 120}
+                      onClick={() => {
+                        const err = onBarterOffer(
+                          selectedLord.id,
+                          120,
+                          Math.min(1, campaign.prisoners),
+                        );
+                        if (err) {
+                          setDialogueLog((prev) => [
+                            ...prev,
+                            { speaker: 'Divan Kâtibi', text: err },
+                          ]);
+                        } else {
+                          setDialogueLog((prev) => [
+                            ...prev,
+                            {
+                              speaker: `${selectedLord.title} ${selectedLord.name}`,
+                              text: `Sunduğun 120 Dinar hazine ve esir takası adil bir antlaşmadır ${campaign.playerName}. El sıkıştık!`,
+                              outcome: 'Takas Başarılı · İlişki +18 · Müttefik Olundu',
+                            },
+                          ]);
+                        }
+                      }}
+                      className="px-2.5 py-1 rounded text-[11px] font-bold bg-[#15803d] hover:bg-[#16a34a] text-white disabled:opacity-40 whitespace-nowrap"
+                    >
+                      🤝 Takas Masası: 120 Dinar ile Antlaşma İmzala
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {(
+                    [
+                      { id: 'HONOR', label: '⚖️ Onur & Meşruiyet Argümanı (%78)' },
+                      { id: 'VALOR', label: '⚔️ Askeri Güç & Zafer Vaadi (%68)' },
+                      { id: 'CALCULATING', label: '💰 Tımar & Gümrük Çıkarı (%74)' },
+                    ] as const
+                  ).map((arg) => (
+                    <button
+                      key={arg.id}
+                      type="button"
+                      disabled={(selectedLord.persuasionPips ?? 0) >= 4}
+                      onClick={() => {
+                        if (!onPersuadeStep) return;
+                        const res = onPersuadeStep(selectedLord.id, arg.id);
+                        setDialogueLog((prev) => [
+                          ...prev,
+                          {
+                            speaker: `${selectedLord.title} ${selectedLord.name}`,
+                            text: res.replyText,
+                            outcome: `İkna Aşaması: ${res.totalPips}/4 ${
+                              res.convinced ? '· İTTİFAK KURULDU!' : ''
+                            }`,
+                          },
+                        ]);
+                      }}
+                      className="px-2.5 py-1 rounded text-[11px] font-semibold bg-[#2b2318] hover:bg-[#3d3122] text-[#fde68a] border border-[#c6a15b]/40 disabled:opacity-40"
+                    >
+                      {arg.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Free-form Gemini Dialogue Input */}

@@ -310,6 +310,7 @@ export const CONTINENTAL_BRIDGE_SPECS: ContinentalBridgeSpec[] = [
   { id: 'bridge_vostrum', name: 'Vostrum Deltası Köprüsü', approxX: 51, approxZ: 152, riverSegIndex: 12, length: 11.0 },
   { id: 'bridge_danustica', name: 'Danustica Boğaz Köprüsü', approxX: 191, approxZ: 122, riverSegIndex: 15, length: 10.5 },
   { id: 'bridge_makeb', name: 'Makeb Kuzey Geçidi Köprüsü', approxX: 228, approxZ: -202, riverSegIndex: 13, length: 9.5 },
+  { id: 'bridge_quyaz_strait', name: 'Quyaz Boğazı Taş Köprüsü', approxX: -232, approxZ: 148, riverSegIndex: -1, length: 18.0 },
 ];
 
 export interface ResolvedBridge {
@@ -323,6 +324,16 @@ export interface ResolvedBridge {
 
 // Automatically compute exact river-centered position and bank-to-bank perpendicular orientation for every bridge!
 export const CONTINENTAL_BRIDGES: ResolvedBridge[] = CONTINENTAL_BRIDGE_SPECS.map((spec) => {
+  if (spec.riverSegIndex === -1) {
+    return {
+      id: spec.id,
+      name: spec.name,
+      x: spec.approxX,
+      z: spec.approxZ,
+      rotationY: 0,
+      length: spec.length,
+    };
+  }
   const seg = RIVER_PATHS[spec.riverSegIndex];
   const riverDx = seg.bx - seg.ax;
   const riverDz = seg.bz - seg.az;
@@ -422,12 +433,22 @@ export function getMacroWaterDepthAt(
     const bayT = Math.sin(((z + 225) / 80) * Math.PI);
     westCoastProfile += bayT * 34;
   }
+  // Authentic Western Ocean coastline curving past Jaculan & Charas toward Ortysia & Quyaz
   if (z > 105) {
-    if (z < 195) {
-      const t = (z - 105) / 90;
-      westCoastProfile = -435 * (1 - t) + -255 * t;
+    if (z < 140) {
+      // North cape leading to Ortysia (-232, 102)
+      const t = (z - 105) / 35;
+      westCoastProfile = -435 * (1 - t) + -248 * t;
+    } else if (z <= 156) {
+      // The ocean enters the Strait of Quyaz channel between z = 138 and z = 156 (water channel open all the way across!)
+      westCoastProfile = -205;
+    } else if (z < 210) {
+      // South cape leading to Quyaz (-232, 202)
+      const t = (z - 156) / 54;
+      westCoastProfile = -248 * (1 - t) + -255 * t;
     } else {
-      const t = Math.min(1, (z - 195) / 360);
+      // Aserai southwest ocean curving away
+      const t = Math.min(1, (z - 210) / 340);
       westCoastProfile = -255 * (1 - t) + -495 * t;
     }
   }
@@ -500,31 +521,29 @@ export function getMacroWaterDepthAt(
 
   // 5. Continuous Perassic Inner Sea (Separating the Empire north shore from the Aserai south shore!)
   if (x > -295 && x < 198 && z > 112 && z < 265) {
-    // Keep Ortysia (-232, 102) -> Quyaz (-232, 202) western land bridge passable at x in [-242, -224]!
-    const onOrtysiaBridge =
-      x > -239 && x < -225 && z > 132 && z < 172;
-    if (!onOrtysiaBridge) {
-      const perassicStrait = Math.hypot((x + 252) / 42, (z - 152) / 28) - 1.0 + noiseFine * 0.09;
-      const perassicWestBasin = Math.hypot((x + 142) / 84, (z - 188) / 36) - 1.0 + noiseFine * 0.1;
-      const perassicMidBasin = Math.hypot((x + 28) / 86, (z - 204) / 36) - 1.0 + noiseFine * 0.1;
-      const perassicEastBasin = Math.hypot((x - 88) / 74, (z - 214) / 32) - 1.0 + noiseFine * 0.1;
-      const danusticaBay = Math.hypot((x - 155) / 36, (z - 195) / 26) - 1.0 + noiseFine * 0.1;
+    // Continuous natural Strait of Quyaz channel between Ortysia north cape (z <= 138) and Quyaz south cape (z >= 158)
+    // Connecting Western Great Ocean directly to Perassic Sea!
+    const perassicStrait =
+      Math.hypot((x + 232) / 45, (z - 148) / 9.5) - 1.0 + noiseFine * 0.06;
+    const perassicWestBasin = Math.hypot((x + 138) / 84, (z - 188) / 36) - 1.0 + noiseFine * 0.1;
+    const perassicMidBasin = Math.hypot((x + 28) / 86, (z - 204) / 36) - 1.0 + noiseFine * 0.1;
+    const perassicEastBasin = Math.hypot((x - 88) / 74, (z - 214) / 32) - 1.0 + noiseFine * 0.1;
+    const danusticaBay = Math.hypot((x - 155) / 36, (z - 195) / 26) - 1.0 + noiseFine * 0.1;
 
-      const seaVal = Math.min(
-        perassicStrait,
-        perassicWestBasin,
-        perassicMidBasin,
-        perassicEastBasin,
-        danusticaBay,
-      );
-      if (seaVal < 0) {
-        // Iconic Perassic Sea Islands (matching Image 4's central-west islands)
-        const perassicIsland1 = Math.hypot((x + 172) / 17, (z - 178) / 10);
-        const perassicIsland2 = Math.hypot((x + 118) / 16, (z - 196) / 10);
-        const perassicIsland3 = Math.hypot((x + 32) / 15, (z - 206) / 9);
-        if (perassicIsland1 > 1.0 && perassicIsland2 > 1.0 && perassicIsland3 > 1.0) {
-          return -Math.min(4.0, -seaVal * 4.0);
-        }
+    const seaVal = Math.min(
+      perassicStrait,
+      perassicWestBasin,
+      perassicMidBasin,
+      perassicEastBasin,
+      danusticaBay,
+    );
+    if (seaVal < 0) {
+      // Iconic Perassic Sea Islands (matching Image 4's central-west islands)
+      const perassicIsland1 = Math.hypot((x + 172) / 17, (z - 178) / 10);
+      const perassicIsland2 = Math.hypot((x + 118) / 16, (z - 196) / 10);
+      const perassicIsland3 = Math.hypot((x + 32) / 15, (z - 206) / 9);
+      if (perassicIsland1 > 1.0 && perassicIsland2 > 1.0 && perassicIsland3 > 1.0) {
+        return -Math.min(4.0, -seaVal * 4.0);
       }
     }
   }
@@ -532,9 +551,9 @@ export function getMacroWaterDepthAt(
   return 1.0;
 }
 
-// Settlement flat terraces so all 74 Calradia settlements (50 Towns, 12 Castles, 12 Villages) sit cleanly on flat ground above water
+// Settlement flat terraces so all Calradia Towns, Castles, and Villages sit cleanly on flat ground above water
 export const SETTLEMENT_TERRACES: Array<{ x: number; z: number; radius: number }> = [
-  // Vlandia Towns (8)
+  // Vlandia Towns (8) & Castles (4)
   { x: -458, z: -242, radius: 9 }, // Ostican
   { x: -398, z: -238, radius: 9 }, // Rovalt
   { x: -378, z: -162, radius: 9 }, // Ocs Hall
@@ -543,13 +562,21 @@ export const SETTLEMENT_TERRACES: Array<{ x: number; z: number; radius: number }
   { x: -425, z: 12, radius: 9 },   // Jaculan
   { x: -358, z: 28, radius: 9 },   // Sargot
   { x: -388, z: 92, radius: 9 },   // Charas
-  // Battania Towns (5)
+  { x: -412, z: -195, radius: 7 }, // Caleus Castle
+  { x: -395, z: 48, radius: 7 },   // Hongard Castle
+  { x: -352, z: -222, radius: 7 }, // Tirby Castle
+  { x: -445, z: -78, radius: 7 },  // Ormanfard Castle
+  // Battania Towns (5) & Castles (4)
   { x: -315, z: -192, radius: 9 }, // Car Banseth
   { x: -298, z: -142, radius: 9 }, // Dunglanys
   { x: -225, z: -132, radius: 9 }, // Seonon
   { x: -298, z: -85, radius: 9 },  // Pen Cannoc
   { x: -258, z: -68, radius: 9 },  // Marunath
-  // Sturgia Towns (7)
+  { x: -268, z: -162, radius: 7 }, // Llanoc Hen Castle
+  { x: -195, z: -85, radius: 7 },  // Garontor Castle
+  { x: -342, z: -55, radius: 7 },  // Ab Comer Castle
+  { x: -188, z: -158, radius: 7 }, // Pendraic Castle
+  // Sturgia Towns (7) & Castles (4)
   { x: -262, z: -278, radius: 9 }, // Revyl
   { x: -175, z: -245, radius: 9 }, // Varcheg
   { x: -42, z: -262, radius: 9 },  // Balgard
@@ -557,7 +584,11 @@ export const SETTLEMENT_TERRACES: Array<{ x: number; z: number; radius: number }
   { x: 68, z: -285, radius: 9 },   // Sibir
   { x: 48, z: -228, radius: 9 },   // Varnovapol
   { x: 188, z: -265, radius: 9 },  // Tyal
-  // Empire Towns & Castles (21)
+  { x: -85, z: -235, radius: 7 },  // Ov Castle
+  { x: 92, z: -238, radius: 7 },   // Urikskala Castle
+  { x: 134, z: -268, radius: 7 },  // Vladiv Castle
+  { x: -152, z: -198, radius: 7 }, // Mazolm Castle
+  // Empire Towns (19) & Castles (9)
   { x: -125, z: -125, radius: 9 }, // Epicrotea
   { x: -55, z: -128, radius: 9 },  // Diathma
   { x: 38, z: -158, radius: 9 },   // Argoron
@@ -579,43 +610,57 @@ export const SETTLEMENT_TERRACES: Array<{ x: number; z: number; radius: number }
   { x: 178, z: 88, radius: 9 },    // Onira
   { x: 205, z: 158, radius: 9 },   // Danustica
   { x: 88, z: 162, radius: 9 },    // Vostrum
-  // Khuzait Towns (6)
+  { x: -95, z: 18, radius: 7 },    // Hertogea Castle
+  { x: -32, z: 112, radius: 7 },   // Veron Castle
+  { x: 142, z: 122, radius: 7 },   // Lavenia Castle
+  { x: -162, z: -52, radius: 7 },  // Gersegos Castle
+  { x: -18, z: -98, radius: 7 },   // Gaos Castle
+  { x: 152, z: -28, radius: 7 },   // Melion Castle
+  { x: 68, z: 22, radius: 7 },     // Morenia Castle
+  { x: -178, z: 112, radius: 7 },  // Onica Castle
+  // Khuzait Towns (6) & Castles (4)
   { x: 292, z: -225, radius: 9 },  // Baltakhand
   { x: 248, z: -125, radius: 9 },  // Makeb
   { x: 318, z: -78, radius: 9 },   // Ortongard
   { x: 252, z: -48, radius: 9 },   // Chaikand
   { x: 292, z: 25, radius: 9 },    // Akkalat
   { x: 322, z: 88, radius: 9 },    // Odokh
-  // Aserai Towns & Bandit Fort (6)
+  { x: 278, z: -162, radius: 7 },  // Simira Castle
+  { x: 282, z: 62, radius: 7 },    // Kaysar Castle
+  { x: 288, z: -102, radius: 7 },  // Tepes Castle
+  { x: 268, z: -8, radius: 7 },    // Khimli Castle
+  // Aserai Towns (6) & Castles (4 including Bandit Fort)
   { x: -232, z: 202, radius: 9 },  // Quyaz
+  { x: -168, z: 238, radius: 9 },  // Askar
   { x: -108, z: 248, radius: 9 },  // Sanala
   { x: 2, z: 268, radius: 9 },     // Qasira
   { x: 122, z: 262, radius: 9 },   // Razih
   { x: 225, z: 218, radius: 9 },   // Husn Fulq
   { x: -62, z: 102, radius: 8 },   // Karageçit Hisarı
-  // Authentic Regional Castles & Villages from Vesper Map (Image 3) (21)
-  { x: -412, z: -195, radius: 7 }, // Caleus Castle
-  { x: -395, z: 48, radius: 7 },   // Hongard Castle
-  { x: -268, z: -162, radius: 7 }, // Llanoc Hen Castle
-  { x: -195, z: -85, radius: 7 },  // Garontor Castle
-  { x: -85, z: -235, radius: 7 },  // Ov Castle
-  { x: 118, z: -242, radius: 7 },  // Urikskala Castle
-  { x: -95, z: 18, radius: 7 },    // Hertogea Castle
-  { x: -32, z: 112, radius: 7 },   // Veron Castle
-  { x: 142, z: 122, radius: 7 },   // Lavenia Castle
-  { x: 278, z: -162, radius: 7 },  // Simira Castle
-  { x: 282, z: 62, radius: 7 },    // Kaysar Castle
-  { x: -168, z: 228, radius: 7 },  // Tubilis Castle
+  { x: -198, z: 218, radius: 7 },  // Tubilis Castle
+  { x: -48, z: 262, radius: 7 },   // Barihal Castle
   { x: 58, z: 265, radius: 7 },    // Medeni Castle
-  { x: -458, z: -155, radius: 6 }, // Valanby (Köy)
-  { x: -435, z: -62, radius: 6 },  // Cantrec (Köy)
-  { x: -268, z: -112, radius: 6 }, // Glenlithrig (Köy)
-  { x: -212, z: -258, radius: 6 }, // Forin (Köy)
-  { x: 145, z: -255, radius: 6 },  // Kranirag (Köy)
-  { x: 48, z: 118, radius: 6 },    // Canterion (Köy)
-  { x: 275, z: -18, radius: 6 },   // Ulaan (Köy)
-  { x: -62, z: 255, radius: 6 },   // Abou Khih (Köy)
+  // Anchor Villages
+  { x: -458, z: -155, radius: 6 }, // Valanby
+  { x: -435, z: -62, radius: 6 },  // Cantrec
+  { x: -268, z: -112, radius: 6 }, // Glenlithrig
+  { x: -212, z: -258, radius: 6 }, // Forin
+  { x: 145, z: -255, radius: 6 },  // Kranirag
+  { x: 48, z: 118, radius: 6 },    // Canterion
+  { x: 275, z: -18, radius: 6 },   // Ulaan
+  { x: -62, z: 255, radius: 6 },   // Abou Khih
 ];
+
+export function registerSettlementTerrace(x: number, z: number, radius: number): void {
+  for (let i = 0; i < SETTLEMENT_TERRACES.length; i++) {
+    const st = SETTLEMENT_TERRACES[i];
+    if (Math.abs(st.x - x) < 1.5 && Math.abs(st.z - z) < 1.5) {
+      if (radius > st.radius) st.radius = radius;
+      return;
+    }
+  }
+  SETTLEMENT_TERRACES.push({ x, z, radius });
+}
 
 interface MountainChainSegment {
   ax: number;
@@ -649,37 +694,46 @@ const MOUNTAIN_CHAINS: MountainChainSegment[] = [
   { ax: 385, az: -105, bx: 405, bz: 62, width: 62, height: 19.0 },
   { ax: 405, az: 62, bx: 375, bz: 215, width: 64, height: 19.5 },
   { ax: 375, az: 215, bx: 455, bz: 415, width: 70, height: 20.5 },
-  // 6. Southern Imperial Coastal Ridge
-  { ax: -132, az: 112, bx: -92, bz: 122, width: 25, height: 12.0 },
-  { ax: 15, az: 118, bx: 38, bz: 132, width: 24, height: 12.5 },
+  // 6. Southern Imperial Coastal Ridge (West of Zeonica)
+  { ax: -132, az: 112, bx: -92, bz: 122, width: 24, height: 11.5 },
   // 7. Aserai Nahasa Desert Rim & Southern Border Mountains
   { ax: -215, az: 268, bx: -65, bz: 325, width: 56, height: 17.5 },
   { ax: -65, az: 325, bx: 125, bz: 345, width: 62, height: 18.0 },
   { ax: 125, az: 345, bx: 315, bz: 305, width: 60, height: 18.5 },
 ];
 
-// Master Continental Elevation Function (2400x1800 seamless world, single-pass terrace lookup)
+// Master Continental Elevation Function (2400x1800 seamless world, single-pass terrace & valley basin lookup)
 export function groundHeightAt(x: number, z: number): number {
-  let matchedTerrace: { x: number; z: number; radius: number } | null = null;
-  let matchedTerraceDist = Infinity;
+  let minBlendFactor = 1.0; // 0.0 inside settlement plateau, smoothly 0..1 across valley basin apron
   let nearAnyTerrace = false;
 
-  if (x > -495 && x < 345 && z > -305 && z < 290) {
+  if (x > -540 && x < 420 && z > -365 && z < 355) {
     for (let i = 0; i < SETTLEMENT_TERRACES.length; i++) {
       const st = SETTLEMENT_TERRACES[i];
+      const outerR = st.radius * 2.55;
       const dx = x - st.x;
-      if (dx > 13 || dx < -13) continue;
+      if (dx > outerR || dx < -outerR) continue;
       const dz = z - st.z;
-      if (dz > 13 || dz < -13) continue;
+      if (dz > outerR || dz < -outerR) continue;
       const d = Math.hypot(dx, dz);
-      if (d < st.radius + 1.8) {
+      if (d < st.radius + 3.5) {
         nearAnyTerrace = true;
       }
-      if (d < st.radius && d < matchedTerraceDist) {
-        matchedTerrace = st;
-        matchedTerraceDist = d;
+      if (d <= st.radius) {
+        minBlendFactor = 0.0;
+      } else if (d < outerR) {
+        const t = (d - st.radius) / (outerR - st.radius);
+        const sBlend = t * t * (3.0 - 2.0 * t);
+        if (sBlend < minBlendFactor) {
+          minBlendFactor = sBlend;
+        }
       }
     }
+  }
+
+  // Fast flat plateau return inside any settlement core so mountains/rivers never bury walls or buildings
+  if (minBlendFactor === 0.0) {
+    return 2.05;
   }
 
   const nDetail = fbm2D(x * 0.032 + 5.2, z * 0.032 - 3.8, 3);
@@ -722,26 +776,26 @@ export function groundHeightAt(x: number, z: number): number {
       }
     }
   }
-  h += maxMountainH;
+  h += maxMountainH * minBlendFactor;
 
   // Continuous outer continental relief on North, East, and South borders
   if (z < -205 && x > -115) {
     const northFactor = Math.min(1.6, (-205 - z) / 150);
-    h += northFactor * 7.8 * (0.42 + 0.68 * ridge);
+    h += northFactor * 7.8 * (0.42 + 0.68 * ridge) * minBlendFactor;
   }
   if (x > 320) {
     const eastFactor = Math.min(1.6, (x - 320) / 170);
-    h += eastFactor * 7.4 * (0.38 + 0.65 * ridge);
+    h += eastFactor * 7.4 * (0.38 + 0.65 * ridge) * minBlendFactor;
   }
   if (z > 235 && x > -260) {
     const southFactor = Math.min(1.5, (z - 235) / 175);
     const southDunes = Math.abs(Math.sin(x * 0.028 + z * 0.02 + nMacro * 2.0)) * 3.2;
-    h += southDunes + southFactor * 6.0 * (0.35 + 0.65 * ridge);
+    h += (southDunes + southFactor * 6.0 * (0.35 + 0.65 * ridge)) * minBlendFactor;
   }
 
   // Carve crisp, slender meandering river channels across the continent
   const { dist: rDist, width: rWidth } = distanceToRiverNetwork(x, z);
-  const valleyWidth = rWidth * 1.35;
+  const valleyWidth = rWidth * 1.45;
   if (rDist < valleyWidth) {
     const t = Math.max(0, Math.min(1, rDist / valleyWidth));
     const smoothT = t * t * (3 - 2 * t);
@@ -749,12 +803,10 @@ export function groundHeightAt(x: number, z: number): number {
     h = riverBed * (1 - smoothT) + h * smoothT;
   }
 
-  // Smoothly flatten around the settlement terrace
-  if (matchedTerrace) {
-    const blend = matchedTerraceDist / matchedTerrace.radius;
-    const sBlend = blend * blend * (3 - 2 * blend);
-    const targetFlat = 1.95;
-    h = targetFlat * (1 - sBlend) + h * sBlend;
+  // Smoothly blend settlement valley apron into surrounding terrain
+  if (minBlendFactor < 1.0) {
+    const targetFlat = 2.05;
+    h = targetFlat * (1 - minBlendFactor) + h * minBlendFactor;
   }
 
   return h;
@@ -794,8 +846,11 @@ export function getTerrainSlopeAndColorAt(x: number, z: number): {
   }
 
   const eps = 1.6;
-  const hx = groundHeightAt(x + eps, z);
-  const hz = groundHeightAt(x, z + eps);
+  const rawHx = groundHeightAt(x + eps, z);
+  const rawHz = groundHeightAt(x, z + eps);
+  // Clamp neighbor heights to WATER_LEVEL when computing land slope so shorelines don't produce artificial cliff spikes!
+  const hx = Math.max(WATER_LEVEL, rawHx);
+  const hz = Math.max(WATER_LEVEL, rawHz);
 
   const dx = (hx - h) / eps;
   const dz = (hz - h) / eps;
@@ -836,14 +891,15 @@ export function getTerrainSlopeAndColorAt(x: number, z: number): {
     };
   }
 
-  // 2. Coastal & Riverbank Sand / Shallow Shore
-  if (h < WATER_LEVEL + 0.45 || (rDist < rWidth * 1.25 && h < 0.85)) {
+  // 2. Smooth Coastal & Riverbank Sand / Shallow Shore
+  const nearMacroShore = rawHx < WATER_LEVEL || rawHz < WATER_LEVEL;
+  if (h < WATER_LEVEL + 0.22 || (nearMacroShore && h < 0.95) || (rDist < rWidth * 1.15 && h < 0.72)) {
     return {
       height: h,
       slope,
-      r: Math.round(162 * sunShade),
-      g: Math.round(144 * sunShade),
-      b: Math.round(104 * sunShade),
+      r: Math.round(154 * sunShade),
+      g: Math.round(138 * sunShade),
+      b: Math.round(98 * sunShade),
     };
   }
 
@@ -872,13 +928,15 @@ export function getTerrainSlopeAndColorAt(x: number, z: number): {
     b = b * (1 - eastBlend) + stepB * eastBlend;
   }
 
-  // Aserai South & Southeast Desert (Golden-terracotta sand & arid dunes, with green coastal delta!)
-  if (z > 135) {
-    const southBlend = Math.min(1, (z - 135) / 80);
-    const deltaGreen = Math.max(0, 1 - Math.hypot((x + 35) / 115, (z - 235) / 36));
-    const desertR = (210 + nFine * 16) * (1 - deltaGreen * 0.45) + 98 * (deltaGreen * 0.45);
-    const desertG = (170 + nFine * 14) * (1 - deltaGreen * 0.45) + 128 * (deltaGreen * 0.45);
-    const desertB = (114 + nFine * 10) * (1 - deltaGreen * 0.45) + 66 * (deltaGreen * 0.45);
+  // Aserai South & Southeast Desert (Golden-terracotta sand, arid dunes & sandstone capes)
+  // Restrict to x > -295 so Western Ocean islands remain lush green while Aserai (Quyaz/Askar/Sanala) is desert!
+  if (x > -295 && (z > 146 || (x < -185 && z > 152))) {
+    const southBlend = Math.min(1, Math.max((z - 146) / 20, x < -185 ? (z - 152) / 16 : 0));
+    // Subtle oasis greenery strictly around Sanala's irrigated date-palm depression
+    const sanalaOasis = Math.max(0, 1 - Math.hypot((x + 85) / 22, (z - 250) / 16)) * 0.42;
+    const desertR = (222 + nFine * 16) * (1 - sanalaOasis) + 120 * sanalaOasis;
+    const desertG = (178 + nFine * 14) * (1 - sanalaOasis) + 138 * sanalaOasis;
+    const desertB = (108 + nFine * 10) * (1 - sanalaOasis) + 68 * sanalaOasis;
     r = r * (1 - southBlend) + desertR * southBlend;
     g = g * (1 - southBlend) + desertG * southBlend;
     b = b * (1 - southBlend) + desertB * southBlend;
@@ -951,6 +1009,10 @@ export function getTerrainSlopeAndColorAt(x: number, z: number): {
   };
 }
 
+// Overworld 1x campaign march & patrol speed constants (tuned for realistic Bannerlord 1x map pace)
+export const OVERWORLD_BASE_MARCH_SPEED = 5.2;
+export const OVERWORLD_LORD_PATROL_SPEED = 0.085;
+
 // Party movement speed calculation based on terrain biome, slope, road proximity, and cavalry ratio
 export function getPartySpeedInfo(
   x: number,
@@ -963,6 +1025,7 @@ export function getPartySpeedInfo(
   onRoad: boolean;
   multiplier: number;
   effectiveSpeed: number;
+  worldUnitsPerSecAt1x: number;
 } {
   const biome = getBiomeAt(x, z);
   const meta = BIOME_METADATA[biome];
@@ -975,7 +1038,7 @@ export function getPartySpeedInfo(
   const cavBonus = 1.0 + Math.min(0.4, Math.max(0, cavalryRatio)) * 0.35;
 
   const multiplier = Number((meta.speedMultiplier * slopePenalty * roadBonus * cavBonus).toFixed(2));
-  const baseSpeed = 4.8;
+  const baseSpeed = 3.8;
   const textLabel = onRoad ? `${meta.label} (Kervan Yolu +25%)` : meta.label;
 
   return {
@@ -985,6 +1048,7 @@ export function getPartySpeedInfo(
     onRoad,
     multiplier,
     effectiveSpeed: Number((baseSpeed * multiplier).toFixed(1)),
+    worldUnitsPerSecAt1x: Number((OVERWORLD_BASE_MARCH_SPEED * multiplier).toFixed(2)),
   };
 }
 
@@ -1028,7 +1092,9 @@ export function computeBannerlordCameraTransform(
 } {
   const clampedZoom = Math.max(16, Math.min(940, zoomDist));
   const t = (clampedZoom - 16) / (940 - 16);
-  const pitchDeg = 38 + t * 48;
+  // Smooth S-curve pitch: Low ground-level angle (26-32 deg) when close for epic scale and horizon, tilting up to 82 deg on full continent overview
+  const smoothT = t < 0.25 ? Math.pow(t / 0.25, 1.4) * 0.25 : t;
+  const pitchDeg = 28 + smoothT * 54;
   const pitchRad = (pitchDeg * Math.PI) / 180;
 
   const horizDist = Math.cos(pitchRad) * clampedZoom;
@@ -1038,7 +1104,7 @@ export function computeBannerlordCameraTransform(
 
   const camX = safeFocus.x + Math.sin(yawRad) * horizDist;
   const camZ = safeFocus.z + Math.cos(yawRad) * horizDist;
-  const camY = Math.max(focusY + 4.5, focusY + vertDist);
+  const camY = Math.max(focusY + 3.8, focusY + vertDist);
 
   return {
     camX,
@@ -1051,3 +1117,21 @@ export function computeBannerlordCameraTransform(
     clampedZoom,
   };
 }
+
+// Settlement label LOD visibility by camera zoom distance:
+// - Close zoom (<= 190m): Towns, Castles, and Villages are all visible
+// - Mid zoom (190m - 380m): Towns and Castles are visible (Villages hidden)
+// - Far / Maximum zoom (> 380m up to 940m max): ONLY Towns (cities) are visible; Castles and Villages are hidden
+export function isSettlementLabelVisible(
+  type: 'TOWN' | 'CASTLE' | 'VILLAGE',
+  zoomDist: number,
+): boolean {
+  if (type === 'VILLAGE') {
+    return zoomDist <= 190;
+  }
+  if (type === 'CASTLE') {
+    return zoomDist <= 380;
+  }
+  return true;
+}
+

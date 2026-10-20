@@ -1,12 +1,17 @@
 import React, { useState } from 'react';
 import {
+  AttributeId,
+  BannerlordSkillId,
   CampaignState,
   FACTION_INFO,
   LordAgent,
   Settlement,
   TacticalOrder,
   UNIT_DEFINITIONS,
+  UnitTierId,
+  calculateClanTier,
   calculateDailyWage,
+  calculateLearningLimit,
   calculatePartyStrength,
   getTotalTroops,
 } from '../game/rules';
@@ -15,6 +20,7 @@ import type {
   CameraControlActions,
   MapCameraTelemetry,
 } from '../game/types';
+import { isSettlementLabelVisible } from '../game/mapGen';
 
 interface GameHudProps {
   subMode: 'overworld' | 'battle';
@@ -37,6 +43,13 @@ interface GameHudProps {
   onStartQuickBattle: () => void;
   onRetreatBattle: () => void;
   onAdvanceDay: () => void;
+  onAllocateAttribute?: (attrId: AttributeId) => string | null;
+  onAllocateFocus?: (skillId: BannerlordSkillId) => string | null;
+  onEquipItem?: (itemId: string) => string | null;
+  onUpgradeTroop?: (fromTier: UnitTierId, toTier: UnitTierId) => string | null;
+  onRecruitPrisoners?: () => string | null;
+  onOpenMarketModal?: () => void;
+  onOpenCharacterArena?: () => void;
 }
 
 export const GameHud: React.FC<GameHudProps> = ({
@@ -60,9 +73,20 @@ export const GameHud: React.FC<GameHudProps> = ({
   onStartQuickBattle,
   onRetreatBattle,
   onAdvanceDay,
+  onAllocateAttribute,
+  onAllocateFocus,
+  onEquipItem,
+  onUpgradeTroop,
+  onRecruitPrisoners,
+  onOpenMarketModal,
+  onOpenCharacterArena,
 }) => {
   const [dockCollapsed, setDockCollapsed] = useState(false);
-  const [activeTab, setActiveTab] = useState<'none' | 'army' | 'chronicle' | 'atlas'>('none');
+  const [activeTab, setActiveTab] = useState<
+    'none' | 'army' | 'character' | 'inventory' | 'chronicle' | 'atlas'
+  >('none');
+  const [hudFeedback, setHudFeedback] = useState<string | null>(null);
+  const [outfitMode, setOutfitMode] = useState<'BATTLE' | 'CIVILIAN'>('BATTLE');
   const [hoveredLabelId, setHoveredLabelId] = useState<string | null>(null);
   const [councilAdvice, setCouncilAdvice] = useState<string | null>(null);
   const [councilLoading, setCouncilLoading] = useState(false);
@@ -77,11 +101,19 @@ export const GameHud: React.FC<GameHudProps> = ({
       }
       if (e.code === 'KeyH') {
         setDockCollapsed((prev) => !prev);
+      } else if (e.code === 'KeyC') {
+        setActiveTab((prev) => (prev === 'character' ? 'none' : 'character'));
+      } else if (e.code === 'KeyI') {
+        if (onOpenMarketModal) {
+          onOpenMarketModal();
+        } else {
+          setActiveTab((prev) => (prev === 'inventory' ? 'none' : 'inventory'));
+        }
       }
     };
     window.addEventListener('keydown', onKeyH);
     return () => window.removeEventListener('keydown', onKeyH);
-  }, []);
+  }, [onOpenMarketModal]);
 
   const totalTroops = getTotalTroops(campaign.roster);
   const partyStrength = calculatePartyStrength(
@@ -242,43 +274,11 @@ export const GameHud: React.FC<GameHudProps> = ({
 
             // 2. SETTLEMENT HERALDIC SHIELD + SMOKY TRANSLUCENT PENNANT BANNER (Towns, Castles, Villages from Image 4!)
             const isContinentalZoom = mapTelemetry.zoomDist > 220;
-            const isVillage = lbl.settlementType === 'VILLAGE';
             const isCastle = lbl.settlementType === 'CASTLE';
 
-            if (isContinentalZoom && isVillage) {
-              return (
-                <div
-                  key={lbl.id}
-                  style={{
-                    transform: `translate3d(${lbl.screenX}px, ${lbl.screenY}px, 0) translate(-50%, -100%)`,
-                  }}
-                  className="absolute top-0 left-0 pointer-events-auto flex flex-col items-center"
-                >
-                  <button
-                    type="button"
-                    data-testid={`map-label-${lbl.id}`}
-                    onMouseEnter={() => setHoveredLabelId(lbl.id)}
-                    onMouseLeave={() =>
-                      setHoveredLabelId((prev) => (prev === lbl.id ? null : prev))
-                    }
-                    onClick={() => {
-                      cameraActionsRef.current?.commandMarchTo(lbl.worldX, lbl.worldZ);
-                    }}
-                    onDoubleClick={() => {
-                      cameraActionsRef.current?.focusOnCoords(lbl.worldX, lbl.worldZ, 38);
-                    }}
-                    className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120f]/75 border border-[#c6a15b]/25 hover:scale-110 transition-transform cursor-pointer whitespace-nowrap"
-                  >
-                    <span
-                      style={{ backgroundColor: lbl.color }}
-                      className="w-2 h-2 rounded-full border border-[#fde68a]/80 shrink-0"
-                    />
-                    <span className="text-[9px] font-medium text-[#e2d6c1]/95 hud-stroke">
-                      {lbl.name}
-                    </span>
-                  </button>
-                </div>
-              );
+            // Hide villages at mid zoom and castles at maximum/continental zoom so only Town (city) names are visible at max distance
+            if (!isSettlementLabelVisible(lbl.settlementType ?? 'TOWN', mapTelemetry.zoomDist)) {
+              return null;
             }
 
             return (
@@ -522,6 +522,17 @@ export const GameHud: React.FC<GameHudProps> = ({
             </div>
           )}
 
+          {onOpenCharacterArena && (
+            <button
+              type="button"
+              onClick={onOpenCharacterArena}
+              className="px-3 py-1.5 rounded text-xs font-bold bg-[#991b1b] hover:bg-[#b91c1c] text-white border border-[#fca5a5]/40 shadow flex items-center gap-1.5 transition-colors whitespace-nowrap"
+            >
+              <span>⚔️</span>
+              <span>Savaş & Karakter Arenası</span>
+            </button>
+          )}
+
           <button
             type="button"
             tabIndex={-1}
@@ -669,7 +680,10 @@ export const GameHud: React.FC<GameHudProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        cameraActionsRef.current?.commandMarchTo(s.x, s.z + 3.5);
+                        cameraActionsRef.current?.commandMarchTo(s.x, s.z + 2.2, {
+                          type: 'settlement',
+                          id: s.id,
+                        });
                         setActiveTab('none');
                       }}
                       className="flex-1 px-2 py-1 rounded text-[11px] font-semibold bg-[#b45309] hover:bg-[#d97706] text-white whitespace-nowrap"
@@ -683,43 +697,123 @@ export const GameHud: React.FC<GameHudProps> = ({
           </div>
         )}
 
-        {/* Expandable Army Drawer */}
+        {/* Expandable Army Drawer (With Troop Upgrades, Prisoner Recruitment & 4 Clan Roles) */}
         {subMode === 'overworld' && activeTab === 'army' && !dockCollapsed && (
-          <div className="hud-panel rounded-lg p-4 w-full max-w-4xl pointer-events-auto">
+          <div className="hud-panel rounded-lg p-4 w-full max-w-4xl pointer-events-auto max-h-[68vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-[#c6a15b]/25 pb-2 mb-3">
               <div>
                 <h3 className="text-sm font-bold text-[#f8f0df]">
-                  Sancak Ordusu ve Birlik Düzeni (Günlük Maaş: {dailyWage} Dinar)
+                  Sancak Ordusu, Terfi Ağacı ve 4 Klan Rolü (Günlük Maaş: {dailyWage} Dinar · Esir: {campaign.prisoners})
                 </h3>
                 <p className="text-xs text-[#b5a890]">
-                  Asker toplamak için yerleşimlere yürüyün veya aşağıdaki hızlı erişimden kaleleri seçin.
+                  Birliklerinizi üst kademeye terfi ettirin, savaş esirlerini sancağınıza katın veya yerleşimlere hızla erişin.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setActiveTab('none')}
-                className="text-xs text-[#c6a15b] hover:underline whitespace-nowrap shrink-0"
-              >
-                Kapat
-              </button>
-            </div>
-            <div className="grid grid-cols-4 gap-3">
-              {Object.values(UNIT_DEFINITIONS).map((u) => (
-                <div
-                  key={u.id}
-                  className="p-2.5 rounded bg-[#181510] border border-[#c6a15b]/20 text-xs"
+              <div className="flex items-center gap-2">
+                {campaign.prisoners > 0 && onRecruitPrisoners && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const err = onRecruitPrisoners();
+                      setHudFeedback(
+                        err || '⛓️ 1 Savaş Esiri ikna edilerek sancağımıza Milis Piyade olarak katıldı!',
+                      );
+                    }}
+                    className="px-2.5 py-1 rounded text-xs font-bold bg-[#15803d] hover:bg-[#16a34a] text-white whitespace-nowrap"
+                  >
+                    ⛓️ Esir Devşir ({campaign.prisoners})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('none')}
+                  className="text-xs text-[#c6a15b] hover:underline whitespace-nowrap shrink-0"
                 >
-                  <div className="font-semibold text-[#f8f0df]">{u.name}</div>
-                  <div className="text-[11px] text-[#a89b84]">{u.role}</div>
-                  <div className="mt-1.5 font-mono-tabular text-sm font-bold text-[#fbbf24]">
-                    {campaign.roster[u.id]} Birlik
-                  </div>
-                </div>
-              ))}
+                  Kapat
+                </button>
+              </div>
             </div>
+
+            {hudFeedback && (
+              <div className="mb-3 px-3 py-1.5 rounded bg-[#262015] border border-[#f59e0b]/40 text-xs text-[#fde68a]">
+                {hudFeedback}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {Object.values(UNIT_DEFINITIONS).map((u) => {
+                const nextTier: UnitTierId | null =
+                  u.id === 'militia'
+                    ? 'archer'
+                    : u.id === 'archer'
+                      ? 'cavalry'
+                      : u.id === 'cavalry'
+                        ? 'guard'
+                        : null;
+                return (
+                  <div
+                    key={u.id}
+                    className="p-2.5 rounded bg-[#181510] border border-[#c6a15b]/20 text-xs flex flex-col justify-between gap-2"
+                  >
+                    <div>
+                      <div className="font-semibold text-[#f8f0df]">{u.name}</div>
+                      <div className="text-[11px] text-[#a89b84]">{u.role}</div>
+                      <div className="mt-1.5 font-mono-tabular text-sm font-bold text-[#fbbf24]">
+                        {campaign.roster[u.id]} Birlik
+                      </div>
+                    </div>
+                    {nextTier && onUpgradeTroop && (
+                      <button
+                        type="button"
+                        disabled={campaign.roster[u.id] <= 0}
+                        onClick={() => {
+                          const err = onUpgradeTroop(u.id, nextTier);
+                          setHudFeedback(
+                            err ||
+                              `🎖️ 1 ${u.name} üst kademeye (${UNIT_DEFINITIONS[nextTier].name}) terfi ettirildi!`,
+                          );
+                        }}
+                        className="w-full py-1 rounded text-[11px] font-bold bg-[#b45309] hover:bg-[#d97706] text-white disabled:opacity-35 transition-colors"
+                      >
+                        + Terfi: {UNIT_DEFINITIONS[nextTier].name.split(' ')[0]}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 4 Clan Party Roles */}
+            <div className="mt-3 pt-2.5 border-t border-[#c6a15b]/20 grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+              <div className="p-2 rounded bg-[#14110d] border border-[#c6a15b]/20">
+                <span className="text-[#c6a15b] font-bold block">📦 İaşe Subayı (Steward)</span>
+                <span className="text-[#e2d6c1]">
+                  {campaign.clanRoles?.QUARTERMASTER ?? 'Komutan Demirhan (+45 Kapasite)'}
+                </span>
+              </div>
+              <div className="p-2 rounded bg-[#14110d] border border-[#c6a15b]/20">
+                <span className="text-[#c6a15b] font-bold block">🧭 İzci (Scout)</span>
+                <span className="text-[#e2d6c1]">
+                  {campaign.clanRoles?.SCOUT ?? 'İzci Aybars (+%12 Görüş & Hız)'}
+                </span>
+              </div>
+              <div className="p-2 rounded bg-[#14110d] border border-[#c6a15b]/20">
+                <span className="text-[#c6a15b] font-bold block">⚕️ Cerrah (Surgeon)</span>
+                <span className="text-[#e2d6c1]">
+                  {campaign.clanRoles?.SURGEON ?? 'Hekim Helena (+%25 Yaralı Kurtarma)'}
+                </span>
+              </div>
+              <div className="p-2 rounded bg-[#14110d] border border-[#c6a15b]/20">
+                <span className="text-[#c6a15b] font-bold block">⚙️ Mühendis (Engineer)</span>
+                <span className="text-[#e2d6c1]">
+                  {campaign.clanRoles?.ENGINEER ?? 'Mimar Торвальд (+%30 Kuşatma İnşası)'}
+                </span>
+              </div>
+            </div>
+
             <div className="mt-3 pt-2 border-t border-[#c6a15b]/20 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap gap-1.5">
-                {campaign.settlements.map((s) => (
+              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                {campaign.settlements.slice(0, 16).map((s) => (
                   <button
                     key={s.id}
                     type="button"
@@ -737,6 +831,291 @@ export const GameHud: React.FC<GameHudProps> = ({
               >
                 Kamp Kur & Günü İlerlet (+1 Gün)
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Expandable Character Sheet Drawer (6 Attributes & 18 Skills) */}
+        {subMode === 'overworld' && activeTab === 'character' && !dockCollapsed && (
+          <div className="hud-panel rounded-lg p-4 w-full max-w-5xl pointer-events-auto max-h-[70vh] overflow-y-auto">
+            <div className="flex flex-wrap items-center justify-between border-b border-[#c6a15b]/25 pb-2 mb-3 gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-[#fef08a]">
+                  🛡️ Karakter Ekranı: {campaign.playerName} · Seviye {campaign.characterLevel ?? 6} ·{' '}
+                  {calculateClanTier(campaign.renown).title}
+                </h3>
+                <p className="text-xs text-[#b5a890]">
+                  Serbest Nitelik Puanı:{' '}
+                  <strong className="text-[#34d399]">{campaign.freeAttributePoints ?? 0}</strong> ·
+                  Serbest Odak Puanı (Focus):{' '}
+                  <strong className="text-[#fbbf24]">{campaign.freeFocusPoints ?? 0}</strong> · Klan
+                  Kapasite Bonusu: +{calculateClanTier(campaign.renown).maxPartyBonus} Asker
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('none')}
+                className="text-xs text-[#c6a15b] hover:underline whitespace-nowrap shrink-0"
+              >
+                Kapat [C]
+              </button>
+            </div>
+
+            {hudFeedback && (
+              <div className="mb-3 px-3 py-1.5 rounded bg-[#262015] border border-[#f59e0b]/40 text-xs text-[#fde68a]">
+                {hudFeedback}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              {(
+                [
+                  {
+                    attrId: 'VIGOR',
+                    name: 'DİNÇLİK (VIGOR)',
+                    skills: [
+                      { id: 'oneHanded', label: 'Tek Elli Silahlar' },
+                      { id: 'twoHanded', label: 'Çift Elli Silahlar' },
+                      { id: 'polearm', label: 'Gönderli Silahlar' },
+                    ],
+                  },
+                  {
+                    attrId: 'CONTROL',
+                    name: 'KONTROL (CONTROL)',
+                    skills: [
+                      { id: 'bow', label: 'Yay (Bow)' },
+                      { id: 'crossbow', label: 'Arbalet (Crossbow)' },
+                      { id: 'throwing', label: 'Fırlatma (Throwing)' },
+                    ],
+                  },
+                  {
+                    attrId: 'ENDURANCE',
+                    name: 'DAYANIKLILIK (ENDURANCE)',
+                    skills: [
+                      { id: 'riding', label: 'Binicilik (Riding)' },
+                      { id: 'athletics', label: 'Atletizm (Athletics)' },
+                      { id: 'smithing', label: 'Demircilik (Smithing)' },
+                    ],
+                  },
+                  {
+                    attrId: 'CUNNING',
+                    name: 'KURNAZLIK (CUNNING)',
+                    skills: [
+                      { id: 'scouting', label: 'İzcilik (Scouting)' },
+                      { id: 'tactics', label: 'Taktik (Tactics)' },
+                      { id: 'roguery', label: 'Serserilik (Roguery)' },
+                    ],
+                  },
+                  {
+                    attrId: 'SOCIAL',
+                    name: 'SOSYALLİK (SOCIAL)',
+                    skills: [
+                      { id: 'charm', label: 'Cazibe (Charm)' },
+                      { id: 'leadership', label: 'Liderlik (Leadership)' },
+                      { id: 'trade', label: 'Ticaret (Trade)' },
+                    ],
+                  },
+                  {
+                    attrId: 'INTELLIGENCE',
+                    name: 'ZEKA (INTELLIGENCE)',
+                    skills: [
+                      { id: 'steward', label: 'İdarecilik (Steward)' },
+                      { id: 'medicine', label: 'Hekimlik (Medicine)' },
+                      { id: 'engineering', label: 'Mühendislik (Engineering)' },
+                    ],
+                  },
+                ] as Array<{
+                  attrId: AttributeId;
+                  name: string;
+                  skills: Array<{ id: BannerlordSkillId; label: string }>;
+                }>
+              ).map((group) => {
+                const attrVal = campaign.attributes?.[group.attrId] ?? 4;
+                return (
+                  <div
+                    key={group.attrId}
+                    className="p-3 rounded bg-[#181510] border border-[#c6a15b]/25 space-y-2"
+                  >
+                    <div className="flex items-center justify-between border-b border-[#c6a15b]/20 pb-1.5">
+                      <span className="font-bold text-[#fef08a]">
+                        {group.name}: <span className="text-[#34d399] font-mono">{attrVal}</span>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={(campaign.freeAttributePoints ?? 0) <= 0 || attrVal >= 10}
+                        onClick={() => {
+                          if (!onAllocateAttribute) return;
+                          const err = onAllocateAttribute(group.attrId);
+                          setHudFeedback(
+                            err || `✨ ${group.name} niteliği +1 artırıldı!`,
+                          );
+                        }}
+                        className="px-2 py-0.5 rounded text-[11px] font-bold bg-[#15803d] hover:bg-[#16a34a] text-white disabled:opacity-35"
+                      >
+                        + Nitelik Ver
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      {group.skills.map((sk) => {
+                        const skData = campaign.skills?.[sk.id] ?? { level: 60, focus: 2 };
+                        const limit = calculateLearningLimit(attrVal, skData.focus);
+                        return (
+                          <div
+                            key={sk.id}
+                            className="p-2 rounded bg-[#120f0b] border border-[#c6a15b]/15 flex flex-col justify-between gap-1"
+                          >
+                            <div>
+                              <div className="font-semibold text-[#f8f0df] text-[11px]">
+                                {sk.label}
+                              </div>
+                              <div className="font-mono-tabular text-[#fbbf24] font-bold">
+                                Sv. {skData.level}{' '}
+                                <span className="text-[10px] text-[#94a3b8]">/ Sınır {limit}</span>
+                              </div>
+                              <div className="text-[10px] text-[#34d399] tracking-widest">
+                                {'●'.repeat(skData.focus)}
+                                {'○'.repeat(Math.max(0, 5 - skData.focus))}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={(campaign.freeFocusPoints ?? 0) <= 0 || skData.focus >= 5}
+                              onClick={() => {
+                                if (!onAllocateFocus) return;
+                                const err = onAllocateFocus(sk.id);
+                                setHudFeedback(
+                                  err || `🔥 ${sk.label} becerisine +1 Odak Puanı (Focus) verildi!`,
+                                );
+                              }}
+                              className="w-full py-0.5 rounded text-[10px] font-bold bg-[#b45309] hover:bg-[#d97706] text-white disabled:opacity-35"
+                            >
+                              + Odak ({skData.focus}/5)
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Expandable Inventory & 12-Slot Equipment Drawer */}
+        {subMode === 'overworld' && activeTab === 'inventory' && !dockCollapsed && (
+          <div className="hud-panel rounded-lg p-4 w-full max-w-5xl pointer-events-auto max-h-[70vh] overflow-y-auto">
+            <div className="flex flex-wrap items-center justify-between border-b border-[#c6a15b]/25 pb-2 mb-3 gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-[#fef08a]">
+                  🎒 Envanter ve 12 Ekipman Slotu ({outfitMode === 'BATTLE' ? '⚔️ Savaş Donanımı' : '👘 Sivil Kıyafet Seti'})
+                </h3>
+                <p className="text-xs text-[#b5a890]">
+                  Taşıma Kapasitesi: 138 / {totalTroops * 10 + 300} kg · Hazine: {campaign.gold} Dinar
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {onOpenMarketModal && (
+                  <button
+                    type="button"
+                    onClick={onOpenMarketModal}
+                    className="px-3 py-1 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#f59e0b]/40 flex items-center gap-1.5 shadow"
+                  >
+                    <span>⚖️</span>
+                    <span>Bannerlord Ticaret & Envanter Pazarı</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setOutfitMode((prev) => (prev === 'BATTLE' ? 'CIVILIAN' : 'BATTLE'))
+                  }
+                  className="px-2.5 py-1 rounded text-xs font-bold bg-[#26211a] hover:bg-[#362f25] text-[#fde68a] border border-[#c6a15b]/40"
+                >
+                  {outfitMode === 'BATTLE' ? '👘 Sivil Sete Geç' : '⚔️ Savaş Setine Geç'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('none')}
+                  className="text-xs text-[#c6a15b] hover:underline whitespace-nowrap shrink-0"
+                >
+                  Kapat [I]
+                </button>
+              </div>
+            </div>
+
+            {hudFeedback && (
+              <div className="mb-3 px-3 py-1.5 rounded bg-[#262015] border border-[#f59e0b]/40 text-xs text-[#fde68a]">
+                {hudFeedback}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
+              {/* Left & Center: 12 Equipped Slots */}
+              <div className="lg:col-span-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {(
+                  [
+                    { slot: 'HEAD', label: '🪖 Başlık (Head)' },
+                    { slot: 'SHOULDER', label: '🧣 Omuzluk (Shoulder)' },
+                    { slot: 'BODY', label: '🥋 Gövde Zırhı (Body)' },
+                    { slot: 'GLOVES', label: '🧤 Eldiven (Gloves)' },
+                    { slot: 'LEG', label: '👢 Çizme (Leg)' },
+                    { slot: 'MOUNT', label: '🐎 Savaş Atı (Mount)' },
+                    { slot: 'HARNESS', label: '🛡️ At Zırhı (Harness)' },
+                    { slot: 'BANNER', label: '🦅 Sancak (Banner)' },
+                    { slot: 'WEAPON1', label: '🗡️ Silah Slotu I' },
+                    { slot: 'WEAPON2', label: '🛡️ Silah Slotu II' },
+                    { slot: 'WEAPON3', label: '🔱 Silah Slotu III' },
+                    { slot: 'WEAPON4', label: '🏹 Silah Slotu IV' },
+                  ] as const
+                ).map((eq) => (
+                  <div
+                    key={eq.slot}
+                    className="p-2.5 rounded bg-[#181510] border border-[#c6a15b]/30"
+                  >
+                    <div className="text-[10px] text-[#c6a15b] font-bold">{eq.label}</div>
+                    <div className="text-[#f8f0df] font-semibold mt-0.5 leading-snug">
+                      {campaign.equipment?.[eq.slot] ?? 'Standart Donanım'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Right: Bag & Loot Items */}
+              <div className="p-3 rounded bg-[#14110d] border border-[#c6a15b]/25 space-y-2">
+                <div className="font-bold text-[#fef08a] border-b border-[#c6a15b]/20 pb-1">
+                  Envanter Çantası & Yedek Ganimetler
+                </div>
+                {(campaign.inventoryItems ?? []).map((item) => (
+                  <div
+                    key={item.id}
+                    className="p-2 rounded bg-[#1c1812] border border-[#c6a15b]/20 flex items-center justify-between gap-2"
+                  >
+                    <div>
+                      <div className="font-semibold text-[#f8f0df]">{item.name}</div>
+                      <div className="text-[10px] text-[#34d399]">{item.statBonus}</div>
+                      <div className="text-[10px] text-[#a89b84]">
+                        Değer: {item.value} D · Ağırlık: {item.weight} kg
+                      </div>
+                    </div>
+                    {item.slot !== 'TRADE' && onEquipItem && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const err = onEquipItem(item.id);
+                          setHudFeedback(
+                            err || `🛡️ "${item.name}" kuşanıldı!`,
+                          );
+                        }}
+                        className="px-2.5 py-1 rounded text-[11px] font-bold bg-[#b45309] hover:bg-[#d97706] text-white shrink-0"
+                      >
+                        Kuşan
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -791,6 +1170,18 @@ export const GameHud: React.FC<GameHudProps> = ({
 
         {/* AUTHENTIC BANNERLORD 3-PIECE BOTTOM RIM HUD (Matching bottom of Image 2, 3, and 4!) */}
         <div className="w-full pointer-events-none flex flex-col items-center">
+          {subMode === 'overworld' &&
+            (mapTelemetry.followingLordName || mapTelemetry.targetSettlementName) && (
+              <div
+                data-testid="active-march-banner"
+                className="mb-1 px-3 py-0.5 rounded-full bg-[#181510]/90 border border-[#f59e0b]/60 text-[11px] font-semibold text-[#fde68a] shadow-lg"
+              >
+                {mapTelemetry.followingLordName
+                  ? `Kesintisiz Takip: ${mapTelemetry.followingLordName} (Görüş Menzilinde)`
+                  : `Sefer Hedefi: ${mapTelemetry.targetSettlementName} (Varışta Otomatik Giriş)`}
+              </div>
+            )}
+
           {subMode === 'overworld' && campaignTimeScale === 0 && (
             <div className="mb-1 font-display font-extrabold text-base tracking-[0.18em] text-[#f8f0df] hud-stroke uppercase select-none">
               PAUSED
@@ -805,14 +1196,33 @@ export const GameHud: React.FC<GameHudProps> = ({
                   <div className="hud-panel rounded-t-xl rounded-bl-lg px-3 py-2 flex items-center gap-1.5 border-t-2 border-t-[#c6a15b]">
                     <button
                       type="button"
-                      onClick={() => setActiveTab(activeTab === 'atlas' ? 'none' : 'atlas')}
+                      onClick={() =>
+                        setActiveTab(activeTab === 'character' ? 'none' : 'character')
+                      }
                       className={`px-2.5 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap ${
-                        activeTab === 'atlas'
+                        activeTab === 'character'
                           ? 'bg-[#b45309] text-white'
                           : 'bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]'
                       }`}
                     >
-                      Kıta Atlası ({campaign.settlements.length})
+                      Karakter [C]
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onOpenMarketModal) {
+                          onOpenMarketModal();
+                        } else {
+                          setActiveTab(activeTab === 'inventory' ? 'none' : 'inventory');
+                        }
+                      }}
+                      className={`px-2.5 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap ${
+                        activeTab === 'inventory'
+                          ? 'bg-[#b45309] text-white'
+                          : 'bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]'
+                      }`}
+                    >
+                      Envanter & Pazar [I]
                     </button>
                     <button
                       type="button"
@@ -827,6 +1237,17 @@ export const GameHud: React.FC<GameHudProps> = ({
                     </button>
                     <button
                       type="button"
+                      onClick={() => setActiveTab(activeTab === 'atlas' ? 'none' : 'atlas')}
+                      className={`px-2.5 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap ${
+                        activeTab === 'atlas'
+                          ? 'bg-[#b45309] text-white'
+                          : 'bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]'
+                      }`}
+                    >
+                      Kıta Atlası ({campaign.settlements.length})
+                    </button>
+                    <button
+                      type="button"
                       onClick={() =>
                         setActiveTab(activeTab === 'chronicle' ? 'none' : 'chronicle')
                       }
@@ -838,10 +1259,20 @@ export const GameHud: React.FC<GameHudProps> = ({
                     >
                       Vakanüvis
                     </button>
+                    {onOpenCharacterArena && (
+                      <button
+                        type="button"
+                        onClick={onOpenCharacterArena}
+                        className="px-3 py-1.5 rounded text-xs font-bold bg-[#991b1b] hover:bg-[#b91c1c] text-white border border-[#f87171]/40 transition-colors whitespace-nowrap flex items-center gap-1 shadow"
+                      >
+                        <span>⚔️</span>
+                        <span>Karakter & Savaş Arenası</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={onStartQuickBattle}
-                      className="px-3 py-1.5 rounded text-xs font-bold bg-[#991b1b] hover:bg-[#b91c1c] text-white border border-[#f87171]/40 transition-colors whitespace-nowrap"
+                      className="px-3 py-1.5 rounded text-xs font-bold bg-[#7f1d1d] hover:bg-[#991b1b] text-white border border-[#f87171]/40 transition-colors whitespace-nowrap"
                     >
                       Meydan Savaşı
                     </button>
@@ -903,6 +1334,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                       <span>Erzak: {campaign.food}</span>
                       <span>Moral: {campaign.morale}</span>
                       <span>Hız: {mapTelemetry.partySpeed}</span>
+                      <span>Görüş: {mapTelemetry.spottingRange ?? 140}m</span>
                       <span>Maaş: {dailyWage}</span>
                     </div>
                   </div>

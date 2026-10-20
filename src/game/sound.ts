@@ -177,6 +177,31 @@ class SoundManager {
       osc.stop(now + idx * 0.18 + 0.38);
     });
   }
+
+  public playSwordSwoosh() {
+    this.playSwordSwing();
+  }
+
+  public playShieldHit() {
+    this.playHeavyHit(true);
+  }
+
+  public playArrowFly() {
+    this.playBowShot();
+  }
+
+  public playClang() {
+    this.playHeavyHit(true);
+  }
+
+  public playCoin() {
+    this.playCoinChime();
+  }
+
+  public playHit() {
+    this.playHeavyHit(false);
+  }
 }
 
 export const sound = new SoundManager();
+

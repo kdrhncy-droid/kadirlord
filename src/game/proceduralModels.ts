@@ -3,22 +3,25 @@ import {
   CONTINENTAL_BRIDGES,
   MAP_HEIGHT,
   MAP_WIDTH,
+  SETTLEMENT_TERRACES,
   distanceToNearestRoad,
   distanceToRiverNetwork,
+  fbm2D,
   getForestMaskAt,
   getTerrainSlopeAndColorAt,
   groundHeightAt,
+  valueNoise2D,
 } from './mapGen';
 
 export { groundHeightAt };
 
-// High-detail procedural tileable textures (Bump Map + World Topographic Albedo for 2400x1800 Continent)
+// High-detail procedural tileable textures (Macro Topographic Albedo + Micro-Detail Splat Texture + Bump Map)
 export function createTerrainTextures(maxAnisotropy: number) {
   const isHeadless =
     typeof navigator !== 'undefined' &&
     (navigator.webdriver || /HeadlessChrome/i.test(navigator.userAgent));
-  const texW = isHeadless ? 960 : 1600;
-  const texH = isHeadless ? 720 : 1200;
+  const texW = isHeadless ? 768 : 1440;
+  const texH = isHeadless ? 576 : 1080;
   const albedoCanvas = document.createElement('canvas');
   albedoCanvas.width = texW;
   albedoCanvas.height = texH;
@@ -35,11 +38,11 @@ export function createTerrainTextures(maxAnisotropy: number) {
       const wx = (px / (texW - 1)) * MAP_WIDTH - halfW;
       const info = getTerrainSlopeAndColorAt(wx, wz);
 
-      const grain = (((px * 73) ^ (py * 139)) & 11) - 5;
+      // Clean, smooth macro topographic color (NO coarse texel XOR grain that looks pixelated up close!)
       const idx = (py * texW + px) * 4;
-      data[idx] = Math.max(8, Math.min(255, Math.round(info.r + grain)));
-      data[idx + 1] = Math.max(8, Math.min(255, Math.round(info.g + grain)));
-      data[idx + 2] = Math.max(8, Math.min(255, Math.round(info.b + grain)));
+      data[idx] = Math.max(8, Math.min(255, Math.round(info.r)));
+      data[idx + 1] = Math.max(8, Math.min(255, Math.round(info.g)));
+      data[idx + 2] = Math.max(8, Math.min(255, Math.round(info.b)));
       data[idx + 3] = 255;
     }
   }
@@ -48,30 +51,110 @@ export function createTerrainTextures(maxAnisotropy: number) {
   const albedoTex = new THREE.CanvasTexture(albedoCanvas);
   albedoTex.colorSpace = THREE.SRGBColorSpace;
   albedoTex.anisotropy = maxAnisotropy;
+  albedoTex.minFilter = THREE.LinearMipmapLinearFilter;
+  albedoTex.magFilter = THREE.LinearFilter;
+  albedoTex.generateMipmaps = true;
+
+  // High-frequency seamless Micro-Detail & Bump Canvas (512x512):
+  // - R channel: Organic grass blades & soil clumps
+  // - G channel: Sharp mountain rock strata & cliff fissures
+  // - B channel: Fine pebbles, sand ripples & micro-relief
+  const detailSize = 512;
+  const detailCanvas = document.createElement('canvas');
+  detailCanvas.width = detailSize;
+  detailCanvas.height = detailSize;
+  const dctx = detailCanvas.getContext('2d')!;
+  const dImg = dctx.createImageData(detailSize, detailSize);
+  const dData = dImg.data;
 
   const bumpCanvas = document.createElement('canvas');
-  bumpCanvas.width = 512;
-  bumpCanvas.height = 512;
+  bumpCanvas.width = detailSize;
+  bumpCanvas.height = detailSize;
   const bctx = bumpCanvas.getContext('2d')!;
-  bctx.fillStyle = '#808080';
-  bctx.fillRect(0, 0, 512, 512);
+  const bImg = bctx.createImageData(detailSize, detailSize);
+  const bData = bImg.data;
 
-  for (let i = 0; i < 14000; i++) {
-    const x = (i * 131) % 512;
-    const y = (i * 79) % 512;
-    const v = i % 3 === 0 ? 220 : i % 3 === 1 ? 45 : 135;
-    bctx.fillStyle = `rgb(${v},${v},${v})`;
-    bctx.fillRect(x, y, (i % 3) + 1, ((i * 2) % 3) + 1);
+  const twoPi = Math.PI * 2;
+  for (let y = 0; y < detailSize; y++) {
+    const ny = y / detailSize;
+    const radY = ny * twoPi;
+    for (let x = 0; x < detailSize; x++) {
+      const nx = x / detailSize;
+      const radX = nx * twoPi;
+
+      // Seamless tileable periodic coordinates
+      const sx = Math.cos(radX) * 6.0 + Math.sin(radX) * 6.0;
+      const sy = Math.cos(radY) * 6.0 + Math.sin(radY) * 6.0;
+
+      // 1. Grass & soil turf multi-octave pattern (R) - Full [8..248] dynamic range for crisp close-up contrast
+      const turf1 = Math.sin(radX * 5 + Math.cos(radY * 4) * 1.9) * Math.cos(radY * 5 - Math.sin(radX * 5) * 1.9);
+      const turf2 = Math.sin(radX * 13 + radY * 11 + turf1 * 2.4) * 0.55 + Math.cos(radX * 23 - radY * 19) * 0.45;
+      const turf3 = Math.sin(radX * 37 - radY * 29 + turf2 * 1.8);
+      const fineHash = (((x * 131 + y * 197) ^ (x * 73 - y * 89)) & 127) / 127.0 - 0.5;
+      const grassSoilVal = Math.max(
+        6,
+        Math.min(250, Math.round(128 + turf1 * 56 + turf2 * 48 + turf3 * 28 + fineHash * 42)),
+      );
+
+      // 2. Sharp ridged rock strata & cliff fractures (G) - Crisp chiseled ridge creases
+      const strataWave = Math.sin(radY * 9 + Math.sin(radX * 4) * 2.6 + turf1 * 1.5);
+      const ridgeCrease1 = 1.0 - Math.abs(Math.sin(radX * 11 - radY * 8 + strataWave * 1.8)) * 2.0;
+      const ridgeCrease2 = 1.0 - Math.abs(Math.cos(radX * 23 + radY * 17 - strataWave * 1.4)) * 2.0;
+      const rockVal = Math.max(
+        4,
+        Math.min(
+          252,
+          Math.round(128 + strataWave * 52 + ridgeCrease1 * 54 + ridgeCrease2 * 36 + fineHash * 30),
+        ),
+      );
+
+      // 3. Fine micro-pebbles, blades & sand grain (B)
+      const pebble = Math.sin(radX * 29 + sx) * Math.cos(radY * 29 + sy);
+      const grain = Math.cos(radX * 53 - radY * 47 + pebble * 2.0);
+      const pebbleVal = Math.max(
+        6,
+        Math.min(250, Math.round(128 + pebble * 58 + grain * 44 + fineHash * 52)),
+      );
+
+      const idx = (y * detailSize + x) * 4;
+      dData[idx] = grassSoilVal;
+      dData[idx + 1] = rockVal;
+      dData[idx + 2] = pebbleVal;
+      dData[idx + 3] = 255;
+
+      const bumpVal = Math.max(
+        8,
+        Math.min(248, Math.round(grassSoilVal * 0.42 + rockVal * 0.38 + pebbleVal * 0.2)),
+      );
+      bData[idx] = bumpVal;
+      bData[idx + 1] = bumpVal;
+      bData[idx + 2] = bumpVal;
+      bData[idx + 3] = 255;
+    }
   }
+  dctx.putImageData(dImg, 0, 0);
+  bctx.putImageData(bImg, 0, 0);
+
+  const detailTex = new THREE.CanvasTexture(detailCanvas);
+  detailTex.colorSpace = THREE.NoColorSpace;
+  detailTex.wrapS = THREE.RepeatWrapping;
+  detailTex.wrapT = THREE.RepeatWrapping;
+  detailTex.anisotropy = maxAnisotropy;
+  detailTex.minFilter = THREE.LinearMipmapLinearFilter;
+  detailTex.magFilter = THREE.LinearFilter;
+  detailTex.generateMipmaps = true;
 
   const bumpTex = new THREE.CanvasTexture(bumpCanvas);
   bumpTex.colorSpace = THREE.NoColorSpace;
   bumpTex.wrapS = THREE.RepeatWrapping;
   bumpTex.wrapT = THREE.RepeatWrapping;
-  bumpTex.repeat.set(96, 72);
+  bumpTex.repeat.set(280, 210);
   bumpTex.anisotropy = maxAnisotropy;
+  bumpTex.minFilter = THREE.LinearMipmapLinearFilter;
+  bumpTex.magFilter = THREE.LinearFilter;
+  bumpTex.generateMipmaps = true;
 
-  return { albedoTex, bumpTex };
+  return { albedoTex, bumpTex, detailTex };
 }
 
 export function createStoneTextures(maxAnisotropy: number) {
@@ -107,37 +190,131 @@ export function createStoneTextures(maxAnisotropy: number) {
   return stoneTex;
 }
 
-// High-Resolution Continental Terrain Mesh spanning 2400x1800 World Units (Zero Void Borders)
+// Non-uniform coordinate warp so 78% of terrain triangles are packed into the playable Calradia continent!
+function warpPlayableAxis(norm: number, halfSpan: number, coreLimit: number): number {
+  const s = norm < 0 ? -1 : 1;
+  const a = Math.abs(norm);
+  const split = 0.78;
+  if (a <= split) {
+    return s * (a / split) * coreLimit;
+  }
+  const outerT = (a - split) / (1 - split);
+  return s * (coreLimit + outerT * outerT * (halfSpan - coreLimit));
+}
+
+// High-Resolution Continental Terrain Mesh with Multi-Scale Close-Up Directional Relief Shader
 export function createContinentalTerrainMesh(
   albedoTex: THREE.CanvasTexture,
   bumpTex: THREE.CanvasTexture,
+  detailTex?: THREE.CanvasTexture,
 ): THREE.Mesh {
   const isHeadless =
     typeof navigator !== 'undefined' &&
     (navigator.webdriver || /HeadlessChrome/i.test(navigator.userAgent));
-  const segX = isHeadless ? 260 : 360;
-  const segZ = isHeadless ? 195 : 270;
+  const segX = isHeadless ? 300 : 460;
+  const segZ = isHeadless ? 225 : 345;
   const geo = new THREE.PlaneGeometry(MAP_WIDTH, MAP_HEIGHT, segX, segZ);
   geo.rotateX(-Math.PI / 2);
 
+  const halfW = MAP_WIDTH / 2;
+  const halfH = MAP_HEIGHT / 2;
   const posAttr = geo.attributes.position;
+  const uvAttr = geo.attributes.uv;
+
   for (let i = 0; i < posAttr.count; i++) {
-    const vx = posAttr.getX(i);
-    const vz = posAttr.getZ(i);
-    // Clamp underwater mesh vertices to a flat water plane (-0.25) so the high-res albedoTex renders razor-sharp coastlines & rivers without triangle slicing!
+    const rawX = posAttr.getX(i);
+    const rawZ = posAttr.getZ(i);
+    const vx = warpPlayableAxis(rawX / halfW, halfW, 510);
+    const vz = warpPlayableAxis(rawZ / halfH, halfH, 350);
+
+    posAttr.setX(i, vx);
+    posAttr.setZ(i, vz);
+    // Keep exact UV mapping aligned with world coordinates so macro albedoTex matches vertex positions 1:1
+    uvAttr.setXY(i, (vx + halfW) / MAP_WIDTH, 1.0 - (vz + halfH) / MAP_HEIGHT);
+
+    // Clamp underwater mesh vertices to a flat water plane (-0.25) so coastlines & rivers never slice triangles
     posAttr.setY(i, Math.max(-0.25, groundHeightAt(vx, vz)));
   }
 
+  posAttr.needsUpdate = true;
+  uvAttr.needsUpdate = true;
   geo.computeVertexNormals();
 
   const mat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     map: albedoTex,
     bumpMap: bumpTex,
-    bumpScale: 0.55,
-    roughness: 0.9,
+    bumpScale: 1.15,
+    roughness: 0.87,
     metalness: 0.02,
   });
+
+  if (detailTex) {
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uDetailMap = { value: detailTex };
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <map_pars_fragment>',
+        `#include <map_pars_fragment>
+        uniform sampler2D uDetailMap;`,
+      );
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+        #ifdef USE_MAP
+          // Reconstruct exact world XZ in meters from continental UV
+          vec2 worldXZ = (vMapUv - 0.5) * vec2(2400.0, 1800.0);
+
+          // 4 rotated multi-scale world-space frequencies (22m patches -> 6m turf -> 1.8m clumps -> 0.55m close-up grain)
+          vec2 uvPatch = worldXZ * 0.045;
+          vec2 uvMeso = vec2(
+            worldXZ.x * 0.15 - worldXZ.y * 0.09,
+            worldXZ.x * 0.09 + worldXZ.y * 0.15
+          );
+          vec2 uvMicro = vec2(
+            worldXZ.x * 0.48 + worldXZ.y * 0.31,
+            -worldXZ.x * 0.31 + worldXZ.y * 0.48
+          );
+          vec2 uvUltra = worldXZ * 1.55;
+
+          vec3 dPatch = texture2D(uDetailMap, uvPatch).rgb;
+          vec3 dMeso = texture2D(uDetailMap, uvMeso).rgb;
+          vec3 dMicro = texture2D(uDetailMap, uvMicro).rgb;
+          vec3 dUltra = texture2D(uDetailMap, uvUltra).rgb;
+
+          // Directional micro-relief self-shadowing sample along NW sun vector
+          vec3 dMesoSun = texture2D(uDetailMap, uvMeso + vec2(-0.045, -0.045)).rgb;
+          vec3 dMicroSun = texture2D(uDetailMap, uvMicro + vec2(-0.055, -0.055)).rgb;
+
+          // Detect water vs land from macro albedo (water has strong blue dominance over red)
+          float isWater = step(diffuseColor.r * 1.16, diffuseColor.b) * step(diffuseColor.g * 1.03, diffuseColor.b);
+
+          // Grass/soil micro-relief and color splatting on plains & valleys
+          float turfRelief = (dMesoSun.r - dMeso.r) * 0.42 + (dMicroSun.r - dMicro.r) * 0.48;
+          float turfPattern = (dPatch.r - 0.5) * 0.24 + (dMeso.r - 0.5) * 0.34 + (dMicro.b - 0.5) * 0.28 + (dUltra.b - 0.5) * 0.22;
+          vec3 landTint = mix(
+            vec3(0.76, 0.82, 0.68),
+            vec3(1.18, 1.15, 0.94),
+            clamp(0.5 + turfPattern + turfRelief * 0.65, 0.0, 1.0)
+          );
+
+          // Craggy rock strata & cliff fissure sharpness on mountain slopes and rocky highlands
+          float isRockOrMountain = clamp(1.0 - abs(diffuseColor.r - diffuseColor.g) * 5.5, 0.0, 1.0);
+          float rockRelief = (dMesoSun.g - dMeso.g) * 0.58 + (dMicroSun.g - dMicro.g) * 0.62;
+          float rockPattern = (dPatch.g - 0.5) * 0.32 + (dMeso.g - 0.5) * 0.42 + (dMicro.g - 0.5) * 0.38 + (dUltra.b - 0.5) * 0.24;
+          vec3 rockTint = mix(
+            vec3(0.62, 0.60, 0.57),
+            vec3(1.28, 1.25, 1.18),
+            clamp(0.5 + rockPattern + rockRelief * 0.75, 0.0, 1.0)
+          );
+
+          vec3 finalLandMod = mix(landTint, rockTint, isRockOrMountain * 0.72);
+          vec3 waterMod = vec3(1.0 + (dMicro.b - 0.5) * 0.06);
+
+          diffuseColor.rgb = clamp(diffuseColor.rgb * mix(finalLandMod, waterMod, isWater), 0.02, 1.0);
+        #endif`,
+      );
+    };
+  }
 
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
@@ -145,18 +322,19 @@ export function createContinentalTerrainMesh(
   return mesh;
 }
 
-// Dense Organic Multi-Canopy Forest Groves & Snow-Dusted Pine Taiga across Calradia Continent
+// Dense Organic Multi-Canopy Forest Groves, Tall Pines & Craggy Mountain Outcrop Boulders
 export function createContinentalForestsAndRocksGroup(): THREE.Group {
   const group = new THREE.Group();
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
 
   const treeCoords: Array<{ x: number; y: number; z: number; scale: number; isPine: boolean; isSnowy: boolean }> = [];
+  const rockCoords: Array<{ x: number; y: number; z: number; sx: number; sy: number; sz: number; rotY: number; isSnowy: boolean; isDesert: boolean }> = [];
 
-  for (let i = 0; i < 15000; i++) {
+  for (let i = 0; i < 15500; i++) {
     let tx: number;
     let tz: number;
-    if (i < 3800) {
+    if (i < 4000) {
       // High-density groves around Central Empire (Saneopa/Myzea/Lycaron/Phycaon) & Battania/Vlandia woodlands
       if (i % 2 === 0) {
         tx = -60 + ((i * 43 + ((i * 17) % 23)) % 240);
@@ -165,7 +343,7 @@ export function createContinentalForestsAndRocksGroup(): THREE.Group {
         tx = -450 + ((i * 47 + ((i * 19) % 29)) % 270);
         tz = -240 + ((i * 67 + ((i * 31) % 37)) % 250);
       }
-    } else if (i < 6800) {
+    } else if (i < 7200) {
       // Dense snowy pine taiga on Sturgia Peninsula (Revyl, Varcheg, Balgard, Sibir, Varnovapol, Tyal) and Khuzait Lake shore
       if (i % 2 === 0) {
         tx = -260 + ((i * 53 + ((i * 23) % 31)) % 560);
@@ -185,53 +363,103 @@ export function createContinentalForestsAndRocksGroup(): THREE.Group {
 
     const { dist: rDist, width: rWidth } = distanceToRiverNetwork(tx, tz);
     const roadDist = distanceToNearestRoad(tx, tz);
-    if (rDist < rWidth * 1.35 || roadDist < 2.8) continue;
+    if (rDist < rWidth * 1.45 || roadDist < 3.1) continue;
+
+    // Never spawn tall trees inside settlement terraces
+    let insideSettlement = false;
+    if (tx > -505 && tx < 365 && tz > -325 && tz < 305) {
+      for (let sIdx = 0; sIdx < SETTLEMENT_TERRACES.length; sIdx++) {
+        const st = SETTLEMENT_TERRACES[sIdx];
+        const clearR = st.radius + 2.2;
+        const dx = tx - st.x;
+        if (dx > clearR || dx < -clearR) continue;
+        const dz = tz - st.z;
+        if (dz > clearR || dz < -clearR) continue;
+        if (dx * dx + dz * dz < clearR * clearR) {
+          insideSettlement = true;
+          break;
+        }
+      }
+    }
+    if (insideSettlement) continue;
 
     const info = getTerrainSlopeAndColorAt(tx, tz);
-    if (info.height < 0.42 || info.height > 8.8 || info.slope > 0.56) continue;
+    if (info.height < 0.45 || info.height > 9.0 || info.slope > 0.56) continue;
     if (tz > 145 && i % 7 !== 0) continue; // Sparse oasis palms in southern desert
 
-    const scale = 0.48 + (i % 7) * 0.062;
+    // Significantly taller, majestic tree scale (1.28x to 2.24x, ~2.6x larger than before!)
+    const scale = 1.28 + (i % 7) * 0.16;
     const isSnowy = tz < -170 || (info.height > 5.0 && tz < 35 && tx > -120 && tx < 320);
-    const isPine = isSnowy || tz < -60 || info.height > 3.6;
+    const isPine = isSnowy || tz < -55 || info.height > 3.4 || (tx < -180 && i % 2 === 0);
     treeCoords.push({ x: tx, y: info.height, z: tz, scale, isPine, isSnowy });
+  }
+
+  // Generate angular flat-shaded mountain crag outcrops strictly on high mountain ridges away from settlements
+  for (let r = 0; r < 4000 && rockCoords.length < 1100; r++) {
+    const rx = ((r * 173 + ((r * 31) % 59)) % 1120) - 560;
+    const rz = ((r * 211 + ((r * 41) % 67)) % 840) - 420;
+    const info = getTerrainSlopeAndColorAt(rx, rz);
+    if (info.height < 6.2 || info.slope < 0.38 || info.height > 19.5) continue;
+
+    let nearSettlement = false;
+    for (let sIdx = 0; sIdx < SETTLEMENT_TERRACES.length; sIdx++) {
+      const st = SETTLEMENT_TERRACES[sIdx];
+      if (Math.abs(rx - st.x) < 22 && Math.abs(rz - st.z) < 22) {
+        nearSettlement = true;
+        break;
+      }
+    }
+    if (nearSettlement) continue;
+
+    const baseS = 0.55 + (r % 5) * 0.18;
+    rockCoords.push({
+      x: rx,
+      y: info.height - 0.15,
+      z: rz,
+      sx: baseS * (1.1 + (r % 3) * 0.25),
+      sy: baseS * (0.85 + (r % 4) * 0.35),
+      sz: baseS * (1.0 + ((r + 1) % 3) * 0.22),
+      rotY: (r * 1.17) % (Math.PI * 2),
+      isSnowy: rz < -175 || (info.height > 8.2 && rz < -25),
+      isDesert: rz > 130 || rx > 240,
+    });
   }
 
   const count = treeCoords.length;
 
-  const trunkGeo = new THREE.CylinderGeometry(0.1, 0.16, 0.8, 5);
+  // Taller, sturdy tree trunks
+  const trunkGeo = new THREE.CylinderGeometry(0.12, 0.21, 1.35, 6);
   const trunkMat = new THREE.MeshStandardMaterial({
-    color: 0x261a10,
+    color: 0x362314,
     roughness: 0.95,
   });
   const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, count);
 
-  const lowerCrownGeo = new THREE.DodecahedronGeometry(0.92, 1);
-  lowerCrownGeo.scale(1.04, 0.82, 1.04);
+  const lowerCrownGeo = new THREE.ConeGeometry(0.98, 1.85, 7);
   const crownMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
-    roughness: 0.88,
+    roughness: 0.86,
     metalness: 0.02,
   });
   const lowerCrownInst = new THREE.InstancedMesh(lowerCrownGeo, crownMat, count);
   lowerCrownInst.castShadow = true;
   lowerCrownInst.receiveShadow = true;
 
-  const upperCrownGeo = new THREE.DodecahedronGeometry(0.65, 1);
-  upperCrownGeo.scale(1.0, 0.85, 1.0);
+  const upperCrownGeo = new THREE.ConeGeometry(0.74, 1.65, 7);
   const upperCrownInst = new THREE.InstancedMesh(upperCrownGeo, crownMat, count);
+  upperCrownInst.castShadow = true;
 
   const deepWoodlandPalette = [
-    0x243312, // deep olive forest
-    0x2f4217, // warm sun-lit moss green
-    0x1b290d, // dark woodland pine
-    0x3b4f1d, // golden-olive leaf
-    0x283814, // rich cypress green
-    0x465922, // dry autumn-olive
+    0x273814, // deep olive forest
+    0x33471a, // warm sun-lit moss green
+    0x1e2e0f, // dark woodland pine
+    0x3e5420, // golden-olive leaf
+    0x2b3d16, // rich cypress green
+    0x495e25, // dry autumn-olive
   ];
 
   const snowyPinePalette = [
-    0x4a6158, // frosted slate pine (matching Image 2 & 3!)
+    0x4a6158, // frosted slate pine
     0x5c736b, // snow-dusted spruce
     0x3b5249, // deep nordic fir
     0x6e857e, // heavy snow-frosted pine tip
@@ -239,40 +467,46 @@ export function createContinentalForestsAndRocksGroup(): THREE.Group {
 
   for (let i = 0; i < count; i++) {
     const t = treeCoords[i];
-    dummy.position.set(t.x, t.y + 0.28 * t.scale, t.z);
+    dummy.position.set(t.x, t.y + 0.58 * t.scale, t.z);
     dummy.rotation.set(0, (i * 1.3) % Math.PI, 0);
     dummy.scale.setScalar(t.scale);
     dummy.updateMatrix();
     trunkInst.setMatrixAt(i, dummy.matrix);
 
-    dummy.position.set(t.x, t.y + 0.88 * t.scale, t.z);
-    dummy.rotation.set((i % 3) * 0.1, (i * 2.1) % Math.PI, 0);
+    // Tall lower canopy tier
+    dummy.position.set(t.x, t.y + 1.48 * t.scale, t.z);
+    dummy.rotation.set((i % 3) * 0.05, (i * 2.1) % Math.PI, 0);
     dummy.scale.set(
-      t.scale * (t.isPine ? 0.78 : 1.1),
-      t.scale * (t.isPine ? 1.32 : 0.9),
-      t.scale * (t.isPine ? 0.78 : 1.1),
+      t.scale * (t.isPine ? 0.88 : 1.18),
+      t.scale * (t.isPine ? 1.38 : 1.05),
+      t.scale * (t.isPine ? 0.88 : 1.18),
     );
     dummy.updateMatrix();
     lowerCrownInst.setMatrixAt(i, dummy.matrix);
 
+    // Tall upper peak canopy tier
     dummy.position.set(
-      t.x + Math.sin(i) * 0.12 * t.scale,
-      t.y + 1.42 * t.scale,
-      t.z + Math.cos(i) * 0.12 * t.scale,
+      t.x + Math.sin(i) * 0.08 * t.scale,
+      t.y + 2.38 * t.scale,
+      t.z + Math.cos(i) * 0.08 * t.scale,
     );
-    dummy.scale.setScalar(t.scale * 0.85);
+    dummy.scale.set(
+      t.scale * (t.isPine ? 0.72 : 0.96),
+      t.scale * (t.isPine ? 1.32 : 0.95),
+      t.scale * (t.isPine ? 0.72 : 0.96),
+    );
     dummy.updateMatrix();
     upperCrownInst.setMatrixAt(i, dummy.matrix);
 
     if (t.isSnowy) {
       color.setHex(snowyPinePalette[i % snowyPinePalette.length]);
       lowerCrownInst.setColorAt(i, color);
-      color.setHex(0x8fa39d); // frosted snow cap on upper crown
+      color.setHex(0x9ab0aa);
       upperCrownInst.setColorAt(i, color);
     } else {
       color.setHex(deepWoodlandPalette[i % deepWoodlandPalette.length]);
       lowerCrownInst.setColorAt(i, color);
-      color.offsetHSL(0, 0, 0.035);
+      color.offsetHSL(0, 0.02, 0.045);
       upperCrownInst.setColorAt(i, color);
     }
   }
@@ -286,6 +520,41 @@ export function createContinentalForestsAndRocksGroup(): THREE.Group {
   group.add(trunkInst);
   group.add(lowerCrownInst);
   group.add(upperCrownInst);
+
+  // Chiseled Flat-Shaded Mountain Crag Outcrops (strictly on high ridges)
+  if (rockCoords.length > 0) {
+    const rockGeo = new THREE.DodecahedronGeometry(0.95, 0);
+    const rockMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.94,
+      metalness: 0.04,
+      flatShading: true,
+    });
+    const rockInst = new THREE.InstancedMesh(rockGeo, rockMat, rockCoords.length);
+    rockInst.castShadow = true;
+    rockInst.receiveShadow = true;
+
+    for (let r = 0; r < rockCoords.length; r++) {
+      const rc = rockCoords[r];
+      dummy.position.set(rc.x, rc.y, rc.z);
+      dummy.rotation.set((r % 5) * 0.24, rc.rotY, ((r + 2) % 5) * 0.22);
+      dummy.scale.set(rc.sx, rc.sy, rc.sz);
+      dummy.updateMatrix();
+      rockInst.setMatrixAt(r, dummy.matrix);
+
+      if (rc.isSnowy) {
+        color.setHex(r % 2 === 0 ? 0x8d97a1 : 0xaab4be);
+      } else if (rc.isDesert) {
+        color.setHex(r % 2 === 0 ? 0x997c5b : 0x82684a);
+      } else {
+        color.setHex(r % 2 === 0 ? 0x666058 : 0x524d46);
+      }
+      rockInst.setColorAt(r, color);
+    }
+    rockInst.instanceMatrix.needsUpdate = true;
+    if (rockInst.instanceColor) rockInst.instanceColor.needsUpdate = true;
+    group.add(rockInst);
+  }
 
   return group;
 }
@@ -355,7 +624,7 @@ export function createContinentalBridgesGroup(stoneTex: THREE.CanvasTexture): TH
   return group;
 }
 
-// Subtle Cobblestone Mileposts along Imperial Roads (replacing the artificial white tubes!)
+// Subtle Cobblestone Mileposts along Imperial Roads
 export function createImperialRoadsGroup(): THREE.Group {
   return new THREE.Group();
 }
@@ -392,90 +661,275 @@ export function createContactShadowDisc(radius = 0.85): THREE.Mesh {
   return disc;
 }
 
-// Authentic Bannerlord Medieval Stone Citadel / Walled Town / Village Miniature Model (like Lycaron in Image 2 & 3!)
+// Shared Settlement Geometry & Material Cache so 211 Towns, Castles, and Villages compile shaders once!
+let cachedSettlementAssets: {
+  stoneMat: THREE.MeshStandardMaterial;
+  darkStoneMat: THREE.MeshStandardMaterial;
+  terracottaRoofMat: THREE.MeshStandardMaterial;
+  slateRoofMat: THREE.MeshStandardMaterial;
+  timberMat: THREE.MeshStandardMaterial;
+  plasterMat: THREE.MeshStandardMaterial;
+  wheatMat: THREE.MeshStandardMaterial;
+  bannerMats: Map<number, THREE.MeshStandardMaterial>;
+  plinthTownGeo: THREE.CylinderGeometry;
+  plinthCastleGeo: THREE.CylinderGeometry;
+  plinthVillageGeo: THREE.CylinderGeometry;
+  acropolisGeo: THREE.CylinderGeometry;
+  keepTownGeo: THREE.BoxGeometry;
+  keepCastleGeo: THREE.BoxGeometry;
+  keepRoofGeo: THREE.ConeGeometry;
+  domeGeo: THREE.SphereGeometry;
+  wallTownGeo: THREE.BoxGeometry;
+  wallCastleGeo: THREE.BoxGeometry;
+  gatehouseGeo: THREE.BoxGeometry;
+  towerTownGeo: THREE.CylinderGeometry;
+  towerCastleGeo: THREE.CylinderGeometry;
+  battlementGeo: THREE.CylinderGeometry;
+  houseGeo: THREE.BoxGeometry;
+  houseRoofGeo: THREE.ConeGeometry;
+  cottageGeo: THREE.BoxGeometry;
+  cottageRoofGeo: THREE.ConeGeometry;
+  wheatFieldGeo: THREE.BoxGeometry;
+  watchTowerGeo: THREE.CylinderGeometry;
+  poleGeo: THREE.CylinderGeometry;
+  flagGeo: THREE.ExtrudeGeometry;
+} | null = null;
+
+function getSettlementAssets(stoneTex: THREE.CanvasTexture) {
+  if (cachedSettlementAssets) return cachedSettlementAssets;
+
+  const flagShape = new THREE.Shape();
+  flagShape.moveTo(0, 0);
+  flagShape.lineTo(1.25, 0.14);
+  flagShape.lineTo(0.95, -0.32);
+  flagShape.lineTo(1.25, -0.75);
+  flagShape.lineTo(0, -0.65);
+  flagShape.closePath();
+
+  cachedSettlementAssets = {
+    stoneMat: new THREE.MeshStandardMaterial({
+      color: 0x948b7e,
+      map: stoneTex,
+      roughness: 0.85,
+      metalness: 0.05,
+    }),
+    darkStoneMat: new THREE.MeshStandardMaterial({
+      color: 0x5c554c,
+      map: stoneTex,
+      roughness: 0.9,
+      metalness: 0.05,
+    }),
+    terracottaRoofMat: new THREE.MeshStandardMaterial({
+      color: 0x7c4734,
+      roughness: 0.76,
+      metalness: 0.06,
+    }),
+    slateRoofMat: new THREE.MeshStandardMaterial({
+      color: 0x47525e,
+      roughness: 0.8,
+      metalness: 0.08,
+    }),
+    timberMat: new THREE.MeshStandardMaterial({
+      color: 0x543b26,
+      roughness: 0.9,
+      metalness: 0.04,
+    }),
+    plasterMat: new THREE.MeshStandardMaterial({
+      color: 0xb8ab96,
+      roughness: 0.88,
+      metalness: 0.02,
+    }),
+    wheatMat: new THREE.MeshStandardMaterial({
+      color: 0xa68b3c,
+      roughness: 0.92,
+      metalness: 0.01,
+    }),
+    bannerMats: new Map(),
+    plinthTownGeo: new THREE.CylinderGeometry(5.1, 5.8, 0.65, 10),
+    plinthCastleGeo: new THREE.CylinderGeometry(3.2, 3.8, 0.85, 8),
+    plinthVillageGeo: new THREE.CylinderGeometry(2.5, 3.0, 0.45, 8),
+    acropolisGeo: new THREE.CylinderGeometry(2.1, 2.5, 0.75, 8),
+    keepTownGeo: new THREE.BoxGeometry(2.2, 3.0, 2.0),
+    keepCastleGeo: new THREE.BoxGeometry(2.1, 3.6, 2.1),
+    keepRoofGeo: new THREE.ConeGeometry(1.65, 1.15, 4),
+    domeGeo: new THREE.SphereGeometry(0.95, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
+    wallTownGeo: new THREE.BoxGeometry(3.35, 1.85, 0.48),
+    wallCastleGeo: new THREE.BoxGeometry(4.6, 2.15, 0.54),
+    gatehouseGeo: new THREE.BoxGeometry(1.75, 2.45, 1.15),
+    towerTownGeo: new THREE.CylinderGeometry(0.58, 0.68, 2.75, 10),
+    towerCastleGeo: new THREE.CylinderGeometry(0.68, 0.78, 3.15, 10),
+    battlementGeo: new THREE.CylinderGeometry(0.76, 0.7, 0.38, 8),
+    houseGeo: new THREE.BoxGeometry(1.05, 1.22, 0.92),
+    houseRoofGeo: new THREE.ConeGeometry(0.82, 0.62, 4),
+    cottageGeo: new THREE.BoxGeometry(1.12, 0.95, 0.9),
+    cottageRoofGeo: new THREE.ConeGeometry(0.88, 0.64, 4),
+    wheatFieldGeo: new THREE.BoxGeometry(1.85, 0.14, 1.35),
+    watchTowerGeo: new THREE.CylinderGeometry(0.44, 0.52, 2.25, 8),
+    poleGeo: new THREE.CylinderGeometry(0.055, 0.055, 2.3, 6),
+    flagGeo: new THREE.ExtrudeGeometry(flagShape, {
+      depth: 0.04,
+      bevelEnabled: false,
+    }),
+  };
+  return cachedSettlementAssets;
+}
+
+// Authentic Bannerlord Grand Fortified Town, Concentric Castle & Rural Village 3D Miniature Models
 export function createSettlementModel(
   type: 'CASTLE' | 'TOWN' | 'VILLAGE',
   factionHex: number,
   stoneTex: THREE.CanvasTexture,
 ): THREE.Group {
   const group = new THREE.Group();
+  const assets = getSettlementAssets(stoneTex);
 
-  const stoneMat = new THREE.MeshStandardMaterial({
-    color: 0x8c8478,
-    map: stoneTex,
-    roughness: 0.86,
-    metalness: 0.05,
-  });
-  const darkStoneMat = new THREE.MeshStandardMaterial({
-    color: 0x5c554c,
-    map: stoneTex,
-    roughness: 0.9,
-    metalness: 0.05,
-  });
-  const terracottaRoofMat = new THREE.MeshStandardMaterial({
-    color: 0x6b4435,
-    roughness: 0.78,
-    metalness: 0.08,
-  });
-  const factionBannerMat = new THREE.MeshStandardMaterial({
-    color: factionHex,
-    roughness: 0.5,
-    metalness: 0.15,
-  });
-  const timberMat = new THREE.MeshStandardMaterial({
-    color: 0x4d3624,
-    roughness: 0.9,
-    metalness: 0.04,
-  });
+  let factionBannerMat = assets.bannerMats.get(factionHex);
+  if (!factionBannerMat) {
+    factionBannerMat = new THREE.MeshStandardMaterial({
+      color: factionHex,
+      roughness: 0.5,
+      metalness: 0.15,
+    });
+    assets.bannerMats.set(factionHex, factionBannerMat);
+  }
 
-  group.add(createContactShadowDisc(type === 'VILLAGE' ? 3.2 : 4.6));
+  group.add(createContactShadowDisc(type === 'TOWN' ? 6.2 : type === 'CASTLE' ? 4.2 : 3.4));
 
-  // Rocky foundation plinth blending into the mountain/hillside
-  const plinthGeo = new THREE.CylinderGeometry(
-    type === 'VILLAGE' ? 2.4 : 3.6,
-    type === 'VILLAGE' ? 2.9 : 4.2,
-    0.7,
-    8,
+  // Rocky foundation plinth leveling settlement onto the terrain terrace
+  const plinth = new THREE.Mesh(
+    type === 'TOWN'
+      ? assets.plinthTownGeo
+      : type === 'CASTLE'
+        ? assets.plinthCastleGeo
+        : assets.plinthVillageGeo,
+    assets.darkStoneMat,
   );
-  const plinth = new THREE.Mesh(plinthGeo, darkStoneMat);
-  plinth.position.y = 0.25;
+  plinth.position.y = type === 'CASTLE' ? 0.35 : 0.22;
   plinth.receiveShadow = true;
   group.add(plinth);
 
-  if (type === 'CASTLE' || type === 'TOWN') {
-    // Central Stone Keep + Clustered Medieval Houses
-    const keepGeo = new THREE.BoxGeometry(1.9, type === 'TOWN' ? 2.6 : 3.1, 1.9);
-    const keep = new THREE.Mesh(keepGeo, stoneMat);
-    keep.position.y = 0.5 + (type === 'TOWN' ? 1.3 : 1.55);
+  if (type === 'TOWN') {
+    // 1. Elevated Inner Citadel Acropolis & Keep
+    const acropolis = new THREE.Mesh(assets.acropolisGeo, assets.darkStoneMat);
+    acropolis.position.set(0, 0.68, -0.85);
+    group.add(acropolis);
+
+    const keep = new THREE.Mesh(assets.keepTownGeo, assets.stoneMat);
+    keep.position.set(0, 2.2, -0.85);
     keep.castShadow = true;
     keep.receiveShadow = true;
     group.add(keep);
 
-    const keepRoof = new THREE.Mesh(new THREE.ConeGeometry(1.5, 0.95, 4), terracottaRoofMat);
-    keepRoof.position.y = type === 'TOWN' ? 3.55 : 4.05;
+    const keepRoof = new THREE.Mesh(assets.keepRoofGeo, assets.terracottaRoofMat);
+    keepRoof.position.set(0, 4.15, -0.85);
     keepRoof.rotation.y = Math.PI / 4;
     group.add(keepRoof);
 
-    // 4 Curtain Walls + 4 Crenelated Round Stone Towers (authentic medieval ring-fortress like Image 2!)
-    const r = type === 'TOWN' ? 2.4 : 2.1;
+    // 2. Grand Civic Forum / Cathedral Dome in central square
+    const civicBase = new THREE.Mesh(assets.houseGeo, assets.plasterMat);
+    civicBase.scale.set(1.45, 1.35, 1.45);
+    civicBase.position.set(1.25, 1.2, 0.55);
+    group.add(civicBase);
+
+    const dome = new THREE.Mesh(assets.domeGeo, assets.terracottaRoofMat);
+    dome.position.set(1.25, 1.92, 0.55);
+    group.add(dome);
+
+    // 3. Expansive Octagonal Outer Curtain Walls & 8 Bastion Towers (r = 4.05m)
+    const wallRadius = 4.05;
+    for (let side = 0; side < 8; side++) {
+      const angle = (side * Math.PI) / 4;
+      const wx = Math.sin(angle) * wallRadius;
+      const wz = Math.cos(angle) * wallRadius;
+
+      const wall = new THREE.Mesh(assets.wallTownGeo, assets.stoneMat);
+      wall.position.set(wx, 1.32, wz);
+      wall.rotation.y = angle;
+      wall.castShadow = true;
+      wall.receiveShadow = true;
+      group.add(wall);
+
+      // Bastion tower at each octagonal vertex
+      const cornerAngle = angle + Math.PI / 8;
+      const tx = Math.sin(cornerAngle) * (wallRadius + 0.25);
+      const tz = Math.cos(cornerAngle) * (wallRadius + 0.25);
+      const tower = new THREE.Mesh(assets.towerTownGeo, assets.stoneMat);
+      tower.position.set(tx, 1.75, tz);
+      tower.castShadow = true;
+      group.add(tower);
+
+      const battlement = new THREE.Mesh(assets.battlementGeo, assets.darkStoneMat);
+      battlement.position.set(tx, 3.18, tz);
+      group.add(battlement);
+    }
+
+    // 4. Grand South Gatehouse (Barbican)
+    const gatehouse = new THREE.Mesh(assets.gatehouseGeo, assets.darkStoneMat);
+    gatehouse.position.set(0, 1.55, wallRadius + 0.22);
+    gatehouse.castShadow = true;
+    group.add(gatehouse);
+
+    // 5. Dense Multi-District Urban Houses (10 varied town buildings inside the walls)
+    const houseLayout: Array<[number, number, number, number, boolean]> = [
+      [-2.1, 0.9, 0.2, 1.15, false],
+      [-1.9, -0.7, -0.15, 1.05, true],
+      [-0.8, 1.85, 0.4, 1.0, false],
+      [0.4, 2.05, -0.1, 1.1, true],
+      [2.15, -0.85, 0.3, 1.18, false],
+      [1.85, 1.85, -0.35, 0.95, false],
+      [-1.25, -2.15, 0.12, 1.08, true],
+      [1.35, -2.15, -0.22, 1.04, false],
+      [-2.45, 0.1, 0.5, 0.92, true],
+      [2.45, 0.35, -0.4, 0.98, false],
+    ];
+    houseLayout.forEach(([hx, hz, rot, hScale, useSlate]) => {
+      const house = new THREE.Mesh(
+        assets.houseGeo,
+        useSlate ? assets.plasterMat : assets.timberMat,
+      );
+      house.scale.set(1, hScale, 1);
+      house.position.set(hx, 0.55 + 0.55 * hScale, hz);
+      house.rotation.y = rot;
+      house.castShadow = true;
+      group.add(house);
+
+      const hRoof = new THREE.Mesh(
+        assets.houseRoofGeo,
+        useSlate ? assets.slateRoofMat : assets.terracottaRoofMat,
+      );
+      hRoof.position.set(hx, 0.55 + 1.15 * hScale + 0.22, hz);
+      hRoof.rotation.y = rot + Math.PI / 4;
+      group.add(hRoof);
+    });
+  } else if (type === 'CASTLE') {
+    // Imposing Concentric Military Fortress on High Stone Crag
+    const keep = new THREE.Mesh(assets.keepCastleGeo, assets.stoneMat);
+    keep.position.set(0, 2.35, -0.2);
+    keep.castShadow = true;
+    keep.receiveShadow = true;
+    group.add(keep);
+
+    const keepRoof = new THREE.Mesh(assets.keepRoofGeo, assets.slateRoofMat);
+    keepRoof.position.set(0, 4.55, -0.2);
+    keepRoof.rotation.y = Math.PI / 4;
+    group.add(keepRoof);
+
+    const r = 2.35;
     const wallPositions: Array<[number, number, number]> = [
       [0, r, 0],
       [0, -r, 0],
       [r, 0, Math.PI / 2],
       [-r, 0, Math.PI / 2],
     ];
-    const wallGeo = new THREE.BoxGeometry(r * 1.95, 1.65, 0.42);
     wallPositions.forEach(([wx, wz, rotY]) => {
-      const wall = new THREE.Mesh(wallGeo, stoneMat);
-      wall.position.set(wx, 1.25, wz);
+      const wall = new THREE.Mesh(assets.wallCastleGeo, assets.stoneMat);
+      wall.position.set(wx, 1.55, wz);
       wall.rotation.y = rotY;
       wall.castShadow = true;
       wall.receiveShadow = true;
       group.add(wall);
     });
 
-    const towerGeo = new THREE.CylinderGeometry(0.58, 0.66, 2.5, 10);
-    const battlementGeo = new THREE.CylinderGeometry(0.66, 0.62, 0.35, 8);
     const offsets = [
       [-r, -r],
       [r, -r],
@@ -483,77 +937,73 @@ export function createSettlementModel(
       [r, r],
     ];
     offsets.forEach(([ox, oz]) => {
-      const tower = new THREE.Mesh(towerGeo, stoneMat);
-      tower.position.set(ox, 1.55, oz);
+      const tower = new THREE.Mesh(assets.towerCastleGeo, assets.stoneMat);
+      tower.position.set(ox, 1.95, oz);
       tower.castShadow = true;
       group.add(tower);
 
-      const battlement = new THREE.Mesh(battlementGeo, darkStoneMat);
-      battlement.position.set(ox, 2.85, oz);
+      const battlement = new THREE.Mesh(assets.battlementGeo, assets.darkStoneMat);
+      battlement.position.set(ox, 3.6, oz);
       group.add(battlement);
     });
 
-    if (type === 'TOWN') {
-      // Extra inner town roofs around the keep
-      [
-        [-1.1, 0.9],
-        [1.1, -0.8],
-        [-0.9, -1.0],
-      ].forEach(([hx, hz]) => {
-        const house = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1.1, 0.85), timberMat);
-        house.position.set(hx, 1.0, hz);
-        group.add(house);
-        const hRoof = new THREE.Mesh(new THREE.ConeGeometry(0.75, 0.55, 4), terracottaRoofMat);
-        hRoof.position.set(hx, 1.8, hz);
-        hRoof.rotation.y = Math.PI / 4;
-        group.add(hRoof);
-      });
-    }
+    const gatehouse = new THREE.Mesh(assets.gatehouseGeo, assets.darkStoneMat);
+    gatehouse.position.set(0, 1.65, r + 0.25);
+    group.add(gatehouse);
   } else {
-    // Medieval Village Cluster: 3 timber cottages + stone watchtower
-    [
-      [-0.8, 0.3, 0.2],
-      [0.7, -0.5, -0.4],
-      [-0.2, -0.9, 0.6],
-    ].forEach(([vx, vz, rot]) => {
-      const cottage = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.95, 0.9), timberMat);
-      cottage.position.set(vx, 0.9, vz);
+    // Authentic Rural Village Cluster: 4 Hearth Cottages + Granary Tower + Golden Farmland Plots
+    const cottages: Array<[number, number, number]> = [
+      [-0.95, 0.45, 0.25],
+      [0.85, -0.55, -0.35],
+      [-0.25, -0.95, 0.55],
+      [0.95, 0.75, 0.15],
+    ];
+    cottages.forEach(([vx, vz, rot]) => {
+      const cottage = new THREE.Mesh(assets.cottageGeo, assets.timberMat);
+      cottage.position.set(vx, 0.85, vz);
       cottage.rotation.y = rot;
       cottage.castShadow = true;
       group.add(cottage);
 
-      const roof = new THREE.Mesh(new THREE.ConeGeometry(0.88, 0.65, 4), terracottaRoofMat);
-      roof.position.set(vx, 1.68, vz);
+      const roof = new THREE.Mesh(assets.cottageRoofGeo, assets.terracottaRoofMat);
+      roof.position.set(vx, 1.58, vz);
       roof.rotation.y = rot + Math.PI / 4;
       group.add(roof);
     });
 
-    const watchTower = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 2.1, 8), stoneMat);
-    watchTower.position.set(1.0, 1.35, 0.8);
+    const watchTower = new THREE.Mesh(assets.watchTowerGeo, assets.stoneMat);
+    watchTower.position.set(-0.95, 1.35, -0.75);
     group.add(watchTower);
+
+    // Cultivated Golden Wheat / Olive Field Strips beside the village
+    const field1 = new THREE.Mesh(assets.wheatFieldGeo, assets.wheatMat);
+    field1.position.set(-1.55, 0.42, 1.35);
+    field1.rotation.y = 0.2;
+    group.add(field1);
+
+    const field2 = new THREE.Mesh(assets.wheatFieldGeo, assets.wheatMat);
+    field2.position.set(1.45, 0.42, -1.45);
+    field2.rotation.y = -0.15;
+    group.add(field2);
   }
 
-  // Subtle Heraldic Flagpole
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.0, 6), timberMat);
-  pole.position.set(0, type === 'VILLAGE' ? 2.6 : 4.3, 0);
+  // Heraldic Flagpole flying the Faction Banner above the Settlement
+  const poleY = type === 'TOWN' ? 4.85 : type === 'CASTLE' ? 5.15 : 2.65;
+  const poleZ = type === 'TOWN' ? -0.85 : type === 'CASTLE' ? -0.2 : -0.75;
+  const poleX = type === 'VILLAGE' ? -0.95 : 0;
+
+  const pole = new THREE.Mesh(assets.poleGeo, assets.timberMat);
+  pole.position.set(poleX, poleY, poleZ);
   group.add(pole);
 
-  const flagShape = new THREE.Shape();
-  flagShape.moveTo(0, 0);
-  flagShape.lineTo(1.1, 0.12);
-  flagShape.lineTo(0.85, -0.3);
-  flagShape.lineTo(1.1, -0.7);
-  flagShape.lineTo(0, -0.6);
-  flagShape.closePath();
-
-  const flagGeo = new THREE.ExtrudeGeometry(flagShape, {
-    depth: 0.04,
-    bevelEnabled: false,
-  });
-  const flag = new THREE.Mesh(flagGeo, factionBannerMat);
-  flag.position.set(0.04, type === 'VILLAGE' ? 3.4 : 5.1, 0);
+  const flag = new THREE.Mesh(assets.flagGeo, factionBannerMat);
+  flag.position.set(poleX + 0.04, poleY + 0.85, poleZ);
   flag.name = 'bannerFlag';
   group.add(flag);
+
+  // Scale settlements so Towns are grand walled cities, Castles are imposing fortresses, and Villages are clear rural estates
+  const modelScale = type === 'TOWN' ? 1.38 : type === 'CASTLE' ? 1.26 : 1.16;
+  group.scale.setScalar(modelScale);
 
   return group;
 }

@@ -1,3 +1,9 @@
+import {
+  SETTLEMENT_TERRACES,
+  distanceToRiverNetwork,
+  groundHeightAt,
+  registerSettlementTerrace,
+} from './mapGen.ts';
 import { snapToNearestLand } from './navigation.ts';
 
 export type FactionId =
@@ -36,6 +42,82 @@ export interface TroopRoster {
   guard: number;
 }
 
+export type BuildingProjectId =
+  | 'FORTIFICATIONS'
+  | 'GRANARY'
+  | 'BARRACKS'
+  | 'FAIRGROUNDS'
+  | 'FORUM'
+  | 'AQUEDUCTS';
+
+export type SettlementDailyDefault = 'FESTIVAL' | 'IRRIGATION' | 'MILITIA' | 'HOUSING';
+
+export type WorkshopTypeId = 'NONE' | 'BREWERY' | 'SMITHY' | 'OLIVE_PRESS' | 'WEAVERY';
+
+export type SiegeEngineType =
+  | 'TREBUCHET'
+  | 'MANGONEL'
+  | 'BALLISTA'
+  | 'BATTERING_RAM'
+  | 'SIEGE_TOWER';
+
+export type AttributeId =
+  | 'VIGOR'
+  | 'CONTROL'
+  | 'ENDURANCE'
+  | 'CUNNING'
+  | 'SOCIAL'
+  | 'INTELLIGENCE';
+
+export type BannerlordSkillId =
+  | 'oneHanded'
+  | 'twoHanded'
+  | 'polearm'
+  | 'bow'
+  | 'crossbow'
+  | 'throwing'
+  | 'riding'
+  | 'athletics'
+  | 'smithing'
+  | 'scouting'
+  | 'tactics'
+  | 'roguery'
+  | 'charm'
+  | 'leadership'
+  | 'trade'
+  | 'steward'
+  | 'medicine'
+  | 'engineering';
+
+export type EquipmentSlotId =
+  | 'HEAD'
+  | 'SHOULDER'
+  | 'BODY'
+  | 'GLOVES'
+  | 'LEG'
+  | 'MOUNT'
+  | 'HARNESS'
+  | 'BANNER'
+  | 'WEAPON1'
+  | 'WEAPON2'
+  | 'WEAPON3'
+  | 'WEAPON4';
+
+export type ClanRoleId = 'QUARTERMASTER' | 'SCOUT' | 'SURGEON' | 'ENGINEER';
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  slot: EquipmentSlotId | 'TRADE';
+  category?: 'WEAPON' | 'SHIELD' | 'ARMOR' | 'FOOD' | 'HORSE' | 'TRADE';
+  value: number;
+  weight: number;
+  statBonus: string;
+  civilianLegal: boolean;
+  icon?: string;
+  tier?: number;
+}
+
 export interface Settlement {
   id: string;
   name: string;
@@ -48,6 +130,32 @@ export interface Settlement {
   recruitPool: TroopRoster;
   foodStock: number;
   description: string;
+  boundSettlementId?: string;
+  boundSettlementName?: string;
+  militia?: number;
+  loyalty?: number;
+  security?: number;
+  wallLevel?: number;
+  primaryProduction?: string;
+  hearths?: number;
+  isRaided?: boolean;
+  buildings?: Record<BuildingProjectId, number>;
+  dailyDefault?: SettlementDailyDefault;
+  workshopType?: WorkshopTypeId;
+  siegeEngines?: SiegeEngineType[];
+  reserveEngines?: SiegeEngineType[];
+  wallHealth?: number;
+}
+
+export function getSettlementArrivalRadius(type: 'TOWN' | 'CASTLE' | 'VILLAGE'): number {
+  switch (type) {
+    case 'TOWN':
+      return 5.2;
+    case 'CASTLE':
+      return 3.8;
+    case 'VILLAGE':
+      return 2.6;
+  }
 }
 
 export interface LordAgent {
@@ -63,17 +171,22 @@ export interface LordAgent {
   targetZ: number;
   armySize: number;
   roster: TroopRoster;
+  wounded?: number;
+  prisoners?: number;
+  morale?: number;
+  foodDays?: number;
   isAtWarWithPlayer: boolean;
   isAlliedWithPlayer: boolean;
   currentAction: string;
   bannerColor: string;
+  persuasionPips?: number;
 }
 
 export interface ChronicleEvent {
   id: string;
   day: number;
   text: string;
-  category: 'WAR' | 'DIPLOMACY' | 'ECONOMY' | 'CONQUEST';
+  category: 'WAR' | 'DIPLOMACY' | 'ECONOMY' | 'CONQUEST' | string;
 }
 
 export interface CampaignState {
@@ -96,6 +209,16 @@ export interface CampaignState {
   settlements: Settlement[];
   lords: LordAgent[];
   chronicle: ChronicleEvent[];
+  characterLevel?: number;
+  freeAttributePoints?: number;
+  freeFocusPoints?: number;
+  attributes?: Record<AttributeId, number>;
+  skills?: Record<BannerlordSkillId, { level: number; focus: number }>;
+  unlockedPerks?: string[];
+  outfitMode?: 'BATTLE' | 'CIVILIAN';
+  equipment?: Record<EquipmentSlotId, string>;
+  inventoryItems?: InventoryItem[];
+  clanRoles?: Record<ClanRoleId, string>;
 }
 
 export const FACTION_INFO: Record<
@@ -343,6 +466,438 @@ export function buyFoodAtSettlement(
   };
 }
 
+export function hireMercenariesAtTavern(
+  state: CampaignState,
+  settlementId: string,
+): { nextState: CampaignState; success: boolean; reason?: string; hiredCount?: number } {
+  const cost = 120;
+  if (state.gold < cost) {
+    return { nextState: state, success: false, reason: 'Yeterli dinarınız yok (120 Dinar gerekli).' };
+  }
+  const s = state.settlements.find((item) => item.id === settlementId);
+  if (!s || s.type !== 'TOWN') {
+    return { nextState: state, success: false, reason: 'Yalnızca büyük şehir meyhanelerinde paralı asker loncası bulunur.' };
+  }
+
+  return {
+    success: true,
+    hiredCount: 4,
+    nextState: {
+      ...state,
+      gold: state.gold - cost,
+      roster: {
+        ...state.roster,
+        cavalry: state.roster.cavalry + 2,
+        archer: state.roster.archer + 2,
+      },
+      morale: Math.min(100, state.morale + 3),
+      chronicle: [
+        {
+          id: `merc-${Date.now()}`,
+          day: state.day,
+          category: 'ECONOMY' as const,
+          text: `${s.name} meyhanesinden 4 kıdemli paralı asker sancağınıza katıldı.`,
+        },
+        ...state.chronicle,
+      ].slice(0, 25),
+    },
+  };
+}
+
+export function ransomPrisonersAtTavern(
+  state: CampaignState,
+  settlementId: string,
+): { nextState: CampaignState; success: boolean; goldGained?: number; reason?: string } {
+  if (state.prisoners <= 0) {
+    return { nextState: state, success: false, reason: 'Fidyeciye teslim edilecek esiriniz yok.' };
+  }
+  const ransomPerPrisoner = 35;
+  const count = state.prisoners;
+  const totalGold = count * ransomPerPrisoner;
+  const s = state.settlements.find((item) => item.id === settlementId);
+
+  return {
+    success: true,
+    goldGained: totalGold,
+    nextState: {
+      ...state,
+      gold: state.gold + totalGold,
+      prisoners: 0,
+      renown: state.renown + 1,
+      chronicle: [
+        {
+          id: `ransom-${Date.now()}`,
+          day: state.day,
+          category: 'ECONOMY' as const,
+          text: `${s?.name || 'Şehir'} fidyecisine ${count} esir teslim edildi (+${totalGold} Dinar).`,
+        },
+        ...state.chronicle,
+      ].slice(0, 25),
+    },
+  };
+}
+
+export function buyTavernRound(
+  state: CampaignState,
+): { nextState: CampaignState; success: boolean; reason?: string } {
+  const cost = 25;
+  if (state.gold < cost) {
+    return { nextState: state, success: false, reason: 'Yeterli dinarınız yok (25 Dinar).' };
+  }
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      gold: state.gold - cost,
+      morale: Math.min(100, state.morale + 8),
+    },
+  };
+}
+
+export function participateInArenaPractice(
+  state: CampaignState,
+  settlementId: string,
+): { nextState: CampaignState; success: boolean; goldEarned: number; renownEarned: number } {
+  const goldEarned = 25;
+  const renownEarned = 2;
+  const s = state.settlements.find((item) => item.id === settlementId);
+
+  return {
+    success: true,
+    goldEarned,
+    renownEarned,
+    nextState: {
+      ...state,
+      gold: state.gold + goldEarned,
+      renown: state.renown + renownEarned,
+      chronicle: [
+        {
+          id: `arena-prac-${Date.now()}`,
+          day: state.day,
+          category: 'WAR' as const,
+          text: `${s?.name || 'Şehir'} arenasında talim dövüşünü kazanıp +${goldEarned} Dinar elde ettiniz.`,
+        },
+        ...state.chronicle,
+      ].slice(0, 25),
+    },
+  };
+}
+
+export function joinArenaTournament(
+  state: CampaignState,
+  settlementId: string,
+): { nextState: CampaignState; success: boolean; victory: boolean; goldEarned: number; renownEarned: number; prizeName: string } {
+  const s = state.settlements.find((item) => item.id === settlementId);
+  const entryFee = 30;
+  if (state.gold < entryFee) {
+    return {
+      nextState: state,
+      success: false,
+      victory: false,
+      goldEarned: 0,
+      renownEarned: 0,
+      prizeName: '',
+    };
+  }
+
+  const partyStrength = calculatePartyStrength(state.roster);
+  const winChance = Math.min(0.85, 0.55 + partyStrength * 0.005);
+  const victory = Math.random() < winChance;
+
+  if (victory) {
+    const goldEarned = 250;
+    const renownEarned = 15;
+    const prizeName = 'Şampiyonun Çelik Kalkanı ve Şeref Miğferi';
+    return {
+      success: true,
+      victory: true,
+      goldEarned,
+      renownEarned,
+      prizeName,
+      nextState: {
+        ...state,
+        gold: state.gold - entryFee + goldEarned,
+        renown: state.renown + renownEarned,
+        morale: Math.min(100, state.morale + 10),
+        chronicle: [
+          {
+            id: `tourney-win-${Date.now()}`,
+            day: state.day,
+            category: 'CONQUEST' as const,
+            text: `${s?.name || 'Şehir'} arenasında büyük turnuva şampiyonu oldunuz! (+${renownEarned} Nam, +${goldEarned} Dinar, ${prizeName})`,
+          },
+          ...state.chronicle,
+        ].slice(0, 25),
+      },
+    };
+  } else {
+    return {
+      success: true,
+      victory: false,
+      goldEarned: 0,
+      renownEarned: 2,
+      prizeName: '',
+      nextState: {
+        ...state,
+        gold: state.gold - entryFee,
+        renown: state.renown + 2,
+        chronicle: [
+          {
+            id: `tourney-loss-${Date.now()}`,
+            day: state.day,
+            category: 'WAR' as const,
+            text: `${s?.name || 'Şehir'} turnuvasının yarı finalinde elendiniz (+2 Nam).`,
+          },
+          ...state.chronicle,
+        ].slice(0, 25),
+      },
+    };
+  }
+}
+
+export function sellSurplusLootAtMarket(
+  state: CampaignState,
+  settlementId: string,
+): { nextState: CampaignState; success: boolean; goldGained: number } {
+  const goldGained = 45;
+  const s = state.settlements.find((item) => item.id === settlementId);
+  return {
+    success: true,
+    goldGained,
+    nextState: {
+      ...state,
+      gold: state.gold + goldGained,
+      chronicle: [
+        {
+          id: `loot-sell-${Date.now()}`,
+          day: state.day,
+          category: 'ECONOMY' as const,
+          text: `${s?.name || 'Yerleşim'} pazarına ganimet ve fazlalıklar satıldı (+${goldGained} Dinar).`,
+        },
+        ...state.chronicle,
+      ].slice(0, 25),
+    },
+  };
+}
+
+export function manageGarrisonTransfer(
+  state: CampaignState,
+  settlementId: string,
+  unitId: UnitTierId,
+  direction: 'deposit' | 'withdraw',
+  amount = 1,
+): { nextState: CampaignState; success: boolean; reason?: string } {
+  const sIdx = state.settlements.findIndex((item) => item.id === settlementId);
+  if (sIdx === -1) return { nextState: state, success: false, reason: 'Yerleşim bulunamadı.' };
+  const s = state.settlements[sIdx];
+
+  if (direction === 'deposit') {
+    if (state.roster[unitId] < amount) {
+      return { nextState: state, success: false, reason: 'Ordunuzda bu birlikten yeterli asker yok.' };
+    }
+    const updatedSettlements = [...state.settlements];
+    updatedSettlements[sIdx] = {
+      ...s,
+      garrison: s.garrison + amount,
+    };
+    return {
+      success: true,
+      nextState: {
+        ...state,
+        roster: {
+          ...state.roster,
+          [unitId]: state.roster[unitId] - amount,
+        },
+        settlements: updatedSettlements,
+      },
+    };
+  } else {
+    if (s.garrison <= 5) {
+      return { nextState: state, success: false, reason: 'Garnizon asgari savunma seviyesinin altına düşemez (en az 5 muhafız).' };
+    }
+    const updatedSettlements = [...state.settlements];
+    updatedSettlements[sIdx] = {
+      ...s,
+      garrison: s.garrison - amount,
+    };
+    return {
+      success: true,
+      nextState: {
+        ...state,
+        roster: {
+          ...state.roster,
+          [unitId]: state.roster[unitId] + amount,
+        },
+        settlements: updatedSettlements,
+      },
+    };
+  }
+}
+
+export function restAndRecoverAtSettlement(
+  state: CampaignState,
+  settlementId: string,
+): { nextState: CampaignState; success: boolean; healedCount: number; message: string } {
+  const s = state.settlements.find((item) => item.id === settlementId);
+  return {
+    success: true,
+    healedCount: 4,
+    message: `${s?.name || 'Yerleşim'} surları altında güvenle dinlenildi. Askerlerinizin morali yükseldi.`,
+    nextState: {
+      ...state,
+      morale: Math.min(100, state.morale + 6),
+      playerHp: Math.min(state.playerMaxHp, state.playerHp + 25),
+    },
+  };
+}
+
+export function raidAndPillageVillage(
+  state: CampaignState,
+  villageId: string,
+): { nextState: CampaignState; success: boolean; goldLoot: number; foodLoot: number; reason?: string } {
+  const vIdx = state.settlements.findIndex((item) => item.id === villageId);
+  if (vIdx === -1) return { nextState: state, success: false, reason: 'Köy bulunamadı.', goldLoot: 0, foodLoot: 0 };
+  const v = state.settlements[vIdx];
+  if (v.type !== 'VILLAGE') {
+    return { nextState: state, success: false, reason: 'Yalnızca köyler doğrudan yağmalanabilir.', goldLoot: 0, foodLoot: 0 };
+  }
+  if (v.isRaided) {
+    return { nextState: state, success: false, reason: 'Bu köy zaten yakın zamanda yağmalanmış ve dumanlar altında.', goldLoot: 0, foodLoot: 0 };
+  }
+
+  const goldLoot = 280;
+  const foodLoot = 16;
+
+  const updatedSettlements = [...state.settlements];
+  updatedSettlements[vIdx] = {
+    ...v,
+    prosperity: Math.max(20, v.prosperity - 80),
+    isRaided: true,
+    foodStock: 2,
+  };
+
+  const villageFaction = v.faction;
+  const updatedLords = state.lords.map((l) => {
+    if (l.faction === villageFaction) {
+      return {
+        ...l,
+        isAtWarWithPlayer: true,
+        relation: Math.max(-100, l.relation - 35),
+      };
+    }
+    return l;
+  });
+
+  return {
+    success: true,
+    goldLoot,
+    foodLoot,
+    nextState: {
+      ...state,
+      gold: state.gold + goldLoot,
+      food: state.food + foodLoot,
+      morale: Math.max(10, state.morale - 4),
+      renown: state.renown + 5,
+      settlements: updatedSettlements,
+      lords: updatedLords,
+      chronicle: [
+        {
+          id: `raid-${Date.now()}`,
+          day: state.day,
+          category: 'WAR' as const,
+          text: `${v.name} köyü yağmalanıp ateşe verildi! (+${goldLoot} Dinar, +${foodLoot} Erzak). ${FACTION_INFO[villageFaction].name} ile savaş durumu başladı!`,
+        },
+        ...state.chronicle,
+      ].slice(0, 25),
+    },
+  };
+}
+
+export function forcePeasantsSupplies(
+  state: CampaignState,
+  villageId: string,
+): { nextState: CampaignState; success: boolean; foodGained: number; reason?: string } {
+  const vIdx = state.settlements.findIndex((item) => item.id === villageId);
+  if (vIdx === -1) return { nextState: state, success: false, reason: 'Köy bulunamadı.', foodGained: 0 };
+  const v = state.settlements[vIdx];
+  if (v.foodStock < 4) {
+    return { nextState: state, success: false, reason: 'Köylülerin verebilecek erzağı kalmamış.', foodGained: 0 };
+  }
+
+  const foodGained = 8;
+  const updatedSettlements = [...state.settlements];
+  updatedSettlements[vIdx] = {
+    ...v,
+    foodStock: Math.max(0, v.foodStock - foodGained),
+    prosperity: Math.max(10, v.prosperity - 15),
+  };
+
+  return {
+    success: true,
+    foodGained,
+    nextState: {
+      ...state,
+      food: state.food + foodGained,
+      morale: Math.min(100, state.morale + 1),
+      settlements: updatedSettlements,
+      chronicle: [
+        {
+          id: `force-supplies-${Date.now()}`,
+          day: state.day,
+          category: 'ECONOMY' as const,
+          text: `${v.name} köylüleri kılıç zoruyla erzak vermeye zorlandı (+${foodGained} Erzak).`,
+        },
+        ...state.chronicle,
+      ].slice(0, 25),
+    },
+  };
+}
+
+export function forcePeasantsRecruits(
+  state: CampaignState,
+  villageId: string,
+): { nextState: CampaignState; success: boolean; recruitsGained: number; reason?: string } {
+  const vIdx = state.settlements.findIndex((item) => item.id === villageId);
+  if (vIdx === -1) return { nextState: state, success: false, reason: 'Köy bulunamadı.', recruitsGained: 0 };
+  const v = state.settlements[vIdx];
+  if (v.recruitPool.militia < 2) {
+    return { nextState: state, success: false, reason: 'Köyde silah altına alınabilecek genç kalmamış.', recruitsGained: 0 };
+  }
+
+  const recruitsGained = 3;
+  const updatedSettlements = [...state.settlements];
+  updatedSettlements[vIdx] = {
+    ...v,
+    recruitPool: {
+      ...v.recruitPool,
+      militia: Math.max(0, v.recruitPool.militia - recruitsGained),
+    },
+    prosperity: Math.max(10, v.prosperity - 12),
+  };
+
+  return {
+    success: true,
+    recruitsGained,
+    nextState: {
+      ...state,
+      roster: {
+        ...state.roster,
+        militia: state.roster.militia + recruitsGained,
+      },
+      settlements: updatedSettlements,
+      chronicle: [
+        {
+          id: `force-recruits-${Date.now()}`,
+          day: state.day,
+          category: 'WAR' as const,
+          text: `${v.name} köyünden ${recruitsGained} köylü zorla sancağınıza katıldı.`,
+        },
+        ...state.chronicle,
+      ].slice(0, 25),
+    },
+  };
+}
+
 export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState {
   const wage = calculateDailyWage(state.roster);
   const foodUsed = calculateDailyFoodConsumption(state.roster);
@@ -445,11 +1000,11 @@ export function resolveBattleOutcome(
   });
 
   const nextSettlements = state.settlements.map((s) => {
-    if (conqueredSettlementId && s.id === conqueredSettlementId) {
+    if (conqueredSettlementId && (s.id === conqueredSettlementId || s.boundSettlementId === conqueredSettlementId)) {
       return {
         ...s,
         faction: 'player' as FactionId,
-        garrison: Math.max(20, Math.floor(s.garrison * 0.6)),
+        garrison: s.id === conqueredSettlementId ? Math.max(20, Math.floor(s.garrison * 0.6)) : s.garrison,
       };
     }
     return s;
@@ -460,7 +1015,7 @@ export function resolveBattleOutcome(
     day: state.day,
     category: conqueredSettlementId ? 'CONQUEST' : 'WAR',
     text: conqueredSettlementId
-      ? `${state.playerName}, kuşatma zaferiyle yeni bir mülkü sancağı altına aldı!`
+      ? `${state.playerName}, kuşatma zaferiyle yeni bir mülkü ve bağlı köylerini sancağı altına aldı!`
       : `${state.playerName}, meydan savaşında düşman ordusunu bozguna uğrattı (+${renownGain} Nam, +${goldLoot} Dinar).`,
   };
 
@@ -478,23 +1033,56 @@ export function resolveBattleOutcome(
   };
 }
 
-export function createInitialCampaignState(
-  playerName = 'Komutan Demirhan',
-  backgroundId: 'noble' | 'steppe' | 'tactician' = 'noble',
-): CampaignState {
-  const initialRoster: TroopRoster =
-    backgroundId === 'steppe'
-      ? { militia: 4, archer: 5, cavalry: 6, guard: 1 }
-      : backgroundId === 'tactician'
-        ? { militia: 6, archer: 7, cavalry: 2, guard: 3 }
-        : { militia: 6, archer: 4, cavalry: 4, guard: 3 };
+// Canonical Regional Village Name Pools per Faction for Authentic Feudal Fiefs
+const FACTION_VILLAGE_NAMES: Record<FactionId, string[]> = {
+  player: ['Sancaktepe'],
+  empire: [
+    'Nideon', 'Agalmon', 'Carphenion', 'Palea', 'Tarcutis', 'Marathea', 'Oristocorys', 'Primessos',
+    'Aeoria', 'Sestadeim', 'Vatatzes', 'Gessios', 'Dradios', 'Rhesos', 'Phasos', 'Crios',
+    'Gamardan', 'Alision', 'Themys', 'Calocote', 'Leblenion', 'Dyopalis', 'Nortan', 'Sermenos',
+    'Epinosa', 'Zestos', 'Tismil', 'Bergum', 'Meroc', 'Hispia', 'Pos', 'Thios',
+    'Apsos', 'Mylea', 'Vacos', 'Cyrton', 'Kynon', 'Panoplia', 'Chanos', 'Golina',
+    'Tevea', 'Zonica', 'Lavenia Köyü', 'Hertogea Köyü', 'Veron Köyü', 'Lochana Köyü', 'Onica Köyü',
+  ],
+  vlandia: [
+    'Bruck', 'Drapand', 'Aldhan', 'Tarcut', 'Nulanc', 'Boran', 'Etirburg', 'Marei',
+    'Chorn', 'Binhall', 'Lanbris', 'Rovalt Kıyısı', 'Ostican Burnu', 'Ocs Yaylası', 'Jaculan Vadisi',
+    'Sargot Bağı', 'Charas Limanı', 'Caleus Köyü', 'Hongard Köyü', 'Tirby Köyü', 'Ormanfard Köyü',
+  ],
+  battania: [
+    'Swenryn', 'Tor Melina', 'Bryn Glas', 'Imlagh', 'Cairngorm', 'Glintor', 'Morihig', 'Durn',
+    'Fenon', 'Ath Cafal', 'Canton', 'Llanoc Köyü', 'Garontor Köyü', 'Ab Comer Köyü', 'Pendraic Köyü',
+  ],
+  sturgia: [
+    'Kvol', 'Dvorusta', 'Iskra', 'Surmya', 'Ostrov', 'Varnov', 'Zimna', 'Shibal Zumr',
+    'Borchov', 'Korsyas', 'Urik Köyü', 'Vladiv Köyü', 'Ov Köyü', 'Mazolm Köyü', 'Balgard Koyu', 'Sibir Obası',
+  ],
+  khuzait: [
+    'Kushul', 'Asmait', 'Dulac', 'Karaka', 'Bozkırpınar', 'Makeb Yaylası', 'Ortongard Obası',
+    'Akkalat Yurdu', 'Odokh Vahası', 'Baltakhand Obası', 'Simira Obası', 'Kaysar Obası',
+    'Tepes Obası', 'Khimli Obası', 'Pabastan', 'Tebircan',
+  ],
+  aserai: [
+    'Wadar', 'Baq', 'Tashba', 'Habiya', 'Nufar', 'Shabwa', 'Zimran', 'Quyaz Kıyısı',
+    'Askar Vahası', 'Qasira Hurmalığı', 'Razih Pınarı', 'Husn Deltası', 'Tubilis Köyü',
+    'Medeni Vahası', 'Barihal Vahası',
+  ],
+  bandits: ['Karageçit Obası'],
+};
 
-  const initialGold = backgroundId === 'noble' ? 680 : backgroundId === 'tactician' ? 620 : 550;
-  const initialRenown = backgroundId === 'noble' ? 65 : 45;
+let cachedCanonicalSettlements: Settlement[] | null = null;
 
-  // 74 Authentic Calradia Continental Settlements (50 Towns, 15 Castles, 9 Villages) matching the official Bannerlord map!
-  const settlements: Settlement[] = [
-    // === EMPIRE (CENTRAL HEARTLAND) ===
+function buildCanonicalCalradiaSettlements(): Settlement[] {
+  if (cachedCanonicalSettlements) {
+    return cachedCanonicalSettlements.map((s) => ({
+      ...s,
+      recruitPool: { ...s.recruitPool },
+    }));
+  }
+
+  // Core Towns (51), Castles (29), and Anchor Villages (9)
+  const baseSettlements: Settlement[] = [
+    // === EMPIRE (19 TOWNS, 9 CASTLES, 2 ANCHOR VILLAGES) ===
     {
       id: 'zeonica',
       name: 'Lycaron',
@@ -519,7 +1107,24 @@ export function createInitialCampaignState(
       garrison: 28,
       recruitPool: { militia: 10, archer: 6, cavalry: 3, guard: 2 },
       foodStock: 46,
-      description: 'Sancağınıza bağlı sadık köylülerin, tahıl ambarlarının ve nehir vadisi geçidinin merkezi.',
+      description: 'Lycaron vadisinde sancağınıza bağlı sadık köylülerin ve tahıl ambarlarının merkezi.',
+      boundSettlementId: 'zeonica',
+      boundSettlementName: 'Lycaron',
+    },
+    {
+      id: 'canterion_village',
+      name: 'Canterion',
+      type: 'VILLAGE',
+      faction: 'empire',
+      x: 48,
+      z: 118,
+      prosperity: 310,
+      garrison: 22,
+      recruitPool: { militia: 8, archer: 5, cavalry: 2, guard: 1 },
+      foodStock: 42,
+      description: 'Lycaron nehir vadisinde zeytin ve buğday üretimiyle bilinen İmparatorluk köyü.',
+      boundSettlementId: 'zeonica',
+      boundSettlementName: 'Lycaron',
     },
     {
       id: 'poros',
@@ -571,7 +1176,7 @@ export function createInitialCampaignState(
       garrison: 60,
       recruitPool: { militia: 9, archer: 7, cavalry: 4, guard: 4 },
       foodStock: 47,
-      description: 'Dağ geçitleri ve nehir vadileri arasında stratejik İmparatorluk kalesi.',
+      description: 'Dağ geçitleri ve nehir vadileri arasında stratejik İmparatorluk şehri.',
     },
     {
       id: 'jalmarys',
@@ -649,20 +1254,7 @@ export function createInitialCampaignState(
       garrison: 56,
       recruitPool: { militia: 8, archer: 7, cavalry: 4, guard: 3 },
       foodStock: 44,
-      description: 'Sturgia sınırı ve kuzey nehir vadilerini koruyan İmparatorluk kalesi.',
-    },
-    {
-      id: 'lochana_castle',
-      name: 'Lochana Castle',
-      type: 'CASTLE',
-      faction: 'empire',
-      x: 105,
-      z: -165,
-      prosperity: 420,
-      garrison: 48,
-      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 3 },
-      foodStock: 36,
-      description: 'Argoron ile Amprela arasındaki sarp kuzey dağ geçidini tutan İmparatorluk hisarı.',
+      description: 'Sturgia sınırı ve kuzey nehir vadilerini koruyan İmparatorluk kenti.',
     },
     {
       id: 'amprela',
@@ -769,6 +1361,19 @@ export function createInitialCampaignState(
       description: 'Güney İmparatorluğunun Perassic Denizi kıyısındaki büyük liman şehri.',
     },
     {
+      id: 'lochana_castle',
+      name: 'Lochana Castle',
+      type: 'CASTLE',
+      faction: 'empire',
+      x: 105,
+      z: -165,
+      prosperity: 420,
+      garrison: 48,
+      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 3 },
+      foodStock: 36,
+      description: 'Argoron ile Amprela arasındaki sarp kuzey dağ geçidini tutan İmparatorluk hisarı.',
+    },
+    {
       id: 'hertogea_castle',
       name: 'Hertogea Castle',
       type: 'CASTLE',
@@ -808,20 +1413,72 @@ export function createInitialCampaignState(
       description: 'Vostrum ile Danustica arasındaki kıyı ovasını koruyan kale.',
     },
     {
-      id: 'canterion_village',
-      name: 'Canterion',
-      type: 'VILLAGE',
+      id: 'gersegos_castle',
+      name: 'Gersegos Castle',
+      type: 'CASTLE',
       faction: 'empire',
-      x: 48,
-      z: 118,
-      prosperity: 310,
-      garrison: 22,
-      recruitPool: { militia: 8, archer: 5, cavalry: 2, guard: 1 },
-      foodStock: 42,
-      description: 'Lycaron nehir vadisinde zeytin ve buğday üretimiyle bilinen İmparatorluk köyü.',
+      x: -162,
+      z: -52,
+      prosperity: 395,
+      garrison: 43,
+      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 2 },
+      foodStock: 34,
+      description: 'Epicrotea ve Rhotae arasındaki sarp vadiyi tutan İmparatorluk kalesi.',
+    },
+    {
+      id: 'gaos_castle',
+      name: 'Gaos Castle',
+      type: 'CASTLE',
+      faction: 'empire',
+      x: -18,
+      z: -98,
+      prosperity: 390,
+      garrison: 42,
+      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 2 },
+      foodStock: 34,
+      description: 'Diathma ile Saneopa arasındaki kuzey sırtlarını gözetleyen hisar.',
+    },
+    {
+      id: 'melion_castle',
+      name: 'Melion Castle',
+      type: 'CASTLE',
+      faction: 'empire',
+      x: 152,
+      z: -28,
+      prosperity: 400,
+      garrison: 44,
+      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 2 },
+      foodStock: 35,
+      description: 'Myzea ve Syronea arasındaki doğu sıradağ geçidini koruyan İmparatorluk kalesi.',
+    },
+    {
+      id: 'morenia_castle',
+      name: 'Morenia Castle',
+      type: 'CASTLE',
+      faction: 'empire',
+      x: 68,
+      z: 22,
+      prosperity: 395,
+      garrison: 43,
+      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 2 },
+      foodStock: 35,
+      description: 'Lycaron ve Phycaon kuzeyindeki sarp vadileri tutan İmparatorluk kalesi.',
+    },
+    {
+      id: 'onica_castle',
+      name: 'Onica Castle',
+      type: 'CASTLE',
+      faction: 'empire',
+      x: -178,
+      z: 112,
+      prosperity: 390,
+      garrison: 42,
+      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 2 },
+      foodStock: 34,
+      description: 'Ortysia ile Zeonica arasındaki güneybatı kıyı geçidini tutan kale.',
     },
 
-    // === VLANDIA (WESTERN COAST & HIGHLANDS) ===
+    // === VLANDIA (8 TOWNS, 4 CASTLES, 2 ANCHOR VILLAGES) ===
     {
       id: 'ostican',
       name: 'Ostican',
@@ -846,7 +1503,7 @@ export function createInitialCampaignState(
       garrison: 54,
       recruitPool: { militia: 8, archer: 6, cavalry: 4, guard: 2 },
       foodStock: 42,
-      description: 'Kuzeybatı kıyı şeridini ve Sturgia deniz yolunu gözetleyen Vlandiya kalesi.',
+      description: 'Kuzeybatı kıyı şeridini ve Sturgia deniz yolunu gözetleyen Vlandiya kenti.',
     },
     {
       id: 'ocs_hall',
@@ -953,6 +1610,32 @@ export function createInitialCampaignState(
       description: 'Jaculan ve Charas arasındaki sırtları koruyan Vlandiya şövalye hisarı.',
     },
     {
+      id: 'tirby_castle',
+      name: 'Tirby Castle',
+      type: 'CASTLE',
+      faction: 'vlandia',
+      x: -352,
+      z: -222,
+      prosperity: 375,
+      garrison: 41,
+      recruitPool: { militia: 7, archer: 5, cavalry: 4, guard: 2 },
+      foodStock: 34,
+      description: 'Rovalt ile Car Banseth sınırındaki kuzey geçidini tutan Vlandiya kalesi.',
+    },
+    {
+      id: 'ormanfard_castle',
+      name: 'Ormanfard Castle',
+      type: 'CASTLE',
+      faction: 'vlandia',
+      x: -445,
+      z: -78,
+      prosperity: 380,
+      garrison: 42,
+      recruitPool: { militia: 7, archer: 5, cavalry: 4, guard: 2 },
+      foodStock: 34,
+      description: 'Pravend ile Galend arasındaki kıyı ovasını koruyan Vlandiya hisarı.',
+    },
+    {
       id: 'valanby_village',
       name: 'Valanby',
       type: 'VILLAGE',
@@ -964,6 +1647,8 @@ export function createInitialCampaignState(
       recruitPool: { militia: 8, archer: 5, cavalry: 3, guard: 1 },
       foodStock: 38,
       description: 'Pravend kuzeyinde balıkçılık ve tahıl tarımıyla geçinen kıyı köyü.',
+      boundSettlementId: 'pravend',
+      boundSettlementName: 'Pravend',
     },
     {
       id: 'cantrec_village',
@@ -977,9 +1662,11 @@ export function createInitialCampaignState(
       recruitPool: { militia: 8, archer: 5, cavalry: 3, guard: 1 },
       foodStock: 38,
       description: 'Galend kuzeydoğusunda nehir mendereslerine bakan Vlandiya köyü.',
+      boundSettlementId: 'galend',
+      boundSettlementName: 'Galend',
     },
 
-    // === BATTANIA (NORTHWEST WOODLAND LAKE BASIN) ===
+    // === BATTANIA (5 TOWNS, 4 CASTLES, 1 ANCHOR VILLAGE) ===
     {
       id: 'car_banseth',
       name: 'Car Banseth',
@@ -1043,7 +1730,7 @@ export function createInitialCampaignState(
       garrison: 54,
       recruitPool: { militia: 7, archer: 10, cavalry: 2, guard: 3 },
       foodStock: 42,
-      description: 'Battaniya dağ gölü güneydoğu vadisinde yükselen Ulu Orman kalesi.',
+      description: 'Battaniya dağ gölü güneydoğu vadisinde yükselen Ulu Orman kenti.',
     },
     {
       id: 'llanoc_hen_castle',
@@ -1072,6 +1759,32 @@ export function createInitialCampaignState(
       description: 'Battaniya yaylasından Lageta ve Rhotae ovalarına inen geçidi tutan kale.',
     },
     {
+      id: 'ab_comer_castle',
+      name: 'Ab Comer Castle',
+      type: 'CASTLE',
+      faction: 'battania',
+      x: -342,
+      z: -55,
+      prosperity: 372,
+      garrison: 40,
+      recruitPool: { militia: 6, archer: 8, cavalry: 2, guard: 2 },
+      foodStock: 33,
+      description: 'Pen Cannoc batısında Vlandiya sınır boğazını gözetleyen Battaniya kalesi.',
+    },
+    {
+      id: 'pendraic_castle',
+      name: 'Pendraic Castle',
+      type: 'CASTLE',
+      faction: 'battania',
+      x: -188,
+      z: -158,
+      prosperity: 375,
+      garrison: 41,
+      recruitPool: { militia: 6, archer: 8, cavalry: 2, guard: 2 },
+      foodStock: 34,
+      description: 'Seonon kuzeydoğusunda tarihi Pendraic Savaşı ovasına bakan kale.',
+    },
+    {
       id: 'glenlithrig_village',
       name: 'Glenlithrig',
       type: 'VILLAGE',
@@ -1083,9 +1796,11 @@ export function createInitialCampaignState(
       recruitPool: { militia: 6, archer: 8, cavalry: 1, guard: 1 },
       foodStock: 36,
       description: 'Battaniya gölü doğu yamacında kereste ve yay yapımıyla ünlü orman köyü.',
+      boundSettlementId: 'dunglanys',
+      boundSettlementName: 'Dunglanys',
     },
 
-    // === STURGIA (NORTHERN SNOW PENINSULA & FJORDS) ===
+    // === STURGIA (7 TOWNS, 4 CASTLES, 2 ANCHOR VILLAGES) ===
     {
       id: 'revyl',
       name: 'Revyl',
@@ -1175,7 +1890,7 @@ export function createInitialCampaignState(
       garrison: 54,
       recruitPool: { militia: 9, archer: 5, cavalry: 3, guard: 4 },
       foodStock: 37,
-      description: 'Doğu karlı sıradağ geçitlerine hükmeden müstahkem Sturgia kalesi.',
+      description: 'Doğu karlı sıradağ geçitlerine hükmeden müstahkem Sturgia kenti.',
     },
     {
       id: 'ov_castle',
@@ -1195,13 +1910,39 @@ export function createInitialCampaignState(
       name: 'Urikskala Castle',
       type: 'CASTLE',
       faction: 'sturgia',
-      x: 118,
-      z: -242,
+      x: 92,
+      z: -238,
       prosperity: 370,
       garrison: 41,
       recruitPool: { militia: 8, archer: 4, cavalry: 2, guard: 3 },
       foodStock: 32,
-      description: 'Varnovapol ile Tyal arasındaki karlı geçidi koruyan Sturgia hisarı.',
+      description: 'Varnovapol ile Sibir arasındaki karlı vadiyi koruyan Sturgia hisarı.',
+    },
+    {
+      id: 'vladiv_castle',
+      name: 'Vladiv Castle',
+      type: 'CASTLE',
+      faction: 'sturgia',
+      x: 134,
+      z: -268,
+      prosperity: 375,
+      garrison: 42,
+      recruitPool: { militia: 8, archer: 4, cavalry: 2, guard: 3 },
+      foodStock: 33,
+      description: 'Sibir ile Tyal arasındaki karlı sıradağ boğazını tutan Sturgia kalesi.',
+    },
+    {
+      id: 'mazolm_castle',
+      name: 'Mazolm Castle',
+      type: 'CASTLE',
+      faction: 'sturgia',
+      x: -152,
+      z: -198,
+      prosperity: 368,
+      garrison: 40,
+      recruitPool: { militia: 8, archer: 4, cavalry: 2, guard: 3 },
+      foodStock: 32,
+      description: 'Varcheg güneyinde Epicrotea sınırını gözetleyen Sturgia kalesi.',
     },
     {
       id: 'forin_village',
@@ -1215,6 +1956,8 @@ export function createInitialCampaignState(
       recruitPool: { militia: 8, archer: 4, cavalry: 1, guard: 2 },
       foodStock: 34,
       description: 'Revyl yarımadası berzahında balıkçılık ve kürk avcılığı yapılan kuzey köyü.',
+      boundSettlementId: 'revyl',
+      boundSettlementName: 'Revyl',
     },
     {
       id: 'kranirag_village',
@@ -1228,9 +1971,11 @@ export function createInitialCampaignState(
       recruitPool: { militia: 8, archer: 4, cavalry: 2, guard: 2 },
       foodStock: 34,
       description: 'Tyal batısında demir ve çam kerestesi üreten karlı dağ köyü.',
+      boundSettlementId: 'tyal',
+      boundSettlementName: 'Tyal',
     },
 
-    // === KHUZAIT (EASTERN INLAND LAKE & STEPPE) ===
+    // === KHUZAIT (6 TOWNS, 4 CASTLES, 1 ANCHOR VILLAGE) ===
     {
       id: 'baltakhand_north',
       name: 'Baltakhand',
@@ -1336,6 +2081,32 @@ export function createInitialCampaignState(
       description: 'Akkalat ve Odokh arasındaki güney bozkır geçidini koruyan hisar.',
     },
     {
+      id: 'tepes_castle',
+      name: 'Tepes Castle',
+      type: 'CASTLE',
+      faction: 'khuzait',
+      x: 288,
+      z: -102,
+      prosperity: 372,
+      garrison: 41,
+      recruitPool: { militia: 5, archer: 7, cavalry: 6, guard: 2 },
+      foodStock: 33,
+      description: 'Makeb ile Ortongard arasındaki bozkır sırtlarını gözetleyen Khuzait hisarı.',
+    },
+    {
+      id: 'khimli_castle',
+      name: 'Khimli Castle',
+      type: 'CASTLE',
+      faction: 'khuzait',
+      x: 268,
+      z: -8,
+      prosperity: 374,
+      garrison: 42,
+      recruitPool: { militia: 5, archer: 7, cavalry: 6, guard: 2 },
+      foodStock: 34,
+      description: 'Chaikand güneyinde iç göl çıkışını ve bozkır yolunu koruyan kale.',
+    },
+    {
       id: 'ulaan_village',
       name: 'Ulaan',
       type: 'VILLAGE',
@@ -1347,9 +2118,11 @@ export function createInitialCampaignState(
       recruitPool: { militia: 5, archer: 7, cavalry: 6, guard: 1 },
       foodStock: 37,
       description: 'Chaikand ile Akkalat arasındaki otlaklarda yılkı yetiştiren bozkır obası.',
+      boundSettlementId: 'makeb',
+      boundSettlementName: 'Chaikand',
     },
 
-    // === ASERAI (SOUTHERN PERASSIC COAST & NAHASA DESERT) + BANDIT FORT ===
+    // === ASERAI (6 TOWNS, 3 CASTLES, 1 ANCHOR VILLAGE) + BANDIT CASTLE ===
     {
       id: 'quyaz',
       name: 'Quyaz',
@@ -1362,6 +2135,19 @@ export function createInitialCampaignState(
       recruitPool: { militia: 7, archer: 7, cavalry: 5, guard: 3 },
       foodStock: 45,
       description: 'Batı boğazının güney yakasını tutan Aserai kıyı kalesi ve limanı.',
+    },
+    {
+      id: 'askar',
+      name: 'Askar',
+      type: 'TOWN',
+      faction: 'aserai',
+      x: -168,
+      z: 238,
+      prosperity: 615,
+      garrison: 58,
+      recruitPool: { militia: 7, archer: 7, cavalry: 6, guard: 3 },
+      foodStock: 47,
+      description: 'Batı Nahasa vahalarında Aserai süvari kabilelerinin ve at yetiştiricilerinin şehri.',
     },
     {
       id: 'sanala',
@@ -1420,13 +2206,26 @@ export function createInitialCampaignState(
       name: 'Tubilis Castle',
       type: 'CASTLE',
       faction: 'aserai',
-      x: -168,
-      z: 228,
+      x: -198,
+      z: 218,
       prosperity: 385,
       garrison: 42,
       recruitPool: { militia: 6, archer: 6, cavalry: 4, guard: 2 },
       foodStock: 35,
-      description: 'Quyaz ile Sanala arasındaki kıyı yolunu koruyan Aserai sahil kalesi.',
+      description: 'Quyaz ile Askar arasındaki kıyı yolunu koruyan Aserai sahil kalesi.',
+    },
+    {
+      id: 'barihal_castle',
+      name: 'Barihal Castle',
+      type: 'CASTLE',
+      faction: 'aserai',
+      x: -48,
+      z: 262,
+      prosperity: 382,
+      garrison: 42,
+      recruitPool: { militia: 6, archer: 6, cavalry: 4, guard: 2 },
+      foodStock: 35,
+      description: 'Sanala ile Qasira arasındaki çöl geçidini tutan Aserai kalesi.',
     },
     {
       id: 'medeni_castle',
@@ -1453,6 +2252,8 @@ export function createInitialCampaignState(
       recruitPool: { militia: 6, archer: 6, cavalry: 4, guard: 1 },
       foodStock: 39,
       description: 'Sanala doğusunda hurma bahçeleri ve kervan kuyularıyla ünlü vaha köyü.',
+      boundSettlementId: 'sanala',
+      boundSettlementName: 'Sanala',
     },
     {
       id: 'karagecit',
@@ -1469,6 +2270,144 @@ export function createInitialCampaignState(
     },
   ];
 
+  // Deterministically generate bound villages so EVERY TOWN has 2 villages and EVERY CASTLE has 1 village!
+  const allSettlements: Settlement[] = [...baseSettlements];
+  const nameCounters: Record<FactionId, number> = {
+    player: 0,
+    empire: 0,
+    vlandia: 0,
+    battania: 0,
+    sturgia: 0,
+    khuzait: 0,
+    aserai: 0,
+    bandits: 0,
+  };
+
+  const usedNames = new Set(allSettlements.map((s) => s.name));
+
+  function findDryVillageSpot(parentX: number, parentZ: number, seedIdx: number): { x: number; z: number } {
+    const radii = [11.5, 14.5, 17.5, 20.5, 24.0, 28.0];
+    for (let rIdx = 0; rIdx < radii.length; rIdx++) {
+      const rad = radii[rIdx];
+      for (let step = 0; step < 16; step++) {
+        const angle = ((seedIdx * 5 + step * 3) % 16) * ((Math.PI * 2) / 16) + rIdx * 0.22;
+        const cx = Math.max(-476, Math.min(336, Math.round(parentX + Math.cos(angle) * rad)));
+        const cz = Math.max(-288, Math.min(278, Math.round(parentZ + Math.sin(angle) * rad)));
+
+        const h = groundHeightAt(cx, cz);
+        if (h < 0.65 || h > 9.5) continue;
+
+        const { dist: rDist, width: rWidth } = distanceToRiverNetwork(cx, cz);
+        if (rDist < rWidth * 1.65) continue;
+
+        let tooClose = false;
+        for (let i = 0; i < allSettlements.length; i++) {
+          const other = allSettlements[i];
+          const minSep = other.type === 'VILLAGE' ? 6.8 : 8.4;
+          if (Math.hypot(cx - other.x, cz - other.z) < minSep) {
+            tooClose = true;
+            break;
+          }
+        }
+        if (!tooClose) {
+          return { x: cx, z: cz };
+        }
+      }
+    }
+    const fallback = snapToNearestLand(
+      Math.max(-475, Math.min(335, parentX + (seedIdx % 2 === 0 ? 11 : -11))),
+      Math.max(-285, Math.min(275, parentZ + (seedIdx % 3 === 0 ? 11 : -11))),
+    );
+    return { x: Math.round(fallback.x), z: Math.round(fallback.z) };
+  }
+
+  const townsAndCastles = baseSettlements.filter((s) => s.type === 'TOWN' || s.type === 'CASTLE');
+  townsAndCastles.forEach((parent, pIdx) => {
+    const requiredVillages = parent.type === 'TOWN' ? 2 : 1;
+    const existingBound = allSettlements.filter(
+      (s) => s.type === 'VILLAGE' && s.boundSettlementId === parent.id,
+    );
+    const needed = requiredVillages - existingBound.length;
+
+    for (let v = 0; v < needed; v++) {
+      const pool = FACTION_VILLAGE_NAMES[parent.faction] || FACTION_VILLAGE_NAMES.empire;
+      let vName = '';
+      while (nameCounters[parent.faction] < pool.length) {
+        const candidate = pool[nameCounters[parent.faction]++];
+        if (!usedNames.has(candidate)) {
+          vName = candidate;
+          break;
+        }
+      }
+      if (!vName) {
+        const baseClean = parent.name.replace(' Castle', '').replace(' Hisarı', '');
+        vName = v === 0 && needed === 1 ? `${baseClean} Köyü` : `${baseClean} ${v + 1}. Köyü`;
+      }
+      usedNames.add(vName);
+
+      const spot = findDryVillageSpot(parent.x, parent.z, pIdx * 3 + v + 1);
+      const villageId = `${parent.id}_village_${existingBound.length + v + 1}`;
+
+      // Register compact terrace in SETTLEMENT_TERRACES so every village sits on flat ground
+      SETTLEMENT_TERRACES.push({ x: spot.x, z: spot.z, radius: 5 });
+
+      const basePool = parent.recruitPool;
+      allSettlements.push({
+        id: villageId,
+        name: vName,
+        type: 'VILLAGE',
+        faction: parent.faction,
+        x: spot.x,
+        z: spot.z,
+        prosperity: 270 + ((pIdx * 17 + v * 13) % 55),
+        garrison: 18 + ((pIdx + v) % 7),
+        recruitPool: {
+          militia: Math.max(5, basePool.militia - 1),
+          archer: Math.max(4, basePool.archer - 1),
+          cavalry: Math.max(1, basePool.cavalry - 1),
+          guard: 1,
+        },
+        foodStock: 34 + ((pIdx * 7 + v * 5) % 12),
+        description: `${parent.name} mülküne bağlı, erzak ve gönüllü asker sağlayan kırsal köy yerleşimi.`,
+        boundSettlementId: parent.id,
+        boundSettlementName: parent.name,
+      });
+    }
+  });
+
+  // Register flat valley plateau for every single Town, Castle, and Bound Village so no settlement is ever buried by a mountain
+  for (let i = 0; i < allSettlements.length; i++) {
+    const s = allSettlements[i];
+    const radius = s.type === 'TOWN' ? 14.5 : s.type === 'CASTLE' ? 11.2 : 8.0;
+    registerSettlementTerrace(s.x, s.z, radius);
+  }
+
+  cachedCanonicalSettlements = allSettlements;
+  return allSettlements.map((s) => ({
+    ...s,
+    recruitPool: { ...s.recruitPool },
+  }));
+}
+
+// Pre-register all 211 canonical settlement terraces at module load so terrain mesh & textures always flatten all settlements
+buildCanonicalCalradiaSettlements();
+
+export function createInitialCampaignState(
+  playerName = 'Komutan Demirhan',
+  backgroundId: 'noble' | 'steppe' | 'tactician' = 'noble',
+): CampaignState {
+  const initialRoster: TroopRoster =
+    backgroundId === 'steppe'
+      ? { militia: 4, archer: 5, cavalry: 6, guard: 1 }
+      : backgroundId === 'tactician'
+        ? { militia: 6, archer: 7, cavalry: 2, guard: 3 }
+        : { militia: 6, archer: 4, cavalry: 4, guard: 3 };
+
+  const initialGold = backgroundId === 'noble' ? 680 : backgroundId === 'tactician' ? 620 : 550;
+  const initialRenown = backgroundId === 'noble' ? 65 : 45;
+
+  const settlements: Settlement[] = buildCanonicalCalradiaSettlements();
+
   const lords: LordAgent[] = [
     {
       id: 'lord-rhagaea',
@@ -1483,6 +2422,10 @@ export function createInitialCampaignState(
       targetZ: 78,
       armySize: 28,
       roster: { militia: 10, archer: 8, cavalry: 5, guard: 5 },
+      wounded: 2,
+      prisoners: 4,
+      morale: 86,
+      foodDays: 14,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Lycaron vadisini koruyor',
@@ -1500,7 +2443,11 @@ export function createInitialCampaignState(
       targetX: 4,
       targetZ: 98,
       armySize: 16,
-      roster: { militia: 9, archer: 4, cavalry: 2, guard: 1 },
+      roster: { militia: 7, archer: 4, cavalry: 4, guard: 1 },
+      wounded: 1,
+      prisoners: 5,
+      morale: 74,
+      foodDays: 9,
       isAtWarWithPlayer: true,
       isAlliedWithPlayer: false,
       currentAction: 'Sancaktepe - Poros yolunda pusu kuruyor',
@@ -1516,10 +2463,13 @@ export function createInitialCampaignState(
       x: -95,
       z: 112,
       targetX: -105,
-      z: 112,
       targetZ: 138,
       armySize: 36,
       roster: { militia: 14, archer: 10, cavalry: 6, guard: 6 },
+      wounded: 3,
+      prisoners: 6,
+      morale: 84,
+      foodDays: 15,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Zeonica ve Amitatys hattını denetliyor',
@@ -1538,6 +2488,10 @@ export function createInitialCampaignState(
       targetZ: -58,
       armySize: 34,
       roster: { militia: 12, archer: 10, cavalry: 6, guard: 6 },
+      wounded: 2,
+      prisoners: 3,
+      morale: 82,
+      foodDays: 13,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Saneopa ve Myzea sınırını koruyor',
@@ -1556,6 +2510,10 @@ export function createInitialCampaignState(
       targetZ: -122,
       armySize: 40,
       roster: { militia: 14, archer: 10, cavalry: 10, guard: 6 },
+      wounded: 4,
+      prisoners: 7,
+      morale: 88,
+      foodDays: 16,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Pravend - Galend kraliyet yolunu denetliyor',
@@ -1574,6 +2532,10 @@ export function createInitialCampaignState(
       targetZ: -68,
       armySize: 34,
       roster: { militia: 10, archer: 16, cavalry: 3, guard: 5 },
+      wounded: 2,
+      prisoners: 4,
+      morale: 85,
+      foodDays: 12,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Battaniya dağ gölü koruluklarını kolaçan ediyor',
@@ -1592,6 +2554,10 @@ export function createInitialCampaignState(
       targetZ: -285,
       armySize: 36,
       roster: { militia: 16, archer: 8, cavalry: 4, guard: 8 },
+      wounded: 3,
+      prisoners: 5,
+      morale: 80,
+      foodDays: 14,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Sibir ve Varnovapol karlı geçidini bekliyor',
@@ -1610,6 +2576,10 @@ export function createInitialCampaignState(
       targetZ: -48,
       armySize: 42,
       roster: { militia: 10, archer: 12, cavalry: 15, guard: 5 },
+      wounded: 3,
+      prisoners: 8,
+      morale: 89,
+      foodDays: 15,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Chaikand ve Makeb iç göl kıyısını tutuyor',
@@ -1628,6 +2598,10 @@ export function createInitialCampaignState(
       targetZ: 248,
       armySize: 38,
       roster: { militia: 12, archer: 10, cavalry: 10, guard: 6 },
+      wounded: 2,
+      prisoners: 5,
+      morale: 87,
+      foodDays: 16,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Sanala ve Qasira vaha hattını koruyor',
@@ -1671,10 +2645,1368 @@ export function createInitialCampaignState(
     playerX: 14,
     playerZ: 88,
     roster: initialRoster,
-    prisoners: 0,
+    prisoners: 2,
     battlesWon: 0,
     settlements,
     lords,
     chronicle,
+    characterLevel: 6,
+    freeAttributePoints: 2,
+    freeFocusPoints: 4,
+    attributes: {
+      VIGOR: backgroundId === 'noble' ? 5 : 4,
+      CONTROL: backgroundId === 'steppe' ? 5 : 3,
+      ENDURANCE: backgroundId === 'steppe' ? 5 : 4,
+      CUNNING: backgroundId === 'tactician' ? 5 : 3,
+      SOCIAL: backgroundId === 'noble' ? 5 : 4,
+      INTELLIGENCE: backgroundId === 'tactician' ? 5 : 4,
+    },
+    skills: {
+      oneHanded: { level: 95, focus: 3 },
+      twoHanded: { level: 45, focus: 1 },
+      polearm: { level: 85, focus: 3 },
+      bow: { level: 70, focus: 2 },
+      crossbow: { level: 25, focus: 1 },
+      throwing: { level: 35, focus: 1 },
+      riding: { level: 110, focus: 4 },
+      athletics: { level: 65, focus: 2 },
+      smithing: { level: 60, focus: 2 },
+      scouting: { level: 80, focus: 3 },
+      tactics: { level: 90, focus: 3 },
+      roguery: { level: 30, focus: 1 },
+      charm: { level: 105, focus: 3 },
+      leadership: { level: 120, focus: 4 },
+      trade: { level: 65, focus: 2 },
+      steward: { level: 115, focus: 4 },
+      medicine: { level: 80, focus: 3 },
+      engineering: { level: 75, focus: 2 },
+    },
+    unlockedPerks: ['shield_wall_master', 'full_speed_charge', 'spartan_rations'],
+    outfitMode: 'BATTLE',
+    equipment: {
+      HEAD: 'İmparatorluk Miğferi (+38 Baş Zırhı)',
+      SHOULDER: 'Pullu Omuzluk & Pelerin (+16 Gövde/Kol)',
+      BODY: 'Lamellar Süvari Zırhı (+52 Gövde Zırhı)',
+      GLOVES: 'Çelik Bileklikli Eldiven (+22 Kol Zırhı)',
+      LEG: 'Zincir Zırhlı Süvari Çizmesi (+26 Bacak Zırhı)',
+      MOUNT: 'Asil Kalradya Küheylanı (Hız: 64 · Hücum: 28)',
+      HARNESS: 'Yarım Pullu At Zırhı (+42 Binek Zırhı)',
+      BANNER: 'Altın Kartal Sancağı (+%10 Yakın Dövüş Hasarı)',
+      WEAPON1: 'Thamaskene İmparatorluk Spathası (Kesici: 84)',
+      WEAPON2: 'Ağır Süvari Kalkanı (Dayanıklılık: 480)',
+      WEAPON3: 'Kontos Ağır Süvari Kargısı (Delici: 135)',
+      WEAPON4: 'Kompozit Bozkır Yayı & Zırh Delici Sadak',
+    },
+    inventoryItems: [
+      {
+        id: 'item_thamaskene_sword',
+        name: 'Thamaskene Çift Elli Falx Kılıcı',
+        slot: 'WEAPON1',
+        value: 540,
+        weight: 2.4,
+        statBonus: '+96 Kesici Hasar · Kalkan Kırıcı',
+        civilianLegal: false,
+      },
+      {
+        id: 'item_imperial_helm',
+        name: 'Altın Kakmalı Katafrakt Miğferi',
+        slot: 'HEAD',
+        value: 620,
+        weight: 3.1,
+        statBonus: '+48 Baş Zırhı · +4 İtibar',
+        civilianLegal: false,
+      },
+      {
+        id: 'item_cataphract_armor',
+        name: 'Ağır İmparatorluk Katafrakt Zırhı',
+        slot: 'BODY',
+        value: 980,
+        weight: 11.5,
+        statBonus: '+64 Gövde Zırhı · +22 Bacak Zırhı',
+        civilianLegal: false,
+      },
+      {
+        id: 'item_noble_steed',
+        name: 'Safkan Aserai Savaş Küheylanı',
+        slot: 'MOUNT',
+        value: 750,
+        weight: 0,
+        statBonus: 'Hız: 68 · Manevra: 72 · +20kg Taşıma',
+        civilianLegal: true,
+      },
+      {
+        id: 'item_dragon_banner',
+        name: 'Kalradya Ejderha Sancağı',
+        slot: 'BANNER',
+        value: 1200,
+        weight: 1.0,
+        statBonus: '+%15 Ordu Morali · +%12 Hücum Hasarı',
+        civilianLegal: true,
+      },
+      {
+        id: 'item_sumpter_mule',
+        name: 'Kervan Yük Katırı (x3)',
+        slot: 'TRADE',
+        value: 240,
+        weight: 0,
+        statBonus: '+300 kg Ordu Taşıma Kapasitesi',
+        civilianLegal: true,
+      },
+    ],
+    clanRoles: {
+      QUARTERMASTER: 'Komutan Demirhan (+45 Birlik Kapasitesi)',
+      SCOUT: 'İzci Aybars (+%12 Harita Görüşü & Hız)',
+      SURGEON: 'Hekim Helena (+%25 Yaralı Kurtarma)',
+      ENGINEER: 'Mimar Торвальд (+%30 Kuşatma İnşası)',
+    },
   };
 }
+
+export function calculateLearningLimit(attributeValue: number, focusPoints: number): number {
+  const safeAttr = Math.max(1, Math.min(10, attributeValue));
+  const safeFocus = Math.max(0, Math.min(5, focusPoints));
+  return (safeAttr - 1) * 14 + safeFocus * 40 + 10;
+}
+
+export function calculateClanTier(renown: number): {
+  tier: number;
+  maxPartyBonus: number;
+  nextRenown: number;
+  title: string;
+} {
+  if (renown >= 6150) return { tier: 6, maxPartyBonus: 150, nextRenown: 10000, title: 'İmparatorluk Hanedanı (Kademe 6)' };
+  if (renown >= 2350) return { tier: 5, maxPartyBonus: 125, nextRenown: 6150, title: 'Ulu Soylu Klan (Kademe 5)' };
+  if (renown >= 900) return { tier: 4, maxPartyBonus: 100, nextRenown: 2350, title: 'Krallık Kurucu Klan (Kademe 4)' };
+  if (renown >= 350) return { tier: 3, maxPartyBonus: 75, nextRenown: 900, title: 'Sancakbeyi Klanı (Kademe 3)' };
+  if (renown >= 150) return { tier: 2, maxPartyBonus: 50, nextRenown: 350, title: 'Derebeyi / Vasal Klanı (Kademe 2)' };
+  if (renown >= 50) return { tier: 1, maxPartyBonus: 25, nextRenown: 150, title: 'Paralı Asker Sancağı (Kademe 1)' };
+  return { tier: 0, maxPartyBonus: 15, nextRenown: 50, title: 'Gezgin Sancak (Kademe 0)' };
+}
+
+export function allocateAttributePoint(
+  state: CampaignState,
+  attrId: AttributeId,
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const freePts = state.freeAttributePoints ?? 0;
+  if (freePts <= 0) {
+    return { success: false, reason: 'Kullanılabilir Nitelik Puanı (Attribute Point) kalmadı.', nextState: state };
+  }
+  const currentAttrs = state.attributes ?? {
+    VIGOR: 4,
+    CONTROL: 3,
+    ENDURANCE: 4,
+    CUNNING: 3,
+    SOCIAL: 4,
+    INTELLIGENCE: 4,
+  };
+  if (currentAttrs[attrId] >= 10) {
+    return { success: false, reason: 'Bu nitelik maksimum seviyeye (10) ulaştı.', nextState: state };
+  }
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      freeAttributePoints: freePts - 1,
+      attributes: {
+        ...currentAttrs,
+        [attrId]: currentAttrs[attrId] + 1,
+      },
+      playerMaxHp: attrId === 'ENDURANCE' || attrId === 'VIGOR' ? state.playerMaxHp + 5 : state.playerMaxHp,
+      playerHp: attrId === 'ENDURANCE' || attrId === 'VIGOR' ? state.playerHp + 5 : state.playerHp,
+    },
+  };
+}
+
+export function allocateFocusPoint(
+  state: CampaignState,
+  skillId: BannerlordSkillId,
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const freeFocus = state.freeFocusPoints ?? 0;
+  if (freeFocus <= 0) {
+    return { success: false, reason: 'Kullanılabilir Odak Puanı (Focus Point) kalmadı.', nextState: state };
+  }
+  const baseSkills = state.skills ?? createInitialCampaignState().skills!;
+  const currentSkill = baseSkills[skillId] ?? { level: 50, focus: 1 };
+  if (currentSkill.focus >= 5) {
+    return { success: false, reason: 'Bir beceriye en fazla 5 Odak Puanı verilebilir.', nextState: state };
+  }
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      freeFocusPoints: freeFocus - 1,
+      skills: {
+        ...baseSkills,
+        [skillId]: {
+          level: currentSkill.level + 10,
+          focus: currentSkill.focus + 1,
+        },
+      },
+    },
+  };
+}
+
+export function equipInventoryItem(
+  state: CampaignState,
+  itemId: string,
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const items = state.inventoryItems ?? [];
+  const item = items.find((i) => i.id === itemId);
+  if (!item) {
+    return { success: false, reason: 'Eşya envanterde bulunamadı.', nextState: state };
+  }
+  if (item.slot === 'TRADE') {
+    return { success: false, reason: 'Ticaret malları ve yük katırları doğrudan envanterde pasif kapasite sağlar.', nextState: state };
+  }
+  const currentEq = state.equipment ?? createInitialCampaignState().equipment!;
+  const previousEquippedName = currentEq[item.slot];
+  const nextItems = items.map((it) =>
+    it.id === itemId
+      ? {
+          ...it,
+          name: previousEquippedName,
+        }
+      : it,
+  );
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      equipment: {
+        ...currentEq,
+        [item.slot]: `${item.name} (${item.statBonus})`,
+      },
+      inventoryItems: nextItems,
+      morale: item.slot === 'BANNER' ? Math.min(100, state.morale + 5) : state.morale,
+    },
+  };
+}
+
+export function upgradeSettlementBuilding(
+  state: CampaignState,
+  settlementId: string,
+  buildingId: BuildingProjectId,
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const idx = state.settlements.findIndex((s) => s.id === settlementId);
+  if (idx === -1) return { success: false, reason: 'Yerleşim bulunamadı.', nextState: state };
+  const s = state.settlements[idx];
+  if (s.type === 'VILLAGE') {
+    return { success: false, reason: 'Bina projeleri yalnızca Şehir ve Kalelerde inşa edilebilir.', nextState: state };
+  }
+  const currentBuildings: Record<BuildingProjectId, number> = s.buildings ?? {
+    FORTIFICATIONS: s.wallLevel ?? 2,
+    GRANARY: 1,
+    BARRACKS: 1,
+    FAIRGROUNDS: 1,
+    FORUM: 1,
+    AQUEDUCTS: 1,
+  };
+  const currentLevel = currentBuildings[buildingId] ?? 1;
+  if (currentLevel >= 3) {
+    return { success: false, reason: 'Bu bina projesi zaten maksimum seviyede (Seviye III).', nextState: state };
+  }
+  const upgradeCost = currentLevel === 1 ? 180 : 320;
+  if (state.gold < upgradeCost) {
+    return {
+      success: false,
+      reason: `Bina yükseltmesi için ${upgradeCost} Dinar gerekiyor.`,
+      nextState: state,
+    };
+  }
+  const nextLevel = currentLevel + 1;
+  const nextSettlements = state.settlements.map((item, i) =>
+    i === idx
+      ? {
+          ...item,
+          wallLevel: buildingId === 'FORTIFICATIONS' ? nextLevel : item.wallLevel ?? 2,
+          foodStock: buildingId === 'GRANARY' ? item.foodStock + 25 : item.foodStock,
+          garrison: buildingId === 'BARRACKS' ? item.garrison + 6 : item.garrison,
+          loyalty:
+            buildingId === 'FAIRGROUNDS'
+              ? Math.min(100, (item.loyalty ?? 82) + 8)
+              : item.loyalty ?? 82,
+          prosperity:
+            buildingId === 'AQUEDUCTS' ? item.prosperity + 45 : item.prosperity + 15,
+          buildings: {
+            ...currentBuildings,
+            [buildingId]: nextLevel,
+          },
+        }
+      : item,
+  );
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      gold: state.gold - upgradeCost,
+      renown: buildingId === 'FORUM' ? state.renown + 8 : state.renown + 3,
+      settlements: nextSettlements,
+      chronicle: [
+        {
+          id: `bldg-${state.day}-${settlementId}-${buildingId}`,
+          day: state.day,
+          category: 'ECONOMY',
+          text: `${s.name} mülkünde ${buildingId} projesi Seviye ${nextLevel} kademesine yükseltildi.`,
+        },
+        ...state.chronicle,
+      ].slice(0, 30),
+    },
+  };
+}
+
+export function setSettlementDailyDefault(
+  state: CampaignState,
+  settlementId: string,
+  defaultType: SettlementDailyDefault,
+): { success: boolean; nextState: CampaignState } {
+  const nextSettlements = state.settlements.map((s) => {
+    if (s.id !== settlementId) return s;
+    return {
+      ...s,
+      dailyDefault: defaultType,
+      loyalty: defaultType === 'FESTIVAL' ? Math.min(100, (s.loyalty ?? 82) + 3) : s.loyalty,
+      prosperity: defaultType === 'HOUSING' || defaultType === 'IRRIGATION' ? s.prosperity + 10 : s.prosperity,
+      militia: defaultType === 'MILITIA' ? (s.militia ?? 40) + 4 : s.militia,
+    };
+  });
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      settlements: nextSettlements,
+    },
+  };
+}
+
+export function buyOrChangeWorkshop(
+  state: CampaignState,
+  settlementId: string,
+  workshopType: WorkshopTypeId,
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const idx = state.settlements.findIndex((s) => s.id === settlementId);
+  if (idx === -1) return { success: false, reason: 'Şehir bulunamadı.', nextState: state };
+  const s = state.settlements[idx];
+  if (s.type !== 'TOWN') {
+    return { success: false, reason: 'Atölyeler (Workshops) yalnızca büyük şehirlerde kurulabilir.', nextState: state };
+  }
+  const cost = 220;
+  if (state.gold < cost) {
+    return { success: false, reason: `Atölye satın almak için ${cost} Dinar gerekiyor.`, nextState: state };
+  }
+  const nextSettlements = state.settlements.map((item, i) =>
+    i === idx
+      ? {
+          ...item,
+          workshopType,
+          prosperity: item.prosperity + 25,
+        }
+      : item,
+  );
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      gold: state.gold - cost,
+      renown: state.renown + 4,
+      settlements: nextSettlements,
+      chronicle: [
+        {
+          id: `workshop-${state.day}-${settlementId}`,
+          day: state.day,
+          category: 'ECONOMY',
+          text: `${s.name} şehrinde ${workshopType} atölyesi satın alındı; günlük kervan üretimi başladı.`,
+        },
+        ...state.chronicle,
+      ].slice(0, 30),
+    },
+  };
+}
+
+export function forgeCustomWeaponAtSmithy(
+  state: CampaignState,
+  settlementId: string,
+  blueprintId: 'SPATHA' | 'FALX' | 'LANCE',
+): { success: boolean; reason?: string; weaponName?: string; profitGold?: number; nextState: CampaignState } {
+  const s = state.settlements.find((item) => item.id === settlementId);
+  if (!s || s.type !== 'TOWN') {
+    return { success: false, reason: 'Demirci Ocağı yalnızca şehirlerde bulunur.', nextState: state };
+  }
+  const materialCost = blueprintId === 'LANCE' ? 95 : blueprintId === 'FALX' ? 80 : 65;
+  if (state.gold < materialCost) {
+    return {
+      success: false,
+      reason: `Demir cevheri ve odun kömürü için ${materialCost} Dinar gerekiyor.`,
+      nextState: state,
+    };
+  }
+  const weaponMeta =
+    blueprintId === 'LANCE'
+      ? { name: 'Usta İşi Kalradya Kontos Kargısı', profit: 195, stat: '+148 Hücum Delici Hasar' }
+      : blueprintId === 'FALX'
+        ? { name: 'Thamaskene Çift Elli Savaş Falxı', profit: 165, stat: '+104 Kesici ZırhYaran' }
+        : { name: 'Altın Kabzalı İmparatorluk Spathası', profit: 140, stat: '+88 Hızlı Kesici Hasar' };
+
+  const baseSkills = state.skills ?? createInitialCampaignState().skills!;
+  const currentSmithing = baseSkills.smithing ?? { level: 60, focus: 2 };
+
+  return {
+    success: true,
+    weaponName: weaponMeta.name,
+    profitGold: weaponMeta.profit,
+    nextState: {
+      ...state,
+      gold: state.gold - materialCost + weaponMeta.profit,
+      renown: state.renown + 3,
+      skills: {
+        ...baseSkills,
+        smithing: {
+          ...currentSmithing,
+          level: currentSmithing.level + 8,
+        },
+      },
+      equipment: {
+        ...(state.equipment ?? createInitialCampaignState().equipment!),
+        WEAPON1: `${weaponMeta.name} (${weaponMeta.stat})`,
+      },
+      chronicle: [
+        {
+          id: `smithy-${state.day}-${settlementId}-${blueprintId}`,
+          day: state.day,
+          category: 'ECONOMY',
+          text: `${s.name} Demirci Ocağında "${weaponMeta.name}" dövüldü; lonca siparişinden net +${weaponMeta.profit - materialCost} Dinar kazanç sağlandı.`,
+        },
+        ...state.chronicle,
+      ].slice(0, 30),
+    },
+  };
+}
+
+export function constructSiegeEngine(
+  state: CampaignState,
+  settlementId: string,
+  engineType: SiegeEngineType,
+  moveToReserve = false,
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const idx = state.settlements.findIndex((s) => s.id === settlementId);
+  if (idx === -1) return { success: false, reason: 'Hedef yerleşim bulunamadı.', nextState: state };
+  const s = state.settlements[idx];
+  const cost =
+    engineType === 'TREBUCHET'
+      ? 90
+      : engineType === 'SIEGE_TOWER'
+        ? 80
+        : engineType === 'MANGONEL'
+          ? 65
+          : 50;
+  if (state.gold < cost) {
+    return {
+      success: false,
+      reason: `${engineType} inşası için ${cost} Dinar mühendislik malzemesi gerekiyor.`,
+      nextState: state,
+    };
+  }
+  const currentActive = s.siegeEngines ?? [];
+  const currentReserve = s.reserveEngines ?? [];
+
+  const nextSettlements = state.settlements.map((item, i) =>
+    i === idx
+      ? {
+          ...item,
+          siegeEngines: moveToReserve ? currentActive : [...currentActive, engineType].slice(0, 6),
+          reserveEngines: moveToReserve ? [...currentReserve, engineType] : currentReserve,
+        }
+      : item,
+  );
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      gold: state.gold - cost,
+      settlements: nextSettlements,
+      chronicle: [
+        {
+          id: `siege-eng-${state.day}-${settlementId}-${engineType}`,
+          day: state.day,
+          category: 'WAR',
+          text: `${s.name} kuşatma kampında ${engineType} inşa edildi${moveToReserve ? ' ve bombardıman için Rezerve çekildi' : ''}.`,
+        },
+        ...state.chronicle,
+      ].slice(0, 30),
+    },
+  };
+}
+
+export function deployReservedSiegeEngines(
+  state: CampaignState,
+  settlementId: string,
+): { success: boolean; nextState: CampaignState } {
+  const idx = state.settlements.findIndex((s) => s.id === settlementId);
+  if (idx === -1) return { success: false, nextState: state };
+  const s = state.settlements[idx];
+  const reserve = s.reserveEngines ?? [];
+  if (reserve.length === 0) return { success: false, nextState: state };
+
+  const nextSettlements = state.settlements.map((item, i) =>
+    i === idx
+      ? {
+          ...item,
+          siegeEngines: [...(item.siegeEngines ?? []), ...reserve].slice(0, 6),
+          reserveEngines: [],
+        }
+      : item,
+  );
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      settlements: nextSettlements,
+    },
+  };
+}
+
+export function bombardSettlementWalls(
+  state: CampaignState,
+  settlementId: string,
+): {
+  success: boolean;
+  reason?: string;
+  wallHealthAfter?: number;
+  garrisonLost?: number;
+  nextState: CampaignState;
+} {
+  const idx = state.settlements.findIndex((s) => s.id === settlementId);
+  if (idx === -1) return { success: false, reason: 'Yerleşim bulunamadı.', nextState: state };
+  const s = state.settlements[idx];
+  const activeEngines = s.siegeEngines ?? [];
+  if (activeEngines.length === 0) {
+    return {
+      success: false,
+      reason: 'Sur bombardımanı için önce en az 1 kuşatma silahı (Trebuchet, Mangonel veya Balista) sahaya sürmelisiniz.',
+      nextState: state,
+    };
+  }
+  const trebuchetCount = activeEngines.filter((e) => e === 'TREBUCHET').length;
+  const mangonelCount = activeEngines.filter((e) => e === 'MANGONEL').length;
+  const wallDamage = Math.min(100, trebuchetCount * 35 + mangonelCount * 20 + activeEngines.length * 10);
+  const currentWallHp = s.wallHealth ?? 100;
+  const nextWallHp = Math.max(0, currentWallHp - wallDamage);
+  const garrisonLoss = Math.min(Math.max(1, s.garrison - 4), Math.max(3, Math.round(wallDamage * 0.25)));
+  const foodLoss = Math.min(s.foodStock, 18);
+
+  const nextSettlements = state.settlements.map((item, i) =>
+    i === idx
+      ? {
+          ...item,
+          wallHealth: nextWallHp,
+          garrison: Math.max(4, item.garrison - garrisonLoss),
+          foodStock: Math.max(0, item.foodStock - foodLoss),
+        }
+      : item,
+  );
+
+  return {
+    success: true,
+    wallHealthAfter: nextWallHp,
+    garrisonLost: garrisonLoss,
+    nextState: {
+      ...state,
+      day: state.day + 1,
+      renown: state.renown + 4,
+      settlements: nextSettlements,
+      chronicle: [
+        {
+          id: `bombard-${state.day}-${settlementId}`,
+          day: state.day + 1,
+          category: 'WAR',
+          text: `${s.name} surları kuşatma silahlarıyla dövüldü! Duvar sağlığı %${nextWallHp} seviyesine indi, ${garrisonLoss} savunmacı saf dışı kaldı.`,
+        },
+        ...state.chronicle,
+      ].slice(0, 30),
+    },
+  };
+}
+
+export function upgradeTroopTier(
+  state: CampaignState,
+  fromTier: UnitTierId,
+  toTier: UnitTierId,
+  count = 1,
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const safeCount = Math.max(1, count);
+  if (state.roster[fromTier] < safeCount) {
+    return {
+      success: false,
+      reason: `Terfi ettirmek için yeterli ${UNIT_DEFINITIONS[fromTier].name} yok.`,
+      nextState: state,
+    };
+  }
+  const upgradeCostPerUnit = Math.max(15, UNIT_DEFINITIONS[toTier].recruitCost - UNIT_DEFINITIONS[fromTier].recruitCost + 10);
+  const totalCost = upgradeCostPerUnit * safeCount;
+  if (state.gold < totalCost) {
+    return {
+      success: false,
+      reason: `Terfi ekipmanı ve savaş atı için ${totalCost} Dinar gerekiyor.`,
+      nextState: state,
+    };
+  }
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      gold: state.gold - totalCost,
+      roster: {
+        ...state.roster,
+        [fromTier]: state.roster[fromTier] - safeCount,
+        [toTier]: state.roster[toTier] + safeCount,
+      },
+      morale: Math.min(100, state.morale + 1),
+    },
+  };
+}
+
+export function recruitCapturedPrisoners(
+  state: CampaignState,
+  count = 1,
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const safeCount = Math.max(1, Math.min(count, state.prisoners));
+  if (state.prisoners <= 0) {
+    return { success: false, reason: 'Devşirilecek savaş esiri bulunmuyor.', nextState: state };
+  }
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      prisoners: state.prisoners - safeCount,
+      roster: {
+        ...state.roster,
+        militia: state.roster.militia + safeCount,
+      },
+      morale: Math.max(40, state.morale - 1),
+    },
+  };
+}
+
+export function assignClanRole(
+  state: CampaignState,
+  roleId: ClanRoleId,
+  assigneeName: string,
+): { success: boolean; nextState: CampaignState } {
+  const currentRoles = state.clanRoles ?? createInitialCampaignState().clanRoles!;
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      clanRoles: {
+        ...currentRoles,
+        [roleId]: assigneeName,
+      },
+    },
+  };
+}
+
+export function attemptLordPersuasionStep(
+  state: CampaignState,
+  lordId: string,
+  argumentType: 'HONOR' | 'VALOR' | 'CALCULATING' | 'MERCY',
+): {
+  success: boolean;
+  pipsGained: number;
+  totalPips: number;
+  convinced: boolean;
+  replyText: string;
+  nextState: CampaignState;
+} {
+  const idx = state.lords.findIndex((l) => l.id === lordId);
+  if (idx === -1) {
+    return {
+      success: false,
+      pipsGained: 0,
+      totalPips: 0,
+      convinced: false,
+      replyText: 'Lord bulunamadı.',
+      nextState: state,
+    };
+  }
+  const lord = state.lords[idx];
+  const currentPips = lord.persuasionPips ?? 0;
+  const charmLevel = state.skills?.charm?.level ?? 100;
+
+  // Deterministic high-reward check based on argument affinity + Charm skill
+  const isCritical =
+    (argumentType === 'HONOR' && (lord.personality.includes('sadık') || lord.personality.includes('Bilge'))) ||
+    (argumentType === 'VALOR' && (lord.personality.includes('Cesur') || lord.personality.includes('Askeri'))) ||
+    (argumentType === 'CALCULATING' && charmLevel >= 90);
+
+  const pipsGained = isCritical ? 2 : 1;
+  const nextPips = Math.min(4, currentPips + pipsGained);
+  const convinced = nextPips >= 4;
+
+  const replyText = convinced
+    ? `Sözlerin de sancağın kadar güçlü ${state.playerName}! Tüm şüphelerimi giderdin (4/4 İkna Tamamlandı). Artık seninle müttefikim!`
+    : isCritical
+      ? `Çok yerinde bir tespit (${argumentType} Kritiği: +2 İkna Aşaması)! Devam et, seni dinliyorum.`
+      : `Söylediklerinde doğruluk payı var (+1 İkna Aşaması: ${nextPips}/4).`;
+
+  const nextLords = state.lords.map((l, i) =>
+    i === idx
+      ? {
+          ...l,
+          persuasionPips: nextPips,
+          relation: Math.min(100, l.relation + (convinced ? 15 : 4)),
+          isAtWarWithPlayer: convinced ? false : l.isAtWarWithPlayer,
+          isAlliedWithPlayer: convinced ? true : l.isAlliedWithPlayer,
+        }
+      : l,
+  );
+
+  const baseSkills = state.skills ?? createInitialCampaignState().skills!;
+  const currentCharm = baseSkills.charm ?? { level: 100, focus: 3 };
+
+  return {
+    success: true,
+    pipsGained,
+    totalPips: nextPips,
+    convinced,
+    replyText,
+    nextState: {
+      ...state,
+      renown: convinced ? state.renown + 15 : state.renown + 2,
+      skills: {
+        ...baseSkills,
+        charm: {
+          ...currentCharm,
+          level: currentCharm.level + 5,
+        },
+      },
+      lords: nextLords,
+      chronicle: convinced
+        ? [
+            {
+              id: `persuade-${state.day}-${lord.id}`,
+              day: state.day,
+              category: 'DIPLOMACY',
+              text: `${lord.title} ${lord.name}, 4 aşamalı divan müzakeresi sonucunda ikna edilerek sancağımızla ittifak kurdu!`,
+            },
+            ...state.chronicle,
+          ].slice(0, 30)
+        : state.chronicle,
+    },
+  };
+}
+
+export function executeLordBarterOffer(
+  state: CampaignState,
+  lordId: string,
+  goldOffered: number,
+  prisonersOffered: number,
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const idx = state.lords.findIndex((l) => l.id === lordId);
+  if (idx === -1) return { success: false, reason: 'Lord bulunamadı.', nextState: state };
+  if (state.gold < goldOffered) {
+    return { success: false, reason: 'Teklif edilen Dinar miktarı hazinede yok.', nextState: state };
+  }
+  if (state.prisoners < prisonersOffered) {
+    return { success: false, reason: 'Teklif edilen esir sayısı orduda yok.', nextState: state };
+  }
+  const lord = state.lords[idx];
+  const nextLords = state.lords.map((l, i) =>
+    i === idx
+      ? {
+          ...l,
+          relation: Math.min(100, l.relation + 18),
+          isAtWarWithPlayer: false,
+          isAlliedWithPlayer: true,
+          persuasionPips: 4,
+        }
+      : l,
+  );
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      gold: state.gold - goldOffered,
+      prisoners: state.prisoners - prisonersOffered,
+      renown: state.renown + 10,
+      lords: nextLords,
+      chronicle: [
+        {
+          id: `barter-${state.day}-${lord.id}`,
+          day: state.day,
+          category: 'DIPLOMACY',
+          text: `${lord.title} ${lord.name} ile ${goldOffered} Dinar ve ${prisonersOffered} esir karşılığında takas antlaşması (Barter) imzalandı.`,
+        },
+        ...state.chronicle,
+      ].slice(0, 30),
+    },
+  };
+}
+
+export type MarketCategory = 'ALL' | 'WEAPON' | 'SHIELD' | 'ARMOR' | 'FOOD' | 'HORSE';
+
+export interface MarketplaceItem {
+  id: string;
+  name: string;
+  category: 'WEAPON' | 'SHIELD' | 'ARMOR' | 'FOOD' | 'HORSE';
+  slot: EquipmentSlotId | 'TRADE';
+  value: number;
+  weight: number;
+  statBonus: string;
+  icon: string;
+  civilianLegal: boolean;
+  tier: number;
+  description: string;
+}
+
+export const CALRADIA_MARKETPLACE_ITEMS: MarketplaceItem[] = [
+  // --- WEAPONS ---
+  {
+    id: 'mkt_thamaskene_spatha',
+    name: 'Thamaskene Lejyoner Spathası',
+    category: 'WEAPON',
+    slot: 'WEAPON1',
+    value: 580,
+    weight: 1.3,
+    statBonus: '+84 Kesici · +48 Saplama (Hız: 96)',
+    icon: '🗡️',
+    civilianLegal: true,
+    tier: 5,
+    description: 'Şam çeliğinden dövülmüş, mükemmel dengeli ve keskin elit imparatorluk kılıcı.',
+  },
+  {
+    id: 'mkt_vlandian_arming_sword',
+    name: 'Vlandiya Süvari Kılıcı',
+    category: 'WEAPON',
+    slot: 'WEAPON1',
+    value: 390,
+    weight: 1.4,
+    statBonus: '+76 Kesici · +42 Saplama (Hız: 92)',
+    icon: '⚔️',
+    civilianLegal: true,
+    tier: 4,
+    description: 'Vlandiya şövalyelerinin at sırtında düşman piyadelerini biçtiği ağır çift ağızlı kılıç.',
+  },
+  {
+    id: 'mkt_battanian_falx',
+    name: 'Battaniya İki Elli Falx Kılıcı',
+    category: 'WEAPON',
+    slot: 'WEAPON1',
+    value: 720,
+    weight: 2.3,
+    statBonus: '+112 Kesici Hasar · Kalkan Kırıcı',
+    icon: '🪓',
+    civilianLegal: false,
+    tier: 5,
+    description: 'Kavisli orak şeklinde devasa iki elli bıçak. Düşman kalkanlarını paramparça eder.',
+  },
+  {
+    id: 'mkt_imperial_kontos',
+    name: 'İmparatorluk Kontos Ağır Kargısı',
+    category: 'WEAPON',
+    slot: 'WEAPON3',
+    value: 460,
+    weight: 2.8,
+    statBonus: '+142 Koltuklanmış Hücum Hasarı · Erişim: 265cm',
+    icon: '🔱',
+    civilianLegal: false,
+    tier: 5,
+    description: 'Ağır katafrakt süvarilerinin düşman hatlarını delip geçtiği devasa kargı.',
+  },
+  {
+    id: 'mkt_steppe_composite_bow',
+    name: 'Bozkır Kompozit Refleks Yayı',
+    category: 'WEAPON',
+    slot: 'WEAPON4',
+    value: 520,
+    weight: 1.1,
+    statBonus: '+72 Delici Ok Hasarı · Çekiş Hızı: 88',
+    icon: '🏹',
+    civilianLegal: false,
+    tier: 5,
+    description: 'Boynuz ve sinirden lamine edilmiş, at sırtında olağanüstü menzilli öldürücü yay.',
+  },
+  {
+    id: 'mkt_bodkin_arrows',
+    name: 'Zırh Delici Bodkin Sadağı (x32)',
+    category: 'WEAPON',
+    slot: 'WEAPON4',
+    value: 180,
+    weight: 2.5,
+    statBonus: '+4 Ekstra Delici Hasar · 32 Adet',
+    icon: '🎯',
+    civilianLegal: false,
+    tier: 4,
+    description: 'Ağır çelik levha zırhları delmek için tasarlanmış kare uçlu elit oklar.',
+  },
+
+  // --- SHIELDS ---
+  {
+    id: 'mkt_sturgian_round_shield',
+    name: 'Sturgiya Ağır Ahşap Yuvarlak Kalkan',
+    category: 'SHIELD',
+    slot: 'WEAPON2',
+    value: 360,
+    weight: 3.8,
+    statBonus: 'Dayanıklılık: 520 · +58 Gövde Koruması',
+    icon: '🛡️',
+    civilianLegal: false,
+    tier: 4,
+    description: 'Demir göbekli sert meşe kalkan. Kalkan duvarı taktiği için mükemmel koruma sağlar.',
+  },
+  {
+    id: 'mkt_vlandian_kite_shield',
+    name: 'Vlandiya Şövalye Damla Kalkanı',
+    category: 'SHIELD',
+    slot: 'WEAPON2',
+    value: 510,
+    weight: 4.2,
+    statBonus: 'Dayanıklılık: 620 · +68 Bacak & Gövde Koruması',
+    icon: '🛡️',
+    civilianLegal: false,
+    tier: 5,
+    description: 'Uzun sivri alt kısmı sayesinde binicinin bacağını ve atın boynunu koruyan asil kalkan.',
+  },
+  {
+    id: 'mkt_legionary_scutum',
+    name: 'İmparatorluk Lejyoner Pavise Kalkanı',
+    category: 'SHIELD',
+    slot: 'WEAPON2',
+    value: 590,
+    weight: 5.4,
+    statBonus: 'Dayanıklılık: 680 · +76 Tam Siper Koruması',
+    icon: '🛡️',
+    civilianLegal: false,
+    tier: 5,
+    description: 'Demir destekli devasa dikdörtgen kalkan. Düşman ok yağmurlarına karşı kale gibidir.',
+  },
+
+  // --- ARMORS ---
+  {
+    id: 'mkt_cataphract_helm',
+    name: 'Altın Kakmalı İmparatorluk Katafrakt Miğferi',
+    category: 'ARMOR',
+    slot: 'HEAD',
+    value: 780,
+    weight: 3.2,
+    statBonus: '+50 Baş Zırhı · +12 Boyun Koruması',
+    icon: '🪖',
+    civilianLegal: false,
+    tier: 6,
+    description: 'Bronz yüz maskesi ve altın kakmalı tepeliğiyle düşmana korku salan muhteşem miğfer.',
+  },
+  {
+    id: 'mkt_spangenhelm',
+    name: 'Demir Burunluklu Savaşçı Spangenhelmi',
+    category: 'ARMOR',
+    slot: 'HEAD',
+    value: 390,
+    weight: 2.6,
+    statBonus: '+36 Baş Zırhı · +8 Boyun Koruması',
+    icon: '🪖',
+    civilianLegal: true,
+    tier: 4,
+    description: 'Perçinli çelik şeritler ve zincir ense korumalığıyla sağlam savaşçı başlığı.',
+  },
+  {
+    id: 'mkt_heavy_cataphract_cuirass',
+    name: 'Ağır İmparatorluk Katafrakt Pullu Zırhı',
+    category: 'ARMOR',
+    slot: 'BODY',
+    value: 1350,
+    weight: 12.5,
+    statBonus: '+66 Gövde Zırhı · +24 Bacak Zırhı',
+    icon: '🥋',
+    civilianLegal: false,
+    tier: 6,
+    description: 'Üst üste binen sertleştirilmiş çelik pullardan örülmüş, Kalradya nın en dayanıklı zırhı.',
+  },
+  {
+    id: 'mkt_hauberk_chainmail',
+    name: 'Perçinli Kuzeyli Örme Zincir Zırh (Hauberk)',
+    category: 'ARMOR',
+    slot: 'BODY',
+    value: 680,
+    weight: 9.8,
+    statBonus: '+48 Gövde Zırhı · +14 Kol Zırhı',
+    icon: '🥋',
+    civilianLegal: true,
+    tier: 4,
+    description: 'Binlerce küçük çelik halkanın birbirine perçinlenmesiyle yapılmış esnek zırh.',
+  },
+  {
+    id: 'mkt_padded_gambeson',
+    name: 'Güçlendirilmiş Kalın Dolgulu Gambeson',
+    category: 'ARMOR',
+    slot: 'BODY',
+    value: 220,
+    weight: 4.5,
+    statBonus: '+28 Gövde Zırhı · +8 Kol Zırhı',
+    icon: '🦺',
+    civilianLegal: true,
+    tier: 2,
+    description: 'Keten ve yün katmanlarıyla dikilmiş, hafif ve hareket kabiliyeti yüksek zırh.',
+  },
+  {
+    id: 'mkt_scaled_pauldrons',
+    name: 'Aslan Kakmalı Pullu Çelik Omuzluk & Pelerin',
+    category: 'ARMOR',
+    slot: 'SHOULDER',
+    value: 490,
+    weight: 3.5,
+    statBonus: '+20 Gövde · +16 Kol Zırhı · +5 Nam',
+    icon: '🧣',
+    civilianLegal: true,
+    tier: 5,
+    description: 'Omuzları koruyan çelik katmanlar ve sancaktar renginde asil ipek pelerin.',
+  },
+  {
+    id: 'mkt_plate_gauntlets',
+    name: 'Çelik Levhalı Şövalye Eldivenleri',
+    category: 'ARMOR',
+    slot: 'GLOVES',
+    value: 360,
+    weight: 1.8,
+    statBonus: '+26 Kol & El Zırhı',
+    icon: '🧤',
+    civilianLegal: true,
+    tier: 4,
+    description: 'Parmak eklemlerini koruyan mafsallı çelik parçalarla zırhlanmış eldiven.',
+  },
+  {
+    id: 'mkt_plated_greaves',
+    name: 'Zincirli Çelik Dizçekli Süvari Çizmeleri',
+    category: 'ARMOR',
+    slot: 'LEG',
+    value: 480,
+    weight: 2.8,
+    statBonus: '+34 Bacak Zırhı',
+    icon: '👢',
+    civilianLegal: true,
+    tier: 5,
+    description: 'Diz kapaklarını ve kaval kemiklerini koruyan çelik takviyeli süvari botları.',
+  },
+
+  // --- MOUNTS & HARNESS ---
+  {
+    id: 'mkt_aserai_pureblood',
+    name: 'Safkan Aserai Çöl Savaş Küheylanı',
+    category: 'HORSE',
+    slot: 'MOUNT',
+    value: 920,
+    weight: 0,
+    statBonus: 'Hız: 68 · Manevra: 74 · Can: 240',
+    icon: '🐎',
+    civilianLegal: true,
+    tier: 6,
+    description: 'Rüzgar gibi koşan, yüksek manevra kabiliyetine sahip efsanevi Aserai atı.',
+  },
+  {
+    id: 'mkt_vlandian_charger',
+    name: 'Zırhlı Vlandiya Ağır Hücum Atı (Destrier)',
+    category: 'HORSE',
+    slot: 'MOUNT',
+    value: 840,
+    weight: 0,
+    statBonus: 'Hız: 62 · Hücum Hasarı: 38 · Can: 280',
+    icon: '🐎',
+    civilianLegal: true,
+    tier: 5,
+    description: 'Geniş göğsüyle düşman piyadelerini ezip geçen güçlü Avrupa tarzı savaş atı.',
+  },
+  {
+    id: 'mkt_steppe_steed',
+    name: 'Dayanıklı Bozkır Akıncı Atı',
+    category: 'HORSE',
+    slot: 'MOUNT',
+    value: 440,
+    weight: 0,
+    statBonus: 'Hız: 65 · Manevra: 70 · Can: 210',
+    icon: '🐎',
+    civilianLegal: true,
+    tier: 4,
+    description: 'Geniş bozkırlarda yorulmadan günlerce yol alabilen çevik akıncı biniti.',
+  },
+  {
+    id: 'mkt_pack_mule',
+    name: 'Kervan Yük Katırı',
+    category: 'HORSE',
+    slot: 'TRADE',
+    value: 160,
+    weight: 0,
+    statBonus: '+100 kg Ordu Taşıma Kapasitesi',
+    icon: '🫏',
+    civilianLegal: true,
+    tier: 2,
+    description: 'Ordunun ganimet ve erzak taşıma kapasitesini artıran uysal katır.',
+  },
+  {
+    id: 'mkt_cataphract_barding',
+    name: 'Pullu Katafrakt At Zırhı (Barding)',
+    category: 'HORSE',
+    slot: 'HARNESS',
+    value: 620,
+    weight: 18.0,
+    statBonus: '+48 Binek Zırhı',
+    icon: '🛡️',
+    civilianLegal: false,
+    tier: 5,
+    description: 'Savaş atının boynunu ve göğsünü saran ağır koruyucu pullu zırh örtüsü.',
+  },
+
+  // --- PROVISIONS & TRADE GOODS ---
+  {
+    id: 'mkt_grain_sack',
+    name: 'Kalradya Buğdayı ve Tahıl Çuvalı',
+    category: 'FOOD',
+    slot: 'TRADE',
+    value: 20,
+    weight: 10.0,
+    statBonus: '+10 Erzak Rezervi',
+    icon: '🌾',
+    civilianLegal: true,
+    tier: 1,
+    description: 'Ordunun temel besin kaynağı un ve ekmek yapımında kullanılan kaliteli tahıl.',
+  },
+  {
+    id: 'mkt_cured_meat',
+    name: 'Kurutulmuş Et ve Tuzlu Sosis',
+    category: 'FOOD',
+    slot: 'TRADE',
+    value: 45,
+    weight: 8.0,
+    statBonus: '+12 Erzak · +4 Ordu Morali',
+    icon: '🥩',
+    civilianLegal: true,
+    tier: 3,
+    description: 'Askerlerin moralini ve dövüş isteğini artıran lezzetli kurutulmuş etler.',
+  },
+  {
+    id: 'mkt_smoked_fish',
+    name: 'Tütsülenmiş Göl Balığı Sepeti',
+    category: 'FOOD',
+    slot: 'TRADE',
+    value: 28,
+    weight: 6.0,
+    statBonus: '+8 Erzak · +2 Ordu Morali',
+    icon: '🐟',
+    civilianLegal: true,
+    tier: 2,
+    description: 'Kuzey göllerinden avlanıp tütsülenmiş dayanıklı balık.',
+  },
+  {
+    id: 'mkt_cheese_wheel',
+    name: 'Otlak Peyniri ve Tereyağı Kalıbı',
+    category: 'FOOD',
+    slot: 'TRADE',
+    value: 32,
+    weight: 5.0,
+    statBonus: '+8 Erzak · +2 Ordu Morali',
+    icon: '🧀',
+    civilianLegal: true,
+    tier: 2,
+    description: 'Yayla köylerinden gelen besleyici sert sarı peynir.',
+  },
+  {
+    id: 'mkt_olive_oil',
+    name: 'Zeytinyağı Amforası',
+    category: 'FOOD',
+    slot: 'TRADE',
+    value: 85,
+    weight: 12.0,
+    statBonus: 'Ticari Değer: Şehirlerde kârlı satılır',
+    icon: '🫒',
+    civilianLegal: true,
+    tier: 3,
+    description: 'Güney imparatorluk koruluklarından toplanmış değerli sızma zeytinyağı.',
+  },
+  {
+    id: 'mkt_iron_ingot',
+    name: 'Yüksek Kalite Demir ve Çelik Külçeleri',
+    category: 'FOOD',
+    slot: 'TRADE',
+    value: 110,
+    weight: 15.0,
+    statBonus: 'Demircilik ve Kervan Malı',
+    icon: '⛏️',
+    civilianLegal: true,
+    tier: 4,
+    description: 'Madenci ocaklarından eritilip kalıba dökülmüş saf demir külçesi.',
+  },
+  {
+    id: 'mkt_velvet_silk',
+    name: 'Doğu İpeği ve Kızıl Kadife Dokuma',
+    category: 'FOOD',
+    slot: 'TRADE',
+    value: 220,
+    weight: 4.0,
+    statBonus: 'Lüks Saray Ticaret Emtiası',
+    icon: '🧵',
+    civilianLegal: true,
+    tier: 5,
+    description: 'Kuzait ve Aserai kervanlarıyla taşınan soyluların aradığı kıymetli kumaş.',
+  },
+];
+
+export function buyMarketplaceItem(
+  state: CampaignState,
+  item: MarketplaceItem,
+  settlementName = 'Pazaryeri',
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  if (state.gold < item.value) {
+    return {
+      success: false,
+      reason: `Yetersiz Dinar! Bu eşyayı satın almak için ${item.value} Dinar gerekiyor (Mevcut: ${state.gold} Dinar).`,
+      nextState: state,
+    };
+  }
+
+  // If it is pure food, immediately increase food and morale
+  if (item.category === 'FOOD' && (item.id === 'mkt_grain_sack' || item.id === 'mkt_cured_meat' || item.id === 'mkt_smoked_fish' || item.id === 'mkt_cheese_wheel')) {
+    const foodGain = item.id === 'mkt_grain_sack' ? 10 : item.id === 'mkt_cured_meat' ? 12 : 8;
+    const moraleGain = item.id === 'mkt_cured_meat' ? 4 : item.id === 'mkt_grain_sack' ? 1 : 2;
+    return {
+      success: true,
+      nextState: {
+        ...state,
+        gold: state.gold - item.value,
+        food: state.food + foodGain,
+        morale: Math.min(100, state.morale + moraleGain),
+        chronicle: [
+          {
+            id: `buy-food-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            day: state.day,
+            category: 'ECONOMY',
+            text: `${settlementName} pazarından "${item.name}" satın alındı (-${item.value} Dinar, +${foodGain} Erzak).`,
+          },
+          ...state.chronicle,
+        ].slice(0, 30),
+      },
+    };
+  }
+
+  // Create InventoryItem to add to player's inventoryItems
+  const newItem: InventoryItem = {
+    id: `${item.id}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    name: item.name,
+    slot: item.slot,
+    category: item.category,
+    value: Math.round(item.value * 0.75), // Resale value in player inventory is 75%
+    weight: item.weight,
+    statBonus: item.statBonus,
+    civilianLegal: item.civilianLegal,
+    icon: item.icon,
+    tier: item.tier,
+  };
+
+  const updatedItems = [...(state.inventoryItems ?? []), newItem];
+
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      gold: state.gold - item.value,
+      inventoryItems: updatedItems,
+      chronicle: [
+        {
+          id: `buy-item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          day: state.day,
+          category: 'ECONOMY',
+          text: `${settlementName} pazarından "${item.name}" satın alındı (-${item.value} Dinar).`,
+        },
+        ...state.chronicle,
+      ].slice(0, 30),
+    },
+  };
+}
+
+export function sellMarketplaceItem(
+  state: CampaignState,
+  itemId: string,
+  settlementName = 'Pazaryeri',
+): { success: boolean; reason?: string; goldGained: number; nextState: CampaignState } {
+  const items = state.inventoryItems ?? [];
+  const itemIndex = items.findIndex((i) => i.id === itemId);
+  if (itemIndex === -1) {
+    return {
+      success: false,
+      reason: 'Eşya envanterde bulunamadı.',
+      goldGained: 0,
+      nextState: state,
+    };
+  }
+
+  const itemToSell = items[itemIndex];
+  const goldGained = Math.max(5, itemToSell.value);
+  const remainingItems = items.filter((_, idx) => idx !== itemIndex);
+
+  return {
+    success: true,
+    goldGained,
+    nextState: {
+      ...state,
+      gold: state.gold + goldGained,
+      inventoryItems: remainingItems,
+      chronicle: [
+        {
+          id: `sell-item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          day: state.day,
+          category: 'ECONOMY',
+          text: `${settlementName} pazarına "${itemToSell.name}" satıldı (+${goldGained} Dinar).`,
+        },
+        ...state.chronicle,
+      ].slice(0, 30),
+    },
+  };
+}
+
+export function unequipEquipmentSlot(
+  state: CampaignState,
+  slot: EquipmentSlotId,
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const currentEq = state.equipment ?? createInitialCampaignState().equipment!;
+  const currentEquippedName = currentEq[slot];
+
+  if (!currentEquippedName || currentEquippedName === 'Boş' || currentEquippedName === 'Yok') {
+    return { success: false, reason: 'Bu slot zaten boş.', nextState: state };
+  }
+
+  const defaultUnarmedNames: Record<EquipmentSlotId, string> = {
+    HEAD: 'Başlıksız (0 Zırh)',
+    SHOULDER: 'Omuzluksuz',
+    BODY: 'Sivil Keten Tunik (+5 Zırh)',
+    GLOVES: 'Eldivensiz',
+    LEG: 'Kaba Deri Çarık (+4 Zırh)',
+    MOUNT: 'Bineksiz (Yaya)',
+    HARNESS: 'Koşumsuz',
+    BANNER: 'Sancaksız',
+    WEAPON1: 'Silahsız (Yumruk)',
+    WEAPON2: 'Boş Slot',
+    WEAPON3: 'Boş Slot',
+    WEAPON4: 'Boş Slot',
+  };
+
+  const unequippedItem: InventoryItem = {
+    id: `unequip_${slot}_${Date.now()}`,
+    name: currentEquippedName.split(' (')[0],
+    slot: slot,
+    value: 120,
+    weight: slot === 'BODY' ? 8 : slot === 'HEAD' || slot === 'WEAPON1' ? 2 : 1,
+    statBonus: currentEquippedName.includes('(') ? currentEquippedName.split('(')[1].replace(')', '') : 'Standart',
+    civilianLegal: true,
+  };
+
+  const nextItems = [...(state.inventoryItems ?? []), unequippedItem];
+
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      equipment: {
+        ...currentEq,
+        [slot]: defaultUnarmedNames[slot],
+      },
+      inventoryItems: nextItems,
+    },
+  };
+}
+
+

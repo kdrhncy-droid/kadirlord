@@ -12,10 +12,10 @@ export interface NavPoint {
   z: number;
 }
 
-// Check if a world position is on one of the continental stone bridges or the Ortysia-Quyaz strait causeway
+// Check if a world position is on one of the continental stone bridges or the Ortysia-Quyaz stone bridge
 export function isPointOnBridge(x: number, z: number): boolean {
-  // Ortysia (-232, 102) <-> Quyaz (-232, 202) Western Strait Causeway / Bridge
-  if (x >= -240 && x <= -224 && z >= 100 && z <= 204) {
+  // Ortysia (-232, 102) <-> Quyaz (-232, 202) Western Strait Stone Arch Bridge (x: -232, z: 148, length: 18)
+  if (Math.abs(x - -232) <= 3.8 && z >= 137 && z <= 159) {
     return true;
   }
   for (let i = 0; i < CONTINENTAL_BRIDGES.length; i++) {
