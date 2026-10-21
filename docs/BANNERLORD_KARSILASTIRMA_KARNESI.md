@@ -3,7 +3,9 @@
 > **Rapor tarihi:** 21 Ekim 2026 · **Sürüm:** Faz 10b sonrası (`cc3fee4`)
 > **Kapsam:** 62 kaynak dosya / 47.912 satır TypeScript + 43 test-render betiği
 > **Yöntem:** Kod okuma + otomatik doğrulama (`tsc`, 28 birim testi, 29 probe paketi, `vite build`)
-> + Bannerlord resmî blog/fandom/topluluk kaynakları + mevcut ekran görüntüleri (`docs/renders/`)
+> + **metin araştırması** (TaleWorlds blog, fandom, Steam/namu wiki, rehberler)
+> + **görsel araştırma**: 8 Bannerlord referans ekranı (`docs/renders/reference/`) ↔ bizim 5 karemiz
+> (`docs/renders/`) yan yana incelendi (bkz. §7.0)
 
 ---
 
@@ -14,6 +16,7 @@
 | **Genel olarak neredeyiz?** | **Mühendislik 6,1 / 10** · **Oyun deneyimi 5,3 / 10** · Bannerlord referansı 9,1 / 10 → **Bannerlord'un ~%67 mühendislik, ~%58 deneyim seviyesi** |
 | **En güçlü olduğumuz yer** | Sıfırdan yazılmış 3B motor (iskelet, IK, dövüş, 1000 asker havuzu), 211 yerleşimli prosedürel harita, kararlı kayıt + 29 problu test disiplini |
 | **En zayıf olduğumuz yer** | **Canlı dünya simülasyonu yok** (lord AI devriye gezmekten öteye geçmiyor), **içerik çeşitliliği çok düşük** (4 asker tipi, 29 eşya, 12 NPC repliği) |
+| **Görsel olarak neredeyiz?** | Düzen/yerleşim **≈%85 doğru**, yüzey işçiliği (parşömen, illüstrasyon, ikon) **≈%30** → görsel ortalama **5,6 / 10** |
 | **"Bannerlord gibi" hissi veren kısım** | Arayüz dili, ansiklopedi, pazar, yerleşim menüsü, dövüş mekaniği |
 | **"Bannerlord gibi" hissettirmeyen kısım** | Dünya sana tepki vermiyor: lordlar peşine düşmüyor, kuşatmıyor, savaş ilan etmiyor; her lord aynı 12 cümleyi kuruyor |
 | **Profesyonel oynanabilir seviyeye ne zaman?** | **Dikey dilim (demo): 8–10 hafta → Ocak 2027** · **Satılabilir erken erişim: ~9 ay → Temmuz 2027** · **Bannerlord'a rakip: gerçekçi değil (yıllar + ekip)** |
@@ -459,8 +462,40 @@ Basit ortalama: **≈ 36 / 100**. Ağırlıklı (oyuncunun en çok gördüğü: 
 
 ## 7. GÖRSEL DURUM (mevcut ekran görüntüleriyle)
 
-> Görseller `docs/renders/` altında; rapor bunlara göre yazıldı. Tarayıcı olmadığı için **yeni** kare
-> üretemedim, mevcut (Faz 9–10) kareleri kullandım.
+> **Bu bölüm iki taraflıdır:** Bannerlord'un resmî/topluluk ekran görüntüleri (`docs/renders/reference/`)
+> ile bizim mevcut karelerimiz (`docs/renders/`) yan yana incelendi. Tarayıcı olmadığı için **yeni**
+> kare üretemedim; bizim taraf Faz 9–10 kareleridir.
+
+### 7.0 Görsel araştırma: incelenen Bannerlord referansları
+
+| Referans dosyası | Ne gösteriyor | Bizim karşılığımız |
+| :--- | :--- | :--- |
+| `reference/bl-town-menu.jpg` | **Oyun içi şehir menüsü** (Dunglanys): sol %30'luk yarı saydam panel, arkada harita + kale 3B sahnesi, **sağ üstte NPC portre kartı**, satırlarda küçük ikon + metin, sağ altta tarih + "PAUSED" | `SettlementModal.tsx` (tam ekran ortalanmış modal) |
+| `reference/bl-menu-art-painting.jpg` | Menü arka planı olarak kullanılan **yağlıboya illüstrasyon** (TaleWorlds Blog/67) | Gradyan + çizgi ikon |
+| `reference/bl-encyclopedia-home.png` | Ansiklopedi ana sayfası: **boyalı illüstrasyonlu kategori kartları**, ortada oymalı başlık çerçevesi | `encyclopedia-home.png` (gradyan + ikon) |
+| `reference/bl-hero-page.jpg` | Kahraman sayfası: solda **tam gövde portre**, sağda "Info" **iki sütunlu etiket/değer ızgarası**, portre altında **beceri ikonları**, sağ üstte "Last seen" | `enc-hero-detail.png` |
+| `reference/bl-family-tree.jpg` | Aile ağacı: portreli düğümler, yatay dallanma | `enc-family-tree.png` |
+| `reference/bl-barter-dialogue.png` | Takas: **3 sütun** (benim teklifim / anlaşma tepsisi / karşı teklif), katlanır kategoriler (Denars, Fiefs, Prisoners, Items, Diplomacy, Other), **denge terazisi**, her satırda **eşya ikonu** | `DiplomacyModal.tsx` |
+| `reference/bl-recruitment.jpg` | Asker toplama: **parşömen panel**, ortada oymalı "Recruitment" başlığı, portreli asker kartları ızgarası, alt ortada **Cancel / Done** ve maliyet şeridi | `SettlementModal` asker sekmesi |
+| `reference/bl-concepts.jpg` | "Concepts" (kavramlar) sayfası: solda ağaç filtre, ortada madde listesi | `encyclopedia` "Kavramlar" sayfası |
+
+### 7.0.1 Ölçülen görsel farklar (somut, uygulanabilir)
+
+| # | Öğe | Bannerlord | Bizde | Fark | Öncelik |
+| :-: | :--- | :--- | :--- | :--- | :-: |
+| 1 | **Panel yüzeyi** | Parşömen/deri dokusu + iç gölge + çift altın çerçeve | Düz `#12100d` zemin + 1px altın kenar | Aynı düzen "boş" görünüyor | 🔴 Yüksek |
+| 2 | **Başlık** | Ortada oymalı madalyon/çerçeve, altında ince çizgi | Sol üstte düz metin | Kimlik hissi kaybı | 🟡 |
+| 3 | **Alt eylem çubuğu** | Her ekranda alt ortada **Cancel / Done** + maliyet şeridi (altın, moral, kapasite) | Kapatma sağ üstte "✕" | Akış ve "oyun" hissi | 🟡 |
+| 4 | **Eşya ikonları** | Her satırda eşya ikonu (katır, at, çizme, kumaş, miğfer…) | Düz metin satırları | Okunabilirlik + estetik | 🔴 |
+| 5 | **Kart sanatı** | Boyalı illüstrasyon (kategori kartları, menü arka planı) | Gradyan + tek renk çizgi ikon | En görünür fark | 🔴 |
+| 6 | **Yerleşim menüsü** | Sol %30 overlay; harita ve 3B sahne arkada görünür | Tam ekran karartma + ortada modal | Bannerlord "haritadan ayrılmıyorsun" hissi | 🔴 |
+| 7 | **NPC paneli** | Sağ üstte portre kartı; tıklayınca doğrudan o kişiyle konuşma | Üstte yatay "İleri Gelenler" çipi | Erişim hızı | 🟡 |
+| 8 | **Zaman göstergesi** | Sağ altta tarih + "PAUSED" | Yok (HUD üstte) | Bağlam | 🟢 |
+| 9 | **Portre boyutu** | Tam gövde, sayfanın ~%25'i | 84 px kafa portresi | Karakter bağlılığı | 🟡 |
+| 10 | **Beceri satırı** | Portrenin altında beceri ikonları + değerler | Ayrı sekmede | Bilgi yoğunluğu | 🟢 |
+
+**Özet:** Düzen/yerleşim **~%85 doğru** (sekmeler, filtre sütunu, iki sütunlu pazar, ansiklopedi akışı);
+**yüzey işçiliği ~%30** (doku, ornament, illüstrasyon, ikon). Fark "tasarım" değil, **"malzeme"** farkı.
 
 ### 7.1 Envanter / HUD — `docs/renders/hud-inventory.png`
 
@@ -478,6 +513,14 @@ at, tahıl…) ve slot boş/ dolu görsel ayrımı.
 ### 7.2 Ansiklopedi — `docs/renders/encyclopedia-heroes.png`
 
 ![Ansiklopedi kahramanlar](renders/encyclopedia-heroes.png)
+
+**Bannerlord'un aynı ekranı (ana sayfa) — farkın kaynağı burada:**
+
+![Bannerlord ansiklopedi](renders/reference/bl-encyclopedia-home.png)
+
+Bannerlord'un 5 kategori kartı **boyalı illüstrasyonlarla** dolu (şehir manzarası, kahraman portresi,
+asker kalabalığı, sancak, kalkan). Bizde aynı düzen var ama kartlar **gradyan + tek renk çizgi ikon**:
+bu yüzden ekran "boş" ve "prototip" hissi veriyor. Düzen doğru, **malzeme** eksik.
 
 | İyi | Kötü |
 | :--- | :--- |
@@ -520,7 +563,53 @@ büyüt, kahraman sayısını 40 → 150+ çıkar.
 | 8 farklı yüz: ten, sakal, yara, saç varyasyonu | Saçlar **bere gibi**, hacim yok; gözler boyanmış |
 | Baked (tek kare) üretim hızlı | Portre kadrajı kullanıcı onayı bekliyor (değiştirilmemeli) |
 
-### 7.6 Görsel puan özeti
+### 7.6 Yan yana: Bannerlord şehir menüsü ↔ bizim yerleşim menümüz
+
+**Bannerlord (oyun içi, Dunglanys):**
+
+![Bannerlord şehir menüsü](renders/reference/bl-town-menu.jpg)
+
+Okunması gereken 6 ayrıntı:
+1. Panel **solda, ekranın ~%30'u**; sağda harita ve kalenin 3B silueti **görünmeye devam ediyor**.
+2. Her satır **küçük çizgi ikon + metin** ("Go to the keep", "Trade", "Enter smithy"…).
+3. **Sağ üstte NPC portre kartı** ("Gift the Coppers" + yüz) — şehirdeki ileri gelenlere tek tıkla erişim.
+4. **Sağ altta tarih + "PAUSED"** — oyun durumu her an görünür.
+5. Panelin üstünde **bir paragraf tanıtım metni** (şehrin valisi, zenginliği).
+6. Zemin **yarı saydam koyu**, ince altın çerçeve; ama arkasındaki dünya **karartılmıyor**.
+
+**Bizimki:** `SettlementModal.tsx` — tam ekran karartma + ortada 4xl modal; üstte yatay sekme
+şeridi; ileri gelenler **üstte çip** olarak; arka planda harita **görünmüyor**.
+
+| Ayrıntı | Bannerlord | Biz | Yapılacak |
+| :--- | :--- | :--- | :--- |
+| Panel konumu | Sol overlay %30 | Ortada modal | `fixed left-0 top-0 h-full w-[380px]` + `backdrop-blur-sm` |
+| Arka plan | Harita + 3B sahne | Karartılmış düz | Karartmayı %20'ye indir, harita görünür kalsın |
+| Satır biçimi | İkon + metin | İkon + metin ✅ (Faz 10b) | — |
+| NPC erişimi | Sağ üst portre kartı | Üstte çip şeridi | Sağ üstte dikey portre paneli |
+| Zaman/PAUSED | Sağ alt | Yok | HUD'daki tarih/saat rozetini buraya da taşı |
+| Tanıtım metni | Panel başında | Sekme içinde | Panel başına taşı |
+
+### 7.7 Görsel doğrulama kapsamımız (dürüst tablo)
+
+| Ekran | Bizim kare var mı? | Not |
+| :--- | :-: | :--- |
+| Ansiklopedi (ana/liste/detay/klan/krallık) | ✅ 6 kare | `enc-*.png`, `encyclopedia-*.png` |
+| Karakter yaratıcı / portre / zırh | ✅ 10 kare | `portrait-*.png`, `armor-*.png` |
+| Arena / dövüş / yay | ✅ 4 kare | `arena-player.png`, `bow-draw*.png` |
+| HUD / envanter | ✅ 1 kare | `hud-inventory.png` |
+| Diyalog sahnesi | ✅ 1 kare | `conversation.png` |
+| **Yerleşim menüsü** | ❌ **yok** | En çok değişen ekran; kare yok |
+| **Pazar (çift sütun)** | ❌ yok | `probe-market-ui` metin düzeyinde doğruluyor |
+| **Divan / krallık yönetimi** | ❌ yok | `probe` yok, kare yok |
+| **Takas / diplomasi** | ❌ yok | Bannerlord referansı var, bizim kare yok |
+| **1000 asker savaş alanı** | ❌ yok | Performans iddiası bu yüzden doğrulanamıyor |
+
+**Bu tablo bir eylem maddesi:** `scripts/visual-check.mjs` (başsız Chromium) **12 modalın tamamı**
+için kare üretmeli. Script'in başlığında NSS kütüphanesi derleme tarifi zaten yazılı; Faz E'de
+`verify:visual` paketi olarak zincire eklenmeli. O zamana kadar bu rapordaki 5 ekranın dışındaki
+görsel yargılar **kod okumasına** dayanıyor (ve öyle olduğu belirtildi).
+
+### 7.8 Görsel puan özeti
 
 | Alan | Puan | Not |
 | :--- | :-: | :--- |
@@ -530,7 +619,8 @@ büyüt, kahraman sayısını 40 → 150+ çıkar.
 | Aydınlatma / atmosfer | **4,0** | Neredeyse yok |
 | Animasyon | **6,5** | Prosedürel, işlevsel; klip değil |
 | VFX / vuruş hissi | **3,5** | Parçacık, sarsıntı, hit-stop yok |
-| **Görsel ortalama** | **5,9** | "Stilize prototip" |
+| **Yüzey işçiliği** (doku, ornament, illüstrasyon, ikon) | **3,0** | Parşömen yok, kart sanatı yok, eşya ikonu yok |
+| **Görsel ortalama** (7 alan, basit ortalama) | **5,6** | "Düzeni doğru, yüzeyi eksik prototip" |
 
 ---
 
@@ -640,13 +730,21 @@ her görev türünün en az 1 üreticisi).
 
 ### Faz D — Görsel ve ses (2 hafta) 🟡
 
-1. **Atmosfer**: skybox (gradyan + bulut katmanı), 3 nokta aydınlatma + gölge, sis (`fog`),
+1. **Yüzey dili (en yüksek getiri, 2–3 gün)**: 9-slice **parşömen dokusu** (prosedürel noise +
+   iç gölge), oymalı **başlık madalyonu** (SVG), alt ortada **Cancel / Done** eylem çubuğu +
+   maliyet şeridi. Tek bir `<Panel>` bileşeniyle 12 modalın tamamı aynı anda Bannerlord'a yaklaşır.
+2. **İllüstrasyon**: 5 ansiklopedi kartı + 3 yerleşim türü için boyalı arka plan (üretilmiş veya
+   lisanslı); menü arka planında `bl-menu-art-painting` yaklaşımı.
+3. **Yerleşim menüsü yerleşimi**: tam ekran modal → **sol %30 overlay**, arkada harita/3B sahne
+   görünür; notables **sağ üst dikey portre paneli**; sağ altta tarih + PAUSED.
+4. **Eşya ikonları**: 29 → 120 eşyanın her birine SVG ikon (pazar, envanter, takas, ganimet).
+5. **Atmosfer**: skybox (gradyan + bulut katmanı), 3 nokta aydınlatma + gölge, sis (`fog`),
    harita için zaman dilimi (şafak/öğle/akşam).
-2. **Oran düzeltmesi**: omuz genişliği, kalkan ölçeği, konuşma kamerası (oyuncu arkası %30'a iner).
-3. **Vuruş hissi**: hit-stop (60–90 ms), ekran sarsıntısı, kıvılcım parçacığı (havuzdan, yeni tahsis yok),
+6. **Oran düzeltmesi**: omuz genişliği, kalkan ölçeği, konuşma kamerası (oyuncu arkası %30'a iner).
+7. **Vuruş hissi**: hit-stop (60–90 ms), ekran sarsıntısı, kıvılcım parçacığı (havuzdan, yeni tahsis yok),
    kan/kalkan kırılması.
-4. **Müzik**: 3 katman (harita / savaş / yerleşim) + geçişler; prosedürel üretim veya CC0.
-5. **Ortam sesi**: kuş, rüzgâr, şehir uğultusu (prosedürel).
+8. **Müzik**: 3 katman (harita / savaş / yerleşim) + geçişler; prosedürel üretim veya CC0.
+9. **Ortam sesi**: kuş, rüzgâr, şehir uğultusu (prosedürel).
 
 **Doğrulama:** `render-*.ts` betikleriyle yeni kareler + `visual-check.mjs`; draw call/FPS sayacı HUD'a.
 
