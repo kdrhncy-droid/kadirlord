@@ -72,6 +72,8 @@ interface SettlementModalProps {
   onDeployReserveEngines?: (settlementId: string) => string | null;
   onBombardWalls?: (settlementId: string) => string | null;
   onOpenFullMarket?: () => void;
+  /** Faz 6: yerleşim reisi/muhtarı ile diyalog. */
+  onTalkToReeve?: () => void;
   onOpenCharacterArena?: () => void;
 }
 
@@ -101,6 +103,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   onDeployReserveEngines,
   onBombardWalls,
   onOpenFullMarket,
+  onTalkToReeve,
   onOpenCharacterArena,
 }) => {
   const [activeTab, setActiveTab] = useState<TownTab>('overview');
@@ -870,6 +873,15 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     </p>
                   </div>
 
+                  {onTalkToReeve && (
+                    <button
+                      type="button"
+                      onClick={onTalkToReeve}
+                      className="px-3 py-1.5 rounded text-xs font-bold bg-[#241c12] hover:bg-[#362a1c] text-[#fde68a] border border-[#c6a15b]/40"
+                    >
+                      Muhtar / Reis ile Konuş
+                    </button>
+                  )}
                   {onOpenFullMarket && (
                     <button
                       type="button"

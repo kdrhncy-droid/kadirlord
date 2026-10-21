@@ -52,6 +52,7 @@ import type {
 import { WorldCanvas } from './components/WorldCanvas';
 import { GameHud } from './components/GameHud';
 import { SettlementModal } from './components/SettlementModal';
+import { DialogueModal } from './components/DialogueModal';
 import { DiplomacyModal } from './components/DiplomacyModal';
 import { BannerlordMarketModal } from './components/BannerlordMarketModal';
 import { KingdomManagementModal } from './components/KingdomManagementModal';
@@ -93,6 +94,9 @@ export default function App() {
   const [nearLord, setNearLord] = useState<LordAgent | null>(null);
   const [activeSettlementModal, setActiveSettlementModal] = useState<Settlement | null>(null);
   const [activeDiplomacyLord, setActiveDiplomacyLord] = useState<LordAgent | null>(null);
+  // Faz 6: yüz yüze diyalog ekranı (lord veya yerleşim reisi)
+  const [dialogueLord, setDialogueLord] = useState<LordAgent | null>(null);
+  const [dialogueSettlement, setDialogueSettlement] = useState<Settlement | null>(null);
   const [isMarketModalOpen, setIsMarketModalOpen] = useState(false);
   const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
   const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
@@ -160,6 +164,8 @@ export default function App() {
     setCampaignTimeScale(1);
     setActiveSettlementModal(null);
     setActiveDiplomacyLord(null);
+    setDialogueLord(null);
+    setDialogueSettlement(null);
     setOutcomeSnapshot(null);
     setGameState('playing');
     document.body.dataset.state = 'playing';
@@ -895,6 +901,10 @@ export default function App() {
             return res.reason || null;
           }}
           onOpenMarketModal={() => setIsMarketModalOpen(true)}
+          onTalkToLord={(l) => {
+            setCampaignTimeScale(0);
+            setDialogueLord(l);
+          }}
           canTrade={!!(activeSettlementModal || nearSettlement)}
           onOpenCharacterArena={() => setViewMode('character_arena')}
           onOpenKingdomModal={() => setIsKingdomModalOpen(true)}
@@ -912,6 +922,10 @@ export default function App() {
           campaign={campaign}
           onClose={() => setActiveSettlementModal(null)}
           onOpenFullMarket={() => setIsMarketModalOpen(true)}
+          onTalkToReeve={() => {
+            setCampaignTimeScale(0);
+            setDialogueSettlement(activeSettlementModal);
+          }}
           onOpenCharacterArena={() => setViewMode('character_arena')}
           onRecruit={handleRecruit}
           onBuyFood={handleBuyFood}
@@ -1144,6 +1158,28 @@ export default function App() {
             setMetHeroIds((prev) => (prev.includes(heroId) ? prev : [...prev, heroId]))
           }
           onClose={() => setIsEncyclopediaOpen(false)}
+        />
+      )}
+
+      {(dialogueLord || dialogueSettlement) && (
+        <DialogueModal
+          campaign={campaign}
+          lord={dialogueLord}
+          settlement={dialogueSettlement}
+          canTrade={!!dialogueSettlement}
+          onClose={() => {
+            setDialogueLord(null);
+            setDialogueSettlement(null);
+          }}
+          onRelationChange={(lordId, delta) =>
+            setCampaign((prev) => ({
+              ...prev,
+              lords: prev.lords.map((l) =>
+                l.id === lordId ? { ...l, relation: Math.max(-100, Math.min(100, l.relation + delta)) } : l,
+              ),
+            }))
+          }
+          onOpenTrade={() => setIsMarketModalOpen(true)}
         />
       )}
 

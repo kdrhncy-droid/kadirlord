@@ -47,6 +47,8 @@ interface GameHudProps {
   onSetTacticalOrder: (order: TacticalOrder) => void;
   onOpenSettlement: (s: Settlement) => void;
   onOpenDiplomacy: (l: LordAgent) => void;
+  /** Faz 6: yüz yüze diyalog ekranı. */
+  onTalkToLord?: (l: LordAgent) => void;
   onStartQuickBattle: () => void;
   onRetreatBattle: () => void;
   onAdvanceDay: () => void;
@@ -116,6 +118,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   onSetTacticalOrder,
   onOpenSettlement,
   onOpenDiplomacy,
+  onTalkToLord,
   onStartQuickBattle,
   onRetreatBattle,
   onAdvanceDay,
@@ -651,12 +654,21 @@ export const GameHud: React.FC<GameHudProps> = ({
                     {FACTION_INFO[nearLord.faction].name} · {nearLord.armySize} Asker
                   </span>
                 </div>
+                {onTalkToLord && (
+                  <button
+                    type="button"
+                    onClick={() => onTalkToLord(nearLord)}
+                    className="px-3 py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white whitespace-nowrap shrink-0"
+                  >
+                    Konuş [E]
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => onOpenDiplomacy(nearLord)}
-                  className="px-3 py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white whitespace-nowrap shrink-0"
+                  className="px-3 py-1.5 rounded text-xs font-bold bg-[#241c12] hover:bg-[#362a1c] text-[#fde68a] border border-[#c6a15b]/40 whitespace-nowrap shrink-0"
                 >
-                  Elçi Gönder / Görüş
+                  Elçi Gönder
                 </button>
               </>
             )}

@@ -1191,3 +1191,30 @@ Altta tamamlanan/başarısız çipleri.
 
 Doğrulama: `scripts/probe-quests.ts` — 17 kontrol (determinizm, ilerleme sınırları,
 süre dolması, hedefe varış, ödül toplamı).
+
+## 27. FAZ 6 — DİYALOG EKRANI (TAMAMLANDI ✅)
+
+Kullanıcı isteği: "fazların arasına Bannerlord'un diyalog ekranını da ekle."
+
+**Veri** (`src/game/dialogue.ts`): `DialogueGraph` (kök + düğümler), `DialogueOption`
+(numaralı, koşullu), `DialogueEffect` (`RELATION`, `GOLD`, `ACCEPT_QUEST`, `OPEN_TRADE`,
+`PERSUADE {difficulty, successNext, failNext}`, `CLOSE`). Düğümler saf veri; yan etkiler
+`applyOption()` ile ayrı. `validateDialogue()` (kırık hedef, çıkmaz, erişilemeyen düğüm)
+ve `canExit()` probe'larda kullanılıyor.
+
+**Akış**: selamlama → görev konuşması (kabul / pazarlık) · ticaret söylentisi (yerleşimdeyse
+"Pazaryerini göster") · övgü (ikna) · tehdit · vedalaşma. Savaş hâlinde ayrı kök:
+meydan okuma · ateşkes (ikna) · vedalaşma.
+
+**Arayüz** (`src/components/DialogueModal.tsx`): haritanın üzerine binen alt-orta panel —
+solda muhatap kartı (sancak rengi + baş harfler), sağda ilişki çubuğu, konuşma metni,
+2 sütunlu numaralı seçenekler (1–9 tuşları), altta kese/uyarı satırı. Esc kapatır.
+
+**Bağlantı**: HUD'da karşılaşılan lord için **"Konuş [E]"**; yerleşim menüsünde
+**"Muhtar / Reis ile Konuş"**. İlişki değişimi kampanyaya yazılır (`setCampaign`),
+pazaryeri seçeneği pazar modalını yalnız yerleşim içinde açar.
+
+**Sonraki adım (6d)**: konuşurken kameranın NPC'ye yumuşak yaklaşması ve NPC'nin
+baş/el animasyonu — mevcut `CharacterArenaView` rig'i yeniden kullanılacak.
+
+Doğrulama: `probe-dialogue` (25 kontrol) + `probe-dialogue-ui` (12 kontrol).
