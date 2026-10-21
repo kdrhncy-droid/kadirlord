@@ -1,3 +1,5 @@
+import { playImpact, setArmorySoundEnabled, unlockArmorySound, armorySoundEnabled } from './armorySound.ts';
+
 // Procedural Web Audio Synthesizer for Sancak-ı Kalradya
 class SoundManager {
   private ctx: AudioContext | null = null;
@@ -19,7 +21,13 @@ class SoundManager {
 
   public toggleMute(): boolean {
     this.muted = !this.muted;
+    setArmorySoundEnabled(!this.muted && armorySoundEnabled());
     return this.muted;
+  }
+
+  /** İlk kullanıcı jestinde çağrılır — tarayıcı autoplay kilidini açar. */
+  public unlock(): void {
+    unlockArmorySound();
   }
 
   public playSwordSwing() {
@@ -64,6 +72,8 @@ class SoundManager {
   }
 
   public playWarhorn() {
+    // BannerForge: 3 katmanlı pirinç savaş borusu + meydan yankısı
+    if (!this.muted && playImpact('battleHorn', { intensity: 1.15 })) return;
     const ctx = this.getContext();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -183,15 +193,36 @@ class SoundManager {
   }
 
   public playShieldHit() {
+    if (!this.muted && playImpact('shieldBlock', { intensity: 1 })) return;
     this.playHeavyHit(true);
   }
 
   public playArrowFly() {
+    if (!this.muted && playImpact('bowRelease', { intensity: 0.9 })) return;
     this.playBowShot();
   }
 
   public playClang() {
+    if (!this.muted && playImpact('swordClash', { intensity: 1.1 })) return;
     this.playHeavyHit(true);
+  }
+
+  /** Kılıç çınlaması (metal–metal). */
+  public playSwordClash() {
+    if (!this.muted && playImpact('swordClash', { intensity: 1.2 })) return;
+    this.playHeavyHit(true);
+  }
+
+  /** Ağır balta/2H savurma ıslığı. */
+  public playHeavySwing() {
+    if (!this.muted && playImpact('heavyAxeSwing', { intensity: 1.1 })) return;
+    this.playSwordSwing();
+  }
+
+  /** Ok gövdeye/kalkana saplandı. */
+  public playArrowImpact() {
+    if (!this.muted && playImpact('arrowHit', { intensity: 1 })) return;
+    this.playHeavyHit(false);
   }
 
   public playCoin() {
@@ -199,6 +230,7 @@ class SoundManager {
   }
 
   public playHit() {
+    if (!this.muted && playImpact('swordClash', { intensity: 0.8 })) return;
     this.playHeavyHit(false);
   }
 }

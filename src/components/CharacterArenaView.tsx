@@ -1073,6 +1073,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
     const onMouseDown = (e: MouseEvent) => {
       if (e.target !== renderer.domElement) return;
+      // Tarayıcı autoplay kilidi: ilk tıklamada ses motorunu aç.
+      sound.unlock();
       const mode = controlModeRef.current;
       if (mode === 'INSPECTOR') {
         orbitRef.current.dragging = true;

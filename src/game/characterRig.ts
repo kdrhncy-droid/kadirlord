@@ -1,5 +1,16 @@
 import * as THREE from 'three';
 import { CharacterAnimator } from './characterAnimator.ts';
+import {
+  applyArmoryArmor,
+  armoryVisualsEnabled,
+  clearArmoryArmor,
+  createArmoryArrow,
+  createArmoryHelmet,
+  createArmoryShield,
+  createArmoryWeapon,
+  resolveWeaponId,
+  type ArmoryContext,
+} from './armoryBridge.ts';
 import type { CharacterAnimState } from './characterAnimator.ts';
 
 export type { CharacterAnimState } from './characterAnimator.ts';
@@ -56,6 +67,8 @@ export interface CharacterVisualOptions {
   beardColor?: string;
   factionColor?: string;
   hasBeard?: boolean;
+  /** Oyun fraksiyonu (vlandia, khuzait, player ...) — BannerForge paletini seçer. */
+  factionId?: string;
   weaponType: WeaponType;
   shieldType: ShieldType;
   helmetType: HelmetType;
@@ -827,10 +840,31 @@ export function applyEquipmentToRig(rig: CharacterRig, options: CharacterVisualO
     rig.beardMesh.visible = false;
   }
 
-  const helmet = buildHelmet(options.helmetType, m);
-  if (helmet) rig.helmetSocket.add(helmet);
+  // ── BannerForge (armory-studio) görsel katmanı ──
+  // Oynanış kodu (IK, dövüş, animasyon) hiç değişmez; yalnızca takılan
+  // geometriler BannerForge üreticilerinden gelir. Kapatılırsa eski modeller.
+  const armoryCtx = { factionId: options.factionId, factionColor: options.factionColor };
+  const useArmory = armoryVisualsEnabled();
 
-  buildArmor(rig, options.armorTier);
+  const helmet = useArmory
+    ? createArmoryHelmet(options.helmetType, armoryCtx) ?? buildHelmet(options.helmetType, m)
+    : buildHelmet(options.helmetType, m);
+  if (helmet) {
+    helmet.userData.helmetType = options.helmetType;
+    rig.helmetSocket.add(helmet);
+  }
+
+  if (useArmory) {
+    try {
+      applyArmoryArmor(rig, options.armorTier, armoryCtx);
+    } catch (error) {
+      console.warn('[characterRig] BannerForge zırhı uygulanamadı, eski zırha dönülüyor:', error);
+      clearArmoryArmor(rig);
+      buildArmor(rig, options.armorTier);
+    }
+  } else {
+    buildArmor(rig, options.armorTier);
+  }
 
   if (options.weaponType === 'BOW') {
     const bow = buildBow(m);
@@ -840,16 +874,21 @@ export function applyEquipmentToRig(rig: CharacterRig, options: CharacterVisualO
     rig.leftShieldSocket.add(bow.group);
     rig.backSocket.add(buildQuiver(m));
   } else {
-    const weapon = buildMainWeapon(options.weaponType, m);
+    const weapon = (useArmory ? createArmoryWeapon(options.weaponType, armoryCtx) : null)
+      ?? buildMainWeapon(options.weaponType, m);
     if (weapon) {
+      weapon.name = 'MainWeapon';
+      weapon.userData.weaponType = options.weaponType;
       rig.mainHandItem = weapon;
       rig.rightWeaponSocket.add(weapon);
     }
     // Two-handed weapons and spears need the left hand -> no shield.
     const twoHanded = options.weaponType === 'TWO_HANDED_SWORD' || options.weaponType === 'SPEAR';
     if (!twoHanded) {
-      const shield = buildShield(options.shieldType, m);
+      const shield = (useArmory ? createArmoryShield(options.shieldType, armoryCtx) : null)
+        ?? buildShield(options.shieldType, m);
       if (shield) {
+        shield.name = 'Shield';
         rig.offHandItem = shield;
         rig.leftShieldSocket.add(shield);
       }
@@ -928,6 +967,26 @@ export function setRigSheathed(rig: CharacterRig, sheathed: boolean): void {
  * Creates a standalone arrow. The arrow points along its local +Z axis and is centered on its shaft.
  */
 export function createArrowMesh(materials?: CharacterRig['materials']): THREE.Group {
+  // BannerForge oku: uç +Z'ye bakar, merkezi gövde ortasındadır.
+  // (Silah yuvasından bağımsız olduğu için animasyonu etkilemez.)
+  if (armoryVisualsEnabled()) {
+    try {
+      const model = createArmoryArrow();
+      if (model) {
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        // Bizim ok uzayı: +Z uca bakar, gövde merkezde (±0.42).
+        model.position.z = -(box.min.z + size.z / 2);
+        const holder = new THREE.Group();
+        holder.name = 'ArrowProjectile';
+        holder.add(model);
+        return holder;
+      }
+    } catch (error) {
+      console.warn('[characterRig] BannerForge oku üretilemedi, eski oka dönülüyor:', error);
+    }
+  }
+
   const arrowGroup = new THREE.Group();
   arrowGroup.name = 'ArrowProjectile';
 
