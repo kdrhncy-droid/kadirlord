@@ -22,6 +22,7 @@ import {
   heroRivals,
   prisonerInfo,
 } from '../../game/encyclopedia';
+import { familyView, hasFamily } from '../../game/familyTree';
 import {
   OCCUPATION_LABELS,
   STATUS_LABELS,
@@ -380,6 +381,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
     const allies = heroAllies(index, hero, 2);
     const rivals = heroRivals(index, hero, 2);
     const prisoner = prisonerInfo(index, hero);
+    const fam = familyView(index.heroById, hero);
     // `visibleHeroInfo` gizliyken null döner; gösterimde bunu '—' yapıyoruz.
     const traits: { key: keyof typeof hero.traits; label: string }[] = [
       { key: 'valor', label: 'Cesaret' },
@@ -507,10 +509,110 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
             )}
           </div>
 
+          {/* Faz 3: aile ağacı (3 kuşak) */}
+          <div className="rounded border border-[#c6a15b]/30 p-3 mb-3">
+            <div className="text-[10px] uppercase tracking-[0.15em] text-[#c6a15b] mb-2">
+              Aile Ağacı
+            </div>
+            {!hasFamily(fam) ? (
+              <div className="text-[11px] text-[#8b8072]">
+                Kayıtlı aile bağı yok (anne, baba, eş veya çocuk bilinmiyor).
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-1">
+                {/* 1. kuşak: ebeveynler */}
+                <div className="flex items-center gap-1.5">
+                  {fam.father && (
+                    <button
+                      type="button"
+                      onClick={() => go({ section: 'HERO', id: fam.father!.id })}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded border border-[#c6a15b]/30 hover:bg-[#c6a15b]/10"
+                    >
+                      <HeroPortrait hero={fam.father} width={20} square />
+                      <span className="text-[10px] text-[#e2d6c1]">{fam.father.name}</span>
+                      <span className="text-[8px] text-[#8b8072]">baba</span>
+                    </button>
+                  )}
+                  {fam.mother && (
+                    <button
+                      type="button"
+                      onClick={() => go({ section: 'HERO', id: fam.mother!.id })}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded border border-[#c6a15b]/30 hover:bg-[#c6a15b]/10"
+                    >
+                      <HeroPortrait hero={fam.mother} width={20} square />
+                      <span className="text-[10px] text-[#e2d6c1]">{fam.mother.name}</span>
+                      <span className="text-[8px] text-[#8b8072]">anne</span>
+                    </button>
+                  )}
+                </div>
+                {(fam.father || fam.mother) && <span className="w-px h-2.5 bg-[#c6a15b]/40" />}
+
+                {/* 2. kuşak: kendisi + eşi */}
+                <div className="flex items-center gap-1.5">
+                  <span className="flex items-center gap-1.5 px-2 py-1 rounded border border-[#fbbf24]/60 bg-[#fbbf24]/10">
+                    <HeroPortrait hero={hero} width={20} square />
+                    <span className="text-[10px] text-[#f8f0df]">{hero.name}</span>
+                  </span>
+                  {fam.spouse && (
+                    <>
+                      <span className="text-[10px] text-[#c6a15b] select-none">∞</span>
+                      <button
+                        type="button"
+                        onClick={() => go({ section: 'HERO', id: fam.spouse!.id })}
+                        className="flex items-center gap-1.5 px-2 py-1 rounded border border-[#c6a15b]/30 hover:bg-[#c6a15b]/10"
+                      >
+                        <HeroPortrait hero={fam.spouse} width={20} square />
+                        <span className="text-[10px] text-[#e2d6c1]">{fam.spouse.name}</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+                {/* 3. kuşak: çocuklar */}
+                {fam.children.length > 0 && (
+                  <div className="flex flex-col items-center">
+                    <span className="w-px h-3 bg-[#c6a15b]/40" />
+                    <span className="h-px w-[calc(100%-2.5rem)] bg-[#c6a15b]/40" />
+                    <div className="flex flex-wrap items-start justify-center gap-1.5">
+                    {fam.children.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => go({ section: 'HERO', id: c.id })}
+                        className="relative mt-2 flex items-center gap-1.5 px-2 py-1 rounded border border-[#c6a15b]/25 hover:bg-[#c6a15b]/10"
+                      >
+                        <span className="absolute left-1/2 -top-2 h-2 w-px bg-[#c6a15b]/40" />
+                        <HeroPortrait hero={c} width={20} square />
+                        <span className="text-[10px] text-[#e2d6c1]">{c.name}</span>
+                      </button>
+                    ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* kardeşler */}
+                {fam.siblings.length > 0 && (
+                  <div className="mt-1 flex flex-wrap items-center justify-center gap-1">
+                    <span className="text-[9px] text-[#a2957f]">Kardeşler:</span>
+                    {fam.siblings.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => go({ section: 'HERO', id: b.id })}
+                        className="text-[9px] px-1.5 py-0.5 rounded border border-[#c6a15b]/25 text-[#e2d6c1] hover:bg-[#c6a15b]/10"
+                      >
+                        {b.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Faz 2: aile & yakınlar */}
           <div className="rounded border border-[#c6a15b]/30 p-3 mb-3">
             <div className="text-[10px] uppercase tracking-[0.15em] text-[#c6a15b] mb-2">
-              Aile & Yakınlar
+              Klan Üyeleri
             </div>
             {kin.length === 0 ? (
               <div className="text-[11px] text-[#8b8072]">Klanında başka kayıtlı üye yok.</div>

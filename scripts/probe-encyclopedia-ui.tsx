@@ -18,6 +18,7 @@ import {
   prisonerInfo,
   kingdomDiplomacy,
 } from '../src/game/encyclopedia.ts';
+import { familyView, hasFamily, validateFamily } from '../src/game/familyTree.ts';
 import { FACTION_INFO } from '../src/game/rules.ts';
 
 const campaign = createInitialCampaignState('Komutan Demirhan', 'noble');
@@ -159,7 +160,7 @@ ok(
   'yakınlar aynı klandan',
 );
 const heroPage = render({ initialRoute: { section: 'HERO', id: targetHero.id } });
-ok(heroPage.includes('Aile &amp; Yakınlar') || heroPage.includes('Aile & Yakınlar'), 'aile bölümü var');
+ok(heroPage.includes('Klan Üyeleri'), 'klan üyeleri bölümü var');
 ok(heroPage.includes('Durum &amp; İlişkiler') || heroPage.includes('Durum & İlişkiler'), 'durum bölümü var');
 ok(
   heroPage.includes('Serbest') || heroPage.includes('Esir'),
@@ -202,6 +203,53 @@ ok(kdPage.includes('Savaşan lord'), 'savaşan lord sayacı var');
 const clanWithMembers = index.clans.find((c) => c.memberIds.length > 1) ?? index.clans[0];
 const clanPage = render({ initialRoute: { section: 'CLAN', id: clanWithMembers.id } });
 ok(clanPage.includes('Aile Bağı'), 'klan detayında aile bağı bölümü');
+
+/* 10. Faz 3: aile ağacı */
+const withFamily = index.heroes.find((h) => hasFamily(familyView(index.heroById, h)));
+ok(!!withFamily, 'en az bir kahramanda aile bağı üretildi');
+const famPage = render({ initialRoute: { section: 'HERO', id: withFamily!.id } });
+ok(famPage.includes('Aile Ağacı'), 'aile ağacı bölümü var');
+const fv = familyView(index.heroById, withFamily!);
+ok(
+  !!fv.spouse || !!fv.father || !!fv.mother || fv.children.length > 0,
+  'aile ağacında en az bir akraba bağlantısı',
+);
+ok(
+  !famPage.includes('Kayıtlı aile bağı yok'),
+  'aile bağı olan kahramanda boş mesajı çıkmıyor',
+);
+
+const noFam = index.heroes.find((h) => !hasFamily(familyView(index.heroById, h)));
+if (noFam) {
+  const noFamPage = render({ initialRoute: { section: 'HERO', id: noFam.id } });
+  ok(noFamPage.includes('Kayıtlı aile bağı yok'), 'ailesiz kahramanda bilgi mesajı');
+}
+
+/* 11. Aile bağlarının tutarlılığı (simetrik eş, yaş aralıkları, cinsiyet) */
+const problems = validateFamily(index.heroes);
+ok(problems.length === 0, 'aile bağları tutarlı', problems.slice(0, 3).join(' | '));
+ok(
+  index.heroes.every((h) => {
+    if (!h.family.spouseId) return true;
+    return index.heroById[h.family.spouseId]?.family.spouseId === h.id;
+  }),
+  'eş bağları simetrik',
+);
+ok(
+  index.heroes.every((h) => (h.family.childrenIds.every((id) => !!index.heroById[id]))),
+  "tüm çocuk id'leri çözümlenebiliyor",
+);
+
+/* 12. Determinizm: aynı kampanya → aynı aile bağları */
+const index2 = buildEncyclopediaIndex(campaign, factionNames);
+ok(
+  index.heroes.every(
+    (h) => index2.heroById[h.id]?.family.spouseId === h.family.spouseId &&
+      index2.heroById[h.id]?.family.fatherId === h.family.fatherId &&
+      index2.heroById[h.id]?.family.childrenIds.join(',') === h.family.childrenIds.join(','),
+  ),
+  'aile bağları deterministik',
+);
 
 console.log(fails === 0 ? '\n✅ ANSİKLOPEDİ ARAYÜZÜ DOĞRU' : `\n❌ ${fails} hata`);
 process.exit(fails === 0 ? 0 : 1);

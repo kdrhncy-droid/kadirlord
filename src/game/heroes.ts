@@ -21,6 +21,7 @@ import type {
   LordAgent,
   Settlement,
 } from './rules.ts';
+import { linkFamilyTies } from './familyTree.ts';
 
 /* ─────────────────────────────── tipler ─────────────────────────────── */
 
@@ -268,7 +269,7 @@ export function heroFromLord(
     relation: lord.relation,
     skills: deriveSkills(lord.id, occupation),
     traits: deriveTraits(lord.id),
-    family: { childrenIds: [] }, // Faz 3: aile ağacı içerikle doldurulacak
+    family: { childrenIds: [] }, // Faz 3: buildHeroRegistry içinde doldurulur
     lastSeen: {
       settlementId: near?.id ?? '',
       settlementName: near?.name ?? 'Bilinmiyor',
@@ -296,6 +297,10 @@ export function buildHeroRegistry(
   campaign.lords.forEach((lord, i) => {
     heroes[lord.id] = heroFromLord(lord, i, campaign, factionNames);
   });
+
+  // Faz 3: aile bağları deterministik olarak kurulur (aynı klan → aynı krallık).
+  linkFamilyTies(Object.values(heroes), campaign.day);
+
   return { version: HERO_REGISTRY_VERSION, day: campaign.day, heroes };
 }
 
