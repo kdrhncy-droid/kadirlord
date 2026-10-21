@@ -725,6 +725,13 @@ yaşatmak"** olmalı. Dikey dilim tam olarak bunu hedefliyor.
 > yazılmış 5 kişi **her** imparatorluk kasabasında aynıydı (Rhagaea, Valerius, Belisarios…).
 > Arayüz artık veriyi okuyor (`NotableSpeechCard`), kayıt **v3** + v1/v2 göçü.
 > Kalan B0 kalemleri: `garrisonRoster`, `ownerClanId`, `workshops`, kalıcı `quests`.
+>
+> **B2 ilk dilim (aynı gün):** `src/game/troops.ts` — asker **adları** artık kültüre bağlı
+> (8 taraf × 4 sınıf = 32 ad): Vlandiya Şövalyesi, Khuzait Bozkır Atlı Okçusu, Battaniya Fian
+> Okçusu, Sturgiya Drujinniki, Aserai Memlûk Süvarisi… Savaş istatistikleri ve
+> `CharacterArenaView` sözleşmesi **değişmedi**; yerleşim panelinde kültür adı birincil,
+> genel sınıf adı ikincil satırda yazılıyor. Kalan B2 kalemi: kültür başına 5 kademeli ayrı
+> ağaç ve terfi zinciri.
 
 1. **B0 Veri genişletme** (önce!): `Settlement.garrisonRoster: TroopRoster`, `ownerClanId`,
    `workshops: Array<{type, owner}>`, `notables: Array<{id, power, relation}>`,
@@ -803,7 +810,7 @@ performans profili, hata avı, telemetri (isteğe bağlı, kapalı varsayılan),
 | 365 günde sahiplik değişimi | **0** | ≥15 | ≥25 | ≥40 |
 | 365 günde vakayiname olayı | **3** | ≥120 | ≥200 | ≥400 |
 | İleri gelen (notable) | **440** (isim/unvan/nüfuz/ilişki) | 440 | 440 + seçim | 440 + seçim |
-| Asker tipi | 4 | 4 | 40 | 60 |
+| Asker tipi | 4 sınıf × 8 kültür adı | 4 sınıf | 40 | 60 |
 | Eşya (ikonlu) | 29 (0 ikon) | 29 | 120 | 160 |
 | Diyalog repliği | 12 | 12 | 300 | 600 |
 | Görev türü | 5 | 5 | 12 | 16 |
@@ -857,17 +864,18 @@ arayüz, test) zaten bitmiş durumda; kalan kısım **içerik ve simülasyon**, 
 npx tsc --noEmit                                   # 0 hata
 npx tsc --noEmit --strict                          # 0 hata (config'de kapalı)
 npx tsc --noEmit --noUnusedLocals --noUnusedParameters   # 78 uyarı
-npm run verify:all                                 # 31 paket ✅
+npm run verify:all                                 # 32 paket ✅
 npx vite build                                     # 1.566 kB (437 kB gzip)
 npx tsx scripts/probe-content.ts                   # 10 kontrol
 npx tsx scripts/probe-world-sim.ts                 # 20 kontrol (365 gün canlı dünya)
 npx tsx scripts/probe-notables.ts                  # 30 kontrol (ileri gelenler + kayıt göçü)
+npx tsx scripts/probe-troops.ts                    # 23 kontrol (kültür asker adları)
 ```
 
 ## EK B — Dosya envanteri (satır sayıları)
 
 `rules.ts` 3.546 · `CharacterArenaView.tsx` 2.936 · `Armory.ts` 2.930 · `WorldCanvas.tsx` 2.624 ·
-`characterRig.ts` 1.995 · `SettlementModal.tsx` 1.809 · `characterAnimator.ts` 1.872 · `GameHud.tsx` 1.571 ·
+`characterRig.ts` 1.995 · `SettlementModal.tsx` 1.814 · `characterAnimator.ts` 1.872 · `GameHud.tsx` 1.571 ·
 `App.tsx` 1.542 · `KingdomManagementModal.tsx` 1.411 · `characterMorph.ts` 1.299 · `kingdomSystem.ts` 1.275 ·
 `Core.ts` 1.242 · `proceduralModels.ts` 1.225 · `mapGen.ts` 1.161 · `CharacterCreatorModal.tsx` 1.131 ·
 `rules.test.ts` 1.112 · `BattleSoundFX.ts` 985 · `Armor.ts` 906 · `battleEnginePool.ts` 858 · `Horse.ts` 825 ·
@@ -882,4 +890,4 @@ npx tsx scripts/probe-notables.ts                  # 30 kontrol (ileri gelenler 
 `characterRig.types.ts` 1 — **toplam 47.912**
 
 **Faz A eklemeleri:** `worldSim.ts` 757 · `WorldWarPanel.tsx` 56 · `probe-world-sim.ts` (betik, sayılmadı)
-`notables.ts` 284 · `rng.ts` 38 → **toplam 49.238** (+1.326 satır).
+`notables.ts` 284 · `rng.ts` 38 · `troops.ts` 95 → **toplam 49.338** (+1.426 satır).

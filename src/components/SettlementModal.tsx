@@ -32,6 +32,7 @@ import {
 import { recruitQuote, partyLimit, partySize, partyRoom } from '../game/recruitment';
 import { sound } from '../game/sound';
 import { generateNotables, type NotableIconKey, type SettlementNotable } from '../game/notables';
+import { troopName, troopRole } from '../game/troops';
 
 export type TownTab =
   | 'overview'
@@ -147,6 +148,8 @@ interface SettlementModalProps {
   /** Faz 6: yerleşim reisi/muhtarı ile diyalog. */
   onTalkToReeve?: () =>void;
   onOpenCharacterArena?: () =>void;
+  /** Başlangıç sekmesi (probe'lar ve hızlı erişim için). */
+  initialTab?: TownTab;
 }
 
 export const SettlementModal: React.FC<SettlementModalProps>= ({
@@ -177,8 +180,9 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
   onOpenFullMarket,
   onTalkToReeve,
   onOpenCharacterArena,
+  initialTab = 'overview',
 }) =>{
-  const [activeTab, setActiveTab] = useState<TownTab>('overview');
+  const [activeTab, setActiveTab] = useState<TownTab>(initialTab);
   /** Faz 8: muhtarla ilişki — asker toplama kapısı ve ücret indirimi. */
   const factionRelation = (() =>{
     const lords = campaign.lords.filter((l) =>l.faction === settlement.faction);
@@ -1122,10 +1126,11 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
                       >
                         <div>
                           <div className="font-semibold text-sm text-[#f8f0df] flex items-center gap-1.5">
-                            <span>{quote.role === 'Süvari'? '': quote.role === 'Menzilli'? '': ''}</span>
-                            <span>{quote.name}</span>
+                            <span>{troopName(unitId, settlement.faction)}</span>
                           </div>
-                          <div className="text-xs text-[#a89b84] mt-0.5">{quote.role}</div>
+                          <div className="text-xs text-[#a89b84] mt-0.5">
+                            {UNIT_DEFINITIONS[unitId].name} · {troopRole(unitId, settlement.faction)}
+                          </div>
                           <div className="text-xs text-[#c6a15b] mt-1 font-mono-tabular">
                             Havuz: <span className="font-bold text-white">{quote.available}</span>· Orduda:{''}
                             {campaign.roster[unitId] ?? 0}
