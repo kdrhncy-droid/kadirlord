@@ -16,7 +16,7 @@ import {
   type ArmorTier,
   type CharacterRig,
 } from './characterRig';
-import { applyMorphDNAToRig, getLordDNA } from './characterMorph';
+import { applyMorphDNAToRig, getHeroDNA } from './characterMorph';
 import type { HeroRecord, Occupation } from './heroes';
 
 export const PORTRAIT_W = 256;
@@ -120,7 +120,12 @@ export function createHeroPortraitRig(hero: HeroRecord): CharacterRig {
     armorTier: ARMOR_BY_OCCUPATION[hero.occupation],
     factionId: hero.culture,
   });
-  applyMorphDNAToRig(rig, getLordDNA(hero.id, hero.culture));
+  // Deterministik DNA + meslekten gelen cinsiyet (leydi portrelerinde erkek
+  // yüzü çıkmasın, aynı kahraman her zaman aynı yüz).
+  applyMorphDNAToRig(
+    rig,
+    getHeroDNA(hero.id, hero.culture, hero.occupation === 'LADY' ? 'female' : 'male'),
+  );
   rig.root.updateMatrixWorld(true);
   return rig;
 }

@@ -1005,3 +1005,41 @@ görsel: `docs/renders/scars-preview.png` (CPU yakın plan) ve
 `HEAD` sabiti modül yüklenirken hazır olmayabilir (`characterRig` ↔ `characterMorph`
 döngüsel import) → `ReferenceError: Cannot access 'HEAD' before initialization`.
 Bu yüzden elipsoid sabitleri **çağrı anında** okunur (`skull()`), modül düzeyinde değil.
+
+## 20. FAZ 1h — LEYDİ YÜZLERİ + DNA KARARLILIĞI (TAMAMLANDI ✅)
+
+### 20.1 Kritik hata: yüzler her yenilemede değişiyordu
+
+`getLordDNA` preset'i olmayan kahramanlar için `generateRandomDNA` çağırıyordu ve bu
+fonksiyon **`Math.random()`** kullanıyordu. Sonuç: aynı lord her sayfa yenilemesinde
+başka bir yüze sahipti ve portre önbelleği (`id:sancak:meslek`) yanlış sonuç veriyordu.
+Ölçüm: 10/10 kahramanın DNA'sı iki çağrıda farklıydı.
+
+Çözüm:
+- `seededRandom(seed)` (mulberry32) + `hashString(id)` → DNA **lord id'sinden** türetilir.
+- `generateRandomDNA(culture, gender?, random = Math.random)` → tohum dışarıdan verilebilir.
+- `getHeroDNA(id, culture, gender)` → portre ve dans için tek kapı; **cinsiyeti meslekten**
+  alır (leydi portrelerinde erkek yüzü çıkmaz).
+- `Math.random()` yalnız tohum verilmeyen asker/soygun üretiminde kalır (orası zaten
+  her seferinde yeni olmalı).
+
+### 20.2 Leydi yüzü
+
+| Özellik | Erkek | Leydi |
+| --- | --- | --- |
+| Kirpik / üst kapak çizgisi | gizli | **görünür** (2 parça) |
+| Kaş yüksekliği | 0.0204 | **0.0141** (−31%) |
+| Dudak yüksekliği | 0.0097 | **0.0124** (+28%) |
+| Iris | ×1.0 | ×1.08 (daha yumuşak bakış) |
+| Sakal | değişken | **yok** |
+
+Kirpik, göz akının üstüne oturan ince koyu yay (`lashL/R`); `applyFaceDNA` cinsiyete göre
+açar. Dudak rengi kadınlarda daha sıcak tona çekilir (`#b05a52`).
+
+### 20.3 Doğrulama
+
+`scripts/probe-ladies.ts` (10 kontrol): DNA deterministik (40/40), yüzler tekil (≥%80),
+leydi cinsiyeti dişi (13/13), kirpik 2/2, leydilerde sakal yok, erkeklerde kirpik gizli,
+kaş inceliği, dudak dolgunluğu, tüm yüz parçaları kafatası yüzeyinin dışında.
+
+`npm run verify:ladies` · görsel: `docs/renders/portraits-webgl.png`

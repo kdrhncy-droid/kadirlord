@@ -54,6 +54,7 @@ interface FacePalette {
   brow: THREE.MeshStandardMaterial;
   lips: THREE.MeshStandardMaterial;
   skinShadow: THREE.MeshStandardMaterial;
+  lash: THREE.MeshStandardMaterial;
 }
 
 function makePalette(mats: FaceMaterials, eyeColor: string): FacePalette {
@@ -64,6 +65,7 @@ function makePalette(mats: FaceMaterials, eyeColor: string): FacePalette {
     brow: mats.hair.clone(),
     lips: new THREE.MeshStandardMaterial({ color: '#a9654f', roughness: 0.82, flatShading: true }),
     skinShadow: new THREE.MeshStandardMaterial({ color: '#b8825f', roughness: 0.9, flatShading: true }),
+    lash: new THREE.MeshStandardMaterial({ color: '#231610', roughness: 0.95, flatShading: true }),
   };
 }
 
@@ -121,6 +123,15 @@ export function createFace(
     );
     pupil.rotation.x = Math.PI / 2;
     pupil.position.set(side * EYE_X, EYE_Y, surfaceZ(EYE_X, EYE_Y, 0.0072));
+
+    // Kirpik / üst göz kapağı çizgisi: gözün üstüne oturan ince koyu yay.
+    // Kadın yüzlerinde görünür (applyFaceDNA açar); erkeklerde gizli.
+    const lash = add(
+      new THREE.Mesh(new THREE.BoxGeometry(0.031, 0.0042, 0.006), pal.lash),
+      `lash${tag}`,
+    );
+    lash.position.set(side * EYE_X, EYE_Y + 0.0106, surfaceZ(EYE_X, EYE_Y + 0.0106, 0.0042));
+    lash.rotation.z = side * 0.17;
 
     // Kaş: alın kavisine oturan ince, kısa levha (saç rengi)
     const brow = add(new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.011, 0.014), pal.brow), `brow${tag}`);
@@ -186,6 +197,7 @@ export function applyFaceDNA(group: THREE.Object3D | null, dna?: Partial<Charact
   if (!group) return;
   SKULL_Y = (group.userData?.skullY as number | undefined) ?? DEFAULT_SKULL_Y;
   const d = dna ?? {};
+  const feminine = d.gender === 'female';
 
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
   const noseLen = clamp(d.noseLength ?? 1, 0.7, 1.4);
@@ -212,10 +224,22 @@ export function applyFaceDNA(group: THREE.Object3D | null, dna?: Partial<Charact
     const browMesh = group.getObjectByName(`brow${tag}`);
     if (browMesh) {
       browMesh.scale.set(0.85 + brow * 0.22, 0.85 + brow * 0.3, 1);
-      browMesh.position.y = SKULL_Y + 0.044 + (brow - 1) * 0.008;
+      if (feminine) {
+        // Kadın yüzü: kaş daha ince, biraz daha uzun ve yukarıda (yumuşak hat).
+        browMesh.scale.set(browMesh.scale.x * 1.06, browMesh.scale.y * 0.6, browMesh.scale.z);
+      }
+      browMesh.position.y = SKULL_Y + 0.044 + (brow - 1) * 0.008 + (feminine ? 0.002 : 0);
     }
     const eye = group.getObjectByName(`eyeWhite${tag}`);
     if (eye) eye.scale.x = 0.95 + jaw * 0.12;
+    const lash = group.getObjectByName(`lash${tag}`) as THREE.Mesh | undefined;
+    if (lash) {
+      lash.visible = feminine;
+      if (feminine) lash.scale.set(0.94 + jaw * 0.1, 1.18, 1);
+    }
+    const iris = group.getObjectByName(`iris${tag}`);
+    // Kadın yüzünde iris biraz daha büyük (yumuşak bakış), erkeklerde aynı.
+    if (iris) iris.scale.setScalar(feminine ? 1.08 : 1);
     const cheek = group.getObjectByName(`cheek${tag}`);
     if (cheek) {
       cheek.position.x = (0.072 + (jaw - 1) * 0.02) * (tag === 'L' ? 1 : -1);
@@ -237,8 +261,19 @@ export function applyFaceDNA(group: THREE.Object3D | null, dna?: Partial<Charact
   const drop = (chinLen - 1) * 0.01;
   for (const m of [mouth, upperLip, lowerLip]) {
     if (m) {
-      m.scale.x = 0.92 + jaw * 0.16 * shape.x;
+      m.scale.x = (0.92 + jaw * 0.16 * shape.x) * (feminine ? 1.06 : 1);
+      if (feminine) m.scale.y *= 1.35;
       m.position.y -= drop;
+    }
+  }
+  if (feminine && mats) {
+    // Kadınlarda dudak daha sıcak bir ton (aynı materyal paylaşılıyorsa klonla).
+    const lipMat = (upperLip as THREE.Mesh | undefined)?.material as
+      | THREE.MeshStandardMaterial
+      | undefined;
+    if (lipMat && !lipMat.userData?.feminineTint) {
+      lipMat.color.set('#b05a52');
+      lipMat.userData = { ...(lipMat.userData ?? {}), feminineTint: true };
     }
   }
   if (mouth) mouth.position.z = 0.1125 + (shape.z - 1) * 0.3;

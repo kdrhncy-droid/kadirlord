@@ -413,19 +413,72 @@ export const PLAYER_DEFAULT_DNA: CharacterMorphDNA = {
  * GET DNA HELPER & RANDOMIZER
  * ----------------------------------------------------------------------- */
 
+/* -----------------------------------------------------------------------
+ * Deterministik DNA
+ *
+ * Üretilen kahramanların DNA'sı `Math.random()` ile seçiliyordu → aynı lord
+ * her sayfa yenilemesinde başka bir yüze sahip oluyordu (portre önbelleği de
+ * anlamsızlaşıyordu). Artık tohum **lord id'sinden** türetilir: aynı id her
+ * zaman aynı yüz. `Math.random()` yalnız rastgele asker/soygun üretiminde
+ * (tohum verilmediğinde) kullanılır.
+ * ----------------------------------------------------------------------- */
+
+function hashString(text: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/** mulberry32 — tohumlu, hızlı, deterministik PRNG. */
+export function seededRandom(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export function getLordDNA(lordId: string, factionFallback: FactionId = 'empire'): CharacterMorphDNA {
   if (LORD_DNA_PRESETS[lordId]) {
     return cloneDNA(LORD_DNA_PRESETS[lordId]);
   }
-  return generateRandomDNA(factionFallback);
+  return generateRandomDNA(factionFallback, undefined, seededRandom(hashString(lordId)));
+}
+
+/**
+ * Kahraman portresi için DNA: **tohumlu** ve cinsiyeti meslekten gelen.
+ * Leydi portrelerinde erkek yüzü çıkmasını da engeller.
+ */
+export function getHeroDNA(
+  heroId: string,
+  culture: FactionId,
+  gender?: GenderType,
+): CharacterMorphDNA {
+  const preset = LORD_DNA_PRESETS[heroId];
+  if (preset) {
+    const dna = cloneDNA(preset);
+    if (gender) dna.gender = gender;
+    return dna;
+  }
+  return generateRandomDNA(culture, gender, seededRandom(hashString(`${heroId}|${culture}`)));
 }
 
 export function cloneDNA(dna: CharacterMorphDNA): CharacterMorphDNA {
   return JSON.parse(JSON.stringify(dna));
 }
 
-export function generateRandomDNA(culture: FactionId, gender?: GenderType): CharacterMorphDNA {
-  const chosenGender: GenderType = gender || (Math.random() > 0.4 ? 'male' : 'female');
+export function generateRandomDNA(
+  culture: FactionId,
+  gender?: GenderType,
+  random: () => number = Math.random,
+): CharacterMorphDNA {
+  const chosenGender: GenderType = gender || (random() > 0.4 ? 'male' : 'female');
 
   // Culture-specific defaults
   let skinTone = '#dfa882';
@@ -435,20 +488,20 @@ export function generateRandomDNA(culture: FactionId, gender?: GenderType): Char
   let beardStyle: BeardStyleId = chosenGender === 'female' ? 'clean_shaven' : 'stubble';
 
   if (culture === 'vlandia') {
-    skinTone = Math.random() > 0.5 ? '#f5d0b5' : '#e8be99';
-    hairColor = Math.random() > 0.5 ? '#382212' : '#573319';
-    eyeColor = Math.random() > 0.4 ? '#0284c7' : '#78350f';
+    skinTone = random() > 0.5 ? '#f5d0b5' : '#e8be99';
+    hairColor = random() > 0.5 ? '#382212' : '#573319';
+    eyeColor = random() > 0.4 ? '#0284c7' : '#78350f';
     hairStyle = chosenGender === 'female' ? 'royal_braid' : 'short_parted';
-    if (chosenGender === 'male') beardStyle = Math.random() > 0.5 ? 'full_beard' : 'stubble';
+    if (chosenGender === 'male') beardStyle = random() > 0.5 ? 'full_beard' : 'stubble';
   } else if (culture === 'sturgia') {
     skinTone = '#f5d0b5';
-    hairColor = Math.random() > 0.4 ? '#d8b065' : '#7a7a7a';
+    hairColor = random() > 0.4 ? '#d8b065' : '#7a7a7a';
     eyeColor = '#0284c7';
     hairStyle = chosenGender === 'female' ? 'shoulder_wavy' : 'nordic_braids';
     if (chosenGender === 'male') beardStyle = 'braided_viking';
   } else if (culture === 'battania') {
     skinTone = '#f5d0b5';
-    hairColor = Math.random() > 0.5 ? '#883317' : '#382212';
+    hairColor = random() > 0.5 ? '#883317' : '#382212';
     eyeColor = '#15803d';
     hairStyle = 'warrior_knot';
     if (chosenGender === 'male') beardStyle = 'full_beard';
@@ -459,7 +512,7 @@ export function generateRandomDNA(culture: FactionId, gender?: GenderType): Char
     hairStyle = 'steppe_topknot';
     if (chosenGender === 'male') beardStyle = 'nomad_goatee';
   } else if (culture === 'aserai') {
-    skinTone = Math.random() > 0.5 ? '#9d6840' : '#704626';
+    skinTone = random() > 0.5 ? '#9d6840' : '#704626';
     hairColor = '#171412';
     eyeColor = '#78350f';
     hairStyle = 'short_parted';
@@ -470,10 +523,10 @@ export function generateRandomDNA(culture: FactionId, gender?: GenderType): Char
     hairColor = '#382212';
     eyeColor = '#475569';
     hairStyle = chosenGender === 'female' ? 'royal_braid' : 'imperial_crop';
-    if (chosenGender === 'male') beardStyle = Math.random() > 0.5 ? 'stubble' : 'imperial_mustache';
+    if (chosenGender === 'male') beardStyle = random() > 0.5 ? 'stubble' : 'imperial_mustache';
   }
 
-  const scarRoll = Math.random();
+  const scarRoll = random();
   const scar: ScarType =
     scarRoll > 0.75
       ? 'eye_slash'
@@ -485,28 +538,28 @@ export function generateRandomDNA(culture: FactionId, gender?: GenderType): Char
 
   return {
     gender: chosenGender,
-    height: Math.round((0.92 + Math.random() * 0.22) * 100) / 100,
-    build: Math.round((0.88 + Math.random() * 0.38) * 100) / 100,
-    weight: Math.round((0.9 + Math.random() * 0.28) * 100) / 100,
+    height: Math.round((0.92 + random() * 0.22) * 100) / 100,
+    build: Math.round((0.88 + random() * 0.38) * 100) / 100,
+    weight: Math.round((0.9 + random() * 0.28) * 100) / 100,
     armLength: 1.0,
-    legLength: Math.round((0.95 + Math.random() * 0.12) * 100) / 100,
+    legLength: Math.round((0.95 + random() * 0.12) * 100) / 100,
     skinTone,
-    skinAge: Math.round(Math.random() * 0.6 * 100) / 100,
+    skinAge: Math.round(random() * 0.6 * 100) / 100,
     faceShape: (['oval', 'square', 'round', 'angular', 'chiseled'] as const)[
-      Math.floor(Math.random() * 5)
+      Math.floor(random() * 5)
     ],
-    jawWidth: Math.round((0.9 + Math.random() * 0.3) * 100) / 100,
-    chinLength: Math.round((0.9 + Math.random() * 0.26) * 100) / 100,
-    noseLength: Math.round((0.85 + Math.random() * 0.35) * 100) / 100,
-    noseBridge: Math.round((0.9 + Math.random() * 0.25) * 100) / 100,
+    jawWidth: Math.round((0.9 + random() * 0.3) * 100) / 100,
+    chinLength: Math.round((0.9 + random() * 0.26) * 100) / 100,
+    noseLength: Math.round((0.85 + random() * 0.35) * 100) / 100,
+    noseBridge: Math.round((0.9 + random() * 0.25) * 100) / 100,
     eyeColor,
-    browProminence: Math.round((0.9 + Math.random() * 0.3) * 100) / 100,
+    browProminence: Math.round((0.9 + random() * 0.3) * 100) / 100,
     hairStyle,
     hairColor,
     beardStyle,
     beardColor: hairColor,
     scar,
-    warPaint: culture === 'battania' && Math.random() > 0.4 ? 'woad_lines' : 'none',
+    warPaint: culture === 'battania' && random() > 0.4 ? 'woad_lines' : 'none',
     warPaintColor: culture === 'battania' ? '#0284c7' : '#881337',
     culture,
   };
