@@ -52,6 +52,7 @@ Detaylar: `tools/e2e/README.md`. E2E ekran görüntüleri
 |---|---|
 | Uygulama durumu/UI akışı | `src/App.tsx`, `src/game/uiSession.ts`, `src/game/saveGame.ts` |
 | Kampanya kuralları/başlangıç verisi | `src/game/rules.ts`, `src/game/campaignSystem.ts`, `src/game/worldSim.ts` |
+| Bannerlord veri temeli/göç | `src/game/bannerlordFoundation.ts` (eşya/birlik tanımları, adetli yığınlar, kahraman kayıtları, eski kayıt normalizasyonu) |
 | Harita ve navigasyon | `src/components/WorldCanvas.tsx`, `src/game/mapGen.ts`, `src/game/navigation.ts` |
 | Karşılaşma/diyalog | `src/game/encounter.ts`, `src/game/dialogue.ts`, `src/components/DialogueModal.tsx`, `src/game/conversation.ts` |
 | Karakter/animasyon | `src/game/characterRig.ts`, `characterAnimator.ts`, `characterMorph.ts`, `ik.ts`, `portraitRenderer.ts` |
@@ -80,6 +81,9 @@ Detaylar: `tools/e2e/README.md`. E2E ekran görüntüleri
 5. **Pazar yerleşim dışından açılmaz.** Envanter ve pazar ayrı akışlardır.
 6. **Kayıt uyumluluğu sessiz bozulmamalıdır.** `saveGame.ts` bozuk/eski
    kayıtlarda oyunu çökertmeden yeni sefere düşecek şekilde tasarlanmıştır.
+   v1–v3 kayıtlar v4'e `ensureBannerlordFoundation` ile deterministik ve
+   idempotent göç eder; yeni kanonik alan eklerken bu kapı ve P0/P1 testi
+   birlikte güncellenmelidir.
 7. **Test kancası üretimde kapalıdır.** `window.__kadirlordTest` yalnız
    `import.meta.env.DEV && ?e2e=1` iken açılır ve E2E durumunda gerçek
    sefer kaydı yazılmaz. Bu kilidi gevşetmeyin.

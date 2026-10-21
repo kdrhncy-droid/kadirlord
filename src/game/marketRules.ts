@@ -854,21 +854,45 @@ export function buyMarketplaceItem(
     };
   }
 
-  // Create InventoryItem to add to player's inventoryItems
-  const newItem: InventoryItem = {
-    id: `${item.id}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-    name: item.name,
-    slot: item.slot,
-    category: item.category,
-    value: Math.round(item.value * 0.75), // Resale value in player inventory is 75%
-    weight: item.weight,
-    statBonus: item.statBonus,
-    civilianLegal: item.civilianLegal,
-    icon: item.iconKey,
-    tier: item.tier,
-  };
-
-  const updatedItems = [...(state.inventoryItems ?? []), newItem];
+  // P1: aynı katalog tanımı ikinci kez alınırsa yeni satır açılmaz; yığın adedi artar.
+  const currentItems = state.inventoryItems ?? [];
+  const existingStackIndex = currentItems.findIndex(
+    (candidate) =>
+      !candidate.locked &&
+      (candidate.definitionId
+        ? candidate.definitionId === item.id
+        : candidate.id === item.id || candidate.id.startsWith(`${item.id}_`)),
+  );
+  const updatedItems =
+    existingStackIndex >= 0
+      ? currentItems.map((candidate, index) =>
+          index === existingStackIndex
+            ? {
+                ...candidate,
+                definitionId: item.id,
+                quantity: Math.max(1, Math.floor(candidate.quantity ?? 1)) + 1,
+                locked: false,
+              }
+            : candidate,
+        )
+      : [
+          ...currentItems,
+          {
+            id: `${item.id}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            definitionId: item.id,
+            name: item.name,
+            slot: item.slot,
+            category: item.category,
+            quantity: 1,
+            locked: false,
+            value: Math.round(item.value * 0.75), // Resale value in player inventory is 75%
+            weight: item.weight,
+            statBonus: item.statBonus,
+            civilianLegal: item.civilianLegal,
+            icon: item.iconKey,
+            tier: item.tier,
+          } satisfies InventoryItem,
+        ];
 
   return {
     success: true,
@@ -906,8 +930,20 @@ export function sellMarketplaceItem(
   }
 
   const itemToSell = items[itemIndex];
+  if (itemToSell.locked) {
+    return {
+      success: false,
+      reason: 'Kilitli eşyalar satılamaz. Önce kilidini kaldır.',
+      goldGained: 0,
+      nextState: state,
+    };
+  }
   const goldGained = Math.max(5, itemToSell.value);
-  const remainingItems = items.filter((_, idx) => idx !== itemIndex);
+  const quantity = Math.max(1, Math.floor(itemToSell.quantity ?? 1));
+  const remainingItems =
+    quantity > 1
+      ? items.map((item, idx) => (idx === itemIndex ? { ...item, quantity: quantity - 1 } : item))
+      : items.filter((_, idx) => idx !== itemIndex);
 
   return {
     success: true,
@@ -958,19 +994,93 @@ export function unequipEquipmentSlot(
     WEAPON4: 'Boş Slot',
   };
 
-  const unequippedItem: InventoryItem = {
-    id: `unequip_${slot}_${Date.now()}`,
-    name: currentEquippedName.split(' (')[0],
-    slot: slot,
-    value: 120,
-    weight: slot === 'BODY' ? 8 : slot === 'HEAD' || slot === 'WEAPON1' ? 2 : 1,
-    statBonus: currentEquippedName.includes('(')
-      ? currentEquippedName.split('(')[1].replace(')', '')
-      : 'Standart',
-    civilianLegal: true,
-  };
+  const playerHero = state.heroes?.find((hero) => hero.id === 'hero_player' || hero.kind === 'PLAYER');
+  const activeSet = state.outfitMode === 'CIVILIAN' ? 'CIVILIAN' : 'BATTLE';
+  const equippedDefinitionId = playerHero?.equipment[activeSet][slot] ?? null;
+  const customDefinition = equippedDefinitionId
+    ? state.customItemDefinitions?.find((definition) => definition.id === equippedDefinitionId)
+    : undefined;
+  const catalogDefinition = equippedDefinitionId
+    ? CALRADIA_MARKETPLACE_ITEMS.find((definition) => definition.id === equippedDefinitionId)
+    : undefined;
 
-  const nextItems = [...(state.inventoryItems ?? []), unequippedItem];
+  const unequippedItem: InventoryItem = customDefinition
+    ? {
+        id: `stack_${customDefinition.id}`,
+        definitionId: customDefinition.id,
+        name: customDefinition.name,
+        slot: customDefinition.slot,
+        category: customDefinition.category,
+        quantity: 1,
+        locked: false,
+        value: customDefinition.baseValue,
+        weight: customDefinition.weight,
+        statBonus: customDefinition.statBonus,
+        stats: { ...customDefinition.stats },
+        civilianLegal: customDefinition.civilianLegal,
+        icon: customDefinition.icon,
+        tier: customDefinition.tier,
+      }
+    : catalogDefinition
+      ? {
+          id: `stack_${catalogDefinition.id}`,
+          definitionId: catalogDefinition.id,
+          name: catalogDefinition.name,
+          slot: catalogDefinition.slot,
+          category: catalogDefinition.category,
+          quantity: 1,
+          locked: false,
+          value: Math.round(catalogDefinition.value * 0.75),
+          weight: catalogDefinition.weight,
+          statBonus: catalogDefinition.statBonus,
+          civilianLegal: catalogDefinition.civilianLegal,
+          icon: catalogDefinition.iconKey,
+          tier: catalogDefinition.tier,
+        }
+      : {
+          id: `unequip_${slot}_${Date.now()}`,
+          name: currentEquippedName.split(' (')[0],
+          slot,
+          quantity: 1,
+          locked: false,
+          value: 120,
+          weight: slot === 'BODY' ? 8 : slot === 'HEAD' || slot === 'WEAPON1' ? 2 : 1,
+          statBonus: currentEquippedName.includes('(')
+            ? currentEquippedName.split('(')[1].replace(')', '')
+            : 'Standart',
+          civilianLegal: true,
+        };
+
+  const currentItems = state.inventoryItems ?? [];
+  const existingStackIndex = unequippedItem.definitionId
+    ? currentItems.findIndex(
+        (item) => !item.locked && (item.definitionId ?? item.id) === unequippedItem.definitionId,
+      )
+    : -1;
+  const nextItems =
+    existingStackIndex >= 0
+      ? currentItems.map((item, index) =>
+          index === existingStackIndex
+            ? { ...item, quantity: Math.max(1, Math.floor(item.quantity ?? 1)) + 1 }
+            : item,
+        )
+      : [...currentItems, unequippedItem];
+  const nextHeroes = playerHero
+    ? state.heroes?.map((hero) =>
+        hero.id === playerHero.id
+          ? {
+              ...hero,
+              equipment: {
+                ...hero.equipment,
+                [activeSet]: {
+                  ...hero.equipment[activeSet],
+                  [slot]: null,
+                },
+              },
+            }
+          : hero,
+      )
+    : state.heroes;
 
   return {
     success: true,
@@ -980,6 +1090,7 @@ export function unequipEquipmentSlot(
         ...currentEq,
         [slot]: defaultUnarmedNames[slot],
       },
+      heroes: nextHeroes,
       inventoryItems: nextItems,
     },
   };

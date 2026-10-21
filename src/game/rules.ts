@@ -14,6 +14,12 @@ import {
   PLAYER_DEFAULT_DNA,
 } from './characterMorph.ts';
 import { generateLordParties } from './heroGen.ts';
+import {
+  addItemDefinitionToInventory,
+  ensureBannerlordFoundation,
+  inventoryItemQuantity,
+  PLAYER_HERO_ID,
+} from './bannerlordFoundation';
 
 export type FactionId =
   | 'player'
@@ -114,17 +120,139 @@ export type EquipmentSlotId =
 
 export type ClanRoleId = 'QUARTERMASTER' | 'SCOUT' | 'SURGEON' | 'ENGINEER';
 
-export interface InventoryItem {
+export type ItemCategory = 'WEAPON' | 'SHIELD' | 'ARMOR' | 'FOOD' | 'HORSE' | 'TRADE';
+export type DonationKind = 'ARMOR' | 'WEAPON';
+export type HorseKind = 'NONE' | 'PACK' | 'RIDING' | 'WAR';
+
+/** Serbest `statBonus` metninden ayrıştırılan sayısal eşya istatistikleri. */
+export interface ItemStats {
+  damage?: number;
+  armorHead?: number;
+  armorBody?: number;
+  armorArm?: number;
+  armorLeg?: number;
+  armorMount?: number;
+  shieldDurability?: number;
+  block?: number;
+  speed?: number;
+  range?: number;
+  ammo?: number;
+  mountSpeed?: number;
+  mountManeuver?: number;
+  mountCharge?: number;
+  mountHp?: number;
+  foodAmount?: number;
+  cargoCapacity?: number;
+  moraleBonus?: number;
+}
+
+/** Katalogdaki veya eski kayıttan türetilmiş kalıcı eşya tanımı. */
+export interface ItemDefinition {
   id: string;
   name: string;
+  category: ItemCategory;
   slot: EquipmentSlotId | 'TRADE';
-  category?: 'WEAPON' | 'SHIELD' | 'ARMOR' | 'FOOD' | 'HORSE' | 'TRADE';
+  baseValue: number;
+  weight: number;
+  tier: number;
+  civilianLegal: boolean;
+  icon: string;
+  statBonus: string;
+  stats: ItemStats;
+  donationKind: DonationKind | null;
+  horseKind: HorseKind;
+}
+
+/**
+ * Envanter satırı artık tek eşya değil, bir tanımın adetli yığınıdır.
+ * `id` geriye uyumlu yığın kimliği, `definitionId` kalıcı eşya kimliğidir.
+ * `value` ve `weight` **birim** değerlerdir; toplam için `quantity` ile çarpılır.
+ */
+export interface InventoryItem {
+  id: string;
+  definitionId?: string;
+  name: string;
+  slot: EquipmentSlotId | 'TRADE';
+  category?: ItemCategory;
+  quantity?: number;
+  locked?: boolean;
   value: number;
   weight: number;
   statBonus: string;
+  stats?: ItemStats;
   civilianLegal: boolean;
   icon?: string;
   tier?: number;
+}
+
+export interface HeroSkillState {
+  level: number;
+  focus: number;
+  xp: number;
+}
+
+export type EquipmentSetId = 'BATTLE' | 'CIVILIAN';
+export type HeroEquipmentSet = Partial<Record<EquipmentSlotId, string | null>>;
+
+/** Oyuncu, eş ve yoldaşlar için kalıcı kahraman kaydı. */
+export interface CampaignHero {
+  id: string;
+  name: string;
+  kind: 'PLAYER' | 'COMPANION' | 'SPOUSE' | 'FAMILY';
+  culture: FactionId;
+  age: number;
+  hp: number;
+  maxHp: number;
+  wage: number;
+  level: number;
+  xp: number;
+  freeAttributePoints: number;
+  freeFocusPoints: number;
+  attributes: Record<AttributeId, number>;
+  skills: Record<BannerlordSkillId, HeroSkillState>;
+  perks: string[];
+  equipment: Record<EquipmentSetId, HeroEquipmentSet>;
+  activeEquipmentSet: EquipmentSetId;
+  isInPlayerParty: boolean;
+  morphDNA?: CharacterMorphDNA;
+  spouseId?: string | null;
+  fatherId?: string | null;
+  motherId?: string | null;
+}
+
+export type HorseRequirement = 'NONE' | 'HORSE' | 'WAR_HORSE';
+
+/** Kültür ağacındaki tek birlik türü. `horseRequirement`, bu türe terfi ederken gerekir. */
+export interface TroopDefinition {
+  id: string;
+  culture: FactionId;
+  name: string;
+  tier: number;
+  battleClass: UnitTierId;
+  wage: number;
+  upgradeXp: number;
+  upgradeGold: number;
+  horseRequirement: HorseRequirement;
+  upgrades: string[];
+  maxHp: number;
+  attack: number;
+  defense: number;
+  speed: number;
+}
+
+/** XP ve yaralı sayısı birlik türü yığını bazında tutulur. */
+export interface TroopStack {
+  troopId: string;
+  count: number;
+  wounded: number;
+  xp: number;
+}
+
+export interface PrisonerStack {
+  troopId: string;
+  count: number;
+  ready: number;
+  readinessProgress: number;
 }
 
 export interface Settlement {
@@ -291,6 +419,14 @@ export interface CampaignState {
   equipment?: Record<EquipmentSlotId, string>;
   inventoryItems?: InventoryItem[];
   clanRoles?: Record<ClanRoleId, string>;
+  /** Bannerlord veri temeli (P1): eski alanlar geçiş döneminde görüntüleme/uyumluluk yedeğidir. */
+  foundationVersion?: number;
+  influence?: number;
+  heroes?: CampaignHero[];
+  roleAssignments?: Partial<Record<ClanRoleId, string | null>>;
+  troopStacks?: TroopStack[];
+  prisonerStacks?: PrisonerStack[];
+  customItemDefinitions?: ItemDefinition[];
   playerMorphDNA?: CharacterMorphDNA;
   /** Faz 11: savaşlar + sayaçlar (kayda yazılır). */
   world?: WorldState;
@@ -1197,7 +1333,7 @@ export function resolveBattleOutcome(
       return s;
     });
 
-    return {
+    return ensureBannerlordFoundation({
       ...state,
       roster: nextRoster,
       lords: nextLords,
@@ -1205,7 +1341,7 @@ export function resolveBattleOutcome(
       morale: Math.max(20, state.morale - 15),
       gold: Math.max(0, state.gold - 40),
       playerHp: Math.max(25, state.playerHp),
-    };
+    });
   }
 
   const isSiegeVictory = Boolean(conqueredSettlementId);
@@ -1245,7 +1381,7 @@ export function resolveBattleOutcome(
       : `${state.playerName}, meydan savaşında düşman ordusunu bozguna uğrattı (+${renownGain} Nam, +${goldLoot} Dinar, ${describeLoot(loot)}).`,
   };
 
-  return {
+  return ensureBannerlordFoundation({
     ...state,
     gold: state.gold + goldLoot,
     renown: state.renown + renownGain,
@@ -1257,7 +1393,7 @@ export function resolveBattleOutcome(
     lords: nextLords,
     settlements: nextSettlements,
     chronicle: [newChronicle, ...state.chronicle].slice(0, 20),
-  };
+  });
 }
 
 // Canonical Regional Village Name Pools per Faction for Authentic Feudal Fiefs
@@ -2861,7 +2997,7 @@ export function createInitialCampaignState(
     },
   ];
 
-  return {
+  return ensureBannerlordFoundation({
     playerName,
     backgroundId,
     day: 1,
@@ -3003,7 +3139,7 @@ export function createInitialCampaignState(
       SURGEON: 'Hekim Helena (+%25 Yaralı Kurtarma)',
       ENGINEER: 'Mimar Torvald (+%30 Kuşatma İnşası)',
     },
-  };
+  });
 }
 
 export function calculateLearningLimit(attributeValue: number, focusPoints: number): number {
@@ -3094,35 +3230,65 @@ export function equipInventoryItem(
   state: CampaignState,
   itemId: string,
 ): { success: boolean; reason?: string; nextState: CampaignState } {
-  const items = state.inventoryItems ?? [];
-  const item = items.find((i) => i.id === itemId);
+  const normalized = ensureBannerlordFoundation(state);
+  const items = normalized.inventoryItems ?? [];
+  const itemIndex = items.findIndex((i) => i.id === itemId || i.definitionId === itemId);
+  const item = itemIndex >= 0 ? items[itemIndex] : undefined;
   if (!item) {
     return { success: false, reason: 'Eşya envanterde bulunamadı.', nextState: state };
   }
   if (item.slot === 'TRADE') {
     return { success: false, reason: 'Ticaret malları ve yük katırları doğrudan envanterde pasif kapasite sağlar.', nextState: state };
   }
-  const currentEq = state.equipment ?? createInitialCampaignState().equipment!;
-  const previousEquippedName = currentEq[item.slot];
-  const nextItems = items.map((it) =>
-    it.id === itemId
-      ? {
-          ...it,
-          name: previousEquippedName,
-        }
-      : it,
-  );
+
+  const playerHero = normalized.heroes?.find((hero) => hero.id === PLAYER_HERO_ID || hero.kind === 'PLAYER');
+  if (!playerHero) {
+    return { success: false, reason: 'Oyuncu kahraman kaydı bulunamadı.', nextState: state };
+  }
+  const activeSet = playerHero.activeEquipmentSet;
+  const previousDefinitionId = playerHero.equipment[activeSet][item.slot] ?? null;
+  const selectedDefinitionId = item.definitionId ?? item.id;
+  const quantity = inventoryItemQuantity(item);
+  const itemsAfterRemoval =
+    quantity > 1
+      ? items.map((candidate, index) =>
+          index === itemIndex ? { ...candidate, quantity: quantity - 1 } : candidate,
+        )
+      : items.filter((_, index) => index !== itemIndex);
+  const stateAfterRemoval: CampaignState = {
+    ...normalized,
+    inventoryItems: itemsAfterRemoval,
+  };
+  const nextItems = previousDefinitionId
+    ? addItemDefinitionToInventory(stateAfterRemoval, previousDefinitionId, 1)
+    : itemsAfterRemoval;
+  const currentEq = (normalized.equipment ?? {}) as Record<EquipmentSlotId, string>;
+
   return {
     success: true,
-    nextState: {
-      ...state,
+    nextState: ensureBannerlordFoundation({
+      ...normalized,
       equipment: {
         ...currentEq,
-        [item.slot]: `${item.name} (${item.statBonus})`,
+        [item.slot]: item.statBonus ? `${item.name} (${item.statBonus})` : item.name,
       },
+      heroes: normalized.heroes?.map((hero) =>
+        hero.id === playerHero.id
+          ? {
+              ...hero,
+              equipment: {
+                ...hero.equipment,
+                [activeSet]: {
+                  ...hero.equipment[activeSet],
+                  [item.slot]: selectedDefinitionId,
+                },
+              },
+            }
+          : hero,
+      ),
       inventoryItems: nextItems,
-      morale: item.slot === 'BANNER' ? Math.min(100, state.morale + 5) : state.morale,
-    },
+      morale: item.slot === 'BANNER' ? Math.min(100, normalized.morale + 5) : normalized.morale,
+    }),
   };
 }
 

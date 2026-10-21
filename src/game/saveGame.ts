@@ -12,16 +12,19 @@ import type { CampaignState } from './rules';
 import type { KingdomMacroState } from './kingdomSystem';
 import { ensureWorld } from './worldSim';
 import { ensureNotables } from './notables';
+import { ensureBannerlordFoundation } from './bannerlordFoundation';
 
 /**
  * Kayıt biçimi sürümü.
  * v1 → v2 (Faz 11): `CampaignState.world` (savaşlar, sayaçlar, kuşatma bekleme süreleri).
  * v2 → v3 (Faz B0): her `Settlement` için `notables` (ileri gelenler, nüfuz, ilişki).
- * Eski kayıtlar **reddedilmez**; yükleme sırasında `ensureWorld` + `ensureNotables` ile
- * göç ettirilir. Üretim deterministik olduğu için eski seferdeki ileri gelenler de
- * aynı tohumdan çıkar.
+ * v3 → v4 (P1): adetli eşya yığınları, kalıcı eşya tanımları, kahraman kayıtları ve
+ * XP/yaralı taşıyan birlik/tutsak yığınları.
+ * Eski kayıtlar **reddedilmez**; yükleme sırasında `ensureWorld` + `ensureNotables` +
+ * `ensureBannerlordFoundation` ile göç ettirilir. Üretim deterministik olduğu için
+ * eski seferdeki türetilen veriler de aynı girdiden aynı sonucu verir.
  */
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 export const MIN_SUPPORTED_VERSION = 1;
 export const SAVE_KEY = 'sancak-kalradya/sefer-v1';
 
@@ -78,7 +81,7 @@ export function createSaveData(input: SaveInput, now = Date.now()): SaveData {
     savedAt: now,
     backgroundChoice: input.backgroundChoice,
     metHeroIds: [...input.metHeroIds],
-    campaign: input.campaign,
+    campaign: ensureBannerlordFoundation(input.campaign),
     macroState: input.macroState,
   };
 }
@@ -107,7 +110,7 @@ export function parseSave(raw: string | null | undefined): SaveData | null {
   const settlements = ensureNotables(parsed.campaign.settlements, world.seed);
   const needsWorld = version < 2 || !parsed.campaign.world;
   const needsNotables = settlements !== parsed.campaign.settlements;
-  const migratedCampaign: CampaignState =
+  const campaignWithWorld: CampaignState =
     needsWorld || needsNotables
       ? {
           ...parsed.campaign,
@@ -115,6 +118,7 @@ export function parseSave(raw: string | null | undefined): SaveData | null {
           ...(needsNotables ? { settlements } : {}),
         }
       : parsed.campaign;
+  const migratedCampaign = ensureBannerlordFoundation(campaignWithWorld);
   const metHeroIds = Array.isArray(parsed.metHeroIds)
     ? parsed.metHeroIds.filter((id): id is string => typeof id === 'string')
     : [];

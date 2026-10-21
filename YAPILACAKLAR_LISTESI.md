@@ -182,9 +182,11 @@ Tarayıcıda **500v500 (1000 asker)** meydan ve kale kuşatması savaşlarını 
 
 ## 🧭 BÖLÜM 6: BANNERLORD PARİTESİ — KULLANICI TARİFİ, KOD KARŞILAŞTIRMASI VE KARAR BEKLEYEN İŞLER (2026-10-22)
 
-> **Durum:** Denetim tamamlandı; bu bölümde anlatılan yeni uygulama işleri **henüz başlatılmadı**.
-> Kullanıcının açık talimatı gereği belirsiz ürün kararları kendi kendime seçilmeyecek; aşağıdaki
-> Q1–Q6 cevaplanmadan veri modeli ve ekran mimarisi kesinleştirilmeyecek.
+> **Durum:** Q1–Q6 kararları kapatıldı; **P0 ve P1 2026-10-22'de tamamlanıp doğrulandı**.
+> Sıradaki iş P2 tam ekran Envanter/Discard/Pazar/Ganimet transfer çekirdeği ve arayüzüdür.
+> Uygulama, her paket kendi doğrulama kapısından geçmeden sonrakine başlanmayacak şekilde
+> **P0 → P8** sırasıyla yürütülecek. Q1 ve Q3'te kullanıcı "mantıklı olan" seçimini açıkça
+> uygulama tarafına bıraktı; diğer kararlar Bannerlord düzeninin esas alınması yönünde verildi.
 
 ### 6.0 Nasıl karşılaştırıldı?
 
@@ -376,14 +378,21 @@ Webden doğrulanan Bannerlord düzeninde:
 | Performans ölçümü | **SON FAZDA** | Tip/kural/E2E doğrulamaları var; tekrarlanabilir göreli FPS/frame-time karşılaştırma paketi bu görevin sonunda kurulacak. SwiftShader ölçümü gerçek GPU FPS'i sayılmayacak. |
 | Kayıt | **VAR AMA SON FAZDA GELİŞTİRİLECEK** | Sürümlü tek `localStorage` yuvası, elle kayıt ve günlük otomatik kayıt var. Çoklu sefer/slot ve Bannerlord tarzı kayıt yönetimi kullanıcı sırası gereği en son ele alınacak. |
 
-### 6.4 Cevaplar geldikten sonra önerilen iş paketleri
+### 6.4 Kesin uygulama sırası ve iş paketleri
 
-Bu sıra **öneri**dir; Q1 cevabı kesin sırayı belirleyecektir.
+Q1'de kullanıcı sırayı "mantıklı olan" ölçütüne bıraktı. Bağımlılıklar nedeniyle kesin sıra
+**P0 karar/göç → P1 veri temeli → P2 envanter/pazar/ganimet → P3 Party → P4 gelişim →
+P5 HUD → P6 büyük sistemler → P7 performans → P8 kayıt** olarak sabitlendi. Bir paketin
+tip + kural testleri (gerekirse tarayıcı/E2E kapısı) geçmeden sonraki pakete başlanmayacak.
 
-- [ ] **P0 — Karar ve göç sözleşmesi:** Q1–Q6 cevaplarını bu bölüme işle; eski kayıtların yeni item/troop/hero
-      modeline deterministik göç kurallarını ve kabul testlerini yaz.
-- [ ] **P1 — Veri temeli:** sayısal stat'lı item tanımları ve adetli envanter yığınları; ekipmanın item
-      kimliğine bağlanması; gerçek hero/yoldaş kayıtları; birlik/esir yığınlarında XP ve yaralı alanları.
+- [x] **P0 — Karar ve göç sözleşmesi (2026-10-22):** Q1–Q6 cevapları 6.5'e işlendi; eski kayıtların
+      yeni item/troop/hero modeline deterministik ve idempotent göç kuralları ile kabul kapısı yazıldı.
+- [x] **P1 — Veri temeli (2026-10-22):** `src/game/bannerlordFoundation.ts` ile sayısal stat'lı 60
+      katalog tanımı ve özel tanımlar; adetli/kilitli yığınlar; tanım kimliğine bağlı savaş/sivil ekipman;
+      oyuncu + Aybars/Helena/Torvald kahraman kayıtları ve kimlikli rol atamaları; 8 kültür × 14 düğümlük
+      dallanan birlik ağaçları; XP/yaralı birlik ve hazır olma alanlı tutsak yığınları kuruldu. Kayıt v4'e
+      yükseltildi, v1–v3 göçü ve Discard perk/tavan/kapasite sözleşmesi 29/29 kural testi + `verify:fast`
+      ile doğrulandı. Tam ekran UI, bekleyen transfer ve Discard uygulama akışı P2'dedir.
 - [ ] **P2 — Envanter + Discard + pazar + ganimet:** tek transfer çekirdeği üzerinde saha envanteri,
       şehir pazarı ve savaş ganimeti modları; kilit, filtre, arama ve sıralama.
 - [ ] **P3 — Party (`P`):** birlik XP'si, dallanan terfiler, yaralı iyileşmesi, tutsak hazır olma durumu,
@@ -400,21 +409,52 @@ Bu sıra **öneri**dir; Q1 cevabı kesin sırayı belirleyecektir.
 - [ ] **P8 — Kayıt sistemi (en son iş):** bütün yeni veri modeli oturduktan sonra Bannerlord tarzı
       kayıt yönetiminin kapsamı ayrıca netleştirilip uygulanacak.
 
-### 6.5 Karar bekleyen sorular
+### 6.5 Kapatılan kararlar ve P0 göç sözleşmesi (2026-10-22)
 
-- [ ] **Q1 — Uygulama sırası:** Temel veri → envanter/Party → gelişim → HUD → büyük sistemler mi,
-      görünen arayüz önce mi, karakter/yoldaş önce mi, büyük kampanya sistemleri önce mi?
-- [ ] **Q2 — Arayüz sadakati:** Bannerlord tam ekran üç sütun düzeni mi, mevcut drawer/modal düzeni
-      korunarak işlev ekleme mi, hibrit mi?
-- [ ] **Q3 — İşlem modeli:** Sürükle/okla bekleyen transfer + `Done` onayı + `Cancel` geri alma mı,
-      mevcut anında al/sat mı, ticarette sepet/ekipmanda anında hibrit mi?
-- [ ] **Q4 — Discard XP:** Güncel Bannerlord perk + kademe bazlı tavanlı XP mi, eski beta perk + değerin
-      %50'si mi, perksiz sade model mi?
-- [ ] **Q5 — Birlik veri modeli:** Tam kültür ağaçları ve yığın bazlı XP/yaralı mı, mevcut dört sınıfı
-      koruyup yığın XP/yaralı ekleme mi, dört sayaç + toplam XP havuzu mu?
-- [ ] **Q6 — Karakter/perk kapsamı:** 18 becerinin bütün çift perk ağaçları ve etkileri mi; önce çekirdek
-      gelişim + kritik perkler, sonra tamamı mı; sadeleştirilmiş perk seti mi?
+- [x] **Q1 — Uygulama sırası ("mantıklı olana öncelik verelim"):** Önce karar/göç ve veri temeli,
+      sonra Envanter/Pazar/Ganimet, Party, karakter gelişimi, HUD ve büyük sistemler. Performans
+      sondan bir önceki, kayıt yönetimi en son iştir.
+- [x] **Q2 — Arayüz (`full_bannerlord`):** Envanter, pazar, ganimet ve Party tam ekran üç sütun
+      düzeninde olacak: sol karşı taraf/Discard/Dismiss, ortada döndürülebilir 3B kahraman/birlik
+      ve slotlar, sağda parti listesi.
+- [x] **Q3 — İşlem modeli ("mantıklı olan"):** Bannerlord'daki bekleyen transfer modeli seçildi.
+      Satır taşıma önce yerel sepete yazılır; altta net altın/XP/ücret görünür; `Done` atomik
+      olarak onaylar, `Cancel` hiçbir kampanya alanını değiştirmeden geri alır.
+- [x] **Q4 — Discard XP ("Bannerlord'daki gibi yapalım, araştır"):** Zırh için İdare 100
+      `paid_in_promise`, silah/kalkan için İdare 125 `giving_hands` zorunludur. Perk, atanmış
+      İaşeci (Quartermaster) kahramanında aranır; atama yoksa parti liderine bakılır. Eşya başına
+      bağış XP'si, eşyanın taban değerinin %50'sinden türetilir ve resmî kademe tavanlarıyla
+      sınırlanır: **T1 75, T2 150, T3 250, T4+ 300**. T0 için ikincil kaynaklardaki **35** tavanı
+      ayrı sabit olarak tutulur ve P2 kabul testinde ayrıca kilitlenir. XP yalnızca bir sonraki
+      kademeye ilerleyebilen normal birlik yığınlarına gider; toplam ihtiyaç aşılırsa önizleme
+      kırmızı/taşma durumunu gösterir.
+- [x] **Q5 — Birlik modeli ("Bannerlord'daki gibi"):** Kültürlere özgü dallanan birlik ağaçları;
+      tür yığını başına sağlıklı/yaralı, XP, ücret, terfi maliyeti ve at şartı; tür bazlı tutsaklar,
+      hazır olma, kapasite, fidye/serbest bırakma ve garnizon değişimi uygulanacak.
+- [x] **Q6 — Kapsam ("adım adım her şeyi yapalım, çalıştığından emin olarak"):** Nihai hedef tam
+      kapsamdır; fakat her paket ayrı doğrulanmadan sonrakine geçilmeyecek. Karakter gelişiminde
+      kullanım XP'si, seviyede 1 odak, 4 seviyede 1 nitelik, doğru yumuşak/sert öğrenme sınırları,
+      25'li eşiklerde çift perk seçimi ve rol kapsamlı gerçek etkiler kurulacak.
 
-> Q1–Q6 cevapları bu bölüme tarihli karar kaydı olarak eklendikten sonra uygulamaya başlanacak.
+**P0 göç sözleşmesi.** Eski kayıtlar reddedilmeyecek; `SAVE_VERSION` veri temeliyle birlikte
+v4'e yükseltilecek ve v1–v3 kayıtlar yüklenirken deterministik olarak göç ettirilecek:
+
+1. Eski tekil `inventoryItems`, tanım kimliği + adet + kilit taşıyan yığınlara normalleştirilir;
+   üretilmiş pazar/ganimet kimliklerinden katalog tanımı geri çıkarılır. Bilinmeyen/bağışlanmış
+   ekipman için kalıcı özel tanım üretilir.
+2. Slot→metin ekipmanı silinmez; her metinden kalıcı bir eşya tanımı üretilir ve oyuncu
+   kahramanının savaş setine tanım kimliğiyle bağlanır. Eski metin alanı geçiş süresince
+   görüntüleme yedeği olarak korunur.
+3. Dört sınıflı `roster`, toplamlar birebir korunarak oyuncu kültür ağacındaki karşılık gelen
+   birlik yığınlarına çevrilir; XP 0, yaralı 0 başlar. Eski `prisoners` sayısı, hazır olmayan
+   haydut acemi tutsak yığınına çevrilir.
+4. Oyuncu için gerçek kahraman kaydı; mevcut rol adlarından Aybars, Helena ve Torvald için
+   gerçek yoldaş kayıtları oluşturulur. Rol atamaları artık kahraman kimliği taşır; eski metin
+   rolleri geçişte görüntüleme yedeğidir.
+5. Eksik/bozuk yeni alanlar kaydı çökertmez: aralıklar kırpılır, bilinmeyen tanım/birlik
+   kimlikleri atlanır, toplamlar eski alanlarla yeniden mutabıklaştırılır. Göç idempotenttir;
+   aynı kayıt iki kez göç ettirilirse ikinci sonuç değişmez.
+6. P0/P1 kabul kapısı: yeni sefer + v3 kayıt göçü + yığın adetleri + birlik ağacı bütünlüğü +
+   Discard perk/tavan/kapasite hesapları kural testlerinden ve `npm run verify:fast`ten geçecek.
 
 
