@@ -16,6 +16,7 @@ import {
 import { OCCUPATION_LABELS, lastSeenLabel, type HeroRecord } from '../../game/heroes';
 import { BannerBadge, Chip, InfoCell, LinkCard, SectionTitle, initials, occupationColor } from './parts';
 import { HeroPortrait } from './HeroPortrait';
+import { SettlementIcon } from './icons';
 
 interface PageProps {
   index: EncyclopediaIndex;
@@ -42,16 +43,16 @@ const HeroRow: React.FC<{ hero: HeroRecord; day: number; onOpen: () => void }> =
           {OCCUPATION_LABELS[hero.occupation]}
         </span>
       </span>
-      <span className="block text-[10px] text-[#8a7f6d] truncate">{hero.title}</span>
+      <span className="block text-[10px] text-[#a2957f] truncate">{hero.title}</span>
     </span>
-    <span className="shrink-0 text-right text-[10px] text-[#6b6154] max-w-[190px] truncate">
+    <span className="shrink-0 text-right text-[10px] text-[#8b8072] max-w-[190px] truncate">
       {lastSeenLabel(hero, day)}
     </span>
   </button>
 );
 
 const EmptyNote: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="px-3 py-4 text-[11px] text-[#6b6154]">{children}</div>
+  <div className="px-3 py-4 text-[11px] text-[#8b8072]">{children}</div>
 );
 
 const ListShell: React.FC<{ count: number; children: React.ReactNode; aside?: React.ReactNode }> = ({
@@ -62,7 +63,7 @@ const ListShell: React.FC<{ count: number; children: React.ReactNode; aside?: Re
   <div className="flex h-full min-h-0">
     {aside && <aside className="w-56 shrink-0 border-r border-[#c6a15b]/25 px-3 py-3 overflow-y-auto">{aside}</aside>}
     <div className="flex-1 min-w-0 flex flex-col">
-      <div className="px-3 py-1.5 text-[10px] text-[#8a7f6d] border-b border-[#c6a15b]/20">{count} kayıt</div>
+      <div className="px-3 py-1.5 text-[10px] text-[#a2957f] border-b border-[#c6a15b]/20">{count} kayıt</div>
       <div className="flex-1 overflow-y-auto">{children}</div>
     </div>
   </div>
@@ -96,7 +97,11 @@ export const KingdomListPage: React.FC<PageProps> = ({ index, onNavigate }) => {
         onClick={() => onNavigate({ section: 'KINGDOM', id: k.id })}
         className="w-full flex items-center gap-3 px-3 py-2 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10 text-left"
       >
-        <BannerBadge color={ruler?.bannerColor ?? '#7c2d12'} text={initials(k.name)} size={36} />
+        {ruler ? (
+          <HeroPortrait hero={ruler} width={36} square />
+        ) : (
+          <BannerBadge color="#7c2d12" text={initials(k.name)} size={36} />
+        )}
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
             <span className="text-xs text-[#f8f0df] truncate">{k.name}</span>
@@ -104,11 +109,11 @@ export const KingdomListPage: React.FC<PageProps> = ({ index, onNavigate }) => {
               <Chip className="text-[#fca5a5] border-[#991b1b] bg-[#991b1b]/20">Savaşta</Chip>
             )}
           </span>
-          <span className="block text-[10px] text-[#8a7f6d] truncate">
+          <span className="block text-[10px] text-[#a2957f] truncate">
             Hükümdar: {k.rulerName} · {k.clanIds.length} klan · {k.memberIds.length} lord
           </span>
         </span>
-        <span className="shrink-0 text-right text-[10px] text-[#6b6154]">{k.fiefCount} tımar</span>
+        <span className="shrink-0 text-right text-[10px] text-[#8b8072]">{k.fiefCount} tımar</span>
       </button>
     );
   });
@@ -131,7 +136,11 @@ export const KingdomDetailPage: React.FC<PageProps & { kingdomId?: string }> = (
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="flex items-start gap-3 rounded border border-[#c6a15b]/30 p-3 mb-3">
-        <BannerBadge color={ruler?.bannerColor ?? '#7c2d12'} text={initials(kingdom.name)} size={56} />
+        {ruler ? (
+          <HeroPortrait hero={ruler} width={56} square />
+        ) : (
+          <BannerBadge color="#7c2d12" text={initials(kingdom.name)} size={56} />
+        )}
         <div className="min-w-0 flex-1">
           <div className="font-display text-sm text-[#f8f0df] truncate">{kingdom.name}</div>
           <div className="text-[11px] text-[#a89b84] mb-1">
@@ -168,7 +177,7 @@ export const KingdomDetailPage: React.FC<PageProps & { kingdomId?: string }> = (
                 className="w-full flex items-center justify-between px-3 py-1.5 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10"
               >
                 <span className="text-[11px] text-[#e2d6c1] truncate">{c.name}</span>
-                <span className="text-[10px] text-[#6b6154]">{c.memberIds.length} üye</span>
+                <span className="text-[10px] text-[#8b8072]">{c.memberIds.length} üye</span>
               </button>
             ))}
           </div>
@@ -188,11 +197,11 @@ export const KingdomDetailPage: React.FC<PageProps & { kingdomId?: string }> = (
                 className="w-full flex items-center justify-between px-3 py-1.5 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10"
               >
                 <span className="text-[11px] text-[#e2d6c1] truncate">{s.name}</span>
-                <span className="text-[10px] text-[#6b6154]">{SETTLEMENT_TYPE_LABELS[s.type]}</span>
+                <span className="text-[10px] text-[#8b8072]">{SETTLEMENT_TYPE_LABELS[s.type]}</span>
               </button>
             ))}
             {fiefs.length > 40 && (
-              <div className="px-3 py-1.5 text-[10px] text-[#6b6154]">
+              <div className="px-3 py-1.5 text-[10px] text-[#8b8072]">
                 … ve {fiefs.length - 40} yerleşim daha
               </div>
             )}
@@ -223,23 +232,31 @@ export const KingdomDetailPage: React.FC<PageProps & { kingdomId?: string }> = (
 
 export const ClanListPage: React.FC<PageProps> = ({ index, onNavigate }) => (
   <ListShell count={index.clans.length}>
-    {index.clans.map((c) => (
+    {index.clans.map((c) => {
+      // Klan lideri varsa portresi rozetin yerine geçer (Bannerlord ansiklopedisi).
+      const leader = c.leaderId ? index.heroById[c.leaderId] : null;
+      return (
       <button
         key={c.id}
         type="button"
         onClick={() => onNavigate({ section: 'CLAN', id: c.id })}
         className="w-full flex items-center gap-3 px-3 py-2 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10 text-left"
       >
-        <BannerBadge color={c.bannerColor} text={initials(c.name)} size={34} />
+        {leader ? (
+          <HeroPortrait hero={leader} width={34} square />
+        ) : (
+          <BannerBadge color={c.bannerColor} text={initials(c.name)} size={34} />
+        )}
         <span className="min-w-0 flex-1">
           <span className="text-xs text-[#f8f0df] truncate block">{c.name}</span>
-          <span className="block text-[10px] text-[#8a7f6d] truncate">
+          <span className="block text-[10px] text-[#a2957f] truncate">
             {c.kingdomName} · {c.memberIds.length} üye
           </span>
         </span>
-        <span className="shrink-0 text-[10px] text-[#6b6154]">{c.fiefCount} tımar</span>
+        <span className="shrink-0 text-[10px] text-[#8b8072]">{c.fiefCount} tımar</span>
       </button>
-    ))}
+      );
+    })}
   </ListShell>
 );
 
@@ -257,7 +274,11 @@ export const ClanDetailPage: React.FC<PageProps & { clanId?: string }> = ({
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="flex items-start gap-3 rounded border border-[#c6a15b]/30 p-3 mb-3">
-        <BannerBadge color={clan.bannerColor} text={initials(clan.name)} size={56} />
+        {leader ? (
+          <HeroPortrait hero={leader} width={56} square />
+        ) : (
+          <BannerBadge color={clan.bannerColor} text={initials(clan.name)} size={56} />
+        )}
         <div className="min-w-0 flex-1">
           <div className="font-display text-sm text-[#f8f0df] truncate">{clan.name}</div>
           <div className="text-[11px] text-[#a89b84] mb-1">{clan.kingdomName}</div>
@@ -344,7 +365,7 @@ export const SettlementListPage: React.FC<PageProps> = ({ index, onNavigate }) =
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Yerleşim adı…"
-            className="w-full bg-[#0d0b08] border border-[#c6a15b]/40 rounded px-2 py-1 text-[11px] text-[#e2d6c1] placeholder:text-[#6b6154] outline-none focus:border-[#fbbf24]/70"
+            className="w-full bg-[#0d0b08] border border-[#c6a15b]/40 rounded px-2 py-1 text-[11px] text-[#e2d6c1] placeholder:text-[#8b8072] outline-none focus:border-[#fbbf24]/70"
           />
         </>
       }
@@ -356,16 +377,16 @@ export const SettlementListPage: React.FC<PageProps> = ({ index, onNavigate }) =
           onClick={() => onNavigate({ section: 'SETTLEMENT', id: s.id })}
           className="w-full flex items-center gap-3 px-3 py-2 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10 text-left"
         >
-          <span className="w-8 h-8 shrink-0 rounded-sm border border-[#c6a15b]/40 flex items-center justify-center text-xs">
-            {s.type === 'TOWN' ? '🏙️' : s.type === 'CASTLE' ? '🏰' : '🏡'}
+          <span className="w-8 h-8 shrink-0 rounded-sm border border-[#c6a15b]/40 flex items-center justify-center text-[#c6a15b]">
+            <SettlementIcon type={s.type} size={15} />
           </span>
           <span className="min-w-0 flex-1">
             <span className="text-xs text-[#f8f0df] truncate block">{s.name}</span>
-            <span className="block text-[10px] text-[#8a7f6d] truncate">
+            <span className="block text-[10px] text-[#a2957f] truncate">
               {SETTLEMENT_TYPE_LABELS[s.type]} · {FACTION_INFO[s.faction]?.name ?? s.faction}
             </span>
           </span>
-          <span className="shrink-0 text-[10px] text-[#6b6154]">{Math.round(s.prosperity)} refah</span>
+          <span className="shrink-0 text-[10px] text-[#8b8072]">{Math.round(s.prosperity)} refah</span>
         </button>
       ))}
     </ListShell>
@@ -387,10 +408,10 @@ export const SettlementDetailPage: React.FC<PageProps & { settlementId?: string 
     <div className="h-full overflow-y-auto p-4">
       <div className="flex items-start gap-3 rounded border border-[#c6a15b]/30 p-3 mb-3">
         <span
-          className="w-14 h-14 shrink-0 rounded-sm border border-[#c6a15b]/40 flex items-center justify-center text-2xl"
+          className="w-14 h-14 shrink-0 rounded-sm border border-[#c6a15b]/40 flex items-center justify-center text-[#d8b977]"
           style={{ background: 'linear-gradient(160deg,#2a2015,#120f0b)' }}
         >
-          {settlement.type === 'TOWN' ? '🏙️' : settlement.type === 'CASTLE' ? '🏰' : '🏡'}
+          <SettlementIcon type={settlement.type} size={26} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="font-display text-sm text-[#f8f0df] truncate">{settlement.name}</div>

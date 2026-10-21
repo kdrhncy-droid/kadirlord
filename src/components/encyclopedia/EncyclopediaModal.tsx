@@ -28,6 +28,7 @@ import {
   type Occupation,
 } from '../../game/heroes';
 import { Chip, InfoCell, LinkCard, occupationColor } from './parts';
+import { SectionIcon, type SectionGlyph } from './icons';
 import { HeroPortrait } from './HeroPortrait';
 import {
   ClanDetailPage,
@@ -50,17 +51,16 @@ interface EncyclopediaModalProps {
 }
 
 const CARD_DEFS: {
-  section: EncyclopediaRoute['section'];
+  section: SectionGlyph;
   title: string;
-  glyph: string;
   art: string;
   desc: string;
 }[] = [
-  { section: 'HEROES', title: 'Kahramanlar', glyph: '🧔', art: 'from-[#3b2a16] via-[#241a0f] to-[#120f0b]', desc: 'Lordlar, leydiler, krallar' },
-  { section: 'KINGDOMS', title: 'Krallıklar', glyph: '🛡️', art: 'from-[#3b1d1d] via-[#241010] to-[#120f0b]', desc: 'Hanedanlar ve savaşlar' },
-  { section: 'CLANS', title: 'Klanlar', glyph: '🏳️', art: 'from-[#1d2f3b] via-[#101d24] to-[#120f0b]', desc: 'Hanedan bağları' },
-  { section: 'SETTLEMENTS', title: 'Yerleşimler', glyph: '🏰', art: 'from-[#1f3320] via-[#12200f] to-[#120f0b]', desc: 'Şehirler, kaleler, köyler' },
-  { section: 'CONCEPTS', title: 'Kavramlar', glyph: '📖', art: 'from-[#2b2b3b] via-[#1a1a24] to-[#120f0b]', desc: 'Sözlük ve terimler' },
+  { section: 'HEROES', title: 'Kahramanlar', art: 'from-[#3b2a16] via-[#241a0f] to-[#120f0b]', desc: 'Lordlar, leydiler, krallar' },
+  { section: 'KINGDOMS', title: 'Krallıklar', art: 'from-[#3b1d1d] via-[#241010] to-[#120f0b]', desc: 'Hanedanlar ve savaşlar' },
+  { section: 'CLANS', title: 'Klanlar', art: 'from-[#1d2f3b] via-[#101d24] to-[#120f0b]', desc: 'Hanedan bağları' },
+  { section: 'SETTLEMENTS', title: 'Yerleşimler', art: 'from-[#1f3320] via-[#12200f] to-[#120f0b]', desc: 'Şehirler, kaleler, köyler' },
+  { section: 'CONCEPTS', title: 'Kavramlar', art: 'from-[#2b2b3b] via-[#1a1a24] to-[#120f0b]', desc: 'Sözlük ve terimler' },
 ];
 
 export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
@@ -172,13 +172,13 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Ara…  ( / )"
-            className="w-52 bg-[#0d0b08] border border-[#c6a15b]/40 rounded px-2.5 py-1 text-xs text-[#e2d6c1] placeholder:text-[#6b6154] outline-none focus:border-[#fbbf24]/70"
+            className="w-52 bg-[#0d0b08] border border-[#c6a15b]/40 rounded px-2.5 py-1 text-xs text-[#e2d6c1] placeholder:text-[#8b8072] outline-none focus:border-[#fbbf24]/70"
           />
           {query && (
             <button
               type="button"
               onClick={() => setQuery('')}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#6b6154] hover:text-[#e2d6c1] text-xs"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#8b8072] hover:text-[#e2d6c1] text-xs"
             >
               ✕
             </button>
@@ -199,7 +199,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
   const searchPanel = query.trim() ? (
     <div className="absolute inset-x-4 top-[64px] z-20 max-h-[60%] overflow-y-auto rounded border border-[#c6a15b]/50 bg-[#0f0c09]/98 shadow-2xl">
       {hits.length === 0 ? (
-        <div className="px-4 py-6 text-center text-xs text-[#8a7f6d]">Sonuç bulunamadı.</div>
+        <div className="px-4 py-6 text-center text-xs text-[#a2957f]">Sonuç bulunamadı.</div>
       ) : (
         hits.map((hit) => (
           <button
@@ -210,7 +210,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
           >
             <span className="min-w-0">
               <span className="block text-xs text-[#f8f0df] truncate">{hit.title}</span>
-              <span className="block text-[10px] text-[#8a7f6d] truncate">{hit.subtitle}</span>
+              <span className="block text-[10px] text-[#a2957f] truncate">{hit.subtitle}</span>
             </span>
             <span className="shrink-0 text-[9px] uppercase tracking-wider text-[#c6a15b]/80">
               {hit.kind === 'HERO'
@@ -238,19 +238,19 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
             onClick={() => go({ section: card.section })}
             className={`group relative shrink-0 w-[168px] h-[260px] rounded-sm border border-[#c6a15b]/45 bg-gradient-to-b ${card.art} hover:border-[#fbbf24]/70 transition-colors overflow-hidden`}
           >
-            <span className="absolute inset-x-0 top-0 py-2 text-center font-display text-[11px] uppercase tracking-[0.18em] text-[#e2d6c1] bg-black/25 border-b border-[#c6a15b]/25">
+            <span className="absolute inset-x-0 top-0 py-2 text-center font-display text-[11px] uppercase tracking-[0.18em] text-[#f2e8d5] bg-black/35 border-b border-[#c6a15b]/30">
               {card.title}
             </span>
-            <span className="absolute inset-0 flex items-center justify-center text-5xl opacity-70 group-hover:opacity-100 transition-opacity">
-              {card.glyph}
+            <span className="absolute inset-0 flex items-center justify-center text-[#c6a15b] opacity-70 group-hover:opacity-100 transition-opacity">
+              <SectionIcon section={card.section} size={56} />
             </span>
-            <span className="absolute inset-x-0 bottom-0 px-2 py-2 text-center text-[10px] text-[#a89b84] bg-black/40 border-t border-[#c6a15b]/20">
+            <span className="absolute inset-x-0 bottom-0 px-2 py-2 text-center text-[10px] text-[#c9bda8] bg-black/50 border-t border-[#c6a15b]/25">
               {card.desc}
             </span>
           </button>
         ))}
       </div>
-      <p className="mt-5 text-[11px] text-[#6b6154]">
+      <p className="mt-5 text-[11px] text-[#8b8072]">
         Kahramanlar · krallıklar · klanlar · yerleşimler · kavramlar. Arama için <kbd className="text-[#c6a15b]">/</kbd>,
         geri için <kbd className="text-[#c6a15b]">Esc</kbd>, kapatmak için <kbd className="text-[#c6a15b]">N</kbd>.
       </p>
@@ -324,7 +324,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
         </aside>
 
         <div className="flex-1 min-w-0 flex flex-col">
-          <div className="px-3 py-1.5 text-[10px] text-[#8a7f6d] border-b border-[#c6a15b]/20">
+          <div className="px-3 py-1.5 text-[10px] text-[#a2957f] border-b border-[#c6a15b]/20">
             {list.length} kayıt
           </div>
           <div className="flex-1 overflow-y-auto">
@@ -348,7 +348,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
                       </span>
                     )}
                   </span>
-                  <span className="block text-[10px] text-[#8a7f6d] truncate">
+                  <span className="block text-[10px] text-[#a2957f] truncate">
                     {h.title} · {h.clanName} · {h.kingdomName}
                   </span>
                 </span>
@@ -356,7 +356,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
                   <span className="block text-[10px] text-[#a89b84]">
                     {h.revealed ? `${ageOf(h, index.day)} yaş` : 'yaş gizli'}
                   </span>
-                  <span className="block text-[10px] text-[#6b6154]">{lastSeenLabel(h, index.day)}</span>
+                  <span className="block text-[10px] text-[#8b8072]">{lastSeenLabel(h, index.day)}</span>
                 </span>
               </button>
             ))}
@@ -369,7 +369,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
   /* ── kahraman detayı ── */
   const heroDetail = (hero: HeroRecord | undefined) => {
     if (!hero) {
-      return <div className="p-8 text-center text-xs text-[#8a7f6d]">Kahraman bulunamadı.</div>;
+      return <div className="p-8 text-center text-xs text-[#a2957f]">Kahraman bulunamadı.</div>;
     }
     const info = visibleHeroInfo(hero, index.day);
     // `visibleHeroInfo` gizliyken null döner; gösterimde bunu '—' yapıyoruz.
@@ -399,11 +399,11 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
           </div>
           <div className="mt-3 w-full space-y-1">
             <div className="flex justify-between text-[10px]">
-              <span className="text-[#8a7f6d]">Durum</span>
+              <span className="text-[#a2957f]">Durum</span>
               <span className="text-[#e2d6c1]">{STATUS_LABELS[hero.status]}</span>
             </div>
             <div className="flex justify-between text-[10px]">
-              <span className="text-[#8a7f6d]">Oyuncuya ilişki</span>
+              <span className="text-[#a2957f]">Oyuncuya ilişki</span>
               <span className={hero.relation >= 0 ? 'text-[#34d399]' : 'text-[#fca5a5]'}>{hero.relation}</span>
             </div>
             {hero.atWarWithPlayer && (
@@ -434,7 +434,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
               <InfoCell label="İlişki" value={`${hero.relation}`} />
             </div>
             <div className="mt-2 flex items-start gap-2 text-[11px]">
-              <span className="text-[#8a7f6d] shrink-0">Son görüldü:</span>
+              <span className="text-[#a2957f] shrink-0">Son görüldü:</span>
               <button
                 type="button"
                 onClick={() =>
@@ -469,7 +469,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
                 const v = hero.traits[t.key];
                 return (
                   <div key={t.key} className="flex items-center gap-2">
-                    <span className="text-[10px] text-[#8a7f6d] w-16">{t.label}</span>
+                    <span className="text-[10px] text-[#a2957f] w-16">{t.label}</span>
                     <span className="flex-1 h-1.5 rounded bg-[#241c12] overflow-hidden">
                       <span
                         className={`block h-full ${v >= 0 ? 'bg-[#34d399]' : 'bg-[#f87171]'}`}
@@ -486,12 +486,12 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
           <div className="rounded border border-[#c6a15b]/30 p-3 mb-3">
             <div className="text-[10px] uppercase tracking-[0.15em] text-[#c6a15b] mb-2">Beceriler</div>
             {info.skills === null ? (
-              <div className="text-[11px] text-[#6b6154]">Tanışmadınız — beceriler gizli.</div>
+              <div className="text-[11px] text-[#8b8072]">Tanışmadınız — beceriler gizli.</div>
             ) : (
               <div className="grid grid-cols-3 gap-1.5">
                 {Object.entries(info.skills).map(([key, val]) => (
                   <div key={key} className="flex items-center justify-between bg-[#0d0b08] rounded px-2 py-0.5">
-                    <span className="text-[9px] text-[#8a7f6d] capitalize">{key}</span>
+                    <span className="text-[9px] text-[#a2957f] capitalize">{key}</span>
                     <span className="text-[10px] text-[#e2d6c1]">{val?.level ?? 0}</span>
                   </div>
                 ))}
@@ -513,7 +513,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
     <div className="flex h-full flex-col items-center justify-center gap-2 text-center px-6">
       <div className="text-3xl opacity-50">🚧</div>
       <div className="font-display text-sm text-[#f8f0df]">{title}</div>
-      <div className="text-[11px] text-[#8a7f6d] max-w-sm">
+      <div className="text-[11px] text-[#a2957f] max-w-sm">
         Bu bölüm Faz 2'de gelecek. Veri hazır; sayfa düzeni sıradaki adımda bağlanacak.
       </div>
     </div>

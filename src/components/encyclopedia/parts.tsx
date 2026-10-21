@@ -25,7 +25,7 @@ export const occupationColor: Record<Occupation, string> = {
 
 export const InfoCell: React.FC<{ label: string; value: string }> = ({ label, value }) => (
   <div className="bg-[#0d0b08] rounded px-2 py-1">
-    <div className="text-[9px] uppercase tracking-wider text-[#6b6154]">{label}</div>
+    <div className="text-[9px] uppercase tracking-wider text-[#8b8072]">{label}</div>
     <div className="text-[11px] text-[#e2d6c1]">{value}</div>
   </div>
 );
@@ -44,7 +44,7 @@ export const LinkCard: React.FC<{
       disabled ? 'opacity-40 cursor-default' : 'hover:border-[#fbbf24]/60 hover:bg-[#c6a15b]/10'
     }`}
   >
-    <div className="text-[9px] uppercase tracking-wider text-[#6b6154]">{label}</div>
+    <div className="text-[9px] uppercase tracking-wider text-[#8b8072]">{label}</div>
     <div className="text-[11px] text-[#e2d6c1] truncate">{value}</div>
   </button>
 );

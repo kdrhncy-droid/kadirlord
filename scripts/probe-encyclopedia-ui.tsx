@@ -92,7 +92,12 @@ ok(clanDetail.includes('Lider'), 'klan detayında lider');
 
 const settlements = render({ initialRoute: { section: 'SETTLEMENTS' } });
 ok(settlements.includes('Tür'), 'yerleşim filtresi var');
-ok(settlements.includes('🏙️') || settlements.includes('🏰') || settlements.includes('🏡'), 'yerleşim tür ikonları');
+// İkonlar artık SVG (emoji fontu olmayan sistemlerde tofu çıkıyordu).
+ok(
+  settlements.includes('<svg') && settlements.includes('lucide-castle'),
+  'yerleşim tür ikonları SVG (lucide)',
+);
+ok(!/🏙️|🏰|🏡|🧔|🛡️|📖/.test(home + settlements), 'emoji ikon kalmadı (font bağımsız)');
 
 const st = index.settlements[0];
 const settlementDetail = render({ initialRoute: { section: 'SETTLEMENT', id: st.id } });
@@ -117,6 +122,22 @@ ok(render({ initialRoute: { section: 'HERO', id: 'yok' } }).includes('Kahraman b
 ok(render({ initialRoute: { section: 'KINGDOM', id: 'yok' } }).includes('Krallık bulunamadı'), 'geçersiz kingdom id çökmüyor');
 ok(render({ initialRoute: { section: 'CLAN', id: 'yok' } }).includes('Klan bulunamadı'), 'geçersiz clan id çökmüyor');
 ok(render({ initialRoute: { section: 'SETTLEMENT', id: 'yok' } }).includes('Yerleşim bulunamadı'), 'geçersiz settlement id çökmüyor');
+
+/* 6. Faz 1i: klan/krallık listelerinde portre (Bannerlord deseni) */
+const kingdomsPage = render({ initialRoute: { section: 'KINGDOMS' } });
+const clansPage = render({ initialRoute: { section: 'CLANS' } });
+ok(kingdomsPage.includes('width:36px'), 'krallık listesinde hükümdar portresi (36px)');
+ok(clansPage.includes('width:34px'), 'klan listesinde lider portresi (34px)');
+const rulerColor = index.kingdomById[index.kingdoms[0].id]?.rulerId
+  ? index.heroById[index.kingdomById[index.kingdoms[0].id]!.rulerId!]?.bannerColor
+  : undefined;
+ok(!rulerColor || kingdomsPage.includes(rulerColor), 'krallık portresi sancak rengini taşıyor');
+
+/* 7. Kontrast: en koyu mikro etiket tonu yükseltildi */
+ok(
+  !home.includes('#6b6154') && !kingdomsPage.includes('#6b6154'),
+  'düşük kontrastlı #6b6154 metin kalmadı',
+);
 
 console.log(fails === 0 ? '\n✅ ANSİKLOPEDİ ARAYÜZÜ DOĞRU' : `\n❌ ${fails} hata`);
 process.exit(fails === 0 ? 0 : 1);

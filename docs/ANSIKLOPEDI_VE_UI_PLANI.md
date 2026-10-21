@@ -1043,3 +1043,49 @@ leydi cinsiyeti dişi (13/13), kirpik 2/2, leydilerde sakal yok, erkeklerde kirp
 kaş inceliği, dudak dolgunluğu, tüm yüz parçaları kafatası yüzeyinin dışında.
 
 `npm run verify:ladies` · görsel: `docs/renders/portraits-webgl.png`
+
+## 21. FAZ 1i — ANSİKLOPEDİ UI CİLASI (TAMAMLANDI ✅)
+
+Gerçek tarayıcı görüntüsünde iki sorun vardı: ana sayfa kartları **tofu (□)** gösteren emoji
+ikonlar kullanıyordu (emoji fontu olmayan sistemlerde) ve mikro etiketler koyu zeminde
+okunmuyordu.
+
+### 21.1 Emoji → SVG (lucide)
+
+`src/components/encyclopedia/icons.tsx`:
+- `SectionIcon` — Kahramanlar `Users`, Krallıklar `Crown`, Klanlar `Flag`, Yerleşimler `Castle`,
+  Kavramlar `BookOpen`.
+- `SettlementIcon` — şehir `Building2`, kale `Castle`, köy `House`.
+- `WarIcon` (`Swords`), `ShieldIcon` (`Shield`) hazır.
+İkonlar `currentColor` + `#c6a15b` paletiyle çizilir → font bağımsız, keskin.
+
+### 21.2 Kontrast
+
+| Eski | Yeni | Yer |
+| --- | --- | --- |
+| `#6b6154` | `#8b8072` | istatistik/ikincil mikro etiketler |
+| `#8a7f6d` | `#a2957f` | liste alt satırları, InfoCell |
+
+Kart başlık/altlık şeritleri de biraz daha opak (`bg-black/35`, `bg-black/50`).
+
+### 21.3 Portreler listelere girdi (Bannerlord deseni)
+
+| Sayfa | Önce | Sonra |
+| --- | --- | --- |
+| Krallık listesi | baş harf rozeti | **hükümdar portresi 36×36** |
+| Krallık detayı başlığı | baş harf rozeti | **hükümdar portresi 56×56** |
+| Klan listesi | baş harf rozeti | **lider portresi 34×34** |
+| Klan detayı başlığı | baş harf rozeti | **lider portresi 56×56** |
+
+Portre yoksa (WebGL yok / lider kaydı yok) baş harf rozeti kalır — geri düşme korunuyor.
+
+### 21.4 Not — içerik tekrarı (Faz 9'a)
+
+Klan listesinde aynı ad birden çok kez görünüyor: "Aybora Hanedanı" 4, "Karadağ Hanedanı" 3 kez.
+Sebep isim üreticisinin küçük bir havuzdan seçmesi (Faz 0b tohumları). Ansiklopedi doğru
+çalışıyor; **içerik** zenginleştirmesi Faz 9'da yapılacak.
+
+### 21.5 Doğrulama
+
+`probe-encyclopedia-ui` 58 kontrol (2'si yeni: SVG ikon zorunluluğu + `#6b6154` kalmadığı,
+4'ü portreler). Görseller: `docs/renders/encyclopedia-home.png`, `enc-kingdoms.png`, `enc-clans.png`.
