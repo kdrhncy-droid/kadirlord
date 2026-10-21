@@ -664,17 +664,21 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
    * Gövde profili: (y, gövde yarıçapı). Gövde silindiri y 0..0.46 arasında
    * 0.18 → 0.24 arası açılıyor; zırh kabuğu bu profilin üstüne oturuyor.
    */
+  /*
+   * Profil **yerel** koordinatta (chestArmorSocket = dünya y 1.38).
+   * Gövde dünyada 1.14–1.60, boyun 1.61–1.75, çene 1.74 → zırh en fazla
+   * 1.64'e kadar çıkabilir, yoksa çeneyi/ağzı yutuyor (Faz 9c bulgusu:
+   * eski profil 1.87'ye çıkıyordu ve levhada göz altına dayanıyordu).
+   */
   const PROFILE: Array<[number, number]> = [
-    [-0.22, 0.194],
-    [-0.14, 0.196],
-    [-0.04, 0.202],
-    [0.09, 0.214],
-    [0.24, 0.228],
-    [0.34, 0.230],
-    // Omuz hizasında hafif daralma: kabuk kolların üstüne binmesin.
-    [0.4, 0.222],
-    [0.45, 0.208],
-    [0.49, 0.186],
+    [-0.24, 0.196],
+    [-0.16, 0.2],
+    [-0.06, 0.208],
+    [0.04, 0.214],
+    [0.14, 0.222],
+    [0.18, 0.216],
+    [0.21, 0.196],
+    [0.225, 0.17],
   ];
   const radiusAt = (y: number) => {
     if (y <= PROFILE[0][0]) return PROFILE[0][1];
@@ -692,7 +696,31 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
   /** Kabuğun ön yüzü (z) — ek parçalar bu mesafeye göre yerleştirilir. */
   const frontZ = (y: number, pad: number, out = 0) => (radiusAt(y) + pad + out) * DEPTH;
 
-  const pieces: THREE.Mesh[] = [];
+  /**
+   * Yaka/gorget: tabanı köprücük kemiğinde, boynu saran ince halka.
+   * Grubun içinde durur ki `refitArmorToHead` yüksekliğini çeneye göre kısatlsın.
+   */
+  const COLLAR = { bottom: 0.14, height: 0.17 };
+  const makeCollar = (mat: THREE.Material) => {
+    const g = new THREE.Group();
+    g.name = 'armorCollar';
+    g.position.y = COLLAR.bottom; // dünya ≈1.52 — köprücük kemiği
+    const ring = mesh(
+      new THREE.CylinderGeometry(0.112, 0.15, COLLAR.height, 10, 1, true),
+      mat,
+      false,
+    );
+    // Halka grubun TABANINDAN yukarı büyür → ölçek tabanı sabit bırakır.
+    ring.position.y = COLLAR.height / 2;
+    ring.scale.z = DEPTH;
+    ring.userData.chestArmor = true;
+    g.add(ring);
+    g.userData.collarHeight = COLLAR.height;
+    g.userData.chestArmor = true;
+    return g;
+  };
+
+  const pieces: THREE.Object3D[] = [];
 
   /** Gövdeye oturan kabuk. */
   const shell = (pad: number, mat: THREE.Material) => {
@@ -716,13 +744,14 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
   if (tier === 'LEATHER') {
     // Dolgun gambeson: kapitone keten gövde + deri kuşak + kapitone dikişler.
     pieces.push(shell(0.016, padded));
-    for (const y of [-0.14, 0.02, 0.18, 0.34]) {
+    for (const y of [-0.16, -0.06, 0.04, 0.14]) {
       pieces.push(band(y, 0.022, 0.008, leather));
     }
     // Omuz askıları: ön göğüsten geçen iki deri şerit.
     for (const side of [-1, 1]) {
-      const strap = mesh(new THREE.BoxGeometry(0.03, 0.34, 0.012), leather, false);
-      strap.position.set(side * 0.062, 0.24, frontZ(0.24, 0.02, 0.004));
+      // Kısa tutuluyor: uzun askı enseden çeneye kadar çıkıp yüzü örtüyordu.
+      const strap = mesh(new THREE.BoxGeometry(0.03, 0.26, 0.012), leather, false);
+      strap.position.set(side * 0.062, 0.02, frontZ(0.02, 0.02, 0.004));
       strap.rotation.z = side * 0.1;
       pieces.push(strap);
     }
@@ -730,45 +759,49 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     // Sancak işareti: göğsün ortasında küçük bir arma pulu.
     const badge = mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.012, 8), cloth, false);
     badge.rotation.x = Math.PI / 2;
-    badge.position.set(0, 0.3, frontZ(0.3, 0.02, 0.008));
+    badge.position.set(0, 0.16, frontZ(0.16, 0.02, 0.008));
     pieces.push(badge);
   } else if (tier === 'CHAINMAIL') {
     // Postacı: gövde + etek + boyun zırhı + omuz askısı.
     pieces.push(shell(0.02, metal));
     const skirt = mesh(new THREE.CylinderGeometry(0.214, 0.242, 0.2, 10, 1, true), metal);
-    skirt.position.y = -0.14;
+    skirt.position.y = -0.16;
     skirt.scale.z = DEPTH;
     pieces.push(skirt);
-    const collar = mesh(new THREE.CylinderGeometry(0.158, 0.202, 0.1, 10, 1, true), metal);
-    collar.position.y = 0.475;
-    collar.scale.z = DEPTH;
-    pieces.push(collar);
+    pieces.push(makeCollar(metal));
     // Göğüs kayışı: kabuğun önünde, çapraz.
-    const strap = mesh(new THREE.BoxGeometry(0.036, 0.42, 0.016), leather, false);
-    strap.position.set(0.055, 0.2, frontZ(0.2, 0.02, 0.006));
-    strap.rotation.z = 0.32;
+    const strap = mesh(new THREE.BoxGeometry(0.036, 0.28, 0.016), leather, false);
+    strap.position.set(0.055, 0.0, frontZ(0.0, 0.02, 0.006));
+    strap.rotation.z = 0.3;
     pieces.push(strap);
     pieces.push(band(0.02, 0.026, 0.03, leather));
   } else if (tier === 'PLATE') {
     // Tam levha: kabuk + omurga + iki kuşak + gorget + arma.
     pieces.push(shell(0.028, metal));
-    const keel = mesh(new THREE.BoxGeometry(0.032, 0.42, 0.03), metal, false);
-    keel.position.set(0, 0.2, frontZ(0.2, 0.028, 0.008));
+    const keel = mesh(new THREE.BoxGeometry(0.032, 0.36, 0.03), metal, false);
+    keel.position.set(0, 0.08, frontZ(0.08, 0.028, 0.008));
     pieces.push(keel);
-    pieces.push(band(0.09, 0.034, 0.032, gold));
-    pieces.push(band(0.34, 0.034, 0.032, gold));
-    const gorget = mesh(new THREE.CylinderGeometry(0.156, 0.206, 0.09, 10), metal, false);
-    gorget.position.y = 0.485;
-    gorget.scale.z = DEPTH;
-    pieces.push(gorget);
+    pieces.push(band(-0.06, 0.034, 0.032, gold));
+    pieces.push(band(0.14, 0.034, 0.032, gold));
+    // Gorget: boynu saran dar halka. Yüksekliği `refitArmorToHead` ile
+    // karakterin çenesine göre ayarlanır (DNA sonrası kafa büyüyebiliyor).
+    pieces.push(makeCollar(metal));
     // Sancak arması: öne bakan dört yüzlü piramit.
     const crest = mesh(new THREE.ConeGeometry(0.055, 0.034, 4), gold, false);
     crest.rotation.x = Math.PI / 2;
-    crest.position.set(0, 0.26, frontZ(0.26, 0.028, 0.014));
+    crest.position.set(0, 0.09, frontZ(0.09, 0.028, 0.014));
     pieces.push(crest);
   }
 
-  rig.chestArmorSocket.add(...pieces);
+  /*
+   * Göğüs zırhının tamamı tek grup altında: `refitArmorToHead` bu grubu
+   * yalnızca **y** ekseninde kısaltarak çeneyle çakışmayı çözer (taban sabit).
+   */
+  const chestGroup = new THREE.Group();
+  chestGroup.name = 'armorChest';
+  chestGroup.userData.chestBottom = -0.24;
+  chestGroup.add(...pieces);
+  rig.chestArmorSocket.add(chestGroup);
   for (const p of pieces) p.userData.chestArmor = true;
 
   /* ── Kol zırhları (üst kol + ön kol) ──
@@ -856,6 +889,43 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
       pad.position.set(side * 0.012, 0.008, 0);
       sock.add(pad);
     }
+  }
+}
+
+/**
+ * Zırh yakasını karakterin **çenesine** göre ayarlar (Faz 9c).
+ *
+ * DNA kafayı 1.16×'e kadar büyütünce çene alçalıyor (en kısa kahramanda 1.611 m);
+ * sabit yükseklikteki yaka o zaman çeneyi/ağzı örtüyordu. `applyMorphDNAToRig`
+ * sonunda çağrılır; yakayı çenenin 3 cm altında kalacak şekilde kısaltır.
+ */
+export function refitArmorToHead(rig: CharacterRig): void {
+  const group = rig.chestArmorSocket.getObjectByName('armorChest');
+  if (!group) return;
+  const skull = rig.head.children.find((c) => (c as THREE.Mesh).isMesh) as THREE.Mesh | undefined;
+  if (!skull) return;
+  rig.root.updateMatrixWorld(true);
+  const chin = new THREE.Box3().setFromObject(skull).min.y;
+
+  // 1) Yaka: çenenin 3 cm altına kadar uzar/kısalır. DNA kafayı büyütünce
+  //    çene alçalıyor (1.61'e kadar) → sabit yaka ağzı örtüyordu.
+  const collar = group.getObjectByName('armorCollar');
+  if (collar) {
+    const box = new THREE.Box3().setFromObject(collar);
+    const height = Math.max(box.max.y - box.min.y, 1e-4);
+    const s = Math.min(1.7, Math.max(0.3, (chin - 0.03 - box.min.y) / height));
+    collar.scale.y *= s;
+  }
+
+  // 2) Emniyet kemeri: gövde kabuğu (yaka dışında) hâlâ çeneye dayanıyorsa
+  //    grubu yalnız y ekseninde, tabanı sabit tutarak kısalt.
+  const armor = new THREE.Box3().setFromObject(group);
+  const height = armor.max.y - armor.min.y;
+  if (height > 0.01 && armor.max.y > chin - 0.02) {
+    const s = Math.max(0.72, (chin - 0.02 - armor.min.y) / height);
+    group.scale.y *= s;
+    const bottomLocal = (group.userData.chestBottom as number) ?? -0.24;
+    group.position.y = bottomLocal * (1 - group.scale.y);
   }
 }
 

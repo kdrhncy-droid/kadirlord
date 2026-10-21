@@ -1401,3 +1401,49 @@ gövde **derinliği**ne bağlandı (oran 1.09–1.19).
 
 Not: `npm run verify:all` tüm `scripts/probe-*.ts` dosyalarını otomatik koştuğu için yeni
 probe ek bir kayıt gerektirmiyor.
+
+## 34. FAZ 9c — ZIRH YÜZÜ KAPATIYOR MU? (TAMAMLANDI ✅)
+
+### Soru (kullanıcı)
+
+"Zırhlar karakterin yüzünü biraz kaplıyor olabilir, ona bir bak — kaplıyor mu?"
+
+### Ölçüm: evet, kaplıyordu
+
+`scripts/render-face.ts` (16 karo: 4 zırh kademesi × 4 miğfer durumu) ile gözle,
+`scripts/probe-face-cover.ts` ile sayısal olarak doğrulandı:
+
+| Bulgu | Önce | Sonra |
+|---|---|---|
+| Deri/postacı yakası | **ağzı ve çeneyi yutuyordu** | çene − 30 mm'de bitiyor |
+| Levha gorget | **göz hizasına dayanıyordu** (y 1.60–1.87) | çene − 30 mm |
+| Postacı boyun zırhı | 1.87'ye kadar çıkıyordu | çene − 30 mm |
+| Deri omuz askısı | enseden çeneye kadar | göğüste kısa şerit |
+| Yüz hacmine giren zırh parçası | 18 parça | **0** |
+
+**Kök neden:** gövde profili yerel koordinatta 0.49'a (dünya **1.87**) çıkıyordu;
+çene 1.74'te. Ayrıca DNA kafayı 1.16× büyütünce en kısa kahramanda çene **1.611 m**'ye
+iniyor — sabit yükseklikli yaka orada da ağzı örtüyordu.
+
+### Düzeltme
+
+1. `PROFILE` gövde silindirinin gerçek üstüne (dünya **1.60**) çekildi; omuz hizasında
+   daralıyor, böylece kabuk omuz çıkıntısına binmiyor.
+2. Yaka/gorget ayrı bir grup (`armorCollar`) oldu; tabanı köprücük kemiğinde
+   (1.52) ve **taban sabit** kalacak şekilde boyu çeneye göre ölçekleniyor (0.3×–1.7×).
+3. Yeni `refitArmorToHead(rig)` — `applyMorphDNAToRig` sonunda çağrılır, yani DNA
+   uygulandıktan **sonra**: yakayı çene − 3 cm'ye oturtur, gerekirse gövde kabuğunu
+   yalnız y ekseninde (tabanı sabit) kısaltır.
+4. Yaka çeneye kadar **yükseltildi** (eskiden 8 cm'lik kısa halkaydı, boyun çıplak
+   kalıyordu): gövde kabuğunun üstü ile çene arasını örten ince zırh halkası.
+
+### Doğrulama
+
+- `scripts/probe-face-cover.ts` — **27 kontrol**: her zırh kademesi × iki katmanda
+  (a) zırh çenenin altında bitiyor, (b) köprücük kemiğini örtüyor, (c) yüz hacmine
+  giren zırh yok; üç miğferde tepe örtüsü, yükseklik, **gözler açık** (açık yüzlü
+  miğferlerde göz hizasında ≤ 12 cm kapama), tam vizörde göz yarığı göz hizasında.
+- `probe-body-fit.ts` yeni kontrol: **40 kahramanın 23 zırhlısının hepsinde**
+  zırh tepesi çenenin ≥ 1 cm altında (Δ = −0.02 m).
+- `scripts/render-face.ts` → `docs/renders/face-cover.png`; `render-armor.ts` →
+  `docs/renders/armor-chest.png` yenilendi. `verify:all` 21 paket ✅, `vite build` ✅.

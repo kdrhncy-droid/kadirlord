@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CharacterRig, HEAD, RIG_DIMENSIONS, TORSO_DEPTH_SCALE } from './characterRig.ts';
+import { CharacterRig, HEAD, RIG_DIMENSIONS, TORSO_DEPTH_SCALE, refitArmorToHead } from './characterRig.ts';
 import { applyFaceDNA, faceShapeScale } from './characterFace.ts';
 import { FactionId } from './rules.ts';
 
@@ -1245,4 +1245,8 @@ export function applyMorphDNAToRig(rig: CharacterRig, dna: CharacterMorphDNA): v
     );
     rig.head.add(decals);
   }
+
+  // 7. Zırh yakası çeneye göre yeniden oturtulur: DNA kafayı büyütünce sabit
+  //    yaka çeneyi örtüyordu (Faz 9c).
+  refitArmorToHead(rig);
 }

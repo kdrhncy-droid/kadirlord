@@ -143,43 +143,71 @@ for (const armory of [true, false]) {
       ok(!insideShoulder || aSize.x < 0.8, `${tier}: ${side} omuz eklemi zırhın içinde kalıyor (normal)`, upper.y.toFixed(2));
     }
 
-    // 6) İç yüzey / ters normal: geometri tek yüzlü ve dışa bakıyorsa,
-    //    göğüs kutusunun ön yüzünde ağırlıklı olarak dış normal bulunur.
-    let frontFaces = 0;
-    let inwardFaces = 0;
+    // 6) İç yüzey görünüyor mu? Gerçek ölçü: ön görünümü yazılımsal olarak
+    //    rasterize edip **görünen** her pikselin hangi yüze ait olduğuna bakıyoruz.
+    //    (Eski test tüm üçgenleri sayıyordu; gömülü arka yüzler yanlış pozitif
+    //    veriyordu — ör. deri kayışın kabuğa bakan arka yüzü.)
+    const cam = new THREE.PerspectiveCamera(34, 1, 0.01, 100);
+    cam.position.set(0, 1.45, 1.4);
+    cam.lookAt(0, 1.45, 0);
+    cam.updateMatrixWorld(true);
+    cam.updateProjectionMatrix();
+    const vp = new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    const W = 200;
+    const depth = new Float32Array(W * W).fill(Infinity);
+    const inwardPx = new Int32Array(W * W);
+    let covered = 0;
     for (const mesh of pieces) {
       const geo = mesh.geometry as THREE.BufferGeometry;
       const pos = geo.getAttribute('position');
       const idx = geo.getIndex();
       if (!pos) continue;
-      const n = idx ? idx.count : pos.count;
-      const va = new THREE.Vector3();
-      const vb = new THREE.Vector3();
-      const vc = new THREE.Vector3();
-      const ab = new THREE.Vector3();
-      const ac = new THREE.Vector3();
-      const nrm = new THREE.Vector3();
-      const center = new THREE.Vector3();
-      for (let i = 0; i + 2 < n; i += 3) {
+      const count = idx ? idx.count : pos.count;
+      for (let i = 0; i + 2 < count; i += 3) {
         const ia = idx ? idx.getX(i) : i;
         const ib = idx ? idx.getX(i + 1) : i + 1;
         const ic = idx ? idx.getX(i + 2) : i + 2;
-        va.fromBufferAttribute(pos, ia).applyMatrix4(mesh.matrixWorld);
-        vb.fromBufferAttribute(pos, ib).applyMatrix4(mesh.matrixWorld);
-        vc.fromBufferAttribute(pos, ic).applyMatrix4(mesh.matrixWorld);
-        center.copy(va).add(vb).add(vc).divideScalar(3);
-        if (center.z < tFront - 0.02) continue; // yalnız ön yüz
-        ab.subVectors(vb, va);
-        ac.subVectors(vc, va);
-        nrm.crossVectors(ab, ac).normalize();
-        if (nrm.z > 0.2) frontFaces += 1;
-        else if (nrm.z < -0.2) inwardFaces += 1;
+        const a = new THREE.Vector3().fromBufferAttribute(pos, ia).applyMatrix4(mesh.matrixWorld);
+        const b = new THREE.Vector3().fromBufferAttribute(pos, ib).applyMatrix4(mesh.matrixWorld);
+        const c = new THREE.Vector3().fromBufferAttribute(pos, ic).applyMatrix4(mesh.matrixWorld);
+        const nrm = new THREE.Vector3().copy(b).sub(a).cross(new THREE.Vector3().copy(c).sub(a)).normalize();
+        // Kameraya bakan yüz: normal · (göz − yüzey) > 0
+        const mid = new THREE.Vector3().add(a).add(b).add(c).divideScalar(3);
+        const facing = nrm.dot(new THREE.Vector3().copy(cam.position).sub(mid)) > 0;
+        const pa = a.clone().applyMatrix4(vp);
+        const pb = b.clone().applyMatrix4(vp);
+        const pc = c.clone().applyMatrix4(vp);
+        const px = [pa, pb, pc].map((v) => ({ x: (v.x * 0.5 + 0.5) * W, y: (1 - (v.y * 0.5 + 0.5)) * W, z: v.z }));
+        const area = (px[1].x - px[0].x) * (px[2].y - px[0].y) - (px[1].y - px[0].y) * (px[2].x - px[0].x);
+        if (Math.abs(area) < 1e-9) continue;
+        const minX = Math.max(0, Math.floor(Math.min(px[0].x, px[1].x, px[2].x)));
+        const maxX = Math.min(W - 1, Math.ceil(Math.max(px[0].x, px[1].x, px[2].x)));
+        const minY = Math.max(0, Math.floor(Math.min(px[0].y, px[1].y, px[2].y)));
+        const maxY = Math.min(W - 1, Math.ceil(Math.max(px[0].y, px[1].y, px[2].y)));
+        for (let y = minY; y <= maxY; y++) {
+          for (let x = minX; x <= maxX; x++) {
+            const sx = x + 0.5;
+            const sy = y + 0.5;
+            const w0 = ((px[1].x - px[0].x) * (sy - px[0].y) - (px[1].y - px[0].y) * (sx - px[0].x)) / area;
+            const w1 = ((sx - px[0].x) * (px[2].y - px[0].y) - (sy - px[0].y) * (px[2].x - px[0].x)) / area;
+            const w2 = 1 - w0 - w1;
+            if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+            const z = px[0].z * w2 + px[1].z * w1 + px[2].z * w0;
+            const k = y * W + x;
+            if (z >= depth[k]) continue;
+            depth[k] = z;
+            inwardPx[k] = facing ? 0 : 1;
+          }
+        }
       }
     }
+    for (let k = 0; k < W * W; k++) if (depth[k] < Infinity) covered += 1;
+    let inward = 0;
+    for (let k = 0; k < W * W; k++) if (depth[k] < Infinity && inwardPx[k]) inward += 1;
     ok(
-      inwardFaces <= frontFaces * 0.35,
-      `${tier}: ön yüzde ters normal yok (iç yüzey görünmüyor)`,
-      `dış ${frontFaces} / iç ${inwardFaces}`,
+      inward <= covered * 0.02,
+      `${tier}: iç yüzey görünmüyor (ters normal pikseli yok)`,
+      `${inward}/${covered} piksel (${((inward / Math.max(covered, 1)) * 100).toFixed(1)}%)`,
     );
   }
 }

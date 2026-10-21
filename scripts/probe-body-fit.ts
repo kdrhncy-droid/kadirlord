@@ -41,6 +41,9 @@ interface Row {
   armorD: number;
   torsoW: number;
   torsoD: number;
+  /** Zırhın en üst noktası ve çene hizası — yüz kapanmasın. */
+  armorTop: number;
+  chinY: number;
 }
 
 const rows: Row[] = heroes.map((hero) => {
@@ -83,6 +86,10 @@ const rows: Row[] = heroes.map((hero) => {
       armorD: armorSize.z,
       torsoW: torsoSize.x,
       torsoD: torsoSize.z,
+      armorTop: armorBox.isEmpty() ? 0 : armorBox.max.y,
+      // Çene = kafatası kutusunun altı. `headBox` saç/sakal yüzünden 30 cm
+      // aşağıya sarkabiliyor (sakal mesh'i), o yüzden kullanılmıyor.
+      chinY: new THREE.Box3().setFromObject(skull).min.y,
     };
   } finally {
     disposeRig(rig);
@@ -127,6 +134,11 @@ ok(
   armored.every((r) => r.armorW < r.shoulderDist),
   'göğüs zırhı omuz açıklığının içinde',
   armored.map((r) => (r.armorW / r.shoulderDist).toFixed(2)).join(' '),
+);
+ok(
+  armored.every((r) => r.armorTop < r.chinY - 0.01),
+  'zırh hiçbir kahramanda çeneye dayanmıyor',
+  armored.map((r) => (r.armorTop - r.chinY).toFixed(2)).join(' '),
 );
 ok(
   armored.every((r) => r.armorD < r.torsoD * 1.35),
