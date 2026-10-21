@@ -166,9 +166,14 @@ ok(
   heroPage.includes('Serbest') || heroPage.includes('Esir'),
   'esaret durumu gösteriliyor',
 );
+// Faz 9g: aynı bilgi iki yerde yazılıyordu (Bilgi + Durum). Artık yalnız Bilgi'de.
 ok(
-  heroPage.includes('Son görüldüğü yer'),
-  'son görüldüğü yer satırı var',
+  heroPage.includes('Son görüldü:'),
+  'son görüldüğü yer / gün satırı var',
+);
+ok(
+  !heroPage.includes('Son görüldüğü yer'),
+  'son görülme bilgisi kahraman sayfasında tekrarlanmıyor',
 );
 ok(
   !heroPage.includes('🚧'),
@@ -199,10 +204,20 @@ ok(
 );
 ok(kdPage.includes('Savaşan lord'), 'savaşan lord sayacı var');
 
-/* 9. Faz 2: klan detayında aile bağı */
+/* 9. Faz 9g: klan detayında tekrar yok — "Aile Bağı" şeridi Üyeler listesinin
+   kopyasıydı, kaldırıldı; lider artık listede altın çerçeve + "Lider" çipiyle. */
 const clanWithMembers = index.clans.find((c) => c.memberIds.length > 1) ?? index.clans[0];
 const clanPage = render({ initialRoute: { section: 'CLAN', id: clanWithMembers.id } });
-ok(clanPage.includes('Aile Bağı'), 'klan detayında aile bağı bölümü');
+ok(!clanPage.includes('Aile Bağı'), 'klan detayında tekrar eden "Aile Bağı" şeridi yok');
+ok(clanPage.includes('Üyeler'), 'klan detayında üye listesi duruyor');
+const clanLeader = clanWithMembers.leaderId ? index.heroById[clanWithMembers.leaderId] : undefined;
+if (clanLeader) {
+  ok(clanPage.includes(clanLeader.name), 'klan lideri sayfada görünüyor');
+  ok(
+    clanPage.includes(`title="${clanLeader.name} — profili aç"`),
+    'lider portresi tıklanabilir (profil bağlantısı)',
+  );
+}
 
 /* 10. Faz 3: aile ağacı */
 const withFamily = index.heroes.find((h) => hasFamily(familyView(index.heroById, h)));

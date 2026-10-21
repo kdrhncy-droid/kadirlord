@@ -664,12 +664,8 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
                   {hero.atWarWithPlayer ? 'Savaşta' : hero.alliedWithPlayer ? 'Müttefik' : 'Barış'}
                 </span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-[#a2957f]">Son görüldüğü yer</span>
-                <span className="text-[#e2d6c1] truncate max-w-[180px] text-right">
-                  {lastSeenLabel(hero, index.day)}
-                </span>
-              </div>
+              {/* Faz 9g: "son görüldüğü yer" yukarıdaki Bilgi bloğunda (tıklanabilir)
+                  zaten var; burada tekrarlanmıyor. */}
             </div>
             {(allies.length > 0 || rivals.length > 0) && (
               <div className="mt-2 pt-2 border-t border-[#c6a15b]/20 flex flex-wrap gap-1">

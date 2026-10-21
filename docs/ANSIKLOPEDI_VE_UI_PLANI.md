@@ -1295,15 +1295,15 @@ Kalan işler (öncelik sırası):
 | 6 | Diyalog ekranı | ✅ | `probe-dialogue` 25 + UI 12 |
 | 7 | Pazaryeri (tam Bannerlord düzeni) | ✅ | `probe-market` 28 + UI 20 |
 | 8 | Asker toplama | ✅ | `probe-recruitment` 28 + UI 10 |
-| 9 | Yüzler / içerik / sesler | 🟡 sırada | — |
+| 9a–9g | Yüzler / içerik / sesler / sadeleştirme | ✅ | `probe-face-cover`, `probe-conversation`, `probe-encyclopedia-dedup` |
 
-Tümü tek komutla: `npm run verify:all` (tsc + 19 test/probe dosyası).
+Tümü tek komutla: `npm run verify:all` (tsc + 26 test/probe dosyası, 26 paket).
 
-**Faz 9 için planlanan küçük işler**
-1. Portre yüz detayı (göz/kaş/dudak) — kadraj **değişmeyecek** (kullanıcı kararı).
-2. Klan/klan lideri bilgisinin tekrarlandığı yerlerin sadeleştirilmesi.
-3. Diyalog sırasında NPC kamera yaklaşımı ve baş/el animasyonu (6d).
-4. Ses: diyalog açılış/kapanış ve teklif kabulü için kısa efektler.
+**Faz 9 için planlanan küçük işler** (hepsi tamamlandı → §32–§38)
+1. ✅ Portre yüz detayı (göz/kaş/dudak) — kadraj **değişmedi** (kullanıcı kararı).
+2. ✅ Klan/klan lideri bilgisinin tekrarlandığı yerlerin sadeleştirilmesi (§38).
+3. ✅ Diyalog sırasında NPC kamera yaklaşımı ve baş/el animasyonu (§37).
+4. ✅ Ses: diyalog açılış/kapanış ve teklif kabulü için kısa efektler (§37).
 
 ## 32. FAZ 9a — KATAFRAKT MİĞFERİ VE KALKANLAR (TAMAMLANDI ✅)
 
@@ -1570,3 +1570,73 @@ Her seçimde jest, her metinde 2.6 sn konuşma penceresi tetiklenir.
   portrenin kaldırıldığı doğrulandı.
 - `docs/renders/conversation.png` — 3 lord × 4 kolon (yaklaşma %0/%50/%100 + jest).
 - `verify:all` **25 paket ✅**, `vite build` ✅.
+
+## 38. FAZ 9g — TEKRARIN SADELEŞTİRİLMESİ (TAMAMLANDI ✅)
+
+Kullanıcı isteği: *"klan/lider bilgisinin tekrarlandığı yerlerin sadeleştirilmesi."*
+
+### 38.1 Ölçülen tekrarlar (öncesi)
+
+`renderToStaticMarkup` + metin sayımı ile ölçüldü (`scripts/probe-encyclopedia-dedup.ts`).
+
+| Sayfa | Bilgi | Önce | Sonra |
+| --- | --- | --- | --- |
+| Klan detayı | Lider adı | **4** (portre `title`/`aria` + başlık portresi + "Lider: ad" çipi + "Lider" LinkCard) | **2** (kimlik bloğu 1 + kadro satırı 1) |
+| Klan detayı | "Lider" kelimesi | 3 (çip + kart + başlık) | **1** (kadro rozeti) |
+| Klan detayı | Krallık adı | **2** (altyazı + LinkCard) | **1** (LinkCard) |
+| Klan detayı | Üye listesi | 2 (Aile Bağı şeridi + Üyeler) | **1** (Üyeler) |
+| Yerleşim detayı | Krallık adı | **2** (altyazı `Tür · Krallık` + LinkCard) | **1** (LinkCard) |
+| Kahraman detayı | Son görüldüğü yer | **2** (Bilgi + Durum & İlişkiler) | **1** (Bilgi, tıklanabilir) |
+
+### 38.2 Yapılan değişiklikler
+
+**Klan sayfası** (`pages.tsx → ClanDetailPage`)
+
+- Kimlik bloğu tek satır: *lider portresi (tıklanabilir → profil)* + klan adı +
+  `LiderAdı · Meslek` altyazısı + `N üye` / `M tımar` çipleri.
+- `Lider: {ad}` çipi **kaldırıldı**, `LinkCard label="Lider"` **kaldırıldı** — lider
+  portresinin kendisi bağlantı (`title="… — profili aç"`, `aria-label`, odak halkası).
+- Krallık altyazıdan çıktı; yalnız `LinkCard "Krallık"` (tam genişlik) kaldı.
+- **"Aile Bağı" şeridi kaldırıldı**: Üyeler listesinin ilk 8 kişisini tekrar ediyordu.
+  Yerine üye listesinde lider satırı **altın çerçeve + "Lider" rozeti** ile işaretlendi
+  (`HeroRow highlight`). Gezinme yolu (klan → üye → lord → klan) birebir korunuyor.
+
+**Üye satırı** (`HeroRow`)
+
+- Sağ sütun iki satır: **yaş** (yalnız `revealed` ise; fog of war korunur) + son görüldüğü yer.
+  Kaldırılan "Aile Bağı" şeridindeki yaş bilgisi buraya taşındı — artık tüm listelerde var.
+- `atWarWithPlayer` olan kahraman satırında **"Savaşta"** rozeti (ansiklopedi şartı: "savaşta mı").
+
+**Yerleşim sayfası** (`SettlementDetailPage`)
+
+- Üst altyazı yalnız **tür** (`Şehir` / `Kale` / `Köy`); krallık tek yerde: `LinkCard`.
+- `Yağmalandı` çipi duruyor (durum bilgisi, tekrar değil).
+
+**Kahraman sayfası** (`EncyclopediaModal`)
+
+- "Durum & İlişkiler" içindeki `Son görüldüğü yer` satırı kaldırıldı; aynı değer
+  yukarıdaki **Bilgi** bloğunda tıklanabilir bağlantı olarak duruyor (yerleşime gider).
+
+### 38.3 Yeni doğrulama: `scripts/probe-encyclopedia-dedup.ts`
+
+HTML etiketleri atılıp **görünür metin** üzerinden sayım yapılır (böylece `title` /
+`aria-label` gibi erişilebilirlik nitelikleri "tekrar" sayılmaz). Sayım **tam sözcük**
+üzerinden yapılır ve **başka varlıkların adları maskelenir** — yoksa "Kara" adlı liderin
+sayfasında "Kara Geçit Yağmacıları" krallığı ikinci anılış sanılıyordu. 14 kontrol:
+
+- Klan: lider adı ≤ 2, kimlik bloğunda **tam 1**, `"Lider: "` 0, `"Lider"` 1,
+  `"Aile Bağı"` yok, krallık **tam 1**, üye sayısı 1.
+- Yerleşim: tür **tam 1**, krallık **tam 1**.
+- **Tüm 21 klan** aynı kurala karşı taranır (boş kadro, lidersiz/haydut klanı dahil) → 0 ihlal.
+- Klan listesi: ad ve krallık **satır başına bir kez** (aynı adlı klanlar sayıya dahil).
+- Kahraman: ad 1–3 (başlık + aile ağacındaki kendi düğümü), "Son görüldü" **1**.
+
+`probe-encyclopedia-ui` güncellendi: "Aile Bağı var" kontrolü → "Aile Bağı yok" +
+"lider portresi bağlantı" + "son görülme tekrarlanmıyor".
+
+### 38.4 Sonuç
+
+- `probe-encyclopedia-dedup` **14/14 ✅**, `probe-encyclopedia-ui` ✅, `probe-encyclopedia` ✅.
+- `verify:all` **26 paket ✅**, `vite build` ✅ (950 ms).
+- Görsel not: bu ortamda tarayıcı (Chromium/NSS) yok; değişiklikler CSS/markup düzeyinde
+  olduğu için yapısal doğrulama + metin sayımı kullanıldı, 3B çıktı üretilmedi.

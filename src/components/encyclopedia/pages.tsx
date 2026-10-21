@@ -14,7 +14,7 @@ import {
   type EncyclopediaRoute,
   type KingdomSummary,
 } from '../../game/encyclopedia';
-import { OCCUPATION_LABELS, lastSeenLabel, type HeroRecord } from '../../game/heroes';
+import { OCCUPATION_LABELS, ageOf, lastSeenLabel, type HeroRecord } from '../../game/heroes';
 import { BannerBadge, Chip, InfoCell, LinkCard, SectionTitle, initials, occupationColor } from './parts';
 import { HeroPortrait } from './HeroPortrait';
 import { SettlementIcon } from './icons';
@@ -26,15 +26,24 @@ interface PageProps {
 
 /* ─────────────────────────── ortak satırlar ─────────────────────────── */
 
-const HeroRow: React.FC<{ hero: HeroRecord; day: number; onOpen: () => void }> = ({
-  hero,
-  day,
-  onOpen,
-}) => (
+/**
+ * Tek kahraman satırı. Klan sayfasında lider `highlight` ile altın çerçeve alır
+ * (ayrı "Lider" çipi taşımaya gerek kalmaz — Faz 9g).
+ * Yaş yalnızca tanışıldıysa yazılır (fog of war: `revealed`).
+ */
+const HeroRow: React.FC<{
+  hero: HeroRecord;
+  day: number;
+  onOpen: () => void;
+  highlight?: boolean;
+}> = ({ hero, day, onOpen, highlight = false }) => (
   <button
     type="button"
     onClick={onOpen}
-    className="w-full flex items-center gap-3 px-3 py-2 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10 text-left"
+    title={hero.name}
+    className={`w-full flex items-center gap-3 px-3 py-2 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10 text-left ${
+      highlight ? 'bg-[#fbbf24]/[0.06] shadow-[inset_2px_0_0_0_#fbbf24]' : ''
+    }`}
   >
     <HeroPortrait hero={hero} width={32} square />
     <span className="min-w-0 flex-1">
@@ -43,11 +52,22 @@ const HeroRow: React.FC<{ hero: HeroRecord; day: number; onOpen: () => void }> =
         <span className={`text-[9px] px-1 rounded border ${occupationColor[hero.occupation]}`}>
           {OCCUPATION_LABELS[hero.occupation]}
         </span>
+        {highlight && (
+          <span className="text-[9px] px-1 rounded border text-[#fbbf24] border-[#fbbf24]/40 bg-[#fbbf24]/10">
+            Lider
+          </span>
+        )}
+        {hero.atWarWithPlayer && (
+          <span className="text-[9px] px-1 rounded border text-[#fca5a5] border-[#991b1b]/70 bg-[#991b1b]/20 whitespace-nowrap">
+            Savaşta
+          </span>
+        )}
       </span>
       <span className="block text-[10px] text-[#a2957f] truncate">{hero.title}</span>
     </span>
-    <span className="shrink-0 text-right text-[10px] text-[#8b8072] max-w-[190px] truncate">
-      {lastSeenLabel(hero, day)}
+    <span className="shrink-0 text-right text-[10px] text-[#8b8072] max-w-[190px]">
+      <span className="block truncate">{hero.revealed ? `${ageOf(hero, day)} yaş` : '—'}</span>
+      <span className="block truncate">{lastSeenLabel(hero, day)}</span>
     </span>
   </button>
 );
@@ -340,87 +360,56 @@ export const ClanDetailPage: React.FC<PageProps & { clanId?: string }> = ({
 
   return (
     <div className="h-full overflow-y-auto p-4">
+      {/*
+        Faz 9g — tek kaynak kuralı: klan kimliği bir kez.
+        Lider yalnızca burada (portre + ad); ayrı "Lider" çipi/kartı yok.
+        Krallık yalnızca LinkCard'da; altyazıda tekrarlanmıyor.
+      */}
       <div className="flex items-start gap-3 rounded border border-[#c6a15b]/30 p-3 mb-3">
         {leader ? (
-          <HeroPortrait hero={leader} width={56} square />
+          <button
+            type="button"
+            onClick={() => onNavigate({ section: 'HERO', id: leader.id })}
+            title={`${leader.name} — profili aç`}
+            aria-label={`${leader.name} profili`}
+            className="shrink-0 rounded-sm ring-1 ring-transparent hover:ring-[#fbbf24]/60 focus:outline-none focus-visible:ring-[#fbbf24]"
+          >
+            <HeroPortrait hero={leader} width={56} square />
+          </button>
         ) : (
           <BannerBadge color={clan.bannerColor} text={initials(clan.name)} size={56} />
         )}
         <div className="min-w-0 flex-1">
           <div className="font-display text-sm text-[#f8f0df] truncate">{clan.name}</div>
-          <div className="text-[11px] text-[#a89b84] mb-1">{clan.kingdomName}</div>
+          <div className="text-[11px] text-[#a89b84] mb-1 truncate">
+            {leader ? `${leader.name} · ${OCCUPATION_LABELS[leader.occupation]}` : 'Lider kaydı yok'}
+          </div>
           <div className="flex flex-wrap gap-1">
             <Chip>{clan.memberIds.length} üye</Chip>
             <Chip>{clan.fiefCount} tımar</Chip>
-            {leader && <Chip className="text-[#fbbf24] border-[#fbbf24]/40 bg-[#fbbf24]/10">Lider: {leader.name}</Chip>}
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 mb-3">
-        <LinkCard
-          label="Krallık"
-          value={clan.kingdomName}
-          onClick={() => clan.kingdomId && onNavigate({ section: 'KINGDOM', id: clan.kingdomId })}
-          disabled={!clan.kingdomId}
-        />
-        <LinkCard
-          label="Lider"
-          value={leader?.name ?? '—'}
-          onClick={() => leader && onNavigate({ section: 'HERO', id: leader.id })}
-          disabled={!leader}
-        />
-      </div>
+      <LinkCard
+        label="Krallık"
+        value={clan.kingdomName}
+        onClick={() => clan.kingdomId && onNavigate({ section: 'KINGDOM', id: clan.kingdomId })}
+        disabled={!clan.kingdomId}
+      />
 
-      {/* Faz 2: klan soy bağı — lider → en yaşlı üyeler → gençler */}
-      <div className="rounded border border-[#c6a15b]/30 p-3 mb-3">
-        <SectionTitle>Aile Bağı</SectionTitle>
-        <div className="flex flex-wrap items-center gap-1.5 mt-1">
-          {[...members]
-            .sort((a, b) => {
-              if (a.id === leader?.id) return -1;
-              if (b.id === leader?.id) return 1;
-              return a.birthDay - b.birthDay;
-            })
-            .slice(0, 8)
-            .map((h, i) => (
-              <React.Fragment key={h.id}>
-                {i > 0 && <span className="text-[10px] text-[#6f6559]">·</span>}
-                <button
-                  type="button"
-                  onClick={() => onNavigate({ section: 'HERO', id: h.id })}
-                  className={`text-[10px] px-1.5 py-0.5 rounded border hover:bg-[#c6a15b]/10 ${
-                    h.id === leader?.id
-                      ? 'border-[#fbbf24]/50 text-[#fbbf24]'
-                      : 'border-[#c6a15b]/30 text-[#e2d6c1]'
-                  }`}
-                >
-                  {h.name}
-                  <span className="text-[8px] text-[#8b8072] ml-1">
-                    {Math.max(0, Math.floor((index.day - h.birthDay) / 365))}y
-                  </span>
-                </button>
-              </React.Fragment>
-            ))}
-          {members.length > 8 && (
-            <span className="text-[9px] text-[#8b8072]">+{members.length - 8}</span>
-          )}
-        </div>
-        <div className="text-[9px] text-[#8b8072] mt-1">
-          Lider altın çerçeveli; yaşlar gün sayısından hesaplanır.
-        </div>
-      </div>
-
-      <div className="rounded border border-[#c6a15b]/30">
+      <div className="mt-3 rounded border border-[#c6a15b]/30">
         <div className="px-3 pt-2">
           <SectionTitle>Üyeler</SectionTitle>
         </div>
         <div className="max-h-[420px] overflow-y-auto">
+          {members.length === 0 && <EmptyNote>Kayıtlı üye yok.</EmptyNote>}
           {members.map((h) => (
             <HeroRow
               key={h.id}
               hero={h}
               day={index.day}
+              highlight={h.id === leader?.id}
               onOpen={() => onNavigate({ section: 'HERO', id: h.id })}
             />
           ))}
@@ -521,9 +510,9 @@ export const SettlementDetailPage: React.FC<PageProps & { settlementId?: string 
         </span>
         <div className="min-w-0 flex-1">
           <div className="font-display text-sm text-[#f8f0df] truncate">{settlement.name}</div>
+          {/* Faz 9g: krallık bilgisi yalnız sağdaki LinkCard'da; altyazı sadece tür. */}
           <div className="text-[11px] text-[#a89b84] mb-1">
-            {SETTLEMENT_TYPE_LABELS[settlement.type]} ·{' '}
-            {FACTION_INFO[settlement.faction]?.name ?? settlement.faction}
+            {SETTLEMENT_TYPE_LABELS[settlement.type]}
           </div>
           <div className="flex flex-wrap gap-1">
             <Chip>{Math.round(settlement.prosperity)} refah</Chip>
