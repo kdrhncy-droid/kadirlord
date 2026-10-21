@@ -1,13 +1,32 @@
 import * as THREE from 'three';
-import { CharacterAnimator } from './characterAnimator';
-import type { CharacterAnimState } from './characterAnimator';
+import { CharacterAnimator } from './characterAnimator.ts';
+import type { CharacterAnimState } from './characterAnimator.ts';
 
-export type { CharacterAnimState } from './characterAnimator';
+export type { CharacterAnimState } from './characterAnimator.ts';
 
 export type WeaponType = 'ONE_HANDED_SWORD' | 'TWO_HANDED_SWORD' | 'BOW' | 'SPEAR' | 'UNARMED';
 export type ShieldType = 'NONE' | 'ROUND_SHIELD' | 'KITE_SHIELD' | 'PAVISE';
 export type HelmetType = 'NONE' | 'KETTLE_HAT' | 'SPANGENHELM' | 'IMPERIAL_VISOR';
 export type ArmorTier = 'CIVILIAN' | 'LEATHER' | 'CHAINMAIL' | 'PLATE';
+
+export type {
+  CharacterMorphDNA,
+  GenderType,
+  FaceShape,
+  HairStyleId,
+  BeardStyleId,
+  ScarType,
+  WarPaintType,
+} from './characterMorph.ts';
+export {
+  applyMorphDNAToRig,
+  getLordDNA,
+  LORD_DNA_PRESETS,
+  PLAYER_DEFAULT_DNA,
+  generateRandomDNA,
+  createHairMesh,
+  createBeardMesh,
+} from './characterMorph.ts';
 
 /**
  * RIG CONVENTIONS (keep these in mind when authoring poses):
@@ -1060,3 +1079,414 @@ export function createArcheryTarget(): THREE.Group {
   }
   return targetGroup;
 }
+
+/**
+ * Deterministically maps a CampaignState equipment record (HEAD, BODY, WEAPON1..4)
+ * into 3D CharacterRig visual options (WeaponType, ShieldType, HelmetType, ArmorTier).
+ */
+export function deriveRigVisualOptionsFromEquipment(
+  equipment?: Partial<Record<string, string>>,
+  factionColor = '#b45309',
+): {
+  weaponType: WeaponType;
+  shieldType: ShieldType;
+  helmetType: HelmetType;
+  armorTier: ArmorTier;
+  factionColor: string;
+} {
+  const eq = equipment || {};
+  const headStr = eq.HEAD || '';
+  const bodyStr = eq.BODY || '';
+  const w1Str = eq.WEAPON1 || '';
+  const w2Str = eq.WEAPON2 || '';
+  const w3Str = eq.WEAPON3 || '';
+  const w4Str = eq.WEAPON4 || '';
+
+  let helmetType: HelmetType = 'SPANGENHELM';
+  if (headStr.includes('Başlıksız') || headStr.includes('Yok')) {
+    helmetType = 'NONE';
+  } else if (headStr.includes('Katafrakt') || headStr.includes('Siper') || headStr.includes('Miğfer')) {
+    if (headStr.includes('Katafrakt') || headStr.includes('Siper')) {
+      helmetType = 'IMPERIAL_VISOR';
+    } else if (headStr.includes('Çanak') || headStr.includes('Kettle')) {
+      helmetType = 'KETTLE_HAT';
+    }
+  } else if (headStr.includes('Çanak') || headStr.includes('Kettle')) {
+    helmetType = 'KETTLE_HAT';
+  }
+
+  let armorTier: ArmorTier = 'CHAINMAIL';
+  if (bodyStr.includes('Sivil') || bodyStr.includes('Tunik') || bodyStr.includes('Kaftan')) {
+    armorTier = 'CIVILIAN';
+  } else if (bodyStr.includes('Deri') || bodyStr.includes('Gambeson')) {
+    armorTier = 'LEATHER';
+  } else if (bodyStr.includes('Katafrakt') || bodyStr.includes('Levha') || bodyStr.includes('Pullu')) {
+    armorTier = 'PLATE';
+  }
+
+  const shieldCandidate = `${w2Str} ${w3Str}`;
+  let shieldType: ShieldType = 'ROUND_SHIELD';
+  if (shieldCandidate.includes('Damla') || shieldCandidate.includes('Kite') || shieldCandidate.includes('Süvari Kalkan')) {
+    shieldType = 'KITE_SHIELD';
+  } else if (shieldCandidate.includes('Pavise') || shieldCandidate.includes('Kule Kalkan')) {
+    shieldType = 'PAVISE';
+  } else if (w2Str.includes('Boş') || !shieldCandidate.includes('Kalkan')) {
+    shieldType = 'NONE';
+  }
+
+  let weaponType: WeaponType = 'ONE_HANDED_SWORD';
+  if (
+    w1Str.includes('Falx') ||
+    w1Str.includes('İki Elli') ||
+    w1Str.includes('Çift Elli') ||
+    w1Str.includes('Balta')
+  ) {
+    weaponType = 'TWO_HANDED_SWORD';
+  } else if (w1Str.includes('Yay') || (w4Str.includes('Yay') && w1Str.includes('Boş'))) {
+    weaponType = 'BOW';
+  } else if (w1Str.includes('Kargı') || w1Str.includes('Mızrak') || w1Str.includes('Kontos')) {
+    weaponType = 'SPEAR';
+  } else if (w1Str.includes('Silahsız')) {
+    weaponType = 'UNARMED';
+  }
+
+  return {
+    weaponType,
+    shieldType,
+    helmetType,
+    armorTier,
+    factionColor,
+  };
+}
+
+// ============================================================================
+//  LOW-POLY ARTICULATED WARHORSE RIG (MOUNTED CAVALRY & CHARGE ENGINE)
+// ============================================================================
+
+export interface WarHorseOptions {
+  coatColor?: string;
+  maneColor?: string;
+  factionColor?: string;
+  armoredBarding?: boolean;
+}
+
+export interface WarHorseRig {
+  root: THREE.Group;
+  body: THREE.Group;
+  neck: THREE.Group;
+  head: THREE.Group;
+  tail: THREE.Group;
+  riderMount: THREE.Group;
+  frontLeftHip: THREE.Group;
+  frontLeftKnee: THREE.Group;
+  frontRightHip: THREE.Group;
+  frontRightKnee: THREE.Group;
+  backLeftHip: THREE.Group;
+  backLeftKnee: THREE.Group;
+  backRightHip: THREE.Group;
+  backRightKnee: THREE.Group;
+}
+
+export function createWarHorseRig(opts: WarHorseOptions = {}): WarHorseRig {
+  const makeMat = (color: string, roughness: number, metalness: number) =>
+    new THREE.MeshStandardMaterial({ color, roughness, metalness, flatShading: true });
+
+  const coatHex = opts.coatColor ?? '#4a3222';
+  const maneHex = opts.maneColor ?? '#1c1510';
+  const factionHex = opts.factionColor ?? '#991b1b';
+  const armored = opts.armoredBarding ?? true;
+
+  const coatMat = makeMat(coatHex, 0.85, 0.05);
+  const darkCoatMat = makeMat(maneHex, 0.9, 0.04);
+  const leatherMat = makeMat('#2e1c10', 0.78, 0.08);
+  const factionMat = makeMat(factionHex, 0.8, 0.08);
+  const steelMat = makeMat('#8d959e', 0.35, 0.78);
+  const brassMat = makeMat('#c89d42', 0.38, 0.72);
+  const hoofMat = makeMat('#181411', 0.88, 0.05);
+
+  const root = new THREE.Group();
+  root.name = 'WarHorseRoot';
+
+  const body = new THREE.Group();
+  body.position.set(0, 1.05, 0);
+  root.add(body);
+
+  // Barrel torso
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.56, 1.38), coatMat);
+  barrel.castShadow = true;
+  barrel.receiveShadow = true;
+  body.add(barrel);
+
+  // Chest & Hindquarters muscular bevels
+  const chest = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.52, 0.42), coatMat);
+  chest.position.set(0, 0.03, 0.62);
+  chest.castShadow = true;
+  body.add(chest);
+
+  const croup = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.5, 0.42), coatMat);
+  croup.position.set(0, 0.04, -0.62);
+  croup.castShadow = true;
+  body.add(croup);
+
+  // Faction caparison / barding cloth + scale armor
+  if (armored) {
+    const caparison = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.52, 1.46), factionMat);
+    caparison.position.set(0, -0.06, 0);
+    caparison.castShadow = true;
+    body.add(caparison);
+
+    const chestPlate = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.38, 0.2), steelMat);
+    chestPlate.position.set(0, 0.02, 0.76);
+    chestPlate.castShadow = true;
+    body.add(chestPlate);
+
+    const goldTrim = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 1.48), brassMat);
+    goldTrim.position.set(0, -0.29, 0);
+    body.add(goldTrim);
+  }
+
+  // Saddle & Stirrups
+  const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.14, 0.56), leatherMat);
+  saddle.position.set(0, 0.31, 0.04);
+  saddle.castShadow = true;
+  body.add(saddle);
+
+  const pommel = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.16, 0.1), leatherMat);
+  pommel.position.set(0, 0.38, 0.28);
+  body.add(pommel);
+
+  const cantle = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.18, 0.1), leatherMat);
+  cantle.position.set(0, 0.39, -0.2);
+  body.add(cantle);
+
+  // Rider mount node (where CharacterRig root sits when mounted)
+  const riderMount = new THREE.Group();
+  riderMount.name = 'RiderMount';
+  riderMount.position.set(0, 0.36, 0.04);
+  body.add(riderMount);
+
+  // Neck & Head
+  const neck = new THREE.Group();
+  neck.position.set(0, 0.22, 0.66);
+  neck.rotation.x = -0.52; // angled up and forward
+  body.add(neck);
+
+  const neckMesh = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.62, 0.36), coatMat);
+  neckMesh.position.set(0, 0.26, 0.08);
+  neckMesh.castShadow = true;
+  neck.add(neckMesh);
+
+  const mane = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.64, 0.14), darkCoatMat);
+  mane.position.set(0, 0.28, -0.12);
+  neck.add(mane);
+
+  const head = new THREE.Group();
+  head.position.set(0, 0.55, 0.16);
+  head.rotation.x = 0.68;
+  neck.add(head);
+
+  const skull = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.26, 0.48), coatMat);
+  skull.position.set(0, 0, 0.16);
+  skull.castShadow = true;
+  head.add(skull);
+
+  const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.2, 0.32), darkCoatMat);
+  muzzle.position.set(0, -0.04, 0.44);
+  head.add(muzzle);
+
+  if (armored) {
+    // Steel chanfron (horse face plate)
+    const chanfron = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.08, 0.46), steelMat);
+    chanfron.position.set(0, 0.12, 0.22);
+    head.add(chanfron);
+  }
+
+  const earGeo = new THREE.ConeGeometry(0.05, 0.16, 4);
+  const leftEar = new THREE.Mesh(earGeo, coatMat);
+  leftEar.position.set(0.1, 0.18, -0.02);
+  const rightEar = new THREE.Mesh(earGeo, coatMat);
+  rightEar.position.set(-0.1, 0.18, -0.02);
+  head.add(leftEar, rightEar);
+
+  // Tail
+  const tail = new THREE.Group();
+  tail.position.set(0, 0.16, -0.78);
+  tail.rotation.x = 0.35;
+  body.add(tail);
+
+  const tailMesh = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.68, 0.14), darkCoatMat);
+  tailMesh.position.set(0, -0.32, -0.06);
+  tailMesh.castShadow = true;
+  tail.add(tailMesh);
+
+  // 4 Articulated 2-bone legs
+  const buildHorseLeg = (x: number, z: number): { hip: THREE.Group; knee: THREE.Group } => {
+    const hip = new THREE.Group();
+    hip.position.set(x, -0.18, z);
+    body.add(hip);
+
+    const upperLeg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.46, 0.2), coatMat);
+    upperLeg.position.set(0, -0.22, 0);
+    upperLeg.castShadow = true;
+    hip.add(upperLeg);
+
+    const knee = new THREE.Group();
+    knee.position.set(0, -0.44, 0);
+    hip.add(knee);
+
+    const cannon = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.38, 0.14), coatMat);
+    cannon.position.set(0, -0.19, 0);
+    cannon.castShadow = true;
+    knee.add(cannon);
+
+    const hoof = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.1, 0.18), hoofMat);
+    hoof.position.set(0, -0.39, 0.02);
+    knee.add(hoof);
+
+    return { hip, knee };
+  };
+
+  const fl = buildHorseLeg(0.22, 0.56);
+  const fr = buildHorseLeg(-0.22, 0.56);
+  const bl = buildHorseLeg(0.22, -0.56);
+  const br = buildHorseLeg(-0.22, -0.56);
+
+  return {
+    root,
+    body,
+    neck,
+    head,
+    tail,
+    riderMount,
+    frontLeftHip: fl.hip,
+    frontLeftKnee: fl.knee,
+    frontRightHip: fr.hip,
+    frontRightKnee: fr.knee,
+    backLeftHip: bl.hip,
+    backLeftKnee: bl.knee,
+    backRightHip: br.hip,
+    backRightKnee: br.knee,
+  };
+}
+
+/**
+ * Animates the WarHorseRig with a natural 4-beat gallop/trot cycle, neck rhythm,
+ * and barrel bob based on horizontal travel speed.
+ */
+export function updateWarHorseAnimation(horse: WarHorseRig, speed: number, time: number): void {
+  const moveFactor = THREE.MathUtils.clamp(speed / 6.5, 0, 1.35);
+  const freq = speed > 0.2 ? 6.5 + moveFactor * 4.5 : 1.8;
+  const phase = time * freq;
+
+  if (speed < 0.15) {
+    // Idle breathing + ear/tail twitch
+    horse.body.position.y = 1.05 + Math.sin(time * 2.2) * 0.012;
+    horse.body.rotation.x = 0;
+    horse.neck.rotation.x = -0.52 + Math.sin(time * 1.8) * 0.03;
+    horse.tail.rotation.z = Math.sin(time * 1.6) * 0.08;
+    horse.tail.rotation.x = 0.32;
+
+    horse.frontLeftHip.rotation.x = 0;
+    horse.frontLeftKnee.rotation.x = 0;
+    horse.frontRightHip.rotation.x = 0;
+    horse.frontRightKnee.rotation.x = 0;
+    horse.backLeftHip.rotation.x = 0;
+    horse.backLeftKnee.rotation.x = 0;
+    horse.backRightHip.rotation.x = 0;
+    horse.backRightKnee.rotation.x = 0;
+    return;
+  }
+
+  // Gallop / Canter 4-beat phase offsets
+  const pFL = phase;
+  const pFR = phase + 0.65;
+  const pBL = phase + Math.PI;
+  const pBR = phase + Math.PI + 0.65;
+
+  const swingAmp = 0.58 * moveFactor;
+  const kneeAmp = 0.65 * moveFactor;
+
+  horse.frontLeftHip.rotation.x = Math.sin(pFL) * swingAmp;
+  horse.frontLeftKnee.rotation.x = Math.max(0, Math.cos(pFL)) * kneeAmp;
+
+  horse.frontRightHip.rotation.x = Math.sin(pFR) * swingAmp;
+  horse.frontRightKnee.rotation.x = Math.max(0, Math.cos(pFR)) * kneeAmp;
+
+  horse.backLeftHip.rotation.x = Math.sin(pBL) * swingAmp * 0.92;
+  horse.backLeftKnee.rotation.x = -Math.max(0, Math.cos(pBL)) * kneeAmp * 0.75;
+
+  horse.backRightHip.rotation.x = Math.sin(pBR) * swingAmp * 0.92;
+  horse.backRightKnee.rotation.x = -Math.max(0, Math.cos(pBR)) * kneeAmp * 0.75;
+
+  // Barrel pitch & vertical suspension
+  horse.body.position.y = 1.05 + Math.abs(Math.sin(phase)) * 0.065 * moveFactor;
+  horse.body.rotation.x = Math.cos(phase) * 0.055 * moveFactor;
+
+  // Neck counter-bob & streaming tail
+  horse.neck.rotation.x = -0.48 + Math.sin(phase - 0.5) * 0.1 * moveFactor;
+  horse.tail.rotation.x = 0.35 + 0.45 * moveFactor + Math.sin(phase * 1.5) * 0.08;
+}
+
+/**
+ * Overrides lower-body joint rotations on a CharacterRig after CharacterAnimator.update()
+ * so the rider sits astride a WarHorse saddle with feet in the stirrups while upper-body
+ * 2-bone IK and directional attacks continue to function at 100% fidelity.
+ */
+export function applyRiderMountedPosture(rider: CharacterRig, horseSpeed: number, time: number): void {
+  const rhythm = Math.sin(time * 9.0) * THREE.MathUtils.clamp(horseSpeed / 8.0, 0, 1) * 0.03;
+  rider.pelvis.position.set(0, 0.14 + rhythm, 0);
+  rider.pelvis.rotation.set(0.06, 0, 0);
+
+  // Spread thighs wide around barrel, bend knees into stirrups
+  rider.leftThigh.rotation.set(-0.62, 0.25, 0.44);
+  rider.rightThigh.rotation.set(-0.62, -0.25, -0.44);
+  rider.leftShin.rotation.set(0.88, 0, 0);
+  rider.rightShin.rotation.set(0.88, 0, 0);
+  rider.leftFoot.rotation.set(-0.22, 0, 0);
+  rider.rightFoot.rotation.set(-0.22, 0, 0);
+}
+
+/**
+ * Creates a 3D Bannerlord tactical command standard/flag marker for "Hold Position" (F1).
+ */
+export function createTacticalBannerMesh(factionColor = '#b45309'): THREE.Group {
+  const makeMat = (color: string, roughness: number, metalness: number) =>
+    new THREE.MeshStandardMaterial({ color, roughness, metalness, flatShading: true });
+
+  const group = new THREE.Group();
+  const poleMat = makeMat('#5c3d24', 0.85, 0.08);
+  const goldMat = makeMat('#eab308', 0.3, 0.8);
+  const clothMat = makeMat(factionColor, 0.75, 0.05);
+
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 2.8, 8), poleMat);
+  pole.position.y = 1.4;
+  pole.castShadow = true;
+  group.add(pole);
+
+  const finial = new THREE.Mesh(new THREE.OctahedronGeometry(0.12, 0), goldMat);
+  finial.position.y = 2.88;
+  group.add(finial);
+
+  const crossbar = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.85, 6), goldMat);
+  crossbar.position.set(0.36, 2.55, 0);
+  crossbar.rotation.z = Math.PI * 0.5;
+  group.add(crossbar);
+
+  const bannerCloth = new THREE.Mesh(new THREE.BoxGeometry(0.76, 1.05, 0.03), clothMat);
+  bannerCloth.position.set(0.38, 2.0, 0);
+  bannerCloth.castShadow = true;
+  group.add(bannerCloth);
+
+  // Ground ring indicator
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.45, 0.62, 24),
+    new THREE.MeshBasicMaterial({ color: '#facc15', side: THREE.DoubleSide, transparent: true, opacity: 0.75 }),
+  );
+  ring.rotation.x = -Math.PI * 0.5;
+  ring.position.y = 0.02;
+  group.add(ring);
+
+  return group;
+}
+
+

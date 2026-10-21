@@ -21,6 +21,7 @@ import {
   WeaponType,
   applyEquipmentToRig,
   createCharacterRig,
+  deriveRigVisualOptionsFromEquipment,
   updateRigAnimation,
 } from '../game/characterRig';
 import { sound } from '../game/sound';
@@ -88,48 +89,10 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
   }, [campaign.inventoryItems, selectedCategory, searchQuery]);
 
   // Derive Character Visual Options from equipped items
-  const visualOptions = useMemo(() => {
-    const eq = (campaign.equipment || {}) as Partial<Record<EquipmentSlotId, string>>;
-    const headStr = eq.HEAD || '';
-    const bodyStr = eq.BODY || '';
-    const w1Str = eq.WEAPON1 || '';
-    const w2Str = eq.WEAPON2 || '';
-    const w4Str = eq.WEAPON4 || '';
-
-    let helmetType: HelmetType = 'SPANGENHELM';
-    if (headStr.includes('Başlıksız') || headStr.includes('Yok')) helmetType = 'NONE';
-    else if (headStr.includes('Katafrakt') || headStr.includes('Siper')) helmetType = 'IMPERIAL_VISOR';
-    else if (headStr.includes('Çanak') || headStr.includes('Kettle')) helmetType = 'KETTLE_HAT';
-
-    let armorTier: ArmorTier = 'CHAINMAIL';
-    if (bodyStr.includes('Sivil') || bodyStr.includes('Tunik')) armorTier = 'CIVILIAN';
-    else if (bodyStr.includes('Deri') || bodyStr.includes('Gambeson')) armorTier = 'LEATHER';
-    else if (bodyStr.includes('Katafrakt') || bodyStr.includes('Levha')) armorTier = 'PLATE';
-
-    let shieldType: ShieldType = 'ROUND_SHIELD';
-    if (w2Str.includes('Damla') || w2Str.includes('Kite')) shieldType = 'KITE_SHIELD';
-    else if (w2Str.includes('Pavise')) shieldType = 'PAVISE';
-    else if (w2Str.includes('Boş') || !w2Str.includes('Kalkan')) shieldType = 'NONE';
-
-    let weaponType: WeaponType = 'ONE_HANDED_SWORD';
-    if (w1Str.includes('Falx') || w1Str.includes('İki Elli') || w1Str.includes('Balta')) {
-      weaponType = 'TWO_HANDED_SWORD';
-    } else if (w4Str.includes('Yay') || w1Str.includes('Yay')) {
-      weaponType = 'BOW';
-    } else if (w1Str.includes('Kargı') || w1Str.includes('Mızrak')) {
-      weaponType = 'SPEAR';
-    } else if (w1Str.includes('Silahsız')) {
-      weaponType = 'UNARMED';
-    }
-
-    return {
-      weaponType,
-      shieldType,
-      helmetType,
-      armorTier,
-      factionColor: '#b45309',
-    };
-  }, [campaign.equipment]);
+  const visualOptions = useMemo(
+    () => deriveRigVisualOptionsFromEquipment(campaign.equipment, '#b45309'),
+    [campaign.equipment],
+  );
 
   // Mount 3D Character Preview Canvas in center
   useEffect(() => {

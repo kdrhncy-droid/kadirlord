@@ -54,7 +54,15 @@ import { GameHud } from './components/GameHud';
 import { SettlementModal } from './components/SettlementModal';
 import { DiplomacyModal } from './components/DiplomacyModal';
 import { BannerlordMarketModal } from './components/BannerlordMarketModal';
+import { KingdomManagementModal } from './components/KingdomManagementModal';
 import { CharacterArenaView } from './components/CharacterArenaView';
+import { CharacterCreatorModal } from './components/CharacterCreatorModal';
+import { BattlePrewarmModal } from './components/BattlePrewarmModal';
+import { BattleMemoryPool, PrewarmStageReport } from './game/battleEnginePool';
+import {
+  KingdomMacroState,
+  createInitialKingdomMacroState,
+} from './game/kingdomSystem';
 import { sound } from './game/sound';
 
 export default function App() {
@@ -73,6 +81,9 @@ export default function App() {
   const [campaign, setCampaign] = useState<CampaignState>(() =>
     createInitialCampaignState('Komutan Demirhan', 'noble'),
   );
+  const [macroState, setMacroState] = useState<KingdomMacroState>(() =>
+    createInitialKingdomMacroState(createInitialCampaignState('Komutan Demirhan', 'noble')),
+  );
 
   const cameraActionsRef = useRef<CameraControlActions | null>(null);
 
@@ -82,6 +93,8 @@ export default function App() {
   const [activeSettlementModal, setActiveSettlementModal] = useState<Settlement | null>(null);
   const [activeDiplomacyLord, setActiveDiplomacyLord] = useState<LordAgent | null>(null);
   const [isMarketModalOpen, setIsMarketModalOpen] = useState(false);
+  const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
+  const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'campaign' | 'character_arena'>('campaign');
 
   const [mapTelemetry, setMapTelemetry] = useState<MapCameraTelemetry>({
@@ -97,7 +110,9 @@ export default function App() {
     labels: [],
   });
 
-  // Battle State
+  // Battle State & Pre-Allocated Object Pool
+  const campaignBattlePoolRef = useRef<BattleMemoryPool>(new BattleMemoryPool());
+  const [battlePrewarmStages, setBattlePrewarmStages] = useState<PrewarmStageReport[] | null>(null);
   const [activeOrder, setActiveOrder] = useState<TacticalOrder>('CHARGE');
   const [battleTargetLordId, setBattleTargetLordId] = useState<string | null>(null);
   const [battleTargetSettlementId, setBattleTargetSettlementId] = useState<string | null>(null);
@@ -164,6 +179,9 @@ export default function App() {
         if (e.code === 'Enter' || e.code === 'Space') {
           e.preventDefault();
           startGame();
+        } else if (e.code === 'KeyB') {
+          e.preventDefault();
+          setIsCharacterCreatorOpen((prev) => !prev);
         }
         return;
       }
@@ -246,10 +264,33 @@ export default function App() {
       nearestL: LordAgent | null,
       camTel: MapCameraTelemetry,
     ) => {
-      setNearSettlement(nearestS);
-      setNearLord(nearestL);
-      setMapTelemetry(camTel);
-      setCampaign((prev) => ({ ...prev, playerX: x, playerZ: z }));
+      setNearSettlement((prev) => (prev?.id === nearestS?.id ? prev : nearestS));
+      setNearLord((prev) => (prev?.id === nearestL?.id ? prev : nearestL));
+      setMapTelemetry((prev) => {
+        if (
+          prev.focusX === camTel.focusX &&
+          prev.focusZ === camTel.focusZ &&
+          prev.zoomDist === camTel.zoomDist &&
+          prev.yawDeg === camTel.yawDeg &&
+          prev.isFollowingPlayer === camTel.isFollowingPlayer &&
+          prev.biomeLabel === camTel.biomeLabel &&
+          prev.partySpeed === camTel.partySpeed &&
+          prev.spottingRange === camTel.spottingRange &&
+          prev.followingLordName === camTel.followingLordName &&
+          prev.targetSettlementName === camTel.targetSettlementName &&
+          prev.onRoad === camTel.onRoad &&
+          prev.isMoving === camTel.isMoving
+        ) {
+          return prev;
+        }
+        return camTel;
+      });
+      setCampaign((prev) => {
+        if (Math.abs(prev.playerX - x) < 0.05 && Math.abs(prev.playerZ - z) < 0.05) {
+          return prev;
+        }
+        return { ...prev, playerX: x, playerZ: z };
+      });
     },
     [],
   );
@@ -512,6 +553,8 @@ export default function App() {
     setBattleTargetLordId(lord.id);
     setBattleTargetSettlementId(null);
     setActiveOrder('CHARGE');
+    const stages = campaignBattlePoolRef.current.prewarmMemoryPages();
+    setBattlePrewarmStages(stages);
     setSubMode('battle');
   }, []);
 
@@ -521,6 +564,8 @@ export default function App() {
     setBattleTargetSettlementId(settlement.id);
     setBattleTargetLordId(null);
     setActiveOrder('CHARGE');
+    const stages = campaignBattlePoolRef.current.prewarmMemoryPages();
+    setBattlePrewarmStages(stages);
     setSubMode('battle');
   }, []);
 
@@ -530,6 +575,8 @@ export default function App() {
     setBattleTargetLordId('lord-kargi');
     setBattleTargetSettlementId(null);
     setActiveOrder('CHARGE');
+    const stages = campaignBattlePoolRef.current.prewarmMemoryPages();
+    setBattlePrewarmStages(stages);
     setSubMode('battle');
   }, []);
 
@@ -734,6 +781,17 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
+                  setIsCharacterCreatorOpen(true);
+                  sound.playCoin();
+                }}
+                className="px-5 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#2a1d13] hover:bg-[#3d2a1b] text-[#fef3c7] border border-[#c6a15b]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-2"
+              >
+                <span>👤</span>
+                <span>KARAKTERİNİ MODELLE [B]</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   setViewMode('character_arena');
                   sound.playWarhorn();
                 }}
@@ -816,6 +874,8 @@ export default function App() {
           }}
           onOpenMarketModal={() => setIsMarketModalOpen(true)}
           onOpenCharacterArena={() => setViewMode('character_arena')}
+          onOpenKingdomModal={() => setIsKingdomModalOpen(true)}
+          onOpenCharacterCreator={() => setIsCharacterCreatorOpen(true)}
         />
       )}
 
@@ -1065,11 +1125,39 @@ export default function App() {
         />
       )}
 
+      {/* 7B. KINGDOM COUNCIL, DIPLOMACY & MACRO-SIMULATION ARCHITECTURE MODAL */}
+      {isKingdomModalOpen && (
+        <KingdomManagementModal
+          campaign={campaign}
+          macroState={macroState}
+          onUpdateMacroState={(next) => setMacroState(next)}
+          onUpdateCampaign={(next) => setCampaign(next)}
+          onClose={() => setIsKingdomModalOpen(false)}
+        />
+      )}
+
       {/* 8. 3D LOW-POLY CHARACTER & COMBAT TEST ARENA */}
       {viewMode === 'character_arena' && (
         <CharacterArenaView
+          campaign={campaign}
           onReturnToMap={() => setViewMode('campaign')}
           onOpenMarket={() => setIsMarketModalOpen(true)}
+        />
+      )}
+
+      {/* 10. BANNERLORD LOW-POLY CHARACTER & LORD MORPH STUDIO */}
+      {isCharacterCreatorOpen && (
+        <CharacterCreatorModal
+          initialDNA={campaign.playerMorphDNA}
+          characterName={campaign.playerName}
+          onSave={(newDNA, newName) => {
+            setCampaign((prev) => ({
+              ...prev,
+              playerMorphDNA: newDNA,
+              playerName: newName || prev.playerName,
+            }));
+          }}
+          onClose={() => setIsCharacterCreatorOpen(false)}
         />
       )}
     </main>

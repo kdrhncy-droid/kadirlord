@@ -517,6 +517,10 @@ export function createContinentalForestsAndRocksGroup(): THREE.Group {
   if (lowerCrownInst.instanceColor) lowerCrownInst.instanceColor.needsUpdate = true;
   if (upperCrownInst.instanceColor) upperCrownInst.instanceColor.needsUpdate = true;
 
+  trunkInst.matrixAutoUpdate = false;
+  lowerCrownInst.matrixAutoUpdate = false;
+  upperCrownInst.matrixAutoUpdate = false;
+
   group.add(trunkInst);
   group.add(lowerCrownInst);
   group.add(upperCrownInst);
@@ -553,10 +557,77 @@ export function createContinentalForestsAndRocksGroup(): THREE.Group {
     }
     rockInst.instanceMatrix.needsUpdate = true;
     if (rockInst.instanceColor) rockInst.instanceColor.needsUpdate = true;
+    rockInst.matrixAutoUpdate = false;
     group.add(rockInst);
   }
 
+  group.matrixAutoUpdate = false;
   return group;
+}
+
+// Fast, zero-dependency static BufferGeometry merger so each Settlement renders in 5-7 batched draw calls instead of 53!
+function mergeStaticGeometries(
+  parts: Array<{
+    geo: THREE.BufferGeometry;
+    x?: number;
+    y?: number;
+    z?: number;
+    rx?: number;
+    ry?: number;
+    rz?: number;
+    sx?: number;
+    sy?: number;
+    sz?: number;
+  }>,
+): THREE.BufferGeometry {
+  const mat4 = new THREE.Matrix4();
+  const euler = new THREE.Euler();
+  const quat = new THREE.Quaternion();
+  const pos = new THREE.Vector3();
+  const scl = new THREE.Vector3();
+
+  const transformedGeos: THREE.BufferGeometry[] = [];
+  let totalVerts = 0;
+
+  for (const p of parts) {
+    const nonIndexed = p.geo.index ? p.geo.toNonIndexed() : p.geo.clone();
+    pos.set(p.x ?? 0, p.y ?? 0, p.z ?? 0);
+    euler.set(p.rx ?? 0, p.ry ?? 0, p.rz ?? 0);
+    quat.setFromEuler(euler);
+    scl.set(p.sx ?? 1, p.sy ?? 1, p.sz ?? 1);
+    mat4.compose(pos, quat, scl);
+    nonIndexed.applyMatrix4(mat4);
+    transformedGeos.push(nonIndexed);
+    totalVerts += nonIndexed.attributes.position.count;
+  }
+
+  const merged = new THREE.BufferGeometry();
+  const positions = new Float32Array(totalVerts * 3);
+  const normals = new Float32Array(totalVerts * 3);
+  const uvs = new Float32Array(totalVerts * 2);
+
+  let vOffset = 0;
+  for (const g of transformedGeos) {
+    const pAttr = g.attributes.position as THREE.BufferAttribute;
+    const nAttr = g.attributes.normal as THREE.BufferAttribute | undefined;
+    const uvAttr = g.attributes.uv as THREE.BufferAttribute | undefined;
+
+    positions.set(pAttr.array as Float32Array, vOffset * 3);
+    if (nAttr) {
+      normals.set(nAttr.array as Float32Array, vOffset * 3);
+    }
+    if (uvAttr) {
+      uvs.set(uvAttr.array as Float32Array, vOffset * 2);
+    }
+    vOffset += pAttr.count;
+    g.dispose();
+  }
+
+  merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  merged.computeBoundingSphere();
+  return merged;
 }
 
 // Build Weathered Stone Arch Bridges across the Continent (Snapped to exact river centerlines & bank elevations)
@@ -569,8 +640,12 @@ export function createContinentalBridgesGroup(stoneTex: THREE.CanvasTexture): TH
     metalness: 0.05,
   });
 
+  const deckBaseGeo = new THREE.BoxGeometry(3.2, 0.42, 1);
+  const rampBaseGeo = new THREE.BoxGeometry(3.2, 0.38, 1);
+  const wallBaseGeo = new THREE.BoxGeometry(0.32, 0.58, 1);
+  const pierGeo = new THREE.CylinderGeometry(0.62, 0.85, 3.2, 8);
+
   CONTINENTAL_BRIDGES.forEach((b) => {
-    const bGroup = new THREE.Group();
     const dirX = Math.sin(b.rotationY);
     const dirZ = Math.cos(b.rotationY);
     const halfLen = b.length * 0.5;
@@ -580,47 +655,29 @@ export function createContinentalBridgesGroup(stoneTex: THREE.CanvasTexture): TH
     const bankH2 = Math.max(1.35, groundHeightAt(b.x + dirX * halfLen, b.z + dirZ * halfLen));
     const bridgeDeckY = Math.max(bankH1, bankH2) + 0.15;
 
-    bGroup.position.set(b.x, bridgeDeckY, b.z);
-    bGroup.rotation.y = b.rotationY;
-
-    // Main central stone deck spanning the river
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.42, b.length * 0.76), stoneMat);
-    deck.position.y = 0;
-    deck.castShadow = true;
-    deck.receiveShadow = true;
-    bGroup.add(deck);
-
-    // Sloped approach ramps on both riverbanks
     const rampLen = b.length * 0.22;
-    const ramp1 = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.38, rampLen), stoneMat);
-    ramp1.position.set(0, -0.18, -b.length * 0.42);
-    ramp1.rotation.x = 0.16;
-    bGroup.add(ramp1);
+    const bridgeMergedGeo = mergeStaticGeometries([
+      { geo: deckBaseGeo, y: 0, sz: b.length * 0.76 },
+      { geo: rampBaseGeo, y: -0.18, z: -b.length * 0.42, rx: 0.16, sz: rampLen },
+      { geo: rampBaseGeo, y: -0.18, z: b.length * 0.42, rx: -0.16, sz: rampLen },
+      { geo: wallBaseGeo, x: -1.44, y: 0.42, sz: b.length * 0.78 },
+      { geo: wallBaseGeo, x: 1.44, y: 0.42, sz: b.length * 0.78 },
+      { geo: pierGeo, y: -1.6, z: -b.length * 0.24 },
+      { geo: pierGeo, y: -1.6, z: 0 },
+      { geo: pierGeo, y: -1.6, z: b.length * 0.24 },
+    ]);
 
-    const ramp2 = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.38, rampLen), stoneMat);
-    ramp2.position.set(0, -0.18, b.length * 0.42);
-    ramp2.rotation.x = -0.16;
-    bGroup.add(ramp2);
-
-    // Stone parapets (left & right walls)
-    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.58, b.length * 0.78), stoneMat);
-    leftWall.position.set(-1.44, 0.42, 0);
-    bGroup.add(leftWall);
-
-    const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.58, b.length * 0.78), stoneMat);
-    rightWall.position.set(1.44, 0.42, 0);
-    bGroup.add(rightWall);
-
-    // Sturdy stone piers extending down into the riverbed
-    [-b.length * 0.24, 0, b.length * 0.24].forEach((zOff) => {
-      const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.85, 3.2, 8), stoneMat);
-      pier.position.set(0, -1.6, zOff);
-      bGroup.add(pier);
-    });
-
-    group.add(bGroup);
+    const bMesh = new THREE.Mesh(bridgeMergedGeo, stoneMat);
+    bMesh.position.set(b.x, bridgeDeckY, b.z);
+    bMesh.rotation.y = b.rotationY;
+    bMesh.castShadow = true;
+    bMesh.receiveShadow = true;
+    bMesh.updateMatrix();
+    bMesh.matrixAutoUpdate = false;
+    group.add(bMesh);
   });
 
+  group.matrixAutoUpdate = false;
   return group;
 }
 
@@ -658,10 +715,12 @@ export function createContactShadowDisc(radius = 0.85): THREE.Mesh {
   const disc = new THREE.Mesh(sharedShadowGeo, sharedShadowMat);
   disc.scale.setScalar(radius);
   disc.position.y = 0.02;
+  disc.updateMatrix();
+  disc.matrixAutoUpdate = false;
   return disc;
 }
 
-// Shared Settlement Geometry & Material Cache so 211 Towns, Castles, and Villages compile shaders once!
+// Shared & Pre-Merged Settlement Geometry & Material Cache so 211 Towns, Castles, and Villages render in ~6 draw calls each!
 let cachedSettlementAssets: {
   stoneMat: THREE.MeshStandardMaterial;
   darkStoneMat: THREE.MeshStandardMaterial;
@@ -671,28 +730,25 @@ let cachedSettlementAssets: {
   plasterMat: THREE.MeshStandardMaterial;
   wheatMat: THREE.MeshStandardMaterial;
   bannerMats: Map<number, THREE.MeshStandardMaterial>;
-  plinthTownGeo: THREE.CylinderGeometry;
-  plinthCastleGeo: THREE.CylinderGeometry;
-  plinthVillageGeo: THREE.CylinderGeometry;
-  acropolisGeo: THREE.CylinderGeometry;
-  keepTownGeo: THREE.BoxGeometry;
-  keepCastleGeo: THREE.BoxGeometry;
-  keepRoofGeo: THREE.ConeGeometry;
-  domeGeo: THREE.SphereGeometry;
-  wallTownGeo: THREE.BoxGeometry;
-  wallCastleGeo: THREE.BoxGeometry;
-  gatehouseGeo: THREE.BoxGeometry;
-  towerTownGeo: THREE.CylinderGeometry;
-  towerCastleGeo: THREE.CylinderGeometry;
-  battlementGeo: THREE.CylinderGeometry;
-  houseGeo: THREE.BoxGeometry;
-  houseRoofGeo: THREE.ConeGeometry;
-  cottageGeo: THREE.BoxGeometry;
-  cottageRoofGeo: THREE.ConeGeometry;
-  wheatFieldGeo: THREE.BoxGeometry;
-  watchTowerGeo: THREE.CylinderGeometry;
-  poleGeo: THREE.CylinderGeometry;
   flagGeo: THREE.ExtrudeGeometry;
+  // Pre-merged Town static geometries (reduces 53 meshes -> 6 static batched meshes!)
+  townStoneGeo: THREE.BufferGeometry;
+  townDarkStoneGeo: THREE.BufferGeometry;
+  townTerracottaGeo: THREE.BufferGeometry;
+  townSlateGeo: THREE.BufferGeometry;
+  townPlasterGeo: THREE.BufferGeometry;
+  townTimberGeo: THREE.BufferGeometry;
+  // Pre-merged Castle static geometries (reduces 19 meshes -> 4 static batched meshes!)
+  castleStoneGeo: THREE.BufferGeometry;
+  castleDarkStoneGeo: THREE.BufferGeometry;
+  castleSlateGeo: THREE.BufferGeometry;
+  castleTimberGeo: THREE.BufferGeometry;
+  // Pre-merged Village static geometries (reduces 15 meshes -> 5 static batched meshes!)
+  villageDarkStoneGeo: THREE.BufferGeometry;
+  villageStoneGeo: THREE.BufferGeometry;
+  villageTimberGeo: THREE.BufferGeometry;
+  villageTerracottaGeo: THREE.BufferGeometry;
+  villageWheatGeo: THREE.BufferGeometry;
 } | null = null;
 
 function getSettlementAssets(stoneTex: THREE.CanvasTexture) {
@@ -705,6 +761,150 @@ function getSettlementAssets(stoneTex: THREE.CanvasTexture) {
   flagShape.lineTo(1.25, -0.75);
   flagShape.lineTo(0, -0.65);
   flagShape.closePath();
+
+  const plinthTownGeo = new THREE.CylinderGeometry(5.1, 5.8, 0.65, 10);
+  const plinthCastleGeo = new THREE.CylinderGeometry(3.2, 3.8, 0.85, 8);
+  const plinthVillageGeo = new THREE.CylinderGeometry(2.5, 3.0, 0.45, 8);
+  const acropolisGeo = new THREE.CylinderGeometry(2.1, 2.5, 0.75, 8);
+  const keepTownGeo = new THREE.BoxGeometry(2.2, 3.0, 2.0);
+  const keepCastleGeo = new THREE.BoxGeometry(2.1, 3.6, 2.1);
+  const keepRoofGeo = new THREE.ConeGeometry(1.65, 1.15, 4);
+  const domeGeo = new THREE.SphereGeometry(0.95, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  const wallTownGeo = new THREE.BoxGeometry(3.35, 1.85, 0.48);
+  const wallCastleGeo = new THREE.BoxGeometry(4.6, 2.15, 0.54);
+  const gatehouseGeo = new THREE.BoxGeometry(1.75, 2.45, 1.15);
+  const towerTownGeo = new THREE.CylinderGeometry(0.58, 0.68, 2.75, 10);
+  const towerCastleGeo = new THREE.CylinderGeometry(0.68, 0.78, 3.15, 10);
+  const battlementGeo = new THREE.CylinderGeometry(0.76, 0.7, 0.38, 8);
+  const houseGeo = new THREE.BoxGeometry(1.05, 1.22, 0.92);
+  const houseRoofGeo = new THREE.ConeGeometry(0.82, 0.62, 4);
+  const cottageGeo = new THREE.BoxGeometry(1.12, 0.95, 0.9);
+  const cottageRoofGeo = new THREE.ConeGeometry(0.88, 0.64, 4);
+  const wheatFieldGeo = new THREE.BoxGeometry(1.85, 0.14, 1.35);
+  const watchTowerGeo = new THREE.CylinderGeometry(0.44, 0.52, 2.25, 8);
+  const poleGeo = new THREE.CylinderGeometry(0.055, 0.055, 2.3, 6);
+
+  // 1. Pre-merge TOWN geometries by material
+  const townWallRadius = 4.05;
+  const townStoneParts: Parameters<typeof mergeStaticGeometries>[0] = [
+    { geo: keepTownGeo, x: 0, y: 2.2, z: -0.85 },
+  ];
+  const townDarkStoneParts: Parameters<typeof mergeStaticGeometries>[0] = [
+    { geo: plinthTownGeo, x: 0, y: 0.22, z: 0 },
+    { geo: acropolisGeo, x: 0, y: 0.68, z: -0.85 },
+    { geo: gatehouseGeo, x: 0, y: 1.55, z: townWallRadius + 0.22 },
+  ];
+  for (let side = 0; side < 8; side++) {
+    const angle = (side * Math.PI) / 4;
+    const wx = Math.sin(angle) * townWallRadius;
+    const wz = Math.cos(angle) * townWallRadius;
+    townStoneParts.push({ geo: wallTownGeo, x: wx, y: 1.32, z: wz, ry: angle });
+
+    const cornerAngle = angle + Math.PI / 8;
+    const tx = Math.sin(cornerAngle) * (townWallRadius + 0.25);
+    const tz = Math.cos(cornerAngle) * (townWallRadius + 0.25);
+    townStoneParts.push({ geo: towerTownGeo, x: tx, y: 1.75, z: tz });
+    townDarkStoneParts.push({ geo: battlementGeo, x: tx, y: 3.18, z: tz });
+  }
+
+  const townTerracottaParts: Parameters<typeof mergeStaticGeometries>[0] = [
+    { geo: keepRoofGeo, x: 0, y: 4.15, z: -0.85, ry: Math.PI / 4 },
+    { geo: domeGeo, x: 1.25, y: 1.92, z: 0.55 },
+  ];
+  const townSlateParts: Parameters<typeof mergeStaticGeometries>[0] = [];
+  const townPlasterParts: Parameters<typeof mergeStaticGeometries>[0] = [
+    { geo: houseGeo, x: 1.25, y: 1.2, z: 0.55, sx: 1.45, sy: 1.35, sz: 1.45 },
+  ];
+  const townTimberParts: Parameters<typeof mergeStaticGeometries>[0] = [
+    { geo: poleGeo, x: 0, y: 4.85, z: -0.85 },
+  ];
+
+  const houseLayout: Array<[number, number, number, number, boolean]> = [
+    [-2.1, 0.9, 0.2, 1.15, false],
+    [-1.9, -0.7, -0.15, 1.05, true],
+    [-0.8, 1.85, 0.4, 1.0, false],
+    [0.4, 2.05, -0.1, 1.1, true],
+    [2.15, -0.85, 0.3, 1.18, false],
+    [1.85, 1.85, -0.35, 0.95, false],
+    [-1.25, -2.15, 0.12, 1.08, true],
+    [1.35, -2.15, -0.22, 1.04, false],
+    [-2.45, 0.1, 0.5, 0.92, true],
+    [2.45, 0.35, -0.4, 0.98, false],
+  ];
+  houseLayout.forEach(([hx, hz, rot, hScale, useSlate]) => {
+    const housePart = {
+      geo: houseGeo,
+      x: hx,
+      y: 0.55 + 0.55 * hScale,
+      z: hz,
+      ry: rot,
+      sy: hScale,
+    };
+    const roofPart = {
+      geo: houseRoofGeo,
+      x: hx,
+      y: 0.55 + 1.15 * hScale + 0.22,
+      z: hz,
+      ry: rot + Math.PI / 4,
+    };
+    if (useSlate) {
+      townPlasterParts.push(housePart);
+      townSlateParts.push(roofPart);
+    } else {
+      townTimberParts.push(housePart);
+      townTerracottaParts.push(roofPart);
+    }
+  });
+
+  // 2. Pre-merge CASTLE geometries by material
+  const castleR = 2.35;
+  const castleStoneParts: Parameters<typeof mergeStaticGeometries>[0] = [
+    { geo: keepCastleGeo, x: 0, y: 2.35, z: -0.2 },
+    { geo: wallCastleGeo, x: 0, y: 1.55, z: castleR, ry: 0 },
+    { geo: wallCastleGeo, x: 0, y: 1.55, z: -castleR, ry: 0 },
+    { geo: wallCastleGeo, x: castleR, y: 1.55, z: 0, ry: Math.PI / 2 },
+    { geo: wallCastleGeo, x: -castleR, y: 1.55, z: 0, ry: Math.PI / 2 },
+    { geo: towerCastleGeo, x: -castleR, y: 1.95, z: -castleR },
+    { geo: towerCastleGeo, x: castleR, y: 1.95, z: -castleR },
+    { geo: towerCastleGeo, x: -castleR, y: 1.95, z: castleR },
+    { geo: towerCastleGeo, x: castleR, y: 1.95, z: castleR },
+  ];
+  const castleDarkStoneParts: Parameters<typeof mergeStaticGeometries>[0] = [
+    { geo: plinthCastleGeo, x: 0, y: 0.35, z: 0 },
+    { geo: gatehouseGeo, x: 0, y: 1.65, z: castleR + 0.25 },
+    { geo: battlementGeo, x: -castleR, y: 3.6, z: -castleR },
+    { geo: battlementGeo, x: castleR, y: 3.6, z: -castleR },
+    { geo: battlementGeo, x: -castleR, y: 3.6, z: castleR },
+    { geo: battlementGeo, x: castleR, y: 3.6, z: castleR },
+  ];
+  const castleSlateGeo = mergeStaticGeometries([
+    { geo: keepRoofGeo, x: 0, y: 4.55, z: -0.2, ry: Math.PI / 4 },
+  ]);
+  const castleTimberGeo = mergeStaticGeometries([
+    { geo: poleGeo, x: 0, y: 5.15, z: -0.2 },
+  ]);
+
+  // 3. Pre-merge VILLAGE geometries by material
+  const cottages: Array<[number, number, number]> = [
+    [-0.95, 0.45, 0.25],
+    [0.85, -0.55, -0.35],
+    [-0.25, -0.95, 0.55],
+    [0.95, 0.75, 0.15],
+  ];
+  const villageTimberParts: Parameters<typeof mergeStaticGeometries>[0] = [
+    { geo: poleGeo, x: -0.95, y: 2.65, z: -0.75 },
+  ];
+  const villageTerracottaParts: Parameters<typeof mergeStaticGeometries>[0] = [];
+  cottages.forEach(([vx, vz, rot]) => {
+    villageTimberParts.push({ geo: cottageGeo, x: vx, y: 0.85, z: vz, ry: rot });
+    villageTerracottaParts.push({
+      geo: cottageRoofGeo,
+      x: vx,
+      y: 1.58,
+      z: vz,
+      ry: rot + Math.PI / 4,
+    });
+  });
 
   cachedSettlementAssets = {
     stoneMat: new THREE.MeshStandardMaterial({
@@ -745,33 +945,44 @@ function getSettlementAssets(stoneTex: THREE.CanvasTexture) {
       metalness: 0.01,
     }),
     bannerMats: new Map(),
-    plinthTownGeo: new THREE.CylinderGeometry(5.1, 5.8, 0.65, 10),
-    plinthCastleGeo: new THREE.CylinderGeometry(3.2, 3.8, 0.85, 8),
-    plinthVillageGeo: new THREE.CylinderGeometry(2.5, 3.0, 0.45, 8),
-    acropolisGeo: new THREE.CylinderGeometry(2.1, 2.5, 0.75, 8),
-    keepTownGeo: new THREE.BoxGeometry(2.2, 3.0, 2.0),
-    keepCastleGeo: new THREE.BoxGeometry(2.1, 3.6, 2.1),
-    keepRoofGeo: new THREE.ConeGeometry(1.65, 1.15, 4),
-    domeGeo: new THREE.SphereGeometry(0.95, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
-    wallTownGeo: new THREE.BoxGeometry(3.35, 1.85, 0.48),
-    wallCastleGeo: new THREE.BoxGeometry(4.6, 2.15, 0.54),
-    gatehouseGeo: new THREE.BoxGeometry(1.75, 2.45, 1.15),
-    towerTownGeo: new THREE.CylinderGeometry(0.58, 0.68, 2.75, 10),
-    towerCastleGeo: new THREE.CylinderGeometry(0.68, 0.78, 3.15, 10),
-    battlementGeo: new THREE.CylinderGeometry(0.76, 0.7, 0.38, 8),
-    houseGeo: new THREE.BoxGeometry(1.05, 1.22, 0.92),
-    houseRoofGeo: new THREE.ConeGeometry(0.82, 0.62, 4),
-    cottageGeo: new THREE.BoxGeometry(1.12, 0.95, 0.9),
-    cottageRoofGeo: new THREE.ConeGeometry(0.88, 0.64, 4),
-    wheatFieldGeo: new THREE.BoxGeometry(1.85, 0.14, 1.35),
-    watchTowerGeo: new THREE.CylinderGeometry(0.44, 0.52, 2.25, 8),
-    poleGeo: new THREE.CylinderGeometry(0.055, 0.055, 2.3, 6),
     flagGeo: new THREE.ExtrudeGeometry(flagShape, {
       depth: 0.04,
       bevelEnabled: false,
     }),
+    townStoneGeo: mergeStaticGeometries(townStoneParts),
+    townDarkStoneGeo: mergeStaticGeometries(townDarkStoneParts),
+    townTerracottaGeo: mergeStaticGeometries(townTerracottaParts),
+    townSlateGeo: mergeStaticGeometries(townSlateParts),
+    townPlasterGeo: mergeStaticGeometries(townPlasterParts),
+    townTimberGeo: mergeStaticGeometries(townTimberParts),
+    castleStoneGeo: mergeStaticGeometries(castleStoneParts),
+    castleDarkStoneGeo: mergeStaticGeometries(castleDarkStoneParts),
+    castleSlateGeo,
+    castleTimberGeo,
+    villageDarkStoneGeo: mergeStaticGeometries([{ geo: plinthVillageGeo, x: 0, y: 0.22, z: 0 }]),
+    villageStoneGeo: mergeStaticGeometries([{ geo: watchTowerGeo, x: -0.95, y: 1.35, z: -0.75 }]),
+    villageTimberGeo: mergeStaticGeometries(villageTimberParts),
+    villageTerracottaGeo: mergeStaticGeometries(villageTerracottaParts),
+    villageWheatGeo: mergeStaticGeometries([
+      { geo: wheatFieldGeo, x: -1.55, y: 0.42, z: 1.35, ry: 0.2 },
+      { geo: wheatFieldGeo, x: 1.45, y: 0.42, z: -1.45, ry: -0.15 },
+    ]),
   };
   return cachedSettlementAssets;
+}
+
+function addStaticMesh(
+  group: THREE.Group,
+  geo: THREE.BufferGeometry,
+  mat: THREE.Material,
+  castShadow: boolean,
+  receiveShadow: boolean,
+) {
+  const m = new THREE.Mesh(geo, mat);
+  m.castShadow = castShadow;
+  m.receiveShadow = receiveShadow;
+  m.matrixAutoUpdate = false;
+  group.add(m);
 }
 
 // Authentic Bannerlord Grand Fortified Town, Concentric Castle & Rural Village 3D Miniature Models
@@ -795,206 +1006,30 @@ export function createSettlementModel(
 
   group.add(createContactShadowDisc(type === 'TOWN' ? 6.2 : type === 'CASTLE' ? 4.2 : 3.4));
 
-  // Rocky foundation plinth leveling settlement onto the terrain terrace
-  const plinth = new THREE.Mesh(
-    type === 'TOWN'
-      ? assets.plinthTownGeo
-      : type === 'CASTLE'
-        ? assets.plinthCastleGeo
-        : assets.plinthVillageGeo,
-    assets.darkStoneMat,
-  );
-  plinth.position.y = type === 'CASTLE' ? 0.35 : 0.22;
-  plinth.receiveShadow = true;
-  group.add(plinth);
-
   if (type === 'TOWN') {
-    // 1. Elevated Inner Citadel Acropolis & Keep
-    const acropolis = new THREE.Mesh(assets.acropolisGeo, assets.darkStoneMat);
-    acropolis.position.set(0, 0.68, -0.85);
-    group.add(acropolis);
-
-    const keep = new THREE.Mesh(assets.keepTownGeo, assets.stoneMat);
-    keep.position.set(0, 2.2, -0.85);
-    keep.castShadow = true;
-    keep.receiveShadow = true;
-    group.add(keep);
-
-    const keepRoof = new THREE.Mesh(assets.keepRoofGeo, assets.terracottaRoofMat);
-    keepRoof.position.set(0, 4.15, -0.85);
-    keepRoof.rotation.y = Math.PI / 4;
-    group.add(keepRoof);
-
-    // 2. Grand Civic Forum / Cathedral Dome in central square
-    const civicBase = new THREE.Mesh(assets.houseGeo, assets.plasterMat);
-    civicBase.scale.set(1.45, 1.35, 1.45);
-    civicBase.position.set(1.25, 1.2, 0.55);
-    group.add(civicBase);
-
-    const dome = new THREE.Mesh(assets.domeGeo, assets.terracottaRoofMat);
-    dome.position.set(1.25, 1.92, 0.55);
-    group.add(dome);
-
-    // 3. Expansive Octagonal Outer Curtain Walls & 8 Bastion Towers (r = 4.05m)
-    const wallRadius = 4.05;
-    for (let side = 0; side < 8; side++) {
-      const angle = (side * Math.PI) / 4;
-      const wx = Math.sin(angle) * wallRadius;
-      const wz = Math.cos(angle) * wallRadius;
-
-      const wall = new THREE.Mesh(assets.wallTownGeo, assets.stoneMat);
-      wall.position.set(wx, 1.32, wz);
-      wall.rotation.y = angle;
-      wall.castShadow = true;
-      wall.receiveShadow = true;
-      group.add(wall);
-
-      // Bastion tower at each octagonal vertex
-      const cornerAngle = angle + Math.PI / 8;
-      const tx = Math.sin(cornerAngle) * (wallRadius + 0.25);
-      const tz = Math.cos(cornerAngle) * (wallRadius + 0.25);
-      const tower = new THREE.Mesh(assets.towerTownGeo, assets.stoneMat);
-      tower.position.set(tx, 1.75, tz);
-      tower.castShadow = true;
-      group.add(tower);
-
-      const battlement = new THREE.Mesh(assets.battlementGeo, assets.darkStoneMat);
-      battlement.position.set(tx, 3.18, tz);
-      group.add(battlement);
-    }
-
-    // 4. Grand South Gatehouse (Barbican)
-    const gatehouse = new THREE.Mesh(assets.gatehouseGeo, assets.darkStoneMat);
-    gatehouse.position.set(0, 1.55, wallRadius + 0.22);
-    gatehouse.castShadow = true;
-    group.add(gatehouse);
-
-    // 5. Dense Multi-District Urban Houses (10 varied town buildings inside the walls)
-    const houseLayout: Array<[number, number, number, number, boolean]> = [
-      [-2.1, 0.9, 0.2, 1.15, false],
-      [-1.9, -0.7, -0.15, 1.05, true],
-      [-0.8, 1.85, 0.4, 1.0, false],
-      [0.4, 2.05, -0.1, 1.1, true],
-      [2.15, -0.85, 0.3, 1.18, false],
-      [1.85, 1.85, -0.35, 0.95, false],
-      [-1.25, -2.15, 0.12, 1.08, true],
-      [1.35, -2.15, -0.22, 1.04, false],
-      [-2.45, 0.1, 0.5, 0.92, true],
-      [2.45, 0.35, -0.4, 0.98, false],
-    ];
-    houseLayout.forEach(([hx, hz, rot, hScale, useSlate]) => {
-      const house = new THREE.Mesh(
-        assets.houseGeo,
-        useSlate ? assets.plasterMat : assets.timberMat,
-      );
-      house.scale.set(1, hScale, 1);
-      house.position.set(hx, 0.55 + 0.55 * hScale, hz);
-      house.rotation.y = rot;
-      house.castShadow = true;
-      group.add(house);
-
-      const hRoof = new THREE.Mesh(
-        assets.houseRoofGeo,
-        useSlate ? assets.slateRoofMat : assets.terracottaRoofMat,
-      );
-      hRoof.position.set(hx, 0.55 + 1.15 * hScale + 0.22, hz);
-      hRoof.rotation.y = rot + Math.PI / 4;
-      group.add(hRoof);
-    });
+    addStaticMesh(group, assets.townDarkStoneGeo, assets.darkStoneMat, true, true);
+    addStaticMesh(group, assets.townStoneGeo, assets.stoneMat, true, true);
+    addStaticMesh(group, assets.townTerracottaGeo, assets.terracottaRoofMat, false, false);
+    addStaticMesh(group, assets.townSlateGeo, assets.slateRoofMat, false, false);
+    addStaticMesh(group, assets.townPlasterGeo, assets.plasterMat, true, false);
+    addStaticMesh(group, assets.townTimberGeo, assets.timberMat, true, false);
   } else if (type === 'CASTLE') {
-    // Imposing Concentric Military Fortress on High Stone Crag
-    const keep = new THREE.Mesh(assets.keepCastleGeo, assets.stoneMat);
-    keep.position.set(0, 2.35, -0.2);
-    keep.castShadow = true;
-    keep.receiveShadow = true;
-    group.add(keep);
-
-    const keepRoof = new THREE.Mesh(assets.keepRoofGeo, assets.slateRoofMat);
-    keepRoof.position.set(0, 4.55, -0.2);
-    keepRoof.rotation.y = Math.PI / 4;
-    group.add(keepRoof);
-
-    const r = 2.35;
-    const wallPositions: Array<[number, number, number]> = [
-      [0, r, 0],
-      [0, -r, 0],
-      [r, 0, Math.PI / 2],
-      [-r, 0, Math.PI / 2],
-    ];
-    wallPositions.forEach(([wx, wz, rotY]) => {
-      const wall = new THREE.Mesh(assets.wallCastleGeo, assets.stoneMat);
-      wall.position.set(wx, 1.55, wz);
-      wall.rotation.y = rotY;
-      wall.castShadow = true;
-      wall.receiveShadow = true;
-      group.add(wall);
-    });
-
-    const offsets = [
-      [-r, -r],
-      [r, -r],
-      [-r, r],
-      [r, r],
-    ];
-    offsets.forEach(([ox, oz]) => {
-      const tower = new THREE.Mesh(assets.towerCastleGeo, assets.stoneMat);
-      tower.position.set(ox, 1.95, oz);
-      tower.castShadow = true;
-      group.add(tower);
-
-      const battlement = new THREE.Mesh(assets.battlementGeo, assets.darkStoneMat);
-      battlement.position.set(ox, 3.6, oz);
-      group.add(battlement);
-    });
-
-    const gatehouse = new THREE.Mesh(assets.gatehouseGeo, assets.darkStoneMat);
-    gatehouse.position.set(0, 1.65, r + 0.25);
-    group.add(gatehouse);
+    addStaticMesh(group, assets.castleDarkStoneGeo, assets.darkStoneMat, true, true);
+    addStaticMesh(group, assets.castleStoneGeo, assets.stoneMat, true, true);
+    addStaticMesh(group, assets.castleSlateGeo, assets.slateRoofMat, false, false);
+    addStaticMesh(group, assets.castleTimberGeo, assets.timberMat, false, false);
   } else {
-    // Authentic Rural Village Cluster: 4 Hearth Cottages + Granary Tower + Golden Farmland Plots
-    const cottages: Array<[number, number, number]> = [
-      [-0.95, 0.45, 0.25],
-      [0.85, -0.55, -0.35],
-      [-0.25, -0.95, 0.55],
-      [0.95, 0.75, 0.15],
-    ];
-    cottages.forEach(([vx, vz, rot]) => {
-      const cottage = new THREE.Mesh(assets.cottageGeo, assets.timberMat);
-      cottage.position.set(vx, 0.85, vz);
-      cottage.rotation.y = rot;
-      cottage.castShadow = true;
-      group.add(cottage);
-
-      const roof = new THREE.Mesh(assets.cottageRoofGeo, assets.terracottaRoofMat);
-      roof.position.set(vx, 1.58, vz);
-      roof.rotation.y = rot + Math.PI / 4;
-      group.add(roof);
-    });
-
-    const watchTower = new THREE.Mesh(assets.watchTowerGeo, assets.stoneMat);
-    watchTower.position.set(-0.95, 1.35, -0.75);
-    group.add(watchTower);
-
-    // Cultivated Golden Wheat / Olive Field Strips beside the village
-    const field1 = new THREE.Mesh(assets.wheatFieldGeo, assets.wheatMat);
-    field1.position.set(-1.55, 0.42, 1.35);
-    field1.rotation.y = 0.2;
-    group.add(field1);
-
-    const field2 = new THREE.Mesh(assets.wheatFieldGeo, assets.wheatMat);
-    field2.position.set(1.45, 0.42, -1.45);
-    field2.rotation.y = -0.15;
-    group.add(field2);
+    addStaticMesh(group, assets.villageDarkStoneGeo, assets.darkStoneMat, false, true);
+    addStaticMesh(group, assets.villageStoneGeo, assets.stoneMat, true, false);
+    addStaticMesh(group, assets.villageTimberGeo, assets.timberMat, true, false);
+    addStaticMesh(group, assets.villageTerracottaGeo, assets.terracottaRoofMat, false, false);
+    addStaticMesh(group, assets.villageWheatGeo, assets.wheatMat, false, true);
   }
 
-  // Heraldic Flagpole flying the Faction Banner above the Settlement
+  // Heraldic Flagpole Banner flying the Faction Banner above the Settlement
   const poleY = type === 'TOWN' ? 4.85 : type === 'CASTLE' ? 5.15 : 2.65;
   const poleZ = type === 'TOWN' ? -0.85 : type === 'CASTLE' ? -0.2 : -0.75;
   const poleX = type === 'VILLAGE' ? -0.95 : 0;
-
-  const pole = new THREE.Mesh(assets.poleGeo, assets.timberMat);
-  pole.position.set(poleX, poleY, poleZ);
-  group.add(pole);
 
   const flag = new THREE.Mesh(assets.flagGeo, factionBannerMat);
   flag.position.set(poleX + 0.04, poleY + 0.85, poleZ);

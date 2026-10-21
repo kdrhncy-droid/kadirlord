@@ -50,6 +50,8 @@ interface GameHudProps {
   onRecruitPrisoners?: () => string | null;
   onOpenMarketModal?: () => void;
   onOpenCharacterArena?: () => void;
+  onOpenKingdomModal?: () => void;
+  onOpenCharacterCreator?: () => void;
 }
 
 export const GameHud: React.FC<GameHudProps> = ({
@@ -80,6 +82,8 @@ export const GameHud: React.FC<GameHudProps> = ({
   onRecruitPrisoners,
   onOpenMarketModal,
   onOpenCharacterArena,
+  onOpenKingdomModal,
+  onOpenCharacterCreator,
 }) => {
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<
@@ -103,17 +107,25 @@ export const GameHud: React.FC<GameHudProps> = ({
         setDockCollapsed((prev) => !prev);
       } else if (e.code === 'KeyC') {
         setActiveTab((prev) => (prev === 'character' ? 'none' : 'character'));
+      } else if (e.code === 'KeyB') {
+        if (onOpenCharacterCreator) {
+          onOpenCharacterCreator();
+        }
       } else if (e.code === 'KeyI') {
         if (onOpenMarketModal) {
           onOpenMarketModal();
         } else {
           setActiveTab((prev) => (prev === 'inventory' ? 'none' : 'inventory'));
         }
+      } else if (e.code === 'KeyK') {
+        if (onOpenKingdomModal) {
+          onOpenKingdomModal();
+        }
       }
     };
     window.addEventListener('keydown', onKeyH);
     return () => window.removeEventListener('keydown', onKeyH);
-  }, [onOpenMarketModal]);
+  }, [onOpenMarketModal, onOpenKingdomModal, onOpenCharacterCreator]);
 
   const totalTroops = getTotalTroops(campaign.roster);
   const partyStrength = calculatePartyStrength(
@@ -852,13 +864,25 @@ export const GameHud: React.FC<GameHudProps> = ({
                   Kapasite Bonusu: +{calculateClanTier(campaign.renown).maxPartyBonus} Asker
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setActiveTab('none')}
-                className="text-xs text-[#c6a15b] hover:underline whitespace-nowrap shrink-0"
-              >
-                Kapat [C]
-              </button>
+              <div className="flex items-center gap-2">
+                {onOpenCharacterCreator && (
+                  <button
+                    type="button"
+                    onClick={onOpenCharacterCreator}
+                    className="px-3 py-1.5 rounded text-xs font-bold bg-[#c6a15b] hover:bg-[#d4af37] text-[#14100c] shadow transition flex items-center gap-1.5 whitespace-nowrap"
+                  >
+                    <span>✂️</span>
+                    <span>Berber & Suret Modelle [B]</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('none')}
+                  className="text-xs text-[#c6a15b] hover:underline whitespace-nowrap shrink-0"
+                >
+                  Kapat [C]
+                </button>
+              </div>
             </div>
 
             {hudFeedback && (
@@ -1259,6 +1283,25 @@ export const GameHud: React.FC<GameHudProps> = ({
                     >
                       Vakanüvis
                     </button>
+                    {onOpenCharacterCreator && (
+                      <button
+                        type="button"
+                        onClick={onOpenCharacterCreator}
+                        className="px-2.5 py-1.5 rounded text-xs font-bold bg-[#292017] hover:bg-[#3d2e20] text-[#fde68a] border border-[#c6a15b]/60 transition-colors whitespace-nowrap flex items-center gap-1 shadow"
+                      >
+                        <span>👤</span>
+                        <span>Berber & Suret [B]</span>
+                      </button>
+                    )}
+                    {onOpenKingdomModal && (
+                      <button
+                        type="button"
+                        onClick={onOpenKingdomModal}
+                        className="px-2.5 py-1.5 rounded text-xs font-bold bg-[#1e293b] hover:bg-[#334155] text-[#fde68a] border border-[#c6a15b]/50 transition-colors whitespace-nowrap"
+                      >
+                        Krallık & Divan [K]
+                      </button>
+                    )}
                     {onOpenCharacterArena && (
                       <button
                         type="button"

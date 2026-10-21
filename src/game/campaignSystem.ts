@@ -168,7 +168,7 @@ export function getLordDetailedIntel(
     guard: Math.max(1, Math.floor(lord.armySize * 0.15)),
   };
   const totalHealthy = Math.max(
-    6,
+    0,
     roster.militia + roster.archer + roster.cavalry + roster.guard,
   );
 

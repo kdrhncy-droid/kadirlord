@@ -5,6 +5,7 @@ import {
   LordAgent,
   getTotalTroops,
 } from '../game/rules';
+import { LordPortraitCanvas } from './LordPortraitCanvas';
 
 interface DiplomacyModalProps {
   selectedLord: LordAgent;
@@ -185,9 +186,14 @@ export const DiplomacyModal: React.FC<DiplomacyModalProps> = ({
 
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 my-4 flex-1 overflow-hidden">
-          {/* Left Column: Lord Dossier */}
+          {/* Left Column: Lord Dossier with 3D Animated Portrait */}
           <div className="bg-[#16130f] border border-[#c6a15b]/25 rounded p-4 flex flex-col justify-between">
             <div>
+              {/* 3D Living Lord Portrait Bust */}
+              <div className="mb-3">
+                <LordPortraitCanvas lord={selectedLord} className="w-full h-44 rounded" />
+              </div>
+
               <div className="text-xs text-[#a89b84]">Karakter & Sancak Özeti</div>
               <div className="text-base font-bold text-[#f8f0df] mt-1">
                 {selectedLord.title} {selectedLord.name}

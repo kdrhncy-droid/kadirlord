@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import type { CharacterRig } from './characterRig';
-import { orientHand, solveTwoBoneIK, type TwoBoneChain } from './ik';
+import type { CharacterRig } from './characterRig.ts';
+import { orientHand, solveTwoBoneIK, type TwoBoneChain } from './ik.ts';
 
 /**
  * ============================================================================

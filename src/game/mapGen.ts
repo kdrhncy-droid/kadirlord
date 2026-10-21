@@ -1073,6 +1073,24 @@ export function clampCameraFocus(
   };
 }
 
+// Smooth logarithmic zoom step calculator normalizing wheel deltaMode (pixels, lines, pages)
+// and preventing sudden frame jumps on notched scroll wheels or high-frequency trackpads.
+export function computeZoomStep(
+  currentZoomDist: number,
+  deltaY: number,
+  deltaMode = 0,
+): number {
+  const clampedCurrent = Math.max(16, Math.min(940, currentZoomDist));
+  // Normalize deltaY across browser wheel modes (0 = pixels, 1 = lines, 2 = pages)
+  const normalizedDelta =
+    deltaMode === 1 ? deltaY * 28 : deltaMode === 2 ? deltaY * 240 : deltaY;
+  // Clamp single-event spike so a fast wheel flick never teleports across LOD tiers in 1 frame
+  const boundedDelta = Math.max(-140, Math.min(140, normalizedDelta));
+  // Proportional exponential zoom factor (smooth across 16m valley to 940m continental overview)
+  const nextZoom = clampedCurrent * Math.exp(boundedDelta * 0.0026);
+  return Math.max(16, Math.min(940, nextZoom));
+}
+
 // Bannerlord-style Strategic Campaign Camera Transform (Zoom 16m valley to 940m full continental overview!)
 export function computeBannerlordCameraTransform(
   focusX: number,
@@ -1092,8 +1110,9 @@ export function computeBannerlordCameraTransform(
 } {
   const clampedZoom = Math.max(16, Math.min(940, zoomDist));
   const t = (clampedZoom - 16) / (940 - 16);
-  // Smooth S-curve pitch: Low ground-level angle (26-32 deg) when close for epic scale and horizon, tilting up to 82 deg on full continent overview
-  const smoothT = t < 0.25 ? Math.pow(t / 0.25, 1.4) * 0.25 : t;
+  // C2-continuous smooth pitch curve (zero derivative kink across the entire 16m..940m range):
+  // Low ground-level angle (28 deg) when close for epic scale and horizon, tilting smoothly to 82 deg on full continent overview
+  const smoothT = t * (0.76 + 0.24 * t);
   const pitchDeg = 28 + smoothT * 54;
   const pitchRad = (pitchDeg * Math.PI) / 180;
 
@@ -1102,16 +1121,20 @@ export function computeBannerlordCameraTransform(
 
   const safeFocus = clampCameraFocus(focusX, focusZ, clampedZoom);
 
+  // Dampen vertical terrain height influence at macro zoom so panning/zooming over mountains never bobs the camera
+  const macroFlatten = Math.max(0, Math.min(1, (clampedZoom - 45) / 180));
+  const effectiveFocusY = focusY * (1 - macroFlatten * 0.82);
+
   const camX = safeFocus.x + Math.sin(yawRad) * horizDist;
   const camZ = safeFocus.z + Math.cos(yawRad) * horizDist;
-  const camY = Math.max(focusY + 3.8, focusY + vertDist);
+  const camY = Math.max(effectiveFocusY + 3.8, effectiveFocusY + vertDist);
 
   return {
     camX,
     camY,
     camZ,
     lookX: safeFocus.x,
-    lookY: focusY,
+    lookY: effectiveFocusY,
     lookZ: safeFocus.z,
     pitchRad,
     clampedZoom,
@@ -1134,4 +1157,5 @@ export function isSettlementLabelVisible(
   }
   return true;
 }
+
 

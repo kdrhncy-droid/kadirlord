@@ -20,6 +20,7 @@ import {
   OVERWORLD_LORD_PATROL_SPEED,
   clampCameraFocus,
   computeBannerlordCameraTransform,
+  computeZoomStep,
   getPartySpeedInfo,
   groundHeightAt,
   isSettlementLabelVisible,
@@ -286,6 +287,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     // 1. 2400x1800 High-Res Slope-Shaded Continental Terrain Mesh with Multi-Scale Close-Up Detail Shader
     const terrainMesh = createContinentalTerrainMesh(albedoTex, bumpTex, detailTex);
+    terrainMesh.updateMatrix();
+    terrainMesh.matrixAutoUpdate = false;
     scene.add(terrainMesh);
 
     // 2. Deep Abyssal Backdrop Skirt at y = -18.0 (Zero Z-Fighting with Terrain Water Surface at y = -0.25)
@@ -296,6 +299,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     });
     const waterMesh = new THREE.Mesh(waterGeo, waterMat);
     waterMesh.position.y = -18.0;
+    waterMesh.updateMatrix();
+    waterMesh.matrixAutoUpdate = false;
     scene.add(waterMesh);
 
     // 3. Weathered Stone Arch Bridges
@@ -314,21 +319,34 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     scene.add(battleGroup);
 
     const settlementMeshes = new Map<string, THREE.Group>();
+    const settlementFlagHandles = new Map<
+      string,
+      { flag: THREE.Mesh; lastFaction: string }
+    >();
     const interactableProxies: THREE.Mesh[] = [];
+    const sharedSettleProxyGeo = new THREE.CylinderGeometry(5.5, 5.5, 8, 8);
+    const sharedLordProxyGeo = new THREE.CylinderGeometry(3.5, 3.5, 5, 8);
+    const sharedHiddenProxyMat = new THREE.MeshBasicMaterial({ visible: false });
 
     stateRef.current.campaign.settlements.forEach((s) => {
       const facHex = FACTION_INFO[s.faction].hex;
       const model = createSettlementModel(s.type, facHex, stoneTex);
       const sy = groundHeightAt(s.x, s.z);
       model.position.set(s.x, sy, s.z);
+      model.updateMatrix();
+      model.matrixAutoUpdate = false;
       overworldGroup.add(model);
       settlementMeshes.set(s.id, model);
 
-      const proxy = new THREE.Mesh(
-        new THREE.CylinderGeometry(5.5, 5.5, 8, 8),
-        new THREE.MeshBasicMaterial({ visible: false }),
-      );
+      const flag = model.getObjectByName('bannerFlag') as THREE.Mesh | undefined;
+      if (flag) {
+        settlementFlagHandles.set(s.id, { flag, lastFaction: s.faction });
+      }
+
+      const proxy = new THREE.Mesh(sharedSettleProxyGeo, sharedHiddenProxyMat);
       proxy.position.set(s.x, sy + 4, s.z);
+      proxy.updateMatrix();
+      proxy.matrixAutoUpdate = false;
       proxy.userData = { kind: 'settlement', id: s.id };
       overworldGroup.add(proxy);
       interactableProxies.push(proxy);
@@ -336,6 +354,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     const lordMeshes = new Map<string, WarriorMeshHandles>();
     const lordProxies = new Map<string, THREE.Mesh>();
+    const lordProxyList: THREE.Mesh[] = [];
     stateRef.current.campaign.lords.forEach((l) => {
       const facHex = FACTION_INFO[l.faction].hex;
       const warrior = createWarriorModel({
@@ -349,15 +368,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       overworldGroup.add(warrior.root);
       lordMeshes.set(l.id, warrior);
 
-      const proxy = new THREE.Mesh(
-        new THREE.CylinderGeometry(3.5, 3.5, 5, 8),
-        new THREE.MeshBasicMaterial({ visible: false }),
-      );
+      const proxy = new THREE.Mesh(sharedLordProxyGeo, sharedHiddenProxyMat);
       proxy.position.set(l.x, ly + 2.5, l.z);
       proxy.userData = { kind: 'lord', id: l.id };
       overworldGroup.add(proxy);
       interactableProxies.push(proxy);
       lordProxies.set(l.id, proxy);
+      lordProxyList.push(proxy);
     });
 
     // Overworld Player Commander Avatar
@@ -420,6 +437,16 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       colorHex: 0xfbbf24,
     }));
     let particleCursor = 0;
+    let hasActiveParticles = false;
+
+    // Initialize particle matrices off-screen once so we never re-upload when idle
+    _dummy.position.set(0, -100, 0);
+    _dummy.scale.setScalar(0.001);
+    _dummy.updateMatrix();
+    for (let i = 0; i < PARTICLE_POOL_SIZE; i++) {
+      particleInst.setMatrixAt(i, _dummy.matrix);
+    }
+    particleInst.instanceMatrix.needsUpdate = true;
 
     function spawnParticles(
       x: number,
@@ -429,6 +456,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       colorHex: number,
       speedScale = 1,
     ) {
+      hasActiveParticles = true;
       for (let i = 0; i < count; i++) {
         const p = particlePool[particleCursor];
         particleCursor = (particleCursor + 1) % PARTICLE_POOL_SIZE;
@@ -458,9 +486,10 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     let lordWalkPhase = 0;
     let overworldTargetPos: { x: number; z: number } | null = null;
     let overworldWaypoints: Array<{ x: number; z: number }> = [];
+    let marchPathDirty = true;
 
     // Live route state for each Lord (moves along land routes at party-size-dependent speed)
-    const lordLiveRoutes = new Map<string, LordLiveRouteState>();
+    const lordLiveRoutes = new Map<string, LordLiveRouteState & { cachedY?: number }>();
     stateRef.current.campaign.lords.forEach((l) => {
       lordLiveRoutes.set(l.id, {
         x: l.x,
@@ -469,6 +498,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         targetSettlementId: null,
         waypoints: computeLandPath(l.x, l.z, l.targetX, l.targetZ),
         currentAction: l.currentAction,
+        cachedY: Math.max(0.25, groundHeightAt(l.x, l.z)),
       });
     });
 
@@ -478,6 +508,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     let camFocusX = initContinentView ? -75 : playerOverworldX;
     let camFocusZ = initContinentView ? -8 : playerOverworldZ;
+    let camFocusY = Math.max(0, groundHeightAt(camFocusX, camFocusZ));
     let targetCamFocusX = camFocusX;
     let targetCamFocusZ = camFocusZ;
     let camYaw = 0;
@@ -531,9 +562,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       const dy = Math.max(0.0, groundHeightAt(finalWp.x, finalWp.z)) + 0.14;
       destRing.position.set(finalWp.x, dy, finalWp.z);
       (destRing.material as THREE.MeshBasicMaterial).opacity = 0.95;
+      marchPathDirty = true;
     }
 
     function updateMarchPathGeometry() {
+      if (!marchPathDirty) return;
+      marchPathDirty = false;
       const posAttr = marchPathLine.geometry.attributes.position as THREE.BufferAttribute;
       if (!overworldTargetPos || overworldWaypoints.length === 0) {
         for (let i = 0; i < 24; i++) {
@@ -635,11 +669,27 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       tooltipCard.classList.remove('hidden');
     }
 
-    const settlementLabelEls = new Map<string, HTMLDivElement>();
-    stateRef.current.campaign.settlements.forEach((s) => {
+    interface SettlementLabelRecord {
+      settlement: Settlement;
+      el: HTMLDivElement;
+      gSpan: HTMLElement | null;
+      sMesh: THREE.Group | undefined;
+      worldY: number;
+      meshCullDist: number;
+      visible: boolean;
+      meshVisible: boolean;
+      lastSx: number;
+      lastSy: number;
+      lastText: string;
+    }
+
+    const settlementLabelRecords: SettlementLabelRecord[] = [];
+    stateRef.current.campaign.settlements.forEach((s, idx) => {
       const el = document.createElement('div');
       el.className =
         'absolute top-0 left-0 pointer-events-auto flex items-center cursor-pointer select-none group transition-transform hover:scale-105';
+      el.style.contain = 'layout style';
+      el.style.willChange = 'transform';
       el.setAttribute('data-testid', `map-label-${s.id}`);
       el.setAttribute('data-settlement-type', s.type);
 
@@ -765,17 +815,44 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       });
 
       labelOverlay.appendChild(el);
-      settlementLabelEls.set(s.id, el);
+      const baseH = groundHeightAt(s.x, s.z);
+      settlementLabelRecords.push({
+        settlement: s,
+        el,
+        gSpan: el.querySelector('[data-role="garrison-count"]'),
+        sMesh: settlementMeshes.get(s.id),
+        worldY: baseH + (isVillage ? 4.4 : isCastle ? 6.8 : 7.4),
+        // Stagger village 3D model culling distance (225m..265m) so all 131 villages never pop on the same frame
+        meshCullDist: isVillage ? 225 + (idx % 16) * 2.5 : isCastle ? 540 : 1200,
+        visible: true,
+        meshVisible: true,
+        lastSx: -9999,
+        lastSy: -9999,
+        lastText: String(s.garrison),
+      });
     });
 
+    interface LordLabelRecord {
+      id: string;
+      el: HTMLDivElement;
+      troopSpan: HTMLElement | null;
+      visible: boolean;
+      lastSx: number;
+      lastSy: number;
+      lastHtml: string;
+    }
+
     // Under-Foot Lord Coat-of-Arms + Troop & Wounded Nameplates (Directly underneath each Lord's horse!)
-    const lordLabelEls = new Map<string, HTMLDivElement>();
+    const lordLabelRecords = new Map<string, LordLabelRecord>();
     stateRef.current.campaign.lords.forEach((l) => {
       const el = document.createElement('div');
       el.className =
         'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120e]/85 border border-[#c6a15b]/45 cursor-pointer select-none group transition-transform hover:scale-110 shadow-md';
+      el.style.contain = 'layout style';
+      el.style.willChange = 'transform';
       el.setAttribute('data-testid', `map-label-${l.id}`);
       const intel = getLordDetailedIntel(l);
+      const initialTroopHtml = `${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#fb923c]">+${intel.wounded}</span>` : ''}`;
       el.innerHTML = `
         <span style="background-color: ${l.bannerColor}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
               class="w-4 h-5 flex items-center justify-center border border-[#fcd34d]/90 shadow shrink-0">
@@ -783,32 +860,42 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         </span>
         <span data-role="lord-troops" class="font-display font-extrabold text-[12px] ${
           l.isAtWarWithPlayer ? 'text-[#fca5a5]' : 'text-[#86efac]'
-        } hud-stroke tracking-tight">
-          ${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#fb923c]">+${intel.wounded}</span>` : ''}
-        </span>
+        } hud-stroke tracking-tight">${initialTroopHtml}</span>
       `;
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         tooltipCard.classList.add('hidden');
+        const liveLord =
+          stateRef.current.campaign.lords.find((item) => item.id === l.id) ?? l;
         const route = lordLiveRoutes.get(l.id);
-        const lx = route ? route.x : l.x;
-        const lz = route ? route.z : l.z;
+        const lx = route ? route.x : liveLord.x;
+        const lz = route ? route.z : liveLord.z;
         const currentDist = Math.hypot(lx - playerOverworldX, lz - playerOverworldZ);
-        setMarchDestination(lx, lz, { type: 'lord', id: l.id });
+        setMarchDestination(lx, lz, { type: 'lord', id: liveLord.id });
         if (currentDist <= 3.2) {
           stateRef.current.onSetTimeScale?.(0);
-          stateRef.current.onOpenDiplomacy(l);
+          stateRef.current.onOpenDiplomacy(liveLord);
         }
       });
       el.addEventListener('mouseenter', () => {
+        const liveLord =
+          stateRef.current.campaign.lords.find((item) => item.id === l.id) ?? l;
         const rect = el.getBoundingClientRect();
-        showLordTooltip(l, rect.left + rect.width / 2, rect.top);
+        showLordTooltip(liveLord, rect.left + rect.width / 2, rect.top);
       });
       el.addEventListener('mouseleave', () => {
         tooltipCard.classList.add('hidden');
       });
       labelOverlay.appendChild(el);
-      lordLabelEls.set(l.id, el);
+      lordLabelRecords.set(l.id, {
+        id: l.id,
+        el,
+        troopSpan: el.querySelector('[data-role="lord-troops"]'),
+        visible: true,
+        lastSx: -9999,
+        lastSy: -9999,
+        lastHtml: initialTroopHtml,
+      });
     });
 
     // Under-Foot Player Party Coat-of-Arms + Troop Count Nameplate (Directly underneath Player's horse!)
@@ -816,6 +903,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     playerPartyEl.setAttribute('data-testid', 'map-label-player-party');
     playerPartyEl.className =
       'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120e]/90 border border-[#fbbf24]/65 cursor-pointer select-none shadow-md';
+    playerPartyEl.style.contain = 'layout style';
+    playerPartyEl.style.willChange = 'transform';
     playerPartyEl.innerHTML = `
       <span style="background-color: ${FACTION_INFO.player.color}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
             class="w-4 h-5 flex items-center justify-center border border-[#fcd34d] shadow shrink-0">
@@ -825,6 +914,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         ${getTotalTroops(stateRef.current.campaign.roster)}
       </span>
     `;
+    const playerPartyCountSpan = playerPartyEl.querySelector('#player-party-count');
+    let playerLabelVisible = true;
+    let playerLabelLastSx = -9999;
+    let playerLabelLastSy = -9999;
+    let playerLabelLastText = String(getTotalTroops(stateRef.current.campaign.roster));
+
     playerPartyEl.addEventListener('mouseenter', () => {
       const camp = stateRef.current.campaign;
       const totalHealthy = getTotalTroops(camp.roster);
@@ -916,6 +1011,22 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     let lastPointerX = 0;
     let lastPointerY = 0;
 
+    // Cached viewport metrics so RAF and pointermove never force synchronous DOM reflows
+    let cachedCanvasWidth = container.clientWidth || window.innerWidth;
+    let cachedCanvasHeight = container.clientHeight || window.innerHeight;
+    let cachedCanvasLeft = 0;
+    let cachedCanvasTop = 0;
+    const updateCachedCanvasMetrics = () => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        cachedCanvasWidth = rect.width;
+        cachedCanvasHeight = rect.height;
+        cachedCanvasLeft = rect.left;
+        cachedCanvasTop = rect.top;
+      }
+    };
+    updateCachedCanvasMetrics();
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
         document.activeElement &&
@@ -952,12 +1063,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         } else if (e.code === 'KeyE') {
           targetCamYaw -= 0.25;
         } else if (e.code === 'KeyZ' || e.code === 'Equal') {
-          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist - 36, 16, 940);
+          targetCamZoomDist = computeZoomStep(targetCamZoomDist, -75, 0);
           const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
           targetCamFocusX = safe.x;
           targetCamFocusZ = safe.z;
         } else if (e.code === 'KeyX' || e.code === 'Minus') {
-          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + 36, 16, 940);
+          targetCamZoomDist = computeZoomStep(targetCamZoomDist, 75, 0);
           const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
           targetCamFocusX = safe.x;
           targetCamFocusZ = safe.z;
@@ -999,6 +1110,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     const raycaster = new THREE.Raycaster();
     const pointerNdc = new THREE.Vector2();
     let hovered3DLordId: string | null = null;
+    let lastHoverRaycastTime = 0;
 
     const handlePointerDown = (e: PointerEvent) => {
       if (stateRef.current.gameState !== 'playing') return;
@@ -1022,9 +1134,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       }
 
       // Overworld Left-Click: Select Settlement/Lord or Set March Target
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      updateCachedCanvasMetrics();
+      pointerNdc.x = ((e.clientX - cachedCanvasLeft) / cachedCanvasWidth) * 2 - 1;
+      pointerNdc.y = -((e.clientY - cachedCanvasTop) / cachedCanvasHeight) * 2 + 1;
       raycaster.setFromCamera(pointerNdc, camera);
 
       const proxyHits = raycaster.intersectObjects(interactableProxies, false);
@@ -1102,13 +1214,19 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         return;
       }
 
-      // 3D Raycast Hover Check on Lord Meshes so hovering over a 3D Lord on the map shows their Bannerlord Tooltip!
-      if (e.target === renderer.domElement) {
-        const rect = renderer.domElement.getBoundingClientRect();
-        pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-        pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      // Throttled 3D Raycast Hover Check on Lord Meshes (skip when zoomed out > 260m or actively zooming)
+      if (
+        e.target === renderer.domElement &&
+        camZoomDist <= 260 &&
+        Math.abs(targetCamZoomDist - camZoomDist) < 12
+      ) {
+        const nowMs = performance.now();
+        if (nowMs - lastHoverRaycastTime < 45) return;
+        lastHoverRaycastTime = nowMs;
+
+        pointerNdc.x = ((e.clientX - cachedCanvasLeft) / cachedCanvasWidth) * 2 - 1;
+        pointerNdc.y = -((e.clientY - cachedCanvasTop) / cachedCanvasHeight) * 2 + 1;
         raycaster.setFromCamera(pointerNdc, camera);
-        const lordProxyList = Array.from(lordProxies.values());
         const hits = raycaster.intersectObjects(lordProxyList, false);
         if (hits.length > 0) {
           const hitId = hits[0].object.userData?.id as string | undefined;
@@ -1137,10 +1255,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         return;
       }
       e.preventDefault();
-      // Fast exponential zoom: distance-proportional step so 6-8 wheel notches traverse entire zoom range smoothly!
-      const zoomFactor = Math.max(0.42, targetCamZoomDist * 0.0036);
-      const zoomStep = e.deltaY * zoomFactor;
-      targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + zoomStep, 16, 940);
+      // Smooth normalized logarithmic zoom across mouse wheel notches and trackpads
+      targetCamZoomDist = computeZoomStep(targetCamZoomDist, e.deltaY, e.deltaMode);
       const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
       targetCamFocusX = safe.x;
       targetCamFocusZ = safe.z;
@@ -1161,6 +1277,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           camera.aspect = width / height;
           camera.updateProjectionMatrix();
           renderer.setSize(width, height);
+          updateCachedCanvasMetrics();
         }
       }
     });
@@ -1425,39 +1542,39 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         return;
       }
 
-      // Update Pooled Particles
-      for (let i = 0; i < PARTICLE_POOL_SIZE; i++) {
-        const p = particlePool[i];
-        if (p.active) {
-          p.life += dt;
-          if (p.life >= p.maxLife) {
-            p.active = false;
-            _dummy.position.set(0, -100, 0);
-            _dummy.scale.setScalar(0.001);
-            _dummy.updateMatrix();
-            particleInst.setMatrixAt(i, _dummy.matrix);
-          } else {
-            p.vy -= 9.8 * dt;
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            p.z += p.vz * dt;
-            const s = p.scale * (1 - p.life / p.maxLife);
-            _dummy.position.set(p.x, p.y, p.z);
-            _dummy.scale.setScalar(Math.max(0.05, s));
-            _dummy.updateMatrix();
-            particleInst.setMatrixAt(i, _dummy.matrix);
-            _color.setHex(p.colorHex);
-            particleInst.setColorAt(i, _color);
+      // Update Pooled Particles ONLY when at least one particle is active
+      if (hasActiveParticles) {
+        let anyStillActive = false;
+        for (let i = 0; i < PARTICLE_POOL_SIZE; i++) {
+          const p = particlePool[i];
+          if (p.active) {
+            p.life += dt;
+            if (p.life >= p.maxLife) {
+              p.active = false;
+              _dummy.position.set(0, -100, 0);
+              _dummy.scale.setScalar(0.001);
+              _dummy.updateMatrix();
+              particleInst.setMatrixAt(i, _dummy.matrix);
+            } else {
+              anyStillActive = true;
+              p.vy -= 9.8 * dt;
+              p.x += p.vx * dt;
+              p.y += p.vy * dt;
+              p.z += p.vz * dt;
+              const s = p.scale * (1 - p.life / p.maxLife);
+              _dummy.position.set(p.x, p.y, p.z);
+              _dummy.scale.setScalar(Math.max(0.05, s));
+              _dummy.updateMatrix();
+              particleInst.setMatrixAt(i, _dummy.matrix);
+              _color.setHex(p.colorHex);
+              particleInst.setColorAt(i, _color);
+            }
           }
-        } else {
-          _dummy.position.set(0, -100, 0);
-          _dummy.scale.setScalar(0.001);
-          _dummy.updateMatrix();
-          particleInst.setMatrixAt(i, _dummy.matrix);
         }
+        particleInst.instanceMatrix.needsUpdate = true;
+        if (particleInst.instanceColor) particleInst.instanceColor.needsUpdate = true;
+        hasActiveParticles = anyStillActive;
       }
-      particleInst.instanceMatrix.needsUpdate = true;
-      if (particleInst.instanceColor) particleInst.instanceColor.needsUpdate = true;
 
       cameraTrauma = Math.max(0, cameraTrauma - dt * 2.2);
 
@@ -1495,15 +1612,17 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           targetCamYaw -= rotSpeed * dt;
         }
 
-        // C. Z / X or +/- Zoom
+        // C. Z / X or +/- Zoom (Proportional exponential speed matching wheel zoom)
         if (keysHeld.has('KeyZ') || keysHeld.has('Equal')) {
-          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist - 85 * dt, 16, 940);
+          const zRate = Math.max(65, targetCamZoomDist * 1.35);
+          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist - zRate * dt, 16, 940);
           const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
           targetCamFocusX = safe.x;
           targetCamFocusZ = safe.z;
         }
         if (keysHeld.has('KeyX') || keysHeld.has('Minus')) {
-          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + 85 * dt, 16, 940);
+          const zRate = Math.max(65, targetCamZoomDist * 1.35);
+          targetCamZoomDist = THREE.MathUtils.clamp(targetCamZoomDist + zRate * dt, 16, 940);
           const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
           targetCamFocusX = safe.x;
           targetCamFocusZ = safe.z;
@@ -1557,6 +1676,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               targetSettlementId: null,
               waypoints: computeLandPath(l.x, l.z, l.targetX, l.targetZ),
               currentAction: l.currentAction,
+              cachedY: Math.max(0.25, groundHeightAt(l.x, l.z)),
             };
             lordLiveRoutes.set(l.id, route);
           }
@@ -1564,11 +1684,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           const isThisLordTalking = activeTalkingLordId === l.id;
           if (!isWorldEffectivelyPaused && !isThisLordTalking && timeScale > 0) {
             stepLordCampaignRoute(l, route, dt, timeScale, camp.settlements);
+            route.cachedY = Math.max(0.25, groundHeightAt(route.x, route.z));
           }
 
           const lx = route.x;
           const lz = route.z;
-          const ly = Math.max(0.25, groundHeightAt(lx, lz));
+          const ly = route.cachedY ?? Math.max(0.25, groundHeightAt(lx, lz));
           const inSight = isWithinSpottingRange(
             playerOverworldX,
             playerOverworldZ,
@@ -1580,13 +1701,15 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           const lMesh = lordMeshes.get(l.id);
           const lProxy = lordProxies.get(l.id);
           if (lMesh) {
-            lMesh.root.visible = inSight;
-            lMesh.root.position.set(lx, ly, lz);
-            lMesh.root.rotation.y = route.rotY;
-            lMesh.bodyGroup.position.y =
-              !isWorldEffectivelyPaused && !isThisLordTalking
-                ? Math.abs(Math.sin(lordWalkPhase + idx * 1.3)) * 0.11
-                : 0;
+            lMesh.root.visible = inSight && camZoomDist <= 310;
+            if (lMesh.root.visible) {
+              lMesh.root.position.set(lx, ly, lz);
+              lMesh.root.rotation.y = route.rotY;
+              lMesh.bodyGroup.position.y =
+                !isWorldEffectivelyPaused && !isThisLordTalking
+                  ? Math.abs(Math.sin(lordWalkPhase + idx * 1.3)) * 0.11
+                  : 0;
+            }
           }
           if (lProxy) {
             lProxy.position.set(lx, ly + 2.5, lz);
@@ -1618,6 +1741,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               overworldTargetPos = null;
               overworldWaypoints = [];
               (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+              marchPathDirty = true;
             } else {
               followRepathTimer += dt;
               const targetMovedDist = overworldTargetPos
@@ -1639,6 +1763,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
                 const dy = Math.max(0.0, groundHeightAt(safeGoal.x, safeGoal.z)) + 0.14;
                 destRing.position.set(safeGoal.x, dy, safeGoal.z);
                 (destRing.material as THREE.MeshBasicMaterial).opacity = 0.95;
+                marchPathDirty = true;
               }
             }
           }
@@ -1662,21 +1787,25 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             );
             if (!moveRes.blocked) {
               isPartyMoving = true;
+              marchPathDirty = true;
               playerOverworldX = THREE.MathUtils.clamp(moveRes.x, -520, 520);
               playerOverworldZ = THREE.MathUtils.clamp(moveRes.z, -390, 390);
               playerOverworldFacing = moveRes.facing;
               walkPhase += worldSimDt * 5.8 * bannerlordSpeed.terrainMultiplier;
             } else {
               overworldWaypoints.shift();
+              marchPathDirty = true;
             }
           } else {
             overworldWaypoints.shift();
+            marchPathDirty = true;
           }
 
           // Handle completion of static waypoint chain (for non-Lord targets)
           if (overworldWaypoints.length === 0 && !followingLordId) {
             overworldTargetPos = null;
             (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+            marchPathDirty = true;
             if (pendingTarget?.type === 'settlement') {
               const s = stateRef.current.campaign.settlements.find(
                 (item) => item.id === pendingTarget!.id,
@@ -1731,6 +1860,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             overworldTargetPos = null;
             overworldWaypoints = [];
             (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+            marchPathDirty = true;
           }
         }
 
@@ -1749,31 +1879,45 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           ? Math.abs(Math.sin(walkPhase)) * 0.14
           : 0;
 
-        // Animate Settlement Flags
-        camp.settlements.forEach((s) => {
-          const grp = settlementMeshes.get(s.id);
-          if (grp) {
-            const flag = grp.getObjectByName('bannerFlag') as THREE.Mesh | undefined;
-            if (flag) {
-              flag.rotation.y = Math.sin(elapsedTotal * 3 + s.x) * 0.22;
-              (flag.material as THREE.MeshStandardMaterial).color.setHex(
+        // Animate Settlement Flags using pre-cached handles (skip micro flag wave at macro zoom > 240m)
+        const animateFlags = camZoomDist <= 240;
+        for (let i = 0; i < camp.settlements.length; i++) {
+          const s = camp.settlements[i];
+          const handle = settlementFlagHandles.get(s.id);
+          if (handle) {
+            if (animateFlags) {
+              handle.flag.rotation.y = Math.sin(elapsedTotal * 3 + s.x) * 0.22;
+            }
+            if (handle.lastFaction !== s.faction) {
+              handle.lastFaction = s.faction;
+              (handle.flag.material as THREE.MeshStandardMaterial).color.setHex(
                 FACTION_INFO[s.faction].hex,
               );
             }
           }
-        });
+        }
 
-        // Smooth Exponential Damping for Bannerlord Strategic Map Camera
-        const camDamp = 1 - Math.exp(-8.5 * dt);
+        // Smooth Exponential Damping for Bannerlord Strategic Map Camera (Focus XZ, Focus Y, Yaw, Zoom)
+        const camDamp = 1 - Math.exp(-11.0 * dt);
         camFocusX = THREE.MathUtils.lerp(camFocusX, targetCamFocusX, camDamp);
         camFocusZ = THREE.MathUtils.lerp(camFocusZ, targetCamFocusZ, camDamp);
         camYaw = THREE.MathUtils.lerp(camYaw, targetCamYaw, camDamp);
         camZoomDist = THREE.MathUtils.lerp(camZoomDist, targetCamZoomDist, camDamp);
 
-        const focusY = Math.max(0, groundHeightAt(camFocusX, camFocusZ));
+        const targetFocusY = Math.max(0, groundHeightAt(camFocusX, camFocusZ));
+        camFocusY = THREE.MathUtils.lerp(camFocusY, targetFocusY, camDamp);
+
+        // Disable real-time directional shadow pass at macro continental zoom (> 290m) to save GPU vertex bandwidth
+        if (!isHeadless) {
+          const wantShadows = camZoomDist <= 290;
+          if (sunLight.castShadow !== wantShadows) {
+            sunLight.castShadow = wantShadows;
+          }
+        }
+
         const camPose = computeBannerlordCameraTransform(
           camFocusX,
-          focusY,
+          camFocusY,
           camFocusZ,
           camYaw,
           camZoomDist,
@@ -1787,7 +1931,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         // Check proximity to settlements & visible lords
         let nearestSettlement: Settlement | null = null;
         let minSettleDist = 13.0;
-        for (const s of camp.settlements) {
+        for (let i = 0; i < camp.settlements.length; i++) {
+          const s = camp.settlements[i];
           const d = Math.hypot(s.x - playerOverworldX, s.z - playerOverworldZ);
           if (d < minSettleDist) {
             minSettleDist = d;
@@ -1809,80 +1954,100 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
         }
 
-        // 60 FPS Zero-Lag Direct DOM Label Updates (Pinned 100% to 3D terrain on every frame with 0ms lag)
-        labelOverlay.style.display = 'block';
-        const cw = renderer.domElement.clientWidth || window.innerWidth;
-        const ch = renderer.domElement.clientHeight || window.innerHeight;
+        // 60 FPS Zero-Reflow Direct DOM Label Updates (Only mutates DOM properties when state changes!)
+        if (labelOverlay.style.display !== 'block') {
+          labelOverlay.style.display = 'block';
+        }
+        const cw = cachedCanvasWidth;
+        const ch = cachedCanvasHeight;
+        const scoutRadius = playerSpottingRange * 1.15;
 
-        camp.settlements.forEach((s) => {
-          const sMesh = settlementMeshes.get(s.id);
-          if (sMesh && s.type === 'VILLAGE') {
-            sMesh.visible = camZoomDist <= 230;
+        for (let i = 0; i < settlementLabelRecords.length; i++) {
+          const rec = settlementLabelRecords[i];
+          const s = camp.settlements[i] ?? rec.settlement;
+
+          // Staggered 3D Village/Castle Mesh LOD culling (only mutates visible flag when changed)
+          if (rec.sMesh) {
+            const wantMeshVis = camZoomDist <= rec.meshCullDist;
+            if (rec.meshVisible !== wantMeshVis) {
+              rec.meshVisible = wantMeshVis;
+              rec.sMesh.visible = wantMeshVis;
+            }
           }
-          const el = settlementLabelEls.get(s.id);
-          if (!el) return;
-          // Settlement LOD: Hide villages at mid zoom (>190) and hide castles at far/max zoom (>380) so only city (TOWN) names are visible at max distance!
+
+          // Settlement Label LOD: Hide villages at mid zoom (>190) and castles at far zoom (>380)
           if (!isSettlementLabelVisible(s.type, camZoomDist)) {
-            el.style.display = 'none';
-            return;
+            if (rec.visible) {
+              rec.visible = false;
+              rec.el.style.display = 'none';
+            }
+            continue;
           }
-          const worldY =
-            groundHeightAt(s.x, s.z) +
-            (s.type === 'VILLAGE' ? 4.4 : s.type === 'CASTLE' ? 6.8 : 7.4);
-          _projVec.set(s.x, worldY, s.z).project(camera);
+
+          _projVec.set(s.x, rec.worldY, s.z).project(camera);
           if (
             _projVec.z < -1 ||
             _projVec.z > 1 ||
             Math.abs(_projVec.x) > 1.05 ||
             Math.abs(_projVec.y) > 1.05
           ) {
-            el.style.display = 'none';
-            return;
+            if (rec.visible) {
+              rec.visible = false;
+              rec.el.style.display = 'none';
+            }
+            continue;
           }
 
           // Information Restriction: Show exact garrison only when within scouting range (or player-owned)
-          const gSpan = el.querySelector('[data-role="garrison-count"]');
-          if (gSpan) {
+          if (rec.gSpan) {
             const scouted =
               s.faction === 'player' ||
-              isWithinSpottingRange(
-                playerOverworldX,
-                playerOverworldZ,
-                s.x,
-                s.z,
-                playerSpottingRange * 1.15,
-              );
+              isWithinSpottingRange(playerOverworldX, playerOverworldZ, s.x, s.z, scoutRadius);
             const expectedText = scouted ? String(s.garrison) : '?';
-            if (gSpan.textContent !== expectedText) {
-              gSpan.textContent = expectedText;
+            if (rec.lastText !== expectedText) {
+              rec.lastText = expectedText;
+              rec.gSpan.textContent = expectedText;
             }
           }
 
           const sx = Math.round(((_projVec.x + 1) / 2) * cw);
           const screenY = Math.round(((-_projVec.y + 1) / 2) * ch);
-          el.style.display = 'flex';
-          el.style.transform = `translate3d(${sx}px, ${screenY}px, 0) translate(-50%, -100%)`;
-        });
+          if (!rec.visible) {
+            rec.visible = true;
+            rec.el.style.display = 'flex';
+          }
+          if (rec.lastSx !== sx || rec.lastSy !== screenY) {
+            rec.lastSx = sx;
+            rec.lastSy = screenY;
+            rec.el.style.transform = `translate3d(${sx}px, ${screenY}px, 0) translate(-50%, -100%)`;
+          }
+        }
 
         // Project Lord Coat-of-Arms & Troop Count DIRECTLY UNDERNEATH (tam altında) each visible Lord's horse!
-        camp.lords.forEach((l) => {
-          const el = lordLabelEls.get(l.id);
-          if (!el) return;
+        for (let i = 0; i < camp.lords.length; i++) {
+          const l = camp.lords[i];
+          const rec = lordLabelRecords.get(l.id);
+          if (!rec) continue;
           const route = lordLiveRoutes.get(l.id);
           const lx = route ? route.x : l.x;
           const lz = route ? route.z : l.z;
-          const inSight = isWithinSpottingRange(
-            playerOverworldX,
-            playerOverworldZ,
-            lx,
-            lz,
-            playerSpottingRange,
-          );
-          if (camZoomDist > 260 || !inSight) {
-            el.style.display = 'none';
-            return;
+          const inSight =
+            camZoomDist <= 260 &&
+            isWithinSpottingRange(
+              playerOverworldX,
+              playerOverworldZ,
+              lx,
+              lz,
+              playerSpottingRange,
+            );
+          if (!inSight) {
+            if (rec.visible) {
+              rec.visible = false;
+              rec.el.style.display = 'none';
+            }
+            continue;
           }
-          const ly = groundHeightAt(lx, lz) - 0.15;
+          const ly = (route?.cachedY ?? groundHeightAt(lx, lz)) - 0.15;
           _projVec.set(lx, ly, lz).project(camera);
           if (
             _projVec.z < -1 ||
@@ -1890,17 +2055,38 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             Math.abs(_projVec.x) > 1.05 ||
             Math.abs(_projVec.y) > 1.05
           ) {
-            el.style.display = 'none';
-            return;
+            if (rec.visible) {
+              rec.visible = false;
+              rec.el.style.display = 'none';
+            }
+            continue;
+          }
+          if (rec.troopSpan) {
+            const intel = getLordDetailedIntel(l, lx, lz);
+            const expectedHtml = `${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#fb923c]">+${intel.wounded}</span>` : ''}`;
+            if (rec.lastHtml !== expectedHtml) {
+              rec.lastHtml = expectedHtml;
+              rec.troopSpan.innerHTML = expectedHtml;
+            }
+            rec.troopSpan.className = `font-display font-extrabold text-[12px] ${
+              l.isAtWarWithPlayer ? 'text-[#fca5a5]' : 'text-[#86efac]'
+            } hud-stroke tracking-tight`;
           }
           const sx = Math.round(((_projVec.x + 1) / 2) * cw);
           const sy = Math.round(((-_projVec.y + 1) / 2) * ch);
-          el.style.display = 'flex';
-          el.style.transform = `translate3d(${sx}px, ${sy}px, 0) translate(-50%, 6px)`;
-        });
+          if (!rec.visible) {
+            rec.visible = true;
+            rec.el.style.display = 'flex';
+          }
+          if (rec.lastSx !== sx || rec.lastSy !== sy) {
+            rec.lastSx = sx;
+            rec.lastSy = sy;
+            rec.el.style.transform = `translate3d(${sx}px, ${sy}px, 0) translate(-50%, 6px)`;
+          }
+        }
 
         // Project Player Coat-of-Arms & Troop Count DIRECTLY UNDERNEATH (tam altında) the Player's horse!
-        const ppy = groundHeightAt(playerOverworldX, playerOverworldZ) - 0.15;
+        const ppy = py - 0.15;
         _projVec.set(playerOverworldX, ppy, playerOverworldZ).project(camera);
         if (
           _projVec.z >= -1 &&
@@ -1910,20 +2096,32 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         ) {
           const sx = Math.round(((_projVec.x + 1) / 2) * cw);
           const sy = Math.round(((-_projVec.y + 1) / 2) * ch);
-          playerPartyEl.style.display = 'flex';
-          playerPartyEl.style.transform = `translate3d(${sx}px, ${sy}px, 0) translate(-50%, 6px)`;
-          const countSpan = playerPartyEl.querySelector('#player-party-count');
-          if (countSpan) {
-            countSpan.textContent =
-              camp.prisoners > 0 ? `${totalTroops} ★${camp.prisoners}` : String(totalTroops);
+          if (!playerLabelVisible) {
+            playerLabelVisible = true;
+            playerPartyEl.style.display = 'flex';
           }
-        } else {
+          if (playerLabelLastSx !== sx || playerLabelLastSy !== sy) {
+            playerLabelLastSx = sx;
+            playerLabelLastSy = sy;
+            playerPartyEl.style.transform = `translate3d(${sx}px, ${sy}px, 0) translate(-50%, 6px)`;
+          }
+          if (playerPartyCountSpan) {
+            const expectedPlayerText =
+              camp.prisoners > 0 ? `${totalTroops} ★${camp.prisoners}` : String(totalTroops);
+            if (playerLabelLastText !== expectedPlayerText) {
+              playerLabelLastText = expectedPlayerText;
+              playerPartyCountSpan.textContent = expectedPlayerText;
+            }
+          }
+        } else if (playerLabelVisible) {
+          playerLabelVisible = false;
           playerPartyEl.style.display = 'none';
         }
 
-        // Sync campaign HUD telemetry for bottom dock
+        // Sync campaign HUD telemetry for bottom dock (throttled during active zoom to avoid React render contention)
+        const isActivelyZooming = Math.abs(targetCamZoomDist - camZoomDist) > 1.5;
         hudSyncTimer += dt;
-        if (hudSyncTimer >= 0.08) {
+        if (hudSyncTimer >= (isActivelyZooming ? 0.18 : 0.1)) {
           hudSyncTimer = 0;
           const followedLordObj = followingLordId
             ? camp.lords.find((item) => item.id === followingLordId)

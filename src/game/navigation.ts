@@ -35,11 +35,15 @@ export function isNavigableLandAt(x: number, z: number): boolean {
   if (isPointOnBridge(x, z)) {
     return true;
   }
-  // Reject isolated SW ocean archipelago & Perassic Sea islands (surrounded by water with no bridge)
+  // Reject isolated SW ocean archipelago & the 3 Perassic Sea islands (surrounded by water with no bridge)
   if (x < -290 && z > 125) {
     return false;
   }
-  if (x > -215 && x < 65 && z > 162 && z < 222) {
+  const onPerassicIsland =
+    Math.hypot((x + 172) / 18.5, (z - 178) / 11.5) <= 1.0 ||
+    Math.hypot((x + 118) / 17.5, (z - 196) / 11.5) <= 1.0 ||
+    Math.hypot((x + 32) / 16.5, (z - 206) / 10.5) <= 1.0;
+  if (onPerassicIsland) {
     return false;
   }
   // Macro water check: rejects Great Western Ocean, Perassic Sea, Gulf of Varcheg/Omor, Varnovapol Fjord, Battania Lake, Khuzait Lake
@@ -154,9 +158,11 @@ const LAND_NAV_NODES: NavPoint[] = [
   { x: 215, z: 188 },   // 55: Danustica-Husn Fulq Eastern Isthmus Pass
   { x: 225, z: 218 },   // 56: Husn Fulq (South of Eastern Isthmus)
   // Aserai Southern Coast (South of Perassic Sea)
-  { x: -108, z: 248 },  // 57: Sanala
-  { x: 2, z: 268 },     // 58: Qasira
-  { x: 122, z: 262 },   // 59: Razih
+  { x: -198, z: 218 },  // 57: Tubilis Castle (Coastal pass between Quyaz & Askar)
+  { x: -168, z: 238 },  // 58: Askar
+  { x: -108, z: 248 },  // 59: Sanala
+  { x: 2, z: 268 },     // 60: Qasira
+  { x: 122, z: 262 },   // 61: Razih
 ];
 
 // Precompute adjacency list between LAND_NAV_NODES that have clear land segments

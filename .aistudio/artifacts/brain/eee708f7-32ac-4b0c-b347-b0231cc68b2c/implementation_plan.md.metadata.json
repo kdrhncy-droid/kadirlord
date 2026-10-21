@@ -1,6 +1,0 @@
-{
-  "summary": "Kapsamlı Kalradya Harita Mimarisi, Akıcı Kamera, Pürüzsüz LOD Etiketleme ve Aserai Düzeltme Planı:\n- Aserai & Ortysia-Quyaz dar kara boğazı ve taş köprü geçişinin doğal çöl/kumtaşı coğrafyasıyla yeniden tasarlanması (çimen köprü hatasının tamamen kaldırılması)\n- Harita yakınlaştırıldığında deniz/nehir ve arazi dokusunun yüksek çözünürlüklü prosedürel dalga, kum ve çakıl detay kaplamalarıyla pürüzsüzleştirilmesi\n- Karakter yakınlaşmasında dünyanın geniş ve destansı hissettirilmesi, orantılı ölçeklendirme\n- Uzak kamera görünümünde yalnızca Şehir ve Kalelerin gösterilmesi, Köylerin yalnızca yakınlaşınca belirmesi (etiket çakışmalarının önlenmesi)\n- WASD ve fare ile gezinirken 2D yerleşim etiketlerinin 60 FPS requestAnimationFrame ile doğrudan DOM dönüşümüyle sıfır gecikme (0ms jitter) ile kilitlenmesi\n- Fare tekerleği (scroll) ile yakınlaştırma/uzaklaştırmanın orantılı/üstel hızlandırılarak 6-8 tıkta tüm kıtayı kapsayacak akıcılığa kavuşturulması\n- Dokun-ve-git (click-to-move) sisteminde tıklandığında zamanın otomatik olarak 1x açılarak yürünmesi ve hedefe varıldığında etkileşim ekranının doğrudan açılması\n- Modüler, bağımsız dosya mimarisi ve temiz Bannerlord UI disiplini",
-  "updatedAt": "2026-10-18T06:25:56.895099930Z",
-  "requestFeedback": true,
-  "userFacing": true
-}

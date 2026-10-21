@@ -67,6 +67,14 @@ import {
   isWithinSpottingRange,
   stepLordCampaignRoute,
 } from './campaignSystem.ts';
+import {
+  getLordDNA,
+  LORD_DNA_PRESETS,
+  PLAYER_DEFAULT_DNA,
+  generateRandomDNA,
+  applyMorphDNAToRig,
+} from './characterMorph.ts';
+import { createCharacterRig } from './characterRig.ts';
 
 test('initial campaign state creates balanced troops, 211 authentic continental settlements (51 Towns with 2 villages each, 29 Castles with 1 village each) on flat dry plateaus, and 9 lords', () => {
   const state = createInitialCampaignState('Komutan Alparslan', 'noble');
@@ -633,6 +641,470 @@ test('Bannerlord marketplace trade system: buying weapons/shields/armor adds to 
   assert.ok(unequipRes.nextState.equipment?.HEAD.includes('Başlıksız'));
   assert.equal(unequipRes.nextState.inventoryItems?.length, initialItemCount + 1);
 });
+
+test('all 211 settlements including Tubilis Castle and Husn Deltası are on navigable land and reachable within arrival radius', () => {
+  const state = createInitialCampaignState();
+  const tubilis = state.settlements.find((s) => s.id === 'tubilis_castle');
+  const husnDelta = state.settlements.find((s) => s.id === 'tubilis_castle_village_1');
+  assert.ok(tubilis, 'Tubilis Castle exists');
+  assert.ok(husnDelta, 'Husn Deltası bound village exists');
+  assert.equal(isNavigableLandAt(tubilis.x, tubilis.z), true);
+  assert.equal(isNavigableLandAt(husnDelta.x, husnDelta.z), true);
+
+  for (const s of state.settlements) {
+    assert.equal(
+      isNavigableLandAt(s.x, s.z),
+      true,
+      `Settlement ${s.name} (${s.id}) center must be on navigable land`,
+    );
+    const gateGoal = snapToNearestLand(s.x, s.z + 1.2);
+    const distFromCenter = Math.hypot(gateGoal.x - s.x, gateGoal.z - s.z);
+    const arrivalR = getSettlementArrivalRadius(s.type);
+    assert.ok(
+      distFromCenter <= arrivalR,
+      `Settlement ${s.name} (${s.id}) gate target must be within arrivalRadius (${distFromCenter.toFixed(2)} <= ${arrivalR})`,
+    );
+  }
+});
+
+import {
+  computeFormationSlots,
+  evaluateDirectionalParry,
+  SpatialHashGrid,
+} from './tacticalFormation.ts';
+import {
+  createWarHorseRig,
+  deriveRigVisualOptionsFromEquipment,
+} from './characterRig.ts';
+
+test('tacticalFormation: computeFormationSlots produces distinct geometry for LINE, SHIELD_WALL, LOOSE, and WEDGE', () => {
+  const anchor = { x: 0, z: 0, facing: 0 };
+  const lineSlots = computeFormationSlots(6, anchor, 'LINE');
+  const shieldWallSlots = computeFormationSlots(6, anchor, 'SHIELD_WALL');
+  const looseSlots = computeFormationSlots(6, anchor, 'LOOSE');
+  const wedgeSlots = computeFormationSlots(6, anchor, 'WEDGE');
+
+  assert.equal(lineSlots.length, 6);
+  assert.equal(shieldWallSlots.length, 6);
+  assert.equal(looseSlots.length, 6);
+  assert.equal(wedgeSlots.length, 6);
+
+  // Shield wall spacing is tighter than line spacing, which is tighter than loose spacing
+  const swSpread = Math.abs(shieldWallSlots[1].x - shieldWallSlots[0].x);
+  const lineSpread = Math.abs(lineSlots[1].x - lineSlots[0].x);
+  const looseSpread = Math.abs(looseSlots[1].x - looseSlots[0].x);
+  assert.ok(swSpread < lineSpread, 'Shield wall rank spacing should be tighter than Line');
+  assert.ok(lineSpread < looseSpread, 'Line rank spacing should be tighter than Loose');
+
+  // Wedge rank 0 has 1 lead horseman at file 0
+  assert.equal(wedgeSlots[0].rank, 0);
+  assert.equal(wedgeSlots[0].file, 0);
+  assert.equal(wedgeSlots[1].rank, 1);
+  assert.equal(wedgeSlots[2].rank, 1);
+});
+
+test('tacticalFormation: evaluateDirectionalParry enforces 4-directional parry and shield wall rules', () => {
+  // Shield blocks any direction
+  const shieldBlock = evaluateDirectionalParry({
+    attackDir: 'left',
+    defenderBlockDir: 'up',
+    hasShield: true,
+    isBlocking: true,
+    isFacingAttacker: true,
+  });
+  assert.equal(shieldBlock.blocked, true);
+  assert.equal(shieldBlock.blockType, 'SHIELD');
+  assert.equal(shieldBlock.damageMultiplier, 0);
+
+  // Weapon parry succeeds on matching direction
+  const matchingParry = evaluateDirectionalParry({
+    attackDir: 'right',
+    defenderBlockDir: 'right',
+    hasShield: false,
+    isBlocking: true,
+    isFacingAttacker: true,
+  });
+  assert.equal(matchingParry.blocked, true);
+  assert.equal(matchingParry.blockType, 'WEAPON_PARRY');
+
+  // Weapon parry fails on wrong direction
+  const wrongParry = evaluateDirectionalParry({
+    attackDir: 'up',
+    defenderBlockDir: 'down',
+    hasShield: false,
+    isBlocking: true,
+    isFacingAttacker: true,
+  });
+  assert.equal(wrongParry.blocked, false);
+  assert.ok(wrongParry.damageMultiplier > 0);
+});
+
+test('tacticalFormation: SpatialHashGrid performs O(N) radius and nearest queries accurately', () => {
+  const grid = new SpatialHashGrid<{ id: string; x: number; z: number; team: number; alive: boolean }>(4.0);
+  const agents = [
+    { id: 'a1', x: 0, z: 0, team: 1, alive: true },
+    { id: 'e1', x: 2.1, z: 1.2, team: 2, alive: true },
+    { id: 'e2', x: 18.0, z: -15.0, team: 2, alive: true },
+    { id: 'dead', x: 0.5, z: 0.5, team: 2, alive: false },
+  ];
+  grid.rebuild(agents);
+
+  const nearby = grid.queryRadius(0, 0, 3.5);
+  assert.equal(nearby.length, 2); // a1 and e1 (dead is ignored, e2 is far)
+
+  const nearestEnemy = grid.findNearest(0, 0, 25, (c) => c.team === 2);
+  assert.ok(nearestEnemy);
+  assert.equal(nearestEnemy.agent.id, 'e1');
+});
+
+test('characterRig: deriveRigVisualOptionsFromEquipment and createWarHorseRig work cleanly', () => {
+  const visuals = deriveRigVisualOptionsFromEquipment({
+    HEAD: 'İmparatorluk Katafrakt Miğferi (+26 Baş Zırhı)',
+    BODY: 'İmparatorluk Katafrakt Zırhı (+48 Gövde Zırhı)',
+    WEAPON1: 'Çift Elli Battaniya Falx (+42 Kesici)',
+    WEAPON2: 'Boş Yuva',
+  });
+  assert.equal(visuals.helmetType, 'IMPERIAL_VISOR');
+  assert.equal(visuals.armorTier, 'PLATE');
+  assert.equal(visuals.weaponType, 'TWO_HANDED_SWORD');
+  assert.equal(visuals.shieldType, 'NONE');
+
+  const horse = createWarHorseRig({ armoredBarding: true });
+  assert.ok(horse.root);
+  assert.ok(horse.riderMount);
+  assert.ok(horse.frontLeftHip);
+  assert.ok(horse.backRightKnee);
+});
+
+import { computeZoomStep } from './mapGen.ts';
+
+test('camera zoom and pitch trajectory are C2-smooth with zero velocity kink across 16m..940m', () => {
+  // Check that pitch rate of change has no sudden discontinuity across zoom = 247m (t = 0.25)
+  const step = 4;
+  let prevDeltaPitch = 0;
+  for (let z = 20; z <= 900; z += step) {
+    const p1 = computeBannerlordCameraTransform(0, 4.0, 0, 0, z - step).pitchRad;
+    const p2 = computeBannerlordCameraTransform(0, 4.0, 0, 0, z).pitchRad;
+    const deltaPitch = p2 - p1;
+    assert.ok(deltaPitch > 0, `Pitch must monotonically increase with zoom at z=${z}`);
+    if (prevDeltaPitch > 0) {
+      const ratio = deltaPitch / prevDeltaPitch;
+      assert.ok(
+        ratio > 0.95 && ratio < 1.05,
+        `Pitch angular velocity must not jump abruptly at z=${z} (ratio=${ratio.toFixed(4)})`,
+      );
+    }
+    prevDeltaPitch = deltaPitch;
+  }
+
+  // Verify computeZoomStep handles pixel, line, and page wheel events smoothly
+  const zInPixel = computeZoomStep(100, -60, 0);
+  const zOutLine = computeZoomStep(100, 3, 1);
+  assert.ok(zInPixel < 100 && zInPixel > 75);
+  assert.ok(zOutLine > 100 && zOutLine < 135);
+  assert.equal(computeZoomStep(16, -500, 0), 16);
+  assert.equal(computeZoomStep(940, 500, 0), 940);
+});
+
+import {
+  BattleMemoryPool,
+  MAX_CORPSE_POOL,
+  MAX_PROJECTILE_POOL,
+  MAX_SOLDIER_POOL,
+} from './battleEnginePool.ts';
+
+test('BattleMemoryPool: Ahead-of-Time Pre-Allocation initializes 10,000-arrow pool, 10,000-corpse pool, 1,000-soldier SoA, and 3D Siege Assault cleanly', () => {
+  const pool = new BattleMemoryPool();
+
+  // 1. Pre-warm all 5 stages (10,000 corpses, 10,000 projectiles, 1,024 soldiers, SpatialHashGrid, 3D Siege)
+  const reports = pool.prewarmMemoryPages();
+  assert.equal(reports.length, 5);
+  assert.equal(reports[4].progressPercent, 100);
+  assert.equal(reports[4].corpseSlotsReady, MAX_CORPSE_POOL);
+  assert.equal(reports[4].arrowSlotsReady, MAX_PROJECTILE_POOL);
+  assert.equal(reports[4].soldierSlotsReady, MAX_SOLDIER_POOL);
+  assert.equal(pool.isPrewarmed, true);
+
+  // 2. Spawn 500v500 Epic Siege Army (1,000 soldiers)
+  pool.spawnBattleArmies('EPIC_500', true);
+  assert.equal(pool.soldierActiveCount, 1000);
+  assert.equal(pool.alliesAliveCount, 500);
+  assert.equal(pool.enemiesAliveCount, 500);
+
+  // 3. Test 10,000-arrow pool O(1) ring buffer
+  const arrowSlot = pool.spawnPooledProjectile(0, 1.5, -10, 0, 4, 24, 1, 0);
+  assert.equal(arrowSlot, 0);
+  assert.equal(pool.projActiveTotal, 1);
+  assert.equal(pool.projInFlightCount, 1);
+
+  // 4. Test 10,000-corpse pool O(1) ring buffer
+  const corpseSlot = pool.recordFallenCorpse(4, 0.08, 2, 1.2, 2);
+  assert.equal(corpseSlot, 0);
+  assert.equal(pool.corpseCount, 1);
+
+  // 5. Verify 3D Siege Assault engines (Battering Ram, Siege Tower, 2 Catapults)
+  assert.equal(pool.siege.enabled, true);
+  assert.equal(pool.siege.gateBreached, false);
+  assert.equal(pool.siege.towerDocked, false);
+
+  // Advance simulation ticks so battering ram and siege tower reach the castle wall and breach the gate
+  for (let i = 0; i < 320; i++) {
+    pool.stepSimulation(0.1, 0, 12, Math.PI, 'CHARGE', 'LINE', true, {
+      x: 0,
+      z: 10,
+      facing: Math.PI,
+    });
+  }
+
+  assert.equal(pool.siege.towerDocked, true, 'Siege tower should reach the wall and drop its drawbridge');
+  assert.equal(pool.siege.gateBreached, true, 'Battering ram should breach the main castle gate');
+  assert.ok(pool.corpseCount > 1, 'Combat and catapult volleys should produce casualties recorded in CorpsePool');
+  assert.ok(pool.projActiveTotal > 5, 'Archers and catapults should fire pooled projectiles without GC');
+});
+
+import {
+  calculateSettlementLoyaltyAndFood,
+  calculateWarDesireAndTribute,
+  computeWeatherAndAutoBattleModifiers,
+  createInitialKingdomMacroState,
+  evaluateStateDrivenKingdomDestruction,
+  generateSettlementClaimantBallot,
+  getSafeRelationBetweenClans,
+  resolveClanLeaderOrRegent,
+  resolveKingdomCouncilVote,
+} from './kingdomSystem.ts';
+
+test('KingdomSystem: DefaultDiplomacyModel WarDesireRatio, Fief-Power Paradox, and Tribute calculation work accurately', () => {
+  const campaign = createInitialCampaignState('Komutan Demirhan', 'noble');
+  const macro = createInitialKingdomMacroState(campaign);
+
+  const fiefs10 = campaign.settlements.filter((s) => s.type === 'TOWN').slice(0, 10);
+  const fiefs5 = campaign.settlements.filter((s) => s.type === 'TOWN').slice(10, 15);
+
+  // Equal military strength (5000 vs 5000), but Kingdom A has 10 towns while Kingdom B has 5 towns
+  const report = calculateWarDesireAndTribute({
+    factionA: 'player',
+    factionB: 'empire',
+    clansA: [{ ...macro.clans[0], warPartyCount: 5, totalStrength: 5000 }],
+    clansB: [{ ...macro.clans[1], warPartyCount: 5, totalStrength: 5000 }],
+    fiefsA: fiefs10,
+    fiefsB: fiefs5,
+    useImprovedArchitecture: false,
+  });
+
+  assert.equal(report.fiefPowerParadoxTriggered, true, 'Fief-Power Paradox should trigger when equal-strength kingdom owns 2x fiefs');
+  assert.ok(report.warDesireRatioA < report.warDesireRatioB, 'Kingdom with more fiefs has lower WarDesireRatio due to larger denominator');
+  assert.ok(report.dailyTributeFromAToB > 0, 'Kingdom A with 10 towns pays tribute to Kingdom B with 5 towns');
+
+  // Test Fiefless Desperation in Vanilla vs Improved Architecture cap
+  const fieflessVanilla = calculateWarDesireAndTribute({
+    factionA: 'player',
+    factionB: 'battania',
+    clansA: [{ ...macro.clans[0], warPartyCount: 6, totalStrength: 8000 }],
+    clansB: [{ ...macro.clans[3], warPartyCount: 1, totalStrength: 600 }],
+    fiefsA: fiefs10,
+    fiefsB: [],
+    useImprovedArchitecture: false,
+  });
+  const fieflessImproved = calculateWarDesireAndTribute({
+    factionA: 'player',
+    factionB: 'battania',
+    clansA: [{ ...macro.clans[0], warPartyCount: 6, totalStrength: 8000 }],
+    clansB: [{ ...macro.clans[3], warPartyCount: 1, totalStrength: 600 }],
+    fiefsA: fiefs10,
+    fiefsB: [],
+    useImprovedArchitecture: true,
+  });
+
+  assert.ok(fieflessVanilla.dailyTributeFromAToB > 0, 'Vanilla bug: superpower is asked to pay tribute to 0-fief kingdom');
+  assert.ok(fieflessImproved.dailyTributeFromAToB < 0, 'Improved architecture: superpower receives tribute from defeated 0-fief kingdom');
+});
+
+test('KingdomSystem: SettlementClaimantDecision.CalculateMeritOfOutcome, distance damping (^0.25 vs ^0.5), and Flexible Ethics threshold fix', () => {
+  const campaign = createInitialCampaignState('Komutan Demirhan', 'noble');
+  const macro = createInitialKingdomMacroState(campaign);
+  const targetTown = campaign.settlements.find((s) => s.id === 'poros')!;
+
+  const ballot = generateSettlementClaimantBallot({
+    settlement: targetTown,
+    kingdomClans: macro.clans.slice(0, 4),
+    allSettlements: campaign.settlements,
+    conquerorClanId: 'clan-player',
+    useImprovedArchitecture: true,
+  });
+
+  assert.equal(ballot.candidates.length, 3, 'Exactly top 3 clans appear on the fief election ballot');
+  const playerCand = ballot.candidates.find((c) => c.clanId === 'clan-player');
+  assert.ok(playerCand, 'Conqueror player clan is included in candidates');
+  assert.equal(playerCand.conquerorBonus, 50, 'Conqueror receives +50 merit bonus (num10)');
+  assert.equal(playerCand.rulerBonus, 100, 'Ruler receives +100 merit bonus (num11)');
+  assert.equal(playerCand.cultureMatchBonus, 60, 'Matching culture receives +60 bonus in improved architecture');
+
+  // Flexible Ethics Perk Bug (Vanilla vs Improved)
+  const voteVanilla = resolveKingdomCouncilVote({
+    election: ballot,
+    chosenClanId: ballot.candidates[0].clanId,
+    influenceTier: 1,
+    hasFlexibleEthicsPerk: true,
+    hasRoyalPrivilegePolicy: false,
+    isRulerOverride: false,
+    useImprovedArchitecture: false,
+  });
+  const voteImproved = resolveKingdomCouncilVote({
+    election: ballot,
+    chosenClanId: ballot.candidates[0].clanId,
+    influenceTier: 1,
+    hasFlexibleEthicsPerk: true,
+    hasRoyalPrivilegePolicy: false,
+    isRulerOverride: false,
+    useImprovedArchitecture: true,
+  });
+
+  assert.equal(voteVanilla.influenceSpent, 17);
+  assert.equal(voteVanilla.flexibleEthicsBugTriggered, true);
+  assert.equal(voteVanilla.relationGained, 0, 'Vanilla hardcoded >=20 check fails at 17 influence');
+
+  assert.equal(voteImproved.influenceSpent, 17);
+  assert.equal(voteImproved.flexibleEthicsBugTriggered, false);
+  assert.ok(voteImproved.relationGained > 0, 'Normalized tier check awards relation and Charm XP even at 17 influence');
+});
+
+test('KingdomSystem: Null-Safe Regent Succession, State-Driven Fiefless Destruction, Loyalty/Food & Weather Modifiers', () => {
+  const campaign = createInitialCampaignState('Komutan Demirhan', 'noble');
+  const macro = createInitialKingdomMacroState(campaign);
+
+  // 1. Null-Safe Regent when clan leader and all adult heirs are eliminated
+  const wipedClan = {
+    ...macro.clans[0],
+    succession: {
+      leaderId: '',
+      leaderName: '',
+      isRegentActive: false,
+      regentName: null,
+      heirQueue: [{ id: 'child-1', name: 'Küçük Şehzade', age: 9, isAdult: false }],
+    },
+  };
+  const safeSucc = resolveClanLeaderOrRegent(wipedClan);
+  assert.equal(safeSucc.isRegentActive, true, 'Should appoint a Regent when only underage heirs exist');
+  assert.ok(safeSucc.leaderName.includes('Naip'), 'Regent name must be non-empty');
+  assert.equal(typeof getSafeRelationBetweenClans(wipedClan, null), 'number', 'Null clan relation check must never throw');
+
+  // 2. State-Driven Fiefless Kingdom Destruction
+  const noBattaniaFiefs = campaign.settlements.map((s) =>
+    s.faction === 'battania' ? { ...s, faction: 'player' as const } : s,
+  );
+  const destCheck = evaluateStateDrivenKingdomDestruction({
+    settlements: noBattaniaFiefs,
+    clans: macro.clans,
+    alreadyDestroyed: [],
+    daysElapsed: 10,
+  });
+  assert.equal(destCheck.newlyDestroyedFactions.includes('battania'), true);
+  assert.ok(destCheck.independentClansCreated >= 1);
+
+  // 3. Loyalty, Culture Penalty, Forgiveness of Debts & Weather Modifiers
+  const town = campaign.settlements.find((s) => s.id === 'zeonica')!;
+  const mismatchLoyalty = calculateSettlementLoyaltyAndFood({
+    settlement: town,
+    ownerCulture: 'vlandia',
+    boundVillages: [],
+    activePolicies: ['FORGIVENESS_OF_DEBTS'],
+    isBesieged: true,
+  });
+  assert.equal(mismatchLoyalty.cultureMismatchPenalty, -3.0);
+  assert.equal(mismatchLoyalty.policyLoyaltyBonus, 2.0);
+
+  const snowMods = computeWeatherAndAutoBattleModifiers('SNOW', true);
+  assert.equal(snowMods.siegePreparationTimeMultiplier, 2.0);
+  assert.equal(snowMods.cavalrySpeedAndAccelMultiplier, 0.85);
+  assert.equal(snowMods.rangedMissileSpeedMultiplier, 0.8);
+  assert.equal(snowMods.captainPerkTier8BonusPct, 3);
+});
+
+test('Faz 6: Bannerlord Low-Poly Character & Lord Customization Engine', () => {
+  // 1. Verify all 9 Historical Lords have authentic distinct DNA presets
+  const canonicalLords = [
+    'lord-rhagaea',
+    'lord-derthert',
+    'lord-caladog',
+    'lord-raganvad',
+    'lord-monchug',
+    'lord-unqid',
+    'lord-garios',
+    'lord-lucon',
+    'lord-kargi',
+  ];
+
+  for (const lordId of canonicalLords) {
+    const dna = LORD_DNA_PRESETS[lordId];
+    assert.ok(dna, `Preset for ${lordId} must exist`);
+    assert.ok(dna.height >= 0.85 && dna.height <= 1.25, `${lordId} height out of bounds`);
+    assert.ok(dna.build >= 0.75 && dna.build <= 1.45, `${lordId} build out of bounds`);
+    assert.ok(dna.skinTone.startsWith('#'), `${lordId} skin tone must be hex color`);
+    assert.ok(dna.hairColor.startsWith('#'), `${lordId} hair color must be hex color`);
+  }
+
+  // Rhagaea must have female gender and royal braid
+  assert.equal(LORD_DNA_PRESETS['lord-rhagaea'].gender, 'female');
+  assert.equal(LORD_DNA_PRESETS['lord-rhagaea'].hairStyle, 'royal_braid');
+
+  // Caladog must have battanian woad paint and eye slash scar
+  assert.equal(LORD_DNA_PRESETS['lord-caladog'].warPaint, 'woad_lines');
+  assert.equal(LORD_DNA_PRESETS['lord-caladog'].scar, 'eye_slash');
+
+  // Raganvad must have Viking braided beard and Nordic hair
+  assert.equal(LORD_DNA_PRESETS['lord-raganvad'].beardStyle, 'braided_viking');
+
+  // 2. getLordDNA fallback & lookup
+  const derthertDNA = getLordDNA('lord-derthert', 'vlandia');
+  assert.equal(derthertDNA.hairStyle, 'short_parted');
+  assert.equal(derthertDNA.culture, 'vlandia');
+
+  const unknownDNA = getLordDNA('unknown-rebel', 'khuzait');
+  assert.ok(unknownDNA, 'Fallback DNA must be generated for unknown lord');
+  assert.equal(unknownDNA.culture, 'khuzait');
+
+  // 3. Procedural Random DNA generator checks
+  const randomSturgian = generateRandomDNA('sturgia', 'male');
+  assert.equal(randomSturgian.culture, 'sturgia');
+  assert.equal(randomSturgian.gender, 'male');
+  assert.ok(randomSturgian.height >= 0.85 && randomSturgian.height <= 1.25);
+
+  const randomFemaleAserai = generateRandomDNA('aserai', 'female');
+  assert.equal(randomFemaleAserai.gender, 'female');
+  assert.equal(randomFemaleAserai.beardStyle, 'clean_shaven', 'Females must have clean_shaven beardStyle');
+
+  // 4. Live 3D Rig Morphing Transformation
+  const rig = createCharacterRig({
+    skinTone: '#ffffff',
+    weaponType: 'ONE_HANDED_SWORD',
+    shieldType: 'ROUND_SHIELD',
+    helmetType: 'NONE',
+    armorTier: 'CHAINMAIL',
+  });
+
+  // Apply Caladog DNA to rig
+  applyMorphDNAToRig(rig, LORD_DNA_PRESETS['lord-caladog']);
+
+  assert.equal(rig.materials.skin.color.getHexString().toLowerCase(), LORD_DNA_PRESETS['lord-caladog'].skinTone.replace('#', '').toLowerCase());
+  assert.ok(rig.head.getObjectByName('Custom_Procedural_Beard'), 'Caladog full beard must be attached to head');
+  assert.ok(rig.head.getObjectByName('Face_Decals'), 'Caladog scars & woad paint decals must be attached to head');
+  assert.ok(rig.hairGroup.getObjectByName('Hair_nordic_braids'), 'Nordic braids hair must be attached');
+
+  // 5. Campaign State integration
+  const camp = createInitialCampaignState('Komutan Demirhan', 'noble');
+  assert.ok(camp.playerMorphDNA, 'Player morph DNA must be initialized');
+  assert.equal(camp.playerMorphDNA.gender, PLAYER_DEFAULT_DNA.gender);
+
+  const rhagaeaInCamp = camp.lords.find((l: any) => l.id === 'lord-rhagaea');
+  assert.ok(rhagaeaInCamp?.morphDNA, 'Rhagaea must have morphDNA initialized in campaign');
+  assert.equal(rhagaeaInCamp.morphDNA?.gender, 'female');
+
+  const derthertInCamp = camp.lords.find((l: any) => l.id === 'lord-derthert');
+  assert.ok(derthertInCamp?.morphDNA, 'Derthert must have morphDNA initialized in campaign');
+  assert.equal(derthertInCamp.morphDNA?.hairStyle, 'short_parted');
+});
+
 
 
 
