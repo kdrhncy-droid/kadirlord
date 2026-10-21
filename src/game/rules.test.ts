@@ -80,7 +80,7 @@ test('initial campaign state creates balanced troops, 211 authentic continental 
   const state = createInitialCampaignState('Komutan Alparslan', 'noble');
   assert.equal(state.playerName, 'Komutan Alparslan');
   assert.equal(getTotalTroops(state.roster), 17);
-  assert.equal(state.lords.length, 9);
+  assert.equal(state.lords.length, 40);
   assert.ok(calculatePartyStrength(state.roster) > 250);
 
   const towns = state.settlements.filter((s) => s.type === 'TOWN');

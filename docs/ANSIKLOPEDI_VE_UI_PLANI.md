@@ -686,10 +686,48 @@ Unqid      58  RULER        Aserai Sultanlığı        Tubilis Köyü yerleşim
 
 ---
 
-## 14. SONRAKİ ADIM (karar bekliyor)
+## 14. FAZ 0b — DÜNYA NÜFUSU (TAMAMLANDI ✅)
 
-1. **Kahraman sayısı:** 9 mevcut lord kalsın mı, yoksa krallık başına 2–3 klan + 30–50 yeni
-   lord/leydi üretilsin mi? (Ansiklopedi ve aile ağacı bu sayıya göre dolu/boş görünür.)
-2. **Üretilen lordlar simüle edilsin mi?** Haritada ordularıyla dolaşan gerçek partiler mi olsun,
-   yoksa şimdilik yalnızca ansiklopedi kaydı olarak mı dursun?
-3. Bunlar netleşince **Faz 1 (Ansiklopedi kabuğu)** başlar.
+### Kararlar (onaylandı)
+
+| Konu | Karar |
+| :--- | :--- |
+| Kahraman sayısı | **~40** (9 elle yazılmış + 31 üretilen) |
+| Simülasyon | **Gerçek partiler** — haritada dolaşır, savaşa girer, "son görüldü" gerçekten değişir |
+
+### Uygulama
+
+- **`src/game/heroGen.ts` (yeni):** kültür başına isim/unvan/sancak havuzları
+  (`empire, vlandia, battania, sturgia, khuzait, aserai, bandits`), deterministik
+  **izole** isim seçimi (aynı kültürde tekrar yok), 16–30 kişilik gerçek partiler.
+- **`createInitialCampaignState`:** `[...elle yazılan, ...generateLordParties()]`
+  → tek satırlık entegrasyon; `LordAgent` şeması değişmedi.
+- **`rules.test.ts`:** lord sayısı beklentisi `9 → 40` güncellendi.
+
+### Ölçüm
+
+```
+40 kahraman · 211 yerleşim · 905 toplam asker
+faksiyon: empire 10 · vlandia 6 · battania 5 · sturgia 5 · khuzait 5 · aserai 5 · bandits 4
+isim tekrarı: yok        benzersiz id: 40/40
+13 leydi (LADY), 13 hükümdar sınıfı (RULER)
+kampanya kurulumu: 1.7 ms      40 lord için A* toplam: 9.4 ms (0.24 ms/lord)
+```
+
+### Etki analizi
+
+| Alan | Etki | Durum |
+| :--- | :--- | :--- |
+| Harita (WorldCanvas) | Lord başına 1 atlı model + 1 DOM etiketi → **31 ek nesne** | ✅ kabul edilebilir |
+| Navigasyon (A*) | 40 yol, toplam 9.4 ms | ✅ |
+| Kampanya tick'i | `lords.map` → 40 kayıt | ✅ |
+| Testler | 28/28 geçiyor | ✅ |
+| Build | `vite build` başarılı | ✅ |
+
+---
+
+## 15. SONRAKİ ADIM
+
+**Faz 1 — Ansiklopedi kabuğu:**
+`N` tuşu, `EncyclopediaModal`, breadcrumb + gezinme yığını, ana sayfa kart karuseli,
+arama kutusu. Veri tarafı hazır (`buildHeroRegistry` + `searchHeroes`).

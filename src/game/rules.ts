@@ -11,6 +11,7 @@ import {
   getLordDNA,
   PLAYER_DEFAULT_DNA,
 } from './characterMorph.ts';
+import { generateLordParties } from './heroGen.ts';
 
 export type FactionId =
   | 'player'
@@ -2733,7 +2734,7 @@ export function createInitialCampaignState(
     prisoners: 2,
     battlesWon: 0,
     settlements,
-    lords: lords.map((l) => ({
+    lords: [...lords, ...generateLordParties(settlements, new Set(lords.map((l) => l.id)))].map((l) => ({
       ...l,
       morphDNA: l.morphDNA || getLordDNA(l.id, l.faction),
     })),
