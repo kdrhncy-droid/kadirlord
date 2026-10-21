@@ -308,18 +308,19 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   useEffect(() => {
     if (!sceneRef.current) return;
     const h = sceneRef.current;
+    // Kafa merkezi ≈ 1.90 m (kafatası 1.77–2.08). Yüz kadrajı buraya bakmalı.
     if (cameraView === 'face') {
-      h.camTarget.set(0, 1.52 * (dna.height || 1.0), 0);
-      h.userDist = 1.25;
-      h.userPitch = 0.05;
+      h.camTarget.set(0, 1.88 * (dna.height || 1.0), 0);
+      h.userDist = 0.72;
+      h.userPitch = 0.02;
     } else if (cameraView === 'torso') {
-      h.camTarget.set(0, 1.15 * (dna.height || 1.0), 0);
-      h.userDist = 1.95;
-      h.userPitch = 0.08;
+      h.camTarget.set(0, 1.45 * (dna.height || 1.0), 0);
+      h.userDist = 1.7;
+      h.userPitch = 0.05;
     } else {
-      h.camTarget.set(0, 0.95 * (dna.height || 1.0), 0);
-      h.userDist = 2.8;
-      h.userPitch = 0.06;
+      h.camTarget.set(0, 1.0 * (dna.height || 1.0), 0);
+      h.userDist = 3.0;
+      h.userPitch = 0.05;
     }
   }, [cameraView, dna.height]);
 

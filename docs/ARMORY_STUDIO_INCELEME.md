@@ -161,3 +161,39 @@ armory-studio/
 2. **At:** `createArmoryHorse` hazır ama arena'nın `WarHorseRig` sistemi kendi iskeleti/animasyonuyla çalışıyor. İki at sistemini birleştirmek yerine, BannerForge atını **kalabalık süvarileri** için kullanmak daha güvenli.
 3. **Vitrin ekranı:** 22 ekipmanı 360° mankenle gösteren React ekranı (zip'in `demo/app.ts`'i port edilmeden, sıfırdan).
 4. **Gövde:** Şu an bizim "kalın" gövdemiz + BannerForge zırhı kullanılıyor. BannerForge gövdesine geçilirse zırh kalibrasyonu gereksizleşir ve görsel bütünlük artar (riskli, ölçümle yapılmalı).
+
+---
+
+## 9. KARAKTER OLUŞTURMA EKRANI · KAFA DÜZELTMESİ (2026-10-21)
+
+### Sorun
+Karakter oluşturma ekranında yüz "yok" gibiydi: sadece iki siyah leke ve düz bir top.
+
+### Tespit edilen 4 kök neden (hepsi ölçümle doğrulandı)
+
+| # | Hata | Kanıt |
+| :--- | :--- | :--- |
+| 1 | **Gözler kafatasının içindeydi** — göz kutuları `z = 0.119`'da, kafatası yüzeyi o noktada `z ≈ 0.131` | Sadece fasetli yüzeylerden rastgele taşan siyah kutular görünüyordu |
+| 2 | **Saç "back taper"ı 360° tam silindirdi** — yüzün tam ortasında bant gibi duruyor, gözleri kapatıyordu | İzolasyon render'ı: saç tek başına yüzü örten siyah bir halka |
+| 3 | **Sakallar ağzın üstünden başlıyordu** — kutu yığınları `y = HEAD.cy - 0.11`'den yukarı taşıyordu | Sakal render'ında ağız tamamen kapalı |
+| 4 | **Yüz parçası yoktu** — burun, ağız, kaş, kulak, elmacık hiç üretilmiyordu | `characterRig.ts` içinde yalnızca 2 göz kutusu + 1 burun kutusu vardı |
+
+Ek olarak: BannerForge miğferleri kendi (daha küçük) kafasına göre ölçekliydi → bizim kafamızda göz hizasına iniyordu; zırh setinin `head` bölgesi de ikinci bir miğfer üretiyordu.
+
+### Yapılanlar
+- **`src/game/characterFace.ts` (yeni):** yüz katmanı sıfırdan yazıldı — göz akı + iris + bebek, kaş, burun (köprü/uç/delik gölgesi), üst-alt dudak + ağız çizgisi, kulak, çene. Tüm plakalar **elipsoid yüzeyinden hesaplanan z** ile oturtulur (`surfaceZ`), böylece hiçbir parça kafatasının içinde kalmaz.
+- **DNA entegrasyonu:** `applyFaceDNA` göz rengi, burun uzunluğu/köprü, kaş belirginliği, çene uzunluğu, çene genişliği ve yüz şeklini (oval/kare/yuvarlak/köşeli/keskin) canlı uygular.
+- **Saç:** 360° silindir → ense yayı; perçemler alın çizgisine çekildi; `shoulder_wavy` ve `royal_braid` başlıkları göz hizasının üstünde bitecek şekilde kısaltıldı; Nordik örgüler kulak arkasına alındı.
+- **Sakal (7 stil yeniden):** çene kütlesi tek parça altıgen prizma + koni uç (üst üste binen kutular kafatasını kesiyordu), bıyık yüzeyin dışında, ağız açık kalıyor.
+- **Miğfer kalibrasyonu:** tip başına ölçek/ofset tablosu (`HELMET_FIT`); zırh setinden gelen ikinci miğfer atlandı; miğfer takılıyken saç gizlenir, kapalı miğferde yüz gizlenir.
+- **Kamera:** "Yüz" kadrajı 1.52 m → 1.88 m'ye (gerçek kafa merkezi) alındı, mesafe 0.72 m.
+
+### Doğrulama (tarayıcısız)
+`npm run verify:armory` → **7 bölüm, tümü geçiyor**; yeni bölümler:
+- **6) Yüz:** 11 parçanın tamamı kafatasının dışında/görünür konumda.
+- **7) Saç & sakal:** 8 saç stili göz hizasını kapatmıyor, 7 sakal stili göz hizasının altında.
+
+Görsel kanıt: `docs/renders/hair-styles.png`, `beard-styles.png`, `helmets.png`
+(`npx tsx scripts/render-styles.ts` ile yeniden üretilir — tarayıcı/WebGL gerekmez.)
+
+Mevcut testler: **28/28 geçiyor**, `tsc` temiz, `vite build` başarılı.

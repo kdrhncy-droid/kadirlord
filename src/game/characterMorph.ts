@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CharacterRig, HEAD, TORSO_DEPTH_SCALE } from './characterRig.ts';
+import { applyFaceDNA, faceShapeScale } from './characterFace.ts';
 import { FactionId } from './rules.ts';
 
 /* =======================================================================
@@ -537,7 +538,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'short_parted') {
     // Vlandian neat side-parted hair cap
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.016, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.5) / 8),
+      new THREE.SphereGeometry(HEAD.r + 0.016, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.25) / 8),
       hairMat,
       false,
     );
@@ -545,18 +546,31 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
     cap.position.y = HEAD.cy;
 
     // Side part fringe (swept left-to-right)
-    const fringe = mesh(new THREE.BoxGeometry(0.12, 0.04, 0.06), hairMat, false);
-    fringe.position.set(0.04, HEAD.cy + 0.09, (HEAD.r + 0.01) * HEAD.sz);
-    fringe.rotation.z = -0.15;
+    const fringe = mesh(new THREE.BoxGeometry(0.115, 0.028, 0.042), hairMat, false);
+    fringe.position.set(0.038, HEAD.cy + 0.105, (HEAD.r + 0.008) * HEAD.sz - 0.012);
+    fringe.rotation.z = -0.14;
+    fringe.rotation.x = -0.2;
 
-    // Back taper
+    // Back taper — SADECE ense: tam 360° silindir yüzün ortasından bant gibi
+    // geçip gözleri kapatıyordu. thetaStart/thetaLength ile arka yayla sınırla.
     const back = mesh(
-      new THREE.CylinderGeometry(HEAD.r + 0.014, HEAD.r + 0.008, 0.1, 7, 1, true),
+      new THREE.CylinderGeometry(
+        HEAD.r + 0.014,
+        HEAD.r + 0.008,
+        0.1,
+        7,
+        1,
+        true,
+        Math.PI * 0.55,
+        Math.PI * 0.9,
+      ),
       hairMat,
       false,
     );
+    back.material = hairMat;
+    (back.material as THREE.Material).side = THREE.DoubleSide;
     back.scale.set(1, 1, HEAD.sz);
-    back.position.set(0, HEAD.cy - 0.04, -0.01);
+    back.position.set(0, HEAD.cy - 0.04, -0.012);
 
     g.add(cap, fringe, back);
     return g;
@@ -575,13 +589,15 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
     // Left braid hanging down
     const braidGeo = new THREE.CylinderGeometry(0.02, 0.012, 0.28, 5);
     const leftBraid = mesh(braidGeo, hairMat, false);
-    leftBraid.position.set(0.11, HEAD.cy - 0.08, 0.04);
-    leftBraid.rotation.z = -0.12;
+    leftBraid.position.set(0.115, HEAD.cy - 0.075, -0.03);
+    leftBraid.rotation.z = -0.1;
+    leftBraid.rotation.x = 0.06;
 
     // Right braid hanging down
     const rightBraid = mesh(braidGeo.clone(), hairMat, false);
-    rightBraid.position.set(-0.11, HEAD.cy - 0.08, 0.04);
-    rightBraid.rotation.z = 0.12;
+    rightBraid.position.set(-0.115, HEAD.cy - 0.075, -0.03);
+    rightBraid.rotation.z = 0.1;
+    rightBraid.rotation.x = 0.06;
 
     // Back hair fall
     const backFall = mesh(new THREE.BoxGeometry(0.18, 0.22, 0.06), hairMat, false);
@@ -636,21 +652,23 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'shoulder_wavy') {
     // Flowing wavy hair covering ears and nape down to shoulders
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.02, 8, 5, 0, Math.PI * 2, 0, (Math.PI * 4.2) / 8),
+      new THREE.SphereGeometry(HEAD.r + 0.02, 8, 5, 0, Math.PI * 2, 0, (Math.PI * 3.35) / 8),
       hairMat,
       false,
     );
     cap.scale.set(1, HEAD.sy, HEAD.sz);
     cap.position.y = HEAD.cy;
 
-    const leftFlow = mesh(new THREE.BoxGeometry(0.07, 0.26, 0.14), hairMat, false);
-    leftFlow.position.set(0.12, HEAD.cy - 0.08, -0.02);
+    const leftFlow = mesh(new THREE.BoxGeometry(0.05, 0.26, 0.1), hairMat, false);
+    leftFlow.position.set(0.116, HEAD.cy - 0.085, -0.062);
+    leftFlow.rotation.y = 0.12;
 
-    const rightFlow = mesh(new THREE.BoxGeometry(0.07, 0.26, 0.14), hairMat, false);
-    rightFlow.position.set(-0.12, HEAD.cy - 0.08, -0.02);
+    const rightFlow = mesh(new THREE.BoxGeometry(0.05, 0.26, 0.1), hairMat, false);
+    rightFlow.position.set(-0.116, HEAD.cy - 0.085, -0.062);
+    rightFlow.rotation.y = -0.12;
 
-    const backFlow = mesh(new THREE.BoxGeometry(0.22, 0.28, 0.07), hairMat, false);
-    backFlow.position.set(0, HEAD.cy - 0.09, -HEAD.r * HEAD.sz - 0.01);
+    const backFlow = mesh(new THREE.BoxGeometry(0.24, 0.28, 0.06), hairMat, false);
+    backFlow.position.set(0, HEAD.cy - 0.09, -HEAD.r * HEAD.sz - 0.025);
 
     g.add(cap, leftFlow, rightFlow, backFlow);
     return g;
@@ -667,8 +685,8 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
     cap.position.y = HEAD.cy;
 
     // Small brow bangs fringe
-    const fringe = mesh(new THREE.BoxGeometry(0.14, 0.028, 0.035), hairMat, false);
-    fringe.position.set(0, HEAD.cy + 0.08, (HEAD.r + 0.012) * HEAD.sz);
+    const fringe = mesh(new THREE.BoxGeometry(0.135, 0.024, 0.03), hairMat, false);
+    fringe.position.set(0, HEAD.cy + 0.098, (HEAD.r + 0.008) * HEAD.sz - 0.008);
 
     g.add(cap, fringe);
     return g;
@@ -677,7 +695,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'royal_braid') {
     // Aristocratic crown braid wrapped around head (Rhagaea style)
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.016, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.5) / 8),
+      new THREE.SphereGeometry(HEAD.r + 0.016, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.25) / 8),
       hairMat,
       false,
     );
@@ -686,8 +704,8 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
 
     // Crown braid torus wrapping the brow
     const crownBraid = mesh(new THREE.TorusGeometry(HEAD.r + 0.015, 0.022, 4, 10), hairMat, false);
-    crownBraid.rotation.x = Math.PI * 0.45;
-    crownBraid.position.set(0, HEAD.cy + 0.05, 0.01);
+    crownBraid.rotation.x = Math.PI * 0.38;
+    crownBraid.position.set(0, HEAD.cy + 0.085, -0.005);
 
     // Chignon / back hair knot
     const chignon = mesh(new THREE.SphereGeometry(0.065, 6, 5), hairMat, false);
@@ -706,104 +724,141 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
 export function createBeardMesh(style: BeardStyleId, beardMat: THREE.Material): THREE.Group {
   const g = new THREE.Group();
   g.name = `Beard_${style}`;
+  if (style === 'clean_shaven') return g;
 
-  if (style === 'clean_shaven') {
-    return g;
-  }
+  /* ── anatomi (kafa eklemi yerel uzayı) ──
+     kafatası: rx 0.125 · ry 0.147 · rz 0.131, merkez y = 0.14
+     alt dudak y ≈ 0.0595 · çene ön yüzeyi z ≈ 0.096                  */
+  const CY = HEAD.cy;
+  const JAW_TOP = CY - 0.088; // alt dudağın hemen altı
+  const CHIN_Y = CY - 0.205; // çene ucu
+
+  /** Kafatası yüzeyinin ön z'si — sakal/bıyık yüzün DIŞINA otursun. */
+  const surfZ = (y: number, x = 0) => {
+    const nx = x / HEAD.r;
+    const ny = (y - CY) / (HEAD.r * HEAD.sy);
+    return HEAD.r * HEAD.sz * Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+  };
+
+  /**
+   * Alt dudaktan çeneye inen SAĞLAM sakal kütlesi.
+   * Eski sürümde üst üste binen kutular kafatasını kesip "kıymık" gibi
+   * görünüyordu. Tek parça altıgen prizma hem ucuz (12 üçgen) hem temiz.
+   */
+  const mass = (
+    topRadius: number,
+    bottomRadius: number,
+    height: number,
+    yBottom: number,
+    zOffset: number,
+    mat: THREE.Material = beardMat,
+  ) => {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(topRadius, bottomRadius, height, 7), mat);
+    // Ön-arka yönde yassılaştır: sakal çeneyi sarar, enseden taşmaz.
+    m.scale.set(1.02, 1, 0.82);
+    m.position.set(0, yBottom + height / 2, zOffset);
+    m.rotation.x = -0.05;
+    m.castShadow = false;
+    return m;
+  };
+
+  /** Bıyık: dudakların üstünde, ince ve hafif öne kıvrık. */
+  const mustache = (width = 0.058, y = CY - 0.052) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(width, 0.013, 0.02), beardMat);
+    m.position.set(0, y, surfZ(y) - 0.002);
+    m.rotation.x = 0.2;
+    m.castShadow = false;
+    return m;
+  };
 
   if (style === 'stubble') {
-    // 5 o'clock shadow low-profile jaw wraps
-    const shadowGeo = new THREE.BoxGeometry(0.165, 0.08, 0.09);
-    const m = mesh(shadowGeo, beardMat, false);
-    m.position.set(0, HEAD.cy - 0.095, 0.08);
-    m.scale.set(1.0, 0.6, 0.75);
-    g.add(m);
+    // Gölge: yarı saydam, yassı tek parça (ağız tamamen açık kalır).
+    const shadow = beardMat.clone();
+    shadow.transparent = true;
+    shadow.opacity = 0.34;
+    shadow.depthWrite = false;
+    g.add(mass(0.084, 0.058, 0.07, JAW_TOP - 0.076, 0.052, shadow));
+    const line = new THREE.Mesh(new THREE.BoxGeometry(0.088, 0.007, 0.01), shadow);
+    line.position.set(0, JAW_TOP - 0.002, surfZ(JAW_TOP) - 0.002);
+    line.castShadow = false;
+    g.add(line);
     return g;
   }
 
   if (style === 'full_beard') {
-    // Classic full knight beard
-    const jawBox = mesh(new THREE.BoxGeometry(0.18, 0.13, 0.11), beardMat, false);
-    jawBox.position.set(0, HEAD.cy - 0.11, 0.085);
-
-    const mustache = mesh(new THREE.BoxGeometry(0.14, 0.035, 0.04), beardMat, false);
-    mustache.position.set(0, HEAD.cy - 0.04, 0.132);
-
-    g.add(jawBox, mustache);
+    g.add(mustache());
+    g.add(mass(0.078, 0.054, 0.09, JAW_TOP - 0.082, 0.05));
+    // çene ucu: sivri koni
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.052, 0.075, 6), beardMat);
+    tip.rotation.x = Math.PI;
+    tip.position.set(0, CHIN_Y + 0.012, 0.062);
+    tip.castShadow = false;
+    g.add(tip);
     return g;
   }
 
   if (style === 'braided_viking') {
-    // Sturgian two long braided strands hanging off the chin
-    const base = mesh(new THREE.BoxGeometry(0.17, 0.1, 0.1), beardMat, false);
-    base.position.set(0, HEAD.cy - 0.1, 0.085);
-
-    // Left chin braid
-    const braidGeo = new THREE.CylinderGeometry(0.022, 0.014, 0.22, 5);
-    const leftBraid = mesh(braidGeo, beardMat, false);
-    leftBraid.position.set(0.045, HEAD.cy - 0.22, 0.1);
-    leftBraid.rotation.z = -0.06;
-
-    // Right chin braid
-    const rightBraid = mesh(braidGeo.clone(), beardMat, false);
-    rightBraid.position.set(-0.045, HEAD.cy - 0.22, 0.1);
-    rightBraid.rotation.z = 0.06;
-
-    const mustache = mesh(new THREE.BoxGeometry(0.15, 0.038, 0.045), beardMat, false);
-    mustache.position.set(0, HEAD.cy - 0.04, 0.132);
-
-    g.add(base, leftBraid, rightBraid, mustache);
+    g.add(mustache(0.062));
+    g.add(mass(0.073, 0.05, 0.082, JAW_TOP - 0.08, 0.05));
+    for (const side of [-1, 1] as const) {
+      const braid = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.008, 0.15, 5), beardMat);
+      braid.position.set(side * 0.032, CHIN_Y + 0.02, 0.062);
+      braid.rotation.z = side * 0.05;
+      braid.castShadow = false;
+      g.add(braid);
+    }
     return g;
   }
 
   if (style === 'imperial_mustache') {
-    // Big prominent mustache with turned-up wingtips, clean chin
-    const center = mesh(new THREE.BoxGeometry(0.12, 0.04, 0.038), beardMat, false);
-    center.position.set(0, HEAD.cy - 0.04, 0.132);
-
-    const leftWing = mesh(new THREE.BoxGeometry(0.05, 0.03, 0.03), beardMat, false);
-    leftWing.position.set(0.08, HEAD.cy - 0.032, 0.128);
-    leftWing.rotation.z = 0.45;
-
-    const rightWing = mesh(new THREE.BoxGeometry(0.05, 0.03, 0.03), beardMat, false);
-    rightWing.position.set(-0.08, HEAD.cy - 0.032, 0.128);
-    rightWing.rotation.z = -0.45;
-
-    g.add(center, leftWing, rightWing);
+    g.add(mustache(0.054, CY - 0.056));
+    for (const side of [-1, 1] as const) {
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.011, 0.016), beardMat);
+      wing.position.set(side * 0.042, CY - 0.048, surfZ(CY - 0.048, 0.042) + 0.006);
+      wing.rotation.z = side * 0.55;
+      wing.castShadow = false;
+      g.add(wing);
+    }
+    // sinekkaydı çene gölgesi
+    const trim = beardMat.clone();
+    trim.transparent = true;
+    trim.opacity = 0.4;
+    trim.depthWrite = false;
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.01, 0.008), trim);
+    plate.position.set(0, JAW_TOP - 0.012, surfZ(JAW_TOP - 0.012) + 0.001);
+    plate.castShadow = false;
+    g.add(plate);
     return g;
   }
 
   if (style === 'nomad_goatee') {
-    // Khuzait drooping mustache and pointed chin goatee
-    const goatee = mesh(new THREE.ConeGeometry(0.04, 0.14, 5), beardMat, false);
+    g.add(mustache(0.05, CY - 0.056));
+    const goatee = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.105, 5), beardMat);
     goatee.rotation.x = Math.PI;
-    goatee.position.set(0, HEAD.cy - 0.15, 0.1);
-
-    const leftDroop = mesh(new THREE.BoxGeometry(0.025, 0.08, 0.025), beardMat, false);
-    leftDroop.position.set(0.06, HEAD.cy - 0.07, 0.128);
-    leftDroop.rotation.z = 0.25;
-
-    const rightDroop = mesh(new THREE.BoxGeometry(0.025, 0.08, 0.025), beardMat, false);
-    rightDroop.position.set(-0.06, HEAD.cy - 0.07, 0.128);
-    rightDroop.rotation.z = -0.25;
-
-    g.add(goatee, leftDroop, rightDroop);
+    goatee.position.set(0, JAW_TOP - 0.075, 0.094);
+    goatee.castShadow = false;
+    g.add(goatee);
+    for (const side of [-1, 1] as const) {
+      const droop = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.05, 0.016), beardMat);
+      droop.position.set(side * 0.032, JAW_TOP - 0.03, 0.1);
+      droop.rotation.z = side * -0.15;
+      droop.castShadow = false;
+      g.add(droop);
+    }
     return g;
   }
 
   if (style === 'long_patriarch') {
-    // Long wise elder beard flowing down the upper chest
-    const upper = mesh(new THREE.BoxGeometry(0.18, 0.12, 0.11), beardMat, false);
-    upper.position.set(0, HEAD.cy - 0.11, 0.085);
-
-    const flowingFall = mesh(new THREE.CylinderGeometry(0.09, 0.04, 0.32, 6), beardMat, false);
-    flowingFall.position.set(0, HEAD.cy - 0.26, 0.09);
-    flowingFall.rotation.x = 0.15;
-
-    const mustache = mesh(new THREE.BoxGeometry(0.15, 0.045, 0.045), beardMat, false);
-    mustache.position.set(0, HEAD.cy - 0.04, 0.134);
-
-    g.add(upper, flowingFall, mustache);
+    g.add(mustache(0.058));
+    g.add(mass(0.08, 0.055, 0.102, JAW_TOP - 0.09, 0.05));
+    const mid = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.046, 0.11, 6), beardMat);
+    mid.position.set(0, CHIN_Y - 0.03, 0.05);
+    mid.castShadow = false;
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.046, 0.1, 6), beardMat);
+    tip.rotation.x = Math.PI;
+    tip.position.set(0, CHIN_Y - 0.125, 0.048);
+    tip.castShadow = false;
+    g.add(mid, tip);
     return g;
   }
 
@@ -951,8 +1006,12 @@ export function applyMorphDNAToRig(rig: CharacterRig, dna: CharacterMorphDNA): v
   const jaw = Math.max(0.75, Math.min(1.35, dna.jawWidth || 1.0));
   const chin = Math.max(0.75, Math.min(1.35, dna.chinLength || 1.0));
   const nose = Math.max(0.7, Math.min(1.4, dna.noseLength || 1.0));
+  const shape = faceShapeScale(dna.faceShape);
 
-  rig.head.scale.set(jaw, chin, (jaw + nose) * 0.5);
+  rig.head.scale.set(jaw * shape.x, chin * shape.y, (jaw + nose) * 0.5 * shape.z);
+
+  // Yüz katmanı: göz rengi, burun, kaş, çene, yanak, ağız DNA'ya göre güncellenir.
+  applyFaceDNA(rig.head.getObjectByName('Face') ?? null, dna, { skin: rig.materials.skin, hair: rig.materials.hair });
 
   // 4. Hair Replacement
   // Remove existing procedural hair from hairGroup

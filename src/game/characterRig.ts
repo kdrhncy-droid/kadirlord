@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CharacterAnimator } from './characterAnimator.ts';
+import { createFace, applyFaceDNA } from './characterFace.ts';
 import {
   applyArmoryArmor,
   armoryVisualsEnabled,
@@ -258,17 +259,10 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   headMesh.position.y = HEAD.cy;
   head.add(headMesh);
 
-  const noseMesh = mesh(new THREE.BoxGeometry(0.035, 0.06, 0.05), mats.skin, false);
-  noseMesh.position.set(0, HEAD.cy - 0.01, HEAD.r * HEAD.sz + 0.005);
-  head.add(noseMesh);
-
-  const eyeMat = new THREE.MeshBasicMaterial({ color: '#1c1917' });
-  const eyeGeo = new THREE.BoxGeometry(0.03, 0.018, 0.03);
-  const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-  leftEye.position.set(0.05, HEAD.cy + 0.02, HEAD.r * HEAD.sz - 0.012);
-  const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-  rightEye.position.set(-0.05, HEAD.cy + 0.02, HEAD.r * HEAD.sz - 0.012);
-  head.add(leftEye, rightEye);
+  // Yüz katmanı (gözler, kaşlar, burun, ağız, kulak, çene) ayrı bir grup olarak
+  // kurulur; DNA kaydırıcıları bu gruba uygulanır (characterFace.ts).
+  const face = createFace({ skin: mats.skin, hair: mats.hair }, undefined, HEAD.cy);
+  head.add(face);
 
   // Hair: a cap over the skull (stops above the brow) + a back piece over the nape.
   const hairGroup = new THREE.Group();
@@ -292,9 +286,12 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   hairGroup.add(hairCap, hairBack);
   head.add(hairGroup);
 
-  const beardMesh = mesh(new THREE.BoxGeometry(0.16, 0.1, 0.1), mats.hair, false);
-  beardMesh.position.set(0, HEAD.cy - 0.1, 0.085);
-  beardMesh.visible = options.hasBeard !== false;
+  // Eski kutu sakal kaldırıldı: sakal artık `createBeardMesh` ile prosedürel
+  // olarak çeneye oturuyor. `beardMesh` alanı geriye dönük uyumluluk için boş
+  // bir taşıyıcı olarak duruyor.
+  const beardMesh = new THREE.Mesh(new THREE.BufferGeometry(), mats.hair);
+  beardMesh.name = 'LegacyBeardPlaceholder';
+  beardMesh.visible = false;
   head.add(beardMesh);
 
   // Helmet socket sits at the CENTER of the head ellipsoid.
@@ -829,7 +826,17 @@ export function applyEquipmentToRig(rig: CharacterRig, options: CharacterVisualO
   // - Kettle hat: hair visible under brim, beard visible
   // - Spangenhelm: mail coif encloses head -> hair hidden, beard visible
   // - Imperial Visor: full enclosed faceplate -> hair and beard hidden inside
-  if (options.helmetType === 'NONE' || options.helmetType === 'KETTLE_HAT') {
+  // BannerForge miğferleri kafatası kubbesini tamamen kaplar; saç kubbeden
+  // taşıp miğferin içinden "fışkırıyor" görünmesin diye saç gizlenir.
+  const armoryHelmets = armoryVisualsEnabled();
+  if (options.helmetType === 'NONE') {
+    rig.hairGroup.visible = true;
+    rig.beardMesh.visible = options.hasBeard !== false;
+  } else if (armoryHelmets) {
+    rig.hairGroup.visible = false;
+    rig.beardMesh.visible =
+      options.hasBeard !== false && options.helmetType !== 'IMPERIAL_VISOR';
+  } else if (options.helmetType === 'KETTLE_HAT') {
     rig.hairGroup.visible = true;
     rig.beardMesh.visible = options.hasBeard !== false;
   } else if (options.helmetType === 'SPANGENHELM') {
@@ -849,6 +856,10 @@ export function applyEquipmentToRig(rig: CharacterRig, options: CharacterVisualO
   const helmet = useArmory
     ? createArmoryHelmet(options.helmetType, armoryCtx) ?? buildHelmet(options.helmetType, m)
     : buildHelmet(options.helmetType, m);
+
+  // Kapalı (tam yüz) miğferde yüz parçaları miğferin içinden taşar → gizle.
+  const faceGroup = rig.head.getObjectByName('Face');
+  if (faceGroup) faceGroup.visible = !(options.helmetType === 'IMPERIAL_VISOR' && useArmory);
   if (helmet) {
     helmet.userData.helmetType = options.helmetType;
     rig.helmetSocket.add(helmet);

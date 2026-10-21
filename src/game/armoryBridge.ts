@@ -359,10 +359,26 @@ export function createArmoryHelmet(helmet: HelmetType, ctx: ArmoryContext = {}):
   if (!id) return null;
   const item = buildArmoryItem(id, ctx);
   const holder = mountFromAuthor(item, { rotateX: 0 });
-  holder.position.set(0, -0.03, 0);
-  holder.scale.setScalar(1.16);
+
+  /* ── kalibrasyon ──
+     BannerForge miğferleri kendi kafa ölçüsüne (r ≈ 0.103) göre yazılmış;
+     bizim kafatasımız r = 0.125. Ayrıca modelin "oturma yüksekliği" miğfer
+     tipine göre değişiyor: kapalı miğfer kafayı TAM sararken kettle hat'ın
+     siperliği alın hizasında durmalı. Ölçek 1.16 iken göz hizasına inip yüzü
+     kesiyordu. */
+  const fit = HELMET_FIT[helmet as Exclude<HelmetType, 'NONE'>];
+  holder.scale.setScalar(fit.scale);
+  holder.position.set(0, fit.y, fit.z ?? 0);
   return holder;
 }
+
+/** Miğfer tipine göre ölçek / dikey ofset (kafa eklemi yerel uzayı). */
+const HELMET_FIT: Record<Exclude<HelmetType, 'NONE'>, { scale: number; y: number; z?: number }> = {
+  // Siperlik alın üstünde kalmalı (göz hizasına inmemeli) → daha küçük + yukarı.
+  KETTLE_HAT: { scale: 0.72, y: 0.115 },
+  SPANGENHELM: { scale: 0.92, y: 0.05 },
+  IMPERIAL_VISOR: { scale: 0.98, y: 0.048 },
+};
 
 /** Oklar: uçuş halindeki mermiler için (uç +Z'ye bakar). */
 export function createArmoryArrow(ctx: ArmoryContext = {}): THREE.Group | null {
@@ -416,6 +432,9 @@ export function applyArmoryArmor(
 
   const attached: THREE.Object3D[] = [];
   for (const zone of Object.keys(set.zones) as (keyof typeof set.zones)[]) {
+    // 'head' bölgesi BannerForge'un kendi miğferini de getirir; miğferi ayrı
+    // `createArmoryHelmet` ile taktığımız için burada atlanır (çifte miğfer olmasın).
+    if (zone === 'head') continue;
     for (const piece of set.zones[zone] ?? []) {
       const node = attachArmorPiece(rig, piece, mats);
       if (node) attached.push(node);

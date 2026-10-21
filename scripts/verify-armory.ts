@@ -122,7 +122,9 @@ for (const weapon of ['ONE_HANDED_SWORD', 'TWO_HANDED_SWORD', 'SPEAR'] as Weapon
 for (const helmet of ['KETTLE_HAT', 'SPANGENHELM', 'IMPERIAL_VISOR'] as HelmetType[]) {
   compareMount(`Miğfer ${helmet}`, { helmetType: helmet }, (r) => r.helmetSocket.children[0] ?? null, {
     shift: 0.16,
-    minRatio: 0.7,
+    // BannerForge siperliği legacy modelden dar (legacy 0.59 m çap = kafa için
+    // fazla genişti); 0.62 alt sınırı gerçekçi.
+    minRatio: 0.62,
     maxRatio: 1.6,
   });
 }
@@ -216,6 +218,81 @@ await import('../src/game/armorySound.ts')
     ok('sessiz modda çağrı güvenli');
   })
   .catch((error) => bad(`ses köprüsü yüklenemedi: ${error}`));
+
+
+/* ═══════════ 6) KARAKTER OLUŞTURMA · YÜZ KATMANI ═══════════ */
+log('\n═══ 6) YÜZ · gözler/burun/ağız kafatasının DIŞINDA mı? ═══');
+{
+  const rig = build({ helmetType: 'NONE', armorTier: 'CIVILIAN' }, true);
+  const face = rig.head.getObjectByName('Face');
+  if (!face) bad('yüz grubu yok (createFace bağlanmamış)');
+  else {
+    const skull = rig.head.children.find((c) => (c as THREE.Mesh).isMesh && c !== face) as THREE.Mesh;
+    const skullBox = new THREE.Box3().setFromObject(skull);
+    const frontZ = skullBox.max.z;
+    let problems = 0;
+    for (const name of ['eyeWhiteL', 'eyeWhiteR', 'irisL', 'irisR', 'nose', 'noseTip', 'mouth', 'upperLip', 'lowerLip', 'browL', 'browR']) {
+      const part = face.getObjectByName(name);
+      if (!part) {
+        bad(`yüz parçası eksik: ${name}`);
+        problems++;
+        continue;
+      }
+      const box = new THREE.Box3().setFromObject(part);
+      // Parçanın görünen yüzeyi kafatasının ön yüzeyine çok yakın/önünde olmalı.
+      if (box.max.z < skullBox.min.z + (frontZ - skullBox.min.z) * 0.55) {
+        bad(`${name} kafatasının içinde kalıyor (z=${box.max.z.toFixed(3)} < ön yüzey ${frontZ.toFixed(3)})`);
+        problems++;
+      }
+    }
+    if (problems === 0) ok('11 yüz parçası da görünür konumda');
+  }
+}
+
+/* ═══════════ 7) SAÇ / SAKAL · yüzü kapatmıyor mu? ═══════════ */
+log('\n═══ 7) SAÇ & SAKAL · göz hizasını kapatmıyor mu? ═══');
+{
+  const { createHairMesh, createBeardMesh, HAIR_STYLE_LABELS, BEARD_STYLE_LABELS } = await import('../src/game/characterMorph.ts');
+  const rig = build({ helmetType: 'NONE', armorTier: 'CIVILIAN' }, true);
+  const skull = rig.head.children.find((c) => (c as THREE.Mesh).isMesh) as THREE.Mesh;
+  const skullBox = new THREE.Box3().setFromObject(skull);
+  const eyeY = skullBox.min.y + (skullBox.max.y - skullBox.min.y) * 0.53; // göz hizası
+
+  let hairProblems = 0;
+  for (const style of Object.keys(HAIR_STYLE_LABELS) as (keyof typeof HAIR_STYLE_LABELS)[]) {
+    const mesh = createHairMesh(style as never, rig.materials.hair);
+    rig.head.add(mesh);
+    rig.root.updateMatrixWorld(true);
+    // Göz hizasında (y = eyeY ± 2 cm) saçın ÖN yüzeyi kafatasının önüne geçmemeli.
+    for (const child of mesh.children) {
+      const box = new THREE.Box3().setFromObject(child);
+      // Saçın alnı örtmesi normaldir; sorun, GÖZ HİZASININ ALTINA inip önde
+      // olmasıdır (eski sürümde 360° silindir bandı tam bunu yapıyordu).
+      const dipsBelowEyes = box.min.y < eyeY - 0.012;
+      const tooForward = box.max.z > skullBox.min.z + (skullBox.max.z - skullBox.min.z) * 0.55;
+      if (dipsBelowEyes && tooForward) {
+        bad(`saç "${style}": göz hizasının altına sarkıyor (minY=${box.min.y.toFixed(3)}, z=${box.max.z.toFixed(3)})`);
+        hairProblems++;
+      }
+    }
+    rig.head.remove(mesh);
+  }
+  if (hairProblems === 0) ok(`${Object.keys(HAIR_STYLE_LABELS).length} saç stili göz hizasını kapatmıyor`);
+
+  let beardProblems = 0;
+  for (const style of Object.keys(BEARD_STYLE_LABELS) as (keyof typeof BEARD_STYLE_LABELS)[]) {
+    const mesh = createBeardMesh(style as never, rig.materials.hair);
+    rig.head.add(mesh);
+    rig.root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(mesh);
+    if (!box.isEmpty() && box.max.y > eyeY - 0.005) {
+      bad(`sakal "${style}": göz hizasına çıkıyor (tepe ${box.max.y.toFixed(3)} > ${(eyeY - 0.005).toFixed(3)})`);
+      beardProblems++;
+    }
+    rig.head.remove(mesh);
+  }
+  if (beardProblems === 0) ok(`${Object.keys(BEARD_STYLE_LABELS).length} sakal stili göz hizasının altında`);
+}
 
 /* ═══════════ SONUÇ ═══════════ */
 log('');
