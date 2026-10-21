@@ -66,6 +66,15 @@ import {
   createInitialKingdomMacroState,
 } from './game/kingdomSystem';
 import { advanceWorldDay } from './game/worldSim';
+import {
+  type EncounterScenario,
+  applyPlayerSurrender,
+  applySacrificeEscape,
+  classifyEncounterScenario,
+  isHostileToPlayer,
+  resolveCorneredBanditSurrender,
+  simulateSendTroopsBattle,
+} from './game/encounter';
 import { sound } from './game/sound';
 import { recruitBatch, refreshRecruitPools } from './game/recruitment';
 import {
@@ -120,6 +129,10 @@ export default function App() {
   // Faz 6: yüz yüze diyalog ekranı (lord veya yerleşim reisi)
   const [dialogueLord, setDialogueLord] = useState<LordAgent | null>(null);
   const [dialogueSettlement, setDialogueSettlement] = useState<Settlement | null>(null);
+  const [isForcedEncounter, setIsForcedEncounter] = useState(false);
+  const [encounterScenario, setEncounterScenario] = useState<EncounterScenario | undefined>(
+    undefined,
+  );
   const [isMarketModalOpen, setIsMarketModalOpen] = useState(false);
   const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
   const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
@@ -203,6 +216,8 @@ export default function App() {
     setActiveDiplomacyLord(null);
     setDialogueLord(null);
     setDialogueSettlement(null);
+    setIsForcedEncounter(false);
+    setEncounterScenario(undefined);
     setIsMarketModalOpen(false);
     setIsKingdomModalOpen(false);
     setIsEncyclopediaOpen(false);
@@ -241,8 +256,11 @@ export default function App() {
         setIsKingdomModalOpen(false);
         break;
       case 'dialogue':
+        if (isForcedEncounter) break;
         setDialogueLord(null);
         setDialogueSettlement(null);
+        setIsForcedEncounter(false);
+        setEncounterScenario(undefined);
         break;
       case 'settlement':
         setActiveSettlementModal(null);
@@ -254,7 +272,7 @@ export default function App() {
         setGameState('playing');
         break;
     }
-  }, []);
+  }, [isForcedEncounter]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -888,6 +906,7 @@ export default function App() {
         cameraActionsRef={cameraActionsRef}
         lordPositionsRef={lordPositionsRef}
         activeDiplomacyLordId={activeDiplomacyLord?.id ?? null}
+        activeDialogueLordId={dialogueLord?.id ?? null}
         activeSettlementModalId={activeSettlementModal?.id ?? null}
         onSetTimeScale={setCampaignTimeScale}
         onUpdatePlayerPos={handleUpdatePlayerPos}
@@ -895,7 +914,21 @@ export default function App() {
           setActiveSettlementModal(s);
         }}
         onOpenDiplomacy={(l) => {
-          setActiveDiplomacyLord(l);
+          const info = classifyEncounterScenario(l, campaign);
+          setDialogueLord(l);
+          setIsForcedEncounter(info.forced);
+          setEncounterScenario(info.scenario);
+        }}
+        onHostileEncounter={(l, scenario) => {
+          sound.playWarhorn();
+          setDialogueLord(l);
+          setIsForcedEncounter(true);
+          setEncounterScenario(scenario);
+          showToast(
+            l.faction === 'bandits'
+              ? `${l.name} yolunuzu kesti!`
+              : `${l.title} ${l.name} sancağınızı kıstırdı!`,
+          );
         }}
         onBattleTelemetry={setBattleTelemetry}
         onBattleComplete={handleBattleComplete}
@@ -1097,8 +1130,8 @@ export default function App() {
         </div>
       )}
 
-      {/* 2. PLAYING HUD */}
-      {gameState === 'playing' && (
+      {/* 2. PLAYING HUD (Diyalog ekranı açıkken gizlenir — harita etiketleri diyaloğa karışmaz) */}
+      {gameState === 'playing' && !dialogueLord && !dialogueSettlement && (
         <GameHud
           subMode={subMode}
           campaignTimeScale={campaignTimeScale}
@@ -1163,7 +1196,10 @@ export default function App() {
           }}
           onOpenMarketModal={() => setIsMarketModalOpen(true)}
           onTalkToLord={(l) => {
+            const info = classifyEncounterScenario(l, campaign);
             setDialogueLord(l);
+            setIsForcedEncounter(info.forced);
+            setEncounterScenario(info.scenario);
           }}
           // Bannerlord: pazaryeri yalnız **yerleşim menüsünden** açılır (haritada yakınlık yetmez).
           canTrade={!!activeSettlementModal}
@@ -1449,19 +1485,130 @@ export default function App() {
           lord={dialogueLord}
           settlement={dialogueSettlement}
           canTrade={!!dialogueSettlement}
+          forcedEncounter={isForcedEncounter}
+          encounterScenario={encounterScenario}
           onClose={() => {
             setDialogueLord(null);
             setDialogueSettlement(null);
+            setIsForcedEncounter(false);
+            setEncounterScenario(undefined);
           }}
           onRelationChange={(lordId, delta) =>
             setCampaign((prev) => ({
               ...prev,
               lords: prev.lords.map((l) =>
-                l.id === lordId ? { ...l, relation: Math.max(-100, Math.min(100, l.relation + delta)) } : l,
+                l.id === lordId
+                  ? { ...l, relation: Math.max(-100, Math.min(100, l.relation + delta)) }
+                  : l,
               ),
             }))
           }
           onOpenTrade={() => setIsMarketModalOpen(true)}
+          onStartFieldBattle={(l) => {
+            setDialogueLord(null);
+            setDialogueSettlement(null);
+            setIsForcedEncounter(false);
+            setEncounterScenario(undefined);
+            handleStartFieldBattle(l);
+          }}
+          onAutoResolveBattle={(l) => {
+            const sim = simulateSendTroopsBattle(campaign, l);
+            setDialogueLord(null);
+            setDialogueSettlement(null);
+            setIsForcedEncounter(false);
+            setEncounterScenario(undefined);
+            setBattleTargetLordId(l.id);
+            setBattleTargetSettlementId(null);
+            setCampaign((prev) => {
+              const next = resolveBattleOutcome(prev, sim.victory, l.id, sim.losses, sim.enemiesDefeated, null);
+              const fiefsOwned = next.settlements.filter((s) => s.faction === 'player').length;
+              setOutcomeSnapshot({
+                victory: sim.victory,
+                title: sim.victory ? 'OTOMATİK MUHAREBE ZAFERİ' : 'BİRLİKLER GERİ ÇEKİLDİ',
+                subtitle: sim.victory
+                  ? `${l.name} kuvvetleri bozguna uğratıldı, ganimet ve esirler toplandı.`
+                  : 'Otomatik muharebede hatlarınız kırıldı; ağır kayıpla geri çekildiniz.',
+                enemiesDefeated: sim.enemiesDefeated,
+                renown: next.renown,
+                gold: next.gold,
+                fiefsOwned,
+              });
+              return next;
+            });
+            setGameState('gameover');
+          }}
+          onSacrificeEscape={(l) => {
+            const res = applySacrificeEscape(campaign, l);
+            setCampaign(res.nextState);
+            setDialogueLord(null);
+            setDialogueSettlement(null);
+            setIsForcedEncounter(false);
+            setEncounterScenario(undefined);
+            showToast(
+              `${res.sacrificedTotal} artçı asker geride bırakılarak ${l.name} çemberinden çıkıldı!`,
+            );
+          }}
+          onBribeEscape={(l, cost) => {
+            sound.playCoinChime();
+            setCampaign((prev) => ({
+              ...prev,
+              gold: Math.max(0, prev.gold - cost),
+              chronicle: [
+                {
+                  id: `bribe-${prev.day}-${Date.now()}`,
+                  day: prev.day,
+                  category: 'DIPLOMACY',
+                  text: `${l.name} kuvvetlerine ${cost} Dinar geçiş akçesi ödenerek çatışmadan kaçınıldı.`,
+                },
+                ...prev.chronicle,
+              ].slice(0, 20),
+            }));
+            setDialogueLord(null);
+            setDialogueSettlement(null);
+            setIsForcedEncounter(false);
+            setEncounterScenario(undefined);
+            showToast(`${l.name} birliğine ${cost} Dinar geçiş hakkı ödendi.`);
+          }}
+          onDemandSurrender={(l) => {
+            const res = resolveCorneredBanditSurrender(campaign, l);
+            if (res.surrendered) {
+              sound.playCoinChime();
+              setCampaign(res.nextState);
+              setDialogueLord(null);
+              setDialogueSettlement(null);
+              setIsForcedEncounter(false);
+              setEncounterScenario(undefined);
+              showToast(
+                `${l.name} çetesi silah bıraktı! +${res.prisonersGained} Esir, +${res.goldGained} Dinar`,
+              );
+            } else {
+              // Teslim olmadılar -> doğrudan 3B savaşa gir!
+              setDialogueLord(null);
+              setDialogueSettlement(null);
+              setIsForcedEncounter(false);
+              setEncounterScenario(undefined);
+              showToast(`${l.name} teslim olmayı reddetti! Savaş başlıyor!`);
+              handleStartFieldBattle(l);
+            }
+          }}
+          onPlayerSurrender={(l) => {
+            const res = applyPlayerSurrender(campaign, l);
+            setCampaign(res.nextState);
+            setDialogueLord(null);
+            setDialogueSettlement(null);
+            setIsForcedEncounter(false);
+            setEncounterScenario(undefined);
+            showToast(
+              `${l.name} kuvvetlerine haraç bırakılarak esaretten kurtulundu (-${res.goldLost} Dinar).`,
+            );
+          }}
+          onOpenDiplomacyCouncil={(l) => {
+            setDialogueLord(null);
+            setDialogueSettlement(null);
+            setIsForcedEncounter(false);
+            setEncounterScenario(undefined);
+            setActiveDiplomacyLord(l);
+          }}
         />
       )}
 

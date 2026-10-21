@@ -5,6 +5,11 @@ import {
   getTerrainSlopeAndColorAt,
   groundHeightAt,
 } from './mapGen.ts';
+import {
+  type HostileReactionKind,
+  evaluateHostileReaction,
+  isHostileToPlayer,
+} from './encounter.ts';
 import { computeLandPath, isNavigableLandAt, stepAlongLandOnly } from './navigation.ts';
 import type { LordAgent, Settlement, TroopRoster } from './rules.ts';
 
@@ -260,6 +265,8 @@ export interface LordLiveRouteState {
   currentAction: string;
   /** Faz 11: uygulanan emrin anahtarı (aynı emir için yeniden A* yapılmaz). */
   orderKey?: string;
+  /** Gerçek zamanlı kovalama / kaçma durumu (harita rozetleri ve animasyon hızı için). */
+  tacticalState?: 'PURSUE' | 'FLEE' | null;
 }
 
 /**
@@ -330,11 +337,20 @@ export function stepLordCampaignRoute(
     const dz = nextWp.z - route.z;
     const dist = Math.hypot(dx, dz);
 
-    // Lord moves at their authentic party-size-dependent speed (agile 16-troop parties move noticeably faster than 42-troop heavy armies!)
-    const stepSpeed = intel.speedInfo.worldUnitsPerSecAt1x * 0.95 * timeScale;
+    // Kovalama veya kaçma sırasında birlikler tam kapasite (%100-104) hızla hareket eder
+    const urgencyMult =
+      route.tacticalState === 'PURSUE'
+        ? 1.04
+        : route.tacticalState === 'FLEE'
+          ? 1.02
+          : 0.95;
+    const stepSpeed = intel.speedInfo.worldUnitsPerSecAt1x * urgencyMult * timeScale;
     const maxStep = stepSpeed * dt;
 
-    if (dist > 0.65) {
+    // Kovalama hedefinde (oyuncunun üstüne yürürken) 0.65m eşiği yüzünden erken durmasın
+    const wpStopThreshold = route.tacticalState === 'PURSUE' ? 0.15 : 0.65;
+
+    if (dist > wpStopThreshold) {
       const nextPos = stepAlongLandOnly(
         route.x,
         route.z,
@@ -383,12 +399,21 @@ export function applyLordOrderToRoute(
   let action = route.currentAction;
 
   if (order.kind === 'HUNT_PLAYER' && playerPos) {
-    // 16 birimlik ızgaraya yuvarla: her karede yeni A* hesaplanmasın.
-    const qx = Math.round(playerPos.x / 16) * 16;
-    const qz = Math.round(playerPos.z / 16) * 16;
-    targetX = qx;
-    targetZ = qz;
-    key = `hunt:${qx}:${qz}`;
+    const dPlayer = Math.hypot(route.x - playerPos.x, route.z - playerPos.z);
+    if (dPlayer <= 20) {
+      // Yakın mesafede ızgaraya yuvarlama yapma, doğrudan oyuncunun konumuna kilitlen!
+      const qx = Math.round(playerPos.x * 2) / 2;
+      const qz = Math.round(playerPos.z * 2) / 2;
+      targetX = playerPos.x;
+      targetZ = playerPos.z;
+      key = `hunt-close:${qx}:${qz}`;
+    } else {
+      const qx = Math.round(playerPos.x / 16) * 16;
+      const qz = Math.round(playerPos.z / 16) * 16;
+      targetX = qx;
+      targetZ = qz;
+      key = `hunt:${qx}:${qz}`;
+    }
     action = 'Sancağını senin üzerine sürüyor';
   } else if (order.kind === 'FLEE' && playerPos) {
     const dx = route.x - playerPos.x;
@@ -425,4 +450,100 @@ export function applyLordOrderToRoute(
   } else if (route.currentAction !== action) {
     route.currentAction = action;
   }
+}
+
+/**
+ * Gerçek zamanlı oyuncu kovalama (`PURSUE_PLAYER`) ve oyuncudan kaçma (`FLEE_FROM_PLAYER`)
+ * davranışını lordun canlı rotasına uygular.
+ */
+export function applyTacticalPlayerReactionToRoute(params: {
+  lord: LordAgent;
+  route: LordLiveRouteState;
+  settlements: Settlement[];
+  playerX: number;
+  playerZ: number;
+  playerStrength: number;
+  nearbyHostileStrength?: number;
+  onCooldown?: boolean;
+}): HostileReactionKind {
+  const {
+    lord,
+    route,
+    settlements,
+    playerX,
+    playerZ,
+    playerStrength,
+    nearbyHostileStrength = 0,
+    onCooldown = false,
+  } = params;
+
+  // Karşılaşma dokunulmazlığı (cooldown) aktifse düşman oyuncudan uzaklaşır
+  if (onCooldown && isHostileToPlayer(lord)) {
+    const dx = route.x - playerX;
+    const dz = route.z - playerZ;
+    const len = Math.hypot(dx, dz) || 1;
+    const tx = route.x + (dx / len) * 18;
+    const tz = route.z + (dz / len) * 18;
+    const key = `cooldown-retreat:${Math.round(tx / 6)}:${Math.round(tz / 6)}`;
+    route.tacticalState = 'FLEE';
+    route.currentAction = 'Mesafeyi açıyor';
+    if (route.orderKey !== key || route.waypoints.length === 0) {
+      route.orderKey = key;
+      route.waypoints = [{ x: tx, z: tz }];
+    }
+    return 'FLEE_FROM_PLAYER';
+  }
+
+  const reaction = evaluateHostileReaction({
+    lord,
+    lordX: route.x,
+    lordZ: route.z,
+    playerX,
+    playerZ,
+    playerStrength,
+    nearbyHostileStrength,
+  });
+
+  if (reaction.kind === 'PURSUE_PLAYER' && reaction.targetPos) {
+    route.tacticalState = 'PURSUE';
+    route.currentAction = reaction.actionLabel;
+    // Yakın takipte (<= 22m) doğrudan oyuncunun canlı konumuna yürü (16m ızgaraya takılma!)
+    if (reaction.distance <= 22) {
+      route.orderKey = `pursue-direct:${Math.round(playerX)}:${Math.round(playerZ)}`;
+      route.waypoints = [{ x: playerX, z: playerZ }];
+    } else {
+      const qx = Math.round(reaction.targetPos.x / 3) * 3;
+      const qz = Math.round(reaction.targetPos.z / 3) * 3;
+      const key = `pursue-path:${qx}:${qz}`;
+      if (route.orderKey !== key || route.waypoints.length === 0) {
+        route.orderKey = key;
+        route.waypoints = computeLandPath(route.x, route.z, reaction.targetPos.x, reaction.targetPos.z);
+      }
+    }
+    return 'PURSUE_PLAYER';
+  }
+
+  if (reaction.kind === 'FLEE_FROM_PLAYER' && reaction.targetPos) {
+    route.tacticalState = 'FLEE';
+    route.currentAction = reaction.actionLabel;
+    const qx = Math.round(reaction.targetPos.x / 4) * 4;
+    const qz = Math.round(reaction.targetPos.z / 4) * 4;
+    const key = `flee-player:${qx}:${qz}`;
+    if (route.orderKey !== key || route.waypoints.length === 0) {
+      route.orderKey = key;
+      route.waypoints = computeLandPath(route.x, route.z, reaction.targetPos.x, reaction.targetPos.z);
+      if (route.waypoints.length === 0) {
+        route.waypoints = [{ x: reaction.targetPos.x, z: reaction.targetPos.z }];
+      }
+    }
+    return 'FLEE_FROM_PLAYER';
+  }
+
+  // Normal devriye veya stratejik emir
+  if (route.tacticalState) {
+    route.tacticalState = null;
+    route.orderKey = undefined;
+  }
+  applyLordOrderToRoute(lord, route, settlements, { x: playerX, z: playerZ });
+  return 'PATROL';
 }

@@ -33,12 +33,21 @@ import {
 import {
   type LordLiveRouteState,
   applyLordOrderToRoute,
+  applyTacticalPlayerReactionToRoute,
   calculateBannerlordPartySpeed,
   computePlayerSpottingRange,
   getLordDetailedIntel,
   isWithinSpottingRange,
   stepLordCampaignRoute,
 } from '../game/campaignSystem';
+import {
+  ENCOUNTER_COOLDOWN_SEC,
+  type EncounterScenario,
+  INTERCEPT_RADIUS,
+  classifyEncounterScenario,
+  getPlayerPartyStrength,
+  isHostileToPlayer,
+} from '../game/encounter';
 import type {
   BattleTelemetry,
   CameraControlActions,
@@ -81,6 +90,7 @@ interface WorldCanvasProps {
   battleTargetLordId: string | null;
   battleTargetSettlementId: string | null;
   activeDiplomacyLordId?: string | null;
+  activeDialogueLordId?: string | null;
   activeSettlementModalId?: string | null;
   cameraActionsRef: React.MutableRefObject<CameraControlActions | null>;
   /** Faz 11: lord konumları her karede buraya yazılır (dünya simülasyonu okur). */
@@ -95,6 +105,7 @@ interface WorldCanvasProps {
   ) => void;
   onOpenSettlement: (settlement: Settlement) => void;
   onOpenDiplomacy: (lord: LordAgent) => void;
+  onHostileEncounter?: (lord: LordAgent, scenario: EncounterScenario) => void;
   onBattleTelemetry: (telemetry: BattleTelemetry) => void;
   onBattleComplete: (
     victory: boolean,
@@ -153,6 +164,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   battleTargetLordId,
   battleTargetSettlementId,
   activeDiplomacyLordId,
+  activeDialogueLordId,
   activeSettlementModalId,
   cameraActionsRef,
   lordPositionsRef,
@@ -160,6 +172,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   onUpdatePlayerPos,
   onOpenSettlement,
   onOpenDiplomacy,
+  onHostileEncounter,
   onBattleTelemetry,
   onBattleComplete,
 }) => {
@@ -174,11 +187,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     battleTargetLordId,
     battleTargetSettlementId,
     activeDiplomacyLordId,
+    activeDialogueLordId,
     activeSettlementModalId,
     onSetTimeScale,
     onUpdatePlayerPos,
     onOpenSettlement,
     onOpenDiplomacy,
+    onHostileEncounter,
     onBattleTelemetry,
     onBattleComplete,
   });
@@ -193,11 +208,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       battleTargetLordId,
       battleTargetSettlementId,
       activeDiplomacyLordId,
+      activeDialogueLordId,
       activeSettlementModalId,
       onSetTimeScale,
       onUpdatePlayerPos,
       onOpenSettlement,
       onOpenDiplomacy,
+      onHostileEncounter,
       onBattleTelemetry,
       onBattleComplete,
     };
@@ -210,11 +227,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     battleTargetLordId,
     battleTargetSettlementId,
     activeDiplomacyLordId,
+    activeDialogueLordId,
     activeSettlementModalId,
     onSetTimeScale,
     onUpdatePlayerPos,
     onOpenSettlement,
     onOpenDiplomacy,
+    onHostileEncounter,
     onBattleTelemetry,
     onBattleComplete,
   ]);
@@ -527,6 +546,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     let pendingTarget: { type: 'settlement' | 'lord'; id: string } | null = null;
     let followingLordId: string | null = null;
     let followRepathTimer = 0;
+    const encounterCooldowns = new Map<string, number>();
+    let lastActiveTalkingLordId: string | null = null;
 
     function setMarchDestination(
       tx: number,
@@ -1664,13 +1685,23 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         const speedInfo = getPartySpeedInfo(playerOverworldX, playerOverworldZ, cavRatio);
         const effectivePartySpeed = bannerlordSpeed.worldUnitsPerSecAt1x;
 
-        const isDialogueOpen = Boolean(stateRef.current.activeDiplomacyLordId);
+        const activeTalkingLordId =
+          stateRef.current.activeDialogueLordId ??
+          stateRef.current.activeDiplomacyLordId ??
+          null;
+        if (lastActiveTalkingLordId && !activeTalkingLordId) {
+          // Diyalog/karşılaşma kapandığında aynı lord 6.5 sn boyunca tekrar yakalamasın
+          encounterCooldowns.set(lastActiveTalkingLordId, elapsedTotal + ENCOUNTER_COOLDOWN_SEC);
+        }
+        lastActiveTalkingLordId = activeTalkingLordId;
+
+        const isDialogueOpen = Boolean(activeTalkingLordId);
         const isSettlementModalOpen = Boolean(stateRef.current.activeSettlementModalId);
-        const activeTalkingLordId = stateRef.current.activeDiplomacyLordId;
         const isWorldEffectivelyPaused =
           timeScale === 0 || isDialogueOpen || isSettlementModalOpen;
 
         const worldSimDt = dt * (isWorldEffectivelyPaused ? 0 : timeScale);
+        const playerStrength = getPlayerPartyStrength(camp);
 
         // F. Advance Lord Parties Along Authentic Land Routes (Frozen if paused or in dialogue)
         if (!isWorldEffectivelyPaused) {
@@ -1694,10 +1725,16 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
           const isThisLordTalking = activeTalkingLordId === l.id;
           if (!isWorldEffectivelyPaused && !isThisLordTalking && timeScale > 0) {
-            // Faz 11: stratejik emir (savaş/kuşatma/av) rotayı belirler.
-            applyLordOrderToRoute(l, route, camp.settlements, {
-              x: playerOverworldX,
-              z: playerOverworldZ,
+            const onCooldown = (encounterCooldowns.get(l.id) ?? 0) > elapsedTotal;
+            // Gerçek zamanlı kovalama (güçlüyse) / kaçma (zayıfsa) veya stratejik emir
+            applyTacticalPlayerReactionToRoute({
+              lord: l,
+              route,
+              settlements: camp.settlements,
+              playerX: playerOverworldX,
+              playerZ: playerOverworldZ,
+              playerStrength,
+              onCooldown,
             });
             stepLordCampaignRoute(l, route, dt, timeScale, camp.settlements);
             route.cachedY = Math.max(0.25, groundHeightAt(route.x, route.z));
@@ -1871,9 +1908,15 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               const lx = route ? route.x : l.x;
               const lz = route ? route.z : l.z;
               const dist = Math.hypot(lx - playerOverworldX, lz - playerOverworldZ);
-              if (dist <= 3.2) {
+              if (dist <= INTERCEPT_RADIUS) {
                 reached = true;
-                stateRef.current.onOpenDiplomacy(l);
+                encounterCooldowns.set(l.id, elapsedTotal + ENCOUNTER_COOLDOWN_SEC);
+                if (isHostileToPlayer(l) && stateRef.current.onHostileEncounter) {
+                  const info = classifyEncounterScenario(l, camp);
+                  stateRef.current.onHostileEncounter(l, info.scenario);
+                } else {
+                  stateRef.current.onOpenDiplomacy(l);
+                }
               }
             }
           }
@@ -1885,6 +1928,48 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             overworldWaypoints = [];
             (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
             marchPathDirty = true;
+          }
+        }
+
+        // I-2. Bannerlord Automatic Hostile Interception (Düşman lord veya haydut oyuncuyu yakaladığında!)
+        if (!isWorldEffectivelyPaused && !activeTalkingLordId) {
+          for (let i = 0; i < camp.lords.length; i++) {
+            const l = camp.lords[i];
+            if (!isHostileToPlayer(l)) continue;
+            if ((encounterCooldowns.get(l.id) ?? 0) > elapsedTotal) continue;
+
+            const route = lordLiveRoutes.get(l.id);
+            const lx = route ? route.x : l.x;
+            const lz = route ? route.z : l.z;
+            const dist = Math.hypot(lx - playerOverworldX, lz - playerOverworldZ);
+
+            if (dist <= INTERCEPT_RADIUS) {
+              encounterCooldowns.set(l.id, elapsedTotal + ENCOUNTER_COOLDOWN_SEC);
+              // Yakalama sonrası iç içe geçmeyi önlemek için düşmanı güvenli temas sınırında tut
+              if (route) {
+                const dx = lx - playerOverworldX;
+                const dz = lz - playerOverworldZ;
+                const len = Math.hypot(dx, dz) || 1;
+                route.x = playerOverworldX + (dx / len) * (INTERCEPT_RADIUS + 0.6);
+                route.z = playerOverworldZ + (dz / len) * (INTERCEPT_RADIUS + 0.6);
+                route.waypoints = [];
+              }
+              stateRef.current.onSetTimeScale?.(0);
+              followingLordId = null;
+              pendingTarget = null;
+              overworldTargetPos = null;
+              overworldWaypoints = [];
+              (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+              marchPathDirty = true;
+
+              const info = classifyEncounterScenario(l, camp);
+              if (stateRef.current.onHostileEncounter) {
+                stateRef.current.onHostileEncounter(l, info.scenario);
+              } else {
+                stateRef.current.onOpenDiplomacy(l);
+              }
+              break;
+            }
           }
         }
 
@@ -1978,9 +2063,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
         }
 
-        // 60 FPS Zero-Reflow Direct DOM Label Updates (Only mutates DOM properties when state changes!)
-        if (labelOverlay.style.display !== 'block') {
-          labelOverlay.style.display = 'block';
+        // 60 FPS Zero-Reflow Direct DOM Label Updates (Hidden during dialogue/settlement modals so names never clutter conversation screen!)
+        const wantLabelsVisible = !isDialogueOpen && !isSettlementModalOpen;
+        const targetDisplay = wantLabelsVisible ? 'block' : 'none';
+        if (labelOverlay.style.display !== targetDisplay) {
+          labelOverlay.style.display = targetDisplay;
         }
         const cw = cachedCanvasWidth;
         const ch = cachedCanvasHeight;
@@ -2096,13 +2183,25 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
           if (rec.troopSpan) {
             const intel = getLordDetailedIntel(l, lx, lz);
-            const expectedHtml = `${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#fb923c]">+${intel.wounded}</span>` : ''}`;
+            const statePrefix =
+              route?.tacticalState === 'PURSUE'
+                ? '⚔️ '
+                : route?.tacticalState === 'FLEE'
+                  ? '🏃 '
+                  : '';
+            const expectedHtml = `${statePrefix}${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#fb923c]">+${intel.wounded}</span>` : ''}`;
             if (rec.lastHtml !== expectedHtml) {
               rec.lastHtml = expectedHtml;
               rec.troopSpan.innerHTML = expectedHtml;
             }
             rec.troopSpan.className = `font-display font-extrabold text-[12px] ${
-              l.isAtWarWithPlayer ? 'text-[#fca5a5]' : 'text-[#86efac]'
+              route?.tacticalState === 'PURSUE'
+                ? 'text-[#f87171]'
+                : route?.tacticalState === 'FLEE'
+                  ? 'text-[#fbbf24]'
+                  : l.isAtWarWithPlayer || l.faction === 'bandits'
+                    ? 'text-[#fca5a5]'
+                    : 'text-[#86efac]'
             } hud-stroke tracking-tight`;
           }
           const sx = Math.round(((_projVec.x + 1) / 2) * cw);

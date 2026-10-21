@@ -163,27 +163,6 @@ export const DiplomacyModal: React.FC<DiplomacyModalProps> = ({
           </button>
         </div>
 
-        {/* Lord Selector Strip */}
-        <div className="flex items-center gap-2 py-3 border-b border-[#c6a15b]/20 overflow-x-auto">
-          {campaign.lords.map((l) => {
-            const active = l.id === selectedLord.id;
-            return (
-              <button
-                key={l.id}
-                type="button"
-                onClick={() => handleLordSwitch(l)}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                  active
-                    ? 'bg-[#b45309] text-white'
-                    : 'bg-[#1a1712] text-[#d1c5b0] hover:bg-[#2a241c]'
-                }`}
-              >
-                {l.title} {l.name} ({l.isAtWarWithPlayer ? 'Savaşta' : l.isAlliedWithPlayer ? 'Müttefik' : `İlişki ${l.relation}`})
-              </button>
-            );
-          })}
-        </div>
-
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 my-4 flex-1 overflow-hidden">
           {/* Left Column: Lord Dossier with 3D Animated Portrait */}
