@@ -16,7 +16,7 @@
 | **Genel olarak neredeyiz?** | **Mühendislik 6,1 / 10** · **Oyun deneyimi 5,3 / 10** · Bannerlord referansı 9,1 / 10 → **Bannerlord'un ~%67 mühendislik, ~%58 deneyim seviyesi** |
 | **En güçlü olduğumuz yer** | Sıfırdan yazılmış 3B motor (iskelet, IK, dövüş, 1000 asker havuzu), 211 yerleşimli prosedürel harita, kararlı kayıt + 29 problu test disiplini |
 | **En zayıf olduğumuz yer** | **Canlı dünya simülasyonu yok** (lord AI devriye gezmekten öteye geçmiyor), **içerik çeşitliliği çok düşük** (4 asker tipi, 29 eşya, 12 NPC repliği) |
-| **Görsel olarak neredeyiz?** | Düzen/yerleşim **≈%85 doğru**, yüzey işçiliği (parşömen, illüstrasyon, ikon) **≈%30** → görsel ortalama **5,6 / 10** |
+| **Görsel olarak neredeyiz?** | Düzen/yerleşim **≈%85 doğru**, yüzey işçiliği (parşömen, illüstrasyon, ikon) **≈%40** → görsel ortalama **5,6 / 10** |
 | **"Bannerlord gibi" hissi veren kısım** | Arayüz dili, ansiklopedi, pazar, yerleşim menüsü, dövüş mekaniği |
 | **"Bannerlord gibi" hissettirmeyen kısım** | Dünya sana tepki vermiyor: lordlar peşine düşmüyor, kuşatmıyor, savaş ilan etmiyor; her lord aynı 12 cümleyi kuruyor |
 | **Profesyonel oynanabilir seviyeye ne zaman?** | **Dikey dilim (demo): 8–10 hafta → Ocak 2027** · **Satılabilir erken erişim: ~9 ay → Temmuz 2027** · **Bannerlord'a rakip: gerçekçi değil (yıllar + ekip)** |
@@ -619,7 +619,7 @@ görsel yargılar **kod okumasına** dayanıyor (ve öyle olduğu belirtildi).
 | Aydınlatma / atmosfer | **4,0** | Neredeyse yok |
 | Animasyon | **6,5** | Prosedürel, işlevsel; klip değil |
 | VFX / vuruş hissi | **3,5** | Parçacık, sarsıntı, hit-stop yok |
-| **Yüzey işçiliği** (doku, ornament, illüstrasyon, ikon) | **3,0** | Parşömen yok, kart sanatı yok, eşya ikonu yok |
+| **Yüzey işçiliği** (doku, ornament, illüstrasyon, ikon) | **4,0** | Eşya ikonları artık SVG (60 eşya); parşömen dokusu ve kart sanatı hâlâ yok |
 | **Görsel ortalama** (7 alan, basit ortalama) | **5,6** | "Düzeni doğru, yüzeyi eksik prototip" |
 
 ---
@@ -726,6 +726,13 @@ yaşatmak"** olmalı. Dikey dilim tam olarak bunu hedefliyor.
 > Arayüz artık veriyi okuyor (`NotableSpeechCard`), kayıt **v3** + v1/v2 göçü.
 > Kalan B0 kalemleri: `garrisonRoster`, `ownerClanId`, `workshops`, kalıcı `quests`.
 >
+> **B3 ilk dilim (aynı gün):** pazar kataloğu **29 → 60 eşya** (14 silah, 6 kalkan, 16 zırh,
+> 16 erzak/emtia, 8 binek) ve **emoji ikonlar → SVG**: `src/game/itemIcons.ts` (30 anahtar) +
+> `src/components/ItemIcon.tsx` (tek renkli siluetler). Pazar ekranının kategori şeridi, eşya
+> kartları, 12 teçhizat slotu ve kilit kolonu da emojiden arındırıldı; kilit artık
+> **"KİLİTLİ / AÇIK"** metniyle yazılıyor. Her teçhizat slotunda en az bir eşya var
+> (`HARNESS` dahil), T1 ort. 69 → T5 ort. 581 dinar (kademe ekonomisi çalışıyor).
+>
 > **B2 ilk dilim (aynı gün):** `src/game/troops.ts` — asker **adları** artık kültüre bağlı
 > (8 taraf × 4 sınıf = 32 ad): Vlandiya Şövalyesi, Khuzait Bozkır Atlı Okçusu, Battaniya Fian
 > Okçusu, Sturgiya Drujinniki, Aserai Memlûk Süvarisi… Savaş istatistikleri ve
@@ -787,7 +794,7 @@ her görev türünün en az 1 üreticisi).
    `React.lazy` → ilk paket < 700 kB.
 3. **Emoji temizliği** (arena 89, HUD 34, pazar 30, yaratıcı 24) → SVG.
 4. **Erişilebilirlik**: `role="dialog"`, `aria-modal`, odak tuzağı, `Esc` (B5/B6).
-5. **Mobil kararı**: dokunmatik joystick **veya** "masaüstü gerekli" ekranı (B7 — hâlâ açık).
+5. ~~**Mobil kararı**~~ ⛔ **kapsam dışı** — oyun yalnız masaüstü (klavye + fare); dokunmatik kontrol yazılmayacak.
 6. README, lisans, ekran görüntüleri, `SAVE_VERSION` göç notu.
 
 ### Faz F — Derinlik (3 ay) 🟡
@@ -811,7 +818,7 @@ performans profili, hata avı, telemetri (isteğe bağlı, kapalı varsayılan),
 | 365 günde vakayiname olayı | **3** | ≥120 | ≥200 | ≥400 |
 | İleri gelen (notable) | **440** (isim/unvan/nüfuz/ilişki) | 440 | 440 + seçim | 440 + seçim |
 | Asker tipi | 4 sınıf × 8 kültür adı | 4 sınıf | 40 | 60 |
-| Eşya (ikonlu) | 29 (0 ikon) | 29 | 120 | 160 |
+| Eşya (ikonlu) | **60 (60 SVG ikon)** | 60 | 120 | 160 |
 | Diyalog repliği | 12 | 12 | 300 | 600 |
 | Görev türü | 5 | 5 | 12 | 16 |
 | Perk | 0 | 0 | 90 | 120 |
@@ -864,12 +871,13 @@ arayüz, test) zaten bitmiş durumda; kalan kısım **içerik ve simülasyon**, 
 npx tsc --noEmit                                   # 0 hata
 npx tsc --noEmit --strict                          # 0 hata (config'de kapalı)
 npx tsc --noEmit --noUnusedLocals --noUnusedParameters   # 78 uyarı
-npm run verify:all                                 # 32 paket ✅
+npm run verify:all                                 # 33 paket ✅
 npx vite build                                     # 1.566 kB (437 kB gzip)
 npx tsx scripts/probe-content.ts                   # 10 kontrol
 npx tsx scripts/probe-world-sim.ts                 # 20 kontrol (365 gün canlı dünya)
 npx tsx scripts/probe-notables.ts                  # 30 kontrol (ileri gelenler + kayıt göçü)
 npx tsx scripts/probe-troops.ts                    # 23 kontrol (kültür asker adları)
+npx tsx scripts/probe-items.ts                     # 34 kontrol (eşya kataloğu + SVG ikonlar)
 ```
 
 ## EK B — Dosya envanteri (satır sayıları)
@@ -879,7 +887,7 @@ npx tsx scripts/probe-troops.ts                    # 23 kontrol (kültür asker 
 `App.tsx` 1.542 · `KingdomManagementModal.tsx` 1.411 · `characterMorph.ts` 1.299 · `kingdomSystem.ts` 1.275 ·
 `Core.ts` 1.242 · `proceduralModels.ts` 1.225 · `mapGen.ts` 1.161 · `CharacterCreatorModal.tsx` 1.131 ·
 `rules.test.ts` 1.112 · `BattleSoundFX.ts` 985 · `Armor.ts` 906 · `battleEnginePool.ts` 858 · `Horse.ts` 825 ·
-`Character.ts` 817 · `Faction.ts` 803 · `BannerlordMarketModal.tsx` 802 · `Rig.ts` 778 · `EncyclopediaModal.tsx` 757 ·
+`Character.ts` 817 · `Faction.ts` 803 · `BannerlordMarketModal.tsx` 809 · `Rig.ts` 778 · `EncyclopediaModal.tsx` 757 ·
 `armoryBridge.ts` 619 · `pages.tsx` 619 · `marketRules.ts` 580 · `encyclopedia.ts` 543 · `instancedArmyRenderer.ts` 520 ·
 `DiplomacyModal.tsx` 467 · `dialogue.ts` 450 · `characterFace.ts` 412 · `navigation.ts` 391 · `heroes.ts` 389 ·
 `quests.ts` 384 · `tacticalFormation.ts` 356 · `campaignSystem.ts` 428 · `sound.ts` 350 · `conversation.ts` 330 ·
@@ -890,4 +898,5 @@ npx tsx scripts/probe-troops.ts                    # 23 kontrol (kültür asker 
 `characterRig.types.ts` 1 — **toplam 47.912**
 
 **Faz A eklemeleri:** `worldSim.ts` 757 · `WorldWarPanel.tsx` 56 · `probe-world-sim.ts` (betik, sayılmadı)
-`notables.ts` 284 · `rng.ts` 38 · `troops.ts` 95 → **toplam 49.338** (+1.426 satır).
+`notables.ts` 284 · `rng.ts` 38 · `troops.ts` 95 · `itemIcons.ts` 85 · `ItemIcon.tsx` 259
+→ **toplam 49.777** (+1.865 satır).

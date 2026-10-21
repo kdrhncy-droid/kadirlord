@@ -182,12 +182,12 @@
   `↑/↓/Enter` yok. Sonuçlar fare ile seçiliyor.
 - **Öneri:** `activeIndex` + `↑/↓` + `Enter`; `aria-activedescendant`.
 
-### B7. 📱 Dokunmatik/mobil destek yok
-- **Kanıt:** `grep -rn "touchstart" src` → yalnız `CharacterCreatorModal.tsx:237`.
-  Harita (WASD + pointer lock), arena (pointer lock) ve tüm HUD fare/klavye varsayıyor.
-- **Etki:** Telefon/tablet için oyun oynanamaz; "live preview" mobilde boş ekran gibi görünür.
-- **Öneri (karar gerektirir):** ya mobil için "sadece harita + dokunmatik sürükle" modu,
-  ya da açılışta "Bu oyun klavye+fare ister" bilgi ekranı.
+### B7. 📱 Dokunmatik/mobil destek — ⛔ **KAPSAM DIŞI (kullanıcı kararı, 2026-10-21)**
+- **Karar:** Oyun **yalnız masaüstü** (klavye + fare). Telefonda oynama olmayacak; dokunmatik
+  kontrol, mobil düzen, "mobil yakında" bilgi ekranı **yazılmayacak**. Bu madde kapatıldı.
+- **Kanıt (kayıt için):** `grep -rn "touchstart" src` → yalnız `CharacterCreatorModal.tsx:237`.
+  Harita (WASD + tekerlek + sürükleme) ve arena (pointer lock) masaüstü varsayar — bu bilinçli.
+- **Yapılmayacaklar:** sanal joystick, dokunmatik kamera, responsive mobil düzen, mobil uyarı ekranı.
 
 ### B8. 📄 README hâlâ AI Studio şablonu
 - **Kanıt:** `README.md:5-20` → "Run and deploy your AI Studio app", kurulumda
@@ -234,7 +234,7 @@
 ## E. ⚖️ KARAR GEREKTİREN ÜÇ BAŞLIK
 
 1. ~~**A4 — Pazar**~~ ✅ yalnız yerleşim menüsünden (Faz 10b).
-2. **B7 — Mobil:** dokunmatik kontrol mü, "masaüstü gerekli" bilgi ekranı mı? **Hâlâ açık.**
+2. ~~**B7 — Mobil**~~ ⛔ kapsam dışı: oyun yalnız masaüstü (kullanıcı kararı).
 3. ~~**B1 — Kale adları**~~ ✅ veri `<Ad> Kalesi` (Faz 10b) — Bannerlord TR çevirisiyle aynı.
 
 > **Durum:** Paket 1 (A1 + A2 + A8) → MD §40; Bannerlord yerleşim menüsü + adlandırma → MD §41.

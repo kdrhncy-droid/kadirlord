@@ -38,7 +38,8 @@ ok(/Ticaret söylentisi|: \d+ D/.test(text), 'ticaret söylentisi satırları va
 ok(text.includes('Stok'), 'tezgah stoğu gösteriliyor');
 ok(/Bitir/.test(text), 'alt barda "Bitir" düğmesi');
 ok(/net sonucu|0 D · \d+ alış/.test(text) || text.includes('alış /'), 'alt barda net sonuç şeridi');
-ok(html.includes('🔒') || html.includes('🔓'), 'envanterde kilit kolonu var');
+ok(html.includes('KİLİTLİ') || html.includes('AÇIK'), 'envanterde kilit kolonu var (metin etiketli)');
+ok(!html.includes('🔒') && !html.includes('🔓'), 'envanterde emoji kilit ikonu kalmadı');
 ok(!html.includes('14800'), 'sabit 14.800 tüccar altını kalmadı');
 ok(/Fiyat \(Artan\)/.test(text), 'sıralama seçenekleri duruyor');
 
