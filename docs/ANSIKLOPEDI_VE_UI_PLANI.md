@@ -1481,3 +1481,42 @@ uzvu örtüyor (pay 0.043–0.050 m), uzvun boyunca oturuyor (kayma yok), iki ba
 zırhı kesişmiyor (0 mm), ayaklık ayağı örtüyor ve tabanla hizalı.
 `render-armor.ts` 36 karoya çıktı (6 satır gövde + 6 karo bacak yakın planı).
 `verify:all` 22 paket ✅, `vite build` ✅.
+
+## 36. FAZ 9f — PORTRE YÜZ DETAYI (TAMAMLANDI ✅)
+
+Kadraj **değişmedi** (kullanıcı kararı: tepe 0.80 NDC, çene −0.76, omuz 1.88).
+Yalnız yüzün kendi detayları yeniden yazıldı. Öncesinde 8 kahramanın yüzü
+`docs/renders/portrait-face.png` ile yakın plandan incelendi.
+
+### Bulgular → düzeltmeler
+
+| Sorun | Önce | Sonra |
+|---|---|---|
+| Burun | 2 kutu, portrede neredeyse görünmüyor | **gerçek kama** (dar köprü → kanat → uç), çıkıntı **22–43 mm** |
+| Ağız | tek düz koyu bar | 3 parçalı hafif kavis + iki kanatlı üst dudak (cupid bow) |
+| Dudak | eşit kalınlıkta iki bar | alt dudak dolgun (**13–20 mm**), üst dudak kanatlı, dudak altı gölgesi |
+| Kaş | 11 mm kalın kutu (siyah bar) | uçları sivrilen **6 şerit**, 4–7 mm |
+| Göz | çıplak ak + iris (yapıştırma gibi) | üst göz kapağı + alt kapak çizgisi + kirpik |
+| Saç | alnı tamamen örtüyor, kaş saça değiyor | **değişken saç çizgisi** (önde yüksek, yanda/arkada düşük) |
+| Burun deliği | tek geniş gölge | iki ayrı delik, hafif açılı |
+
+### Teknik
+
+- `characterFace.ts`: `noseWedgeGeometry()` (6 köşe/8 üçgen) ve `browGeometry()`
+  (sivrilen şerit) eklendi; `nostril/lid/lidLow/lipShadow/upperLipHalf` isimleri
+  korunuyor (probe'lar bunları arıyor).
+- `characterMorph.ts`: `hairCapGeometry(radius, thetaSide, thetaFront)` — 7 saç
+  stilinin tamamı `SphereGeometry` yerine bunu kullanıyor. Önde üst açı 1.08 rad
+  (alın açık), arkada eski değer. 8×4 segment = 64 üçgen.
+- İki probe'daki ölçüm hatası da düzeltildi: sakal/saç, kafa kutusunu büyütüp
+  "çene kadraj dışında" (probe-portrait-frame) ve "yüz kapalı" (probe-face-cover)
+  yanlış pozitifleri üretiyordu → ölçüm **kafatası mesh'i** üzerinden yapılıyor.
+
+### Doğrulama
+
+`probe-portrait-face.ts` — **7 kontrol × 40 kahraman**: burun çıkıntısı ≥ 8 mm,
+kaş ≤ 9.5 mm ve gözün üstünde, alın açık (saç çizgisi kaşın ≥ 8 mm üstünde),
+alt dudak ≥ 10 mm, göz kapakları var, portre kamerası 30° FOV ve kafanın önünde.
+`verify:all` **23 paket ✅**, `vite build` ✅.
+Çıktılar: `docs/renders/portrait-face.png` (8 yüz), `portrait-preview.png`,
+`scars-preview.png`.

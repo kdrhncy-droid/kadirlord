@@ -47,7 +47,10 @@ const r3 = (v: number) => v.toFixed(3);
 
 const bare = createCharacterRig({ ...base, armorTier: 'CIVILIAN' } as CharacterVisualOptions);
 bare.root.updateMatrixWorld(true);
-const skull = box(bare.head.getObjectByName('Skull') ?? bare.head);
+// Kafatası = head grubunun İLK mesh'i (saç/sakal/yüz katmanları hariç).
+// Grubun tamamının kutusu alınırsa sakal ölçüme girer (z 0.22'ye kadar).
+const skullMesh = bare.head.children.find((c) => (c as THREE.Mesh).isMesh) as THREE.Mesh;
+const skull = box(skullMesh);
 const eyeY = 1.892;
 const chinY = skull.min.y;
 console.log(
@@ -126,6 +129,10 @@ for (const helmetType of HELMETS) {
     .map((m) => box(m))
     .filter((b) => b.max.y > bandBottom && b.min.y < bandTop && b.max.z > skull.max.z - 0.035);
   const spanX = blockers.length ? Math.max(...blockers.map((b) => b.max.x)) - Math.min(...blockers.map((b) => b.min.x)) : 0;
+  if (process.env.FACE_DEBUG) {
+    console.log('   debug: skullFront', skull.max.z.toFixed(3), 'blockers', blockers.length,
+      hm.map((m) => `${(m.geometry as THREE.BufferGeometry).type}@${box(m).min.y.toFixed(2)}`).join(' '));
+  }
   if (helmetType === 'IMPERIAL_VISOR') {
     const slit = rig.helmetSocket.getObjectByName('visorEyeSlit');
     ok(!!slit, 'IMPERIAL_VISOR: göz yarığı var');

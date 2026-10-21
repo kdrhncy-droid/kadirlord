@@ -42,6 +42,64 @@ function surfaceZ(x: number, y: number, out = 0.004): number {
   return SKULL_R.z * Math.sqrt(Math.max(0, k)) + out;
 }
 
+
+/* ─────────────────────── yardımcı geometriler ─────────────────────── */
+
+/**
+ * Burun kaması — low-poly.
+ *
+ * Eski burun iki kutuydu ve portrede neredeyse görünmüyordu (düz bir çıkıntı).
+ * Burada gerçek bir kama var: dar köprü → geniş burun kanatları → öne çıkan uç.
+ * 6 köşe / 8 üçgen: yüz diline uygun, ucuz.
+ */
+function noseWedgeGeometry(height: number, bridgeW: number, baseW: number, depth: number): THREE.BufferGeometry {
+  const hb = height / 2;
+  const v = new Float32Array([
+    // köprü (üst): sol, sağ
+    -bridgeW / 2, hb, 0,
+    bridgeW / 2, hb, 0,
+    // kanat (alt): sol, sağ
+    -baseW / 2, -hb, 0,
+    baseW / 2, -hb, 0,
+    // uç: öne çıkan
+    0, -hb * 0.55, depth,
+  ]);
+  const idx = [
+    0, 1, 4, // üst yüz
+    1, 3, 4, // sağ yan
+    3, 2, 4, // alt yüz
+    2, 0, 4, // sol yan
+    0, 2, 3, 0, 3, 1, // arka (kafaya gömülü)
+  ];
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(v, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/** İnce, uçları sivrilen kaş: 6 köşeli yassı şerit (kutu değil). */
+function browGeometry(len: number, thick: number, depth: number): THREE.BufferGeometry {
+  // iç uç kalın, dış uç ince; hafif yay.
+  const h = thick / 2;
+  const v = new Float32Array([
+    -len / 2, h * 0.55, 0,
+    len / 2, -h * 0.45, 0,
+    len / 2, -h * 0.45, depth,
+    -len / 2, h * 0.55, depth,
+    -len / 2, -h * 0.9, 0,
+    len / 2, -h * 1.0, 0,
+    len / 2, -h * 1.0, depth,
+    -len / 2, -h * 0.9, depth,
+  ]);
+  const idx = [0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 3, 2, 6, 3, 6, 7];
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(v, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 export interface FaceMaterials {
   skin: THREE.MeshStandardMaterial;
   hair: THREE.MeshStandardMaterial;
@@ -133,11 +191,26 @@ export function createFace(
     lash.position.set(side * EYE_X, EYE_Y + 0.0106, surfaceZ(EYE_X, EYE_Y + 0.0106, 0.0042));
     lash.rotation.z = side * 0.17;
 
-    // Kaş: alın kavisine oturan ince, kısa levha (saç rengi)
-    const brow = add(new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.011, 0.014), pal.brow), `brow${tag}`);
-    brow.position.set(side * 0.048, SKULL_Y + 0.042, surfaceZ(0.048, SKULL_Y + 0.042, 0.0025));
-    brow.rotation.z = side * -0.12;
-    brow.rotation.y = side * 0.36;
+    // Üst göz kapağı: göz akının üstünü örten ten rengi kapak (göz "yapıştırma"
+    // gibi durmasın, göz çukurunun içinde olsun).
+    const lid = add(new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.011, 0.012), mats.skin), `lid${tag}`);
+    lid.position.set(side * EYE_X, EYE_Y + 0.0092, surfaceZ(EYE_X, EYE_Y + 0.0092, 0.0045));
+    lid.rotation.z = side * -0.16;
+    lid.rotation.y = side * 0.2;
+
+    // Alt göz kapağı çizgisi (ince, ten gölgesi).
+    const lidLower = add(
+      new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.0032, 0.006), pal.skinShadow),
+      `lidLow${tag}`,
+    );
+    lidLower.position.set(side * EYE_X, EYE_Y - 0.0105, surfaceZ(EYE_X, EYE_Y - 0.0105, 0.0035));
+    lidLower.rotation.z = side * 0.1;
+
+    // Kaş: uçları sivrilen şerit (kalın kutu yerine), saç rengi.
+    const brow = add(new THREE.Mesh(browGeometry(0.046, 0.0068, 0.0085), pal.brow), `brow${tag}`);
+    brow.position.set(side * 0.047, SKULL_Y + 0.043, surfaceZ(0.047, SKULL_Y + 0.043, 0.0022));
+    brow.rotation.z = side * -0.13;
+    brow.rotation.y = side * 0.34;
 
     // Kulak: kafatası yanına gömülü ince levha
     // Kulak: kafatası elipsoidinin yanına TAM oturur (içine girerse faset
@@ -150,26 +223,64 @@ export function createFace(
 
   /* ── burun: ince köprü + uç + burun deliği gölgesi ──
      Yüzey z'si y = -0.01'de ≈ 0.130, y = -0.04'te ≈ 0.126. */
-  const nose = add(new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.05, 0.034), mats.skin), 'nose');
-  nose.position.set(0, SKULL_Y - 0.008, surfaceZ(0, SKULL_Y - 0.008, -0.006));
-  nose.rotation.x = 0.1;
+  // Burun: gerçek kama (dar köprü → geniş kanat → öne çıkan uç).
+  const nose = add(new THREE.Mesh(noseWedgeGeometry(0.052, 0.012, 0.03, 0.026), mats.skin), 'nose');
+  nose.position.set(0, SKULL_Y - 0.012, surfaceZ(0, SKULL_Y - 0.012, -0.004));
+  nose.rotation.x = 0.06;
 
-  const noseTip = add(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.018, 0.026), mats.skin), 'noseTip');
-  noseTip.position.set(0, SKULL_Y - 0.036, surfaceZ(0, SKULL_Y - 0.036, 0.006));
-  noseTip.rotation.x = 0.4;
+  // Burun ucu: kamanın önüne oturan küçük çıkıntı (yuvarlak uç).
+  const noseTip = add(new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.013, 0.016), mats.skin), 'noseTip');
+  noseTip.position.set(0, SKULL_Y - 0.034, surfaceZ(0, SKULL_Y - 0.034, 0.012));
+  noseTip.rotation.x = 0.42;
 
-  const nostril = add(new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.006, 0.008), pal.skinShadow), 'nostril');
-  nostril.position.set(0, SKULL_Y - 0.0465, surfaceZ(0, SKULL_Y - 0.0465, 0.0005));
+  // Burun delikleri: tek geniş çizgi yerine iki ayrı gölge (daha okunur).
+  for (const side of [-1, 1] as const) {
+    const n = add(new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.0055, 0.007), pal.skinShadow), `nostril${side < 0 ? 'R' : 'L'}`);
+    n.position.set(side * 0.0085, SKULL_Y - 0.0415, surfaceZ(0, SKULL_Y - 0.0415, 0.0105));
+    n.rotation.y = side * 0.28;
+  }
+  // Eski tek parça 'nostril' adı geriye dönük uyumluluk için (görünmez).
+  const nostril = add(new THREE.Mesh(new THREE.BufferGeometry(), pal.skinShadow), 'nostril');
+  nostril.visible = false;
 
   /* ── ağız: tek ince çizgi + hafif dudak dokusu (kırmızı değil) ── */
-  const mouth = add(new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.006, 0.008), pal.skinShadow), 'mouth');
-  mouth.position.set(0, SKULL_Y - 0.074, surfaceZ(0, SKULL_Y - 0.074, 0.0012));
+  // Ağız çizgisi: 3 parçalı hafif kavis (düz bar yerine).
+  const mouth = add(new THREE.Group() as unknown as THREE.Mesh, 'mouth');
+  for (const [dx, dy, rot] of [
+    [-0.014, 0.0012, 0.1],
+    [0, 0, 0],
+    [0.014, 0.0012, -0.1],
+  ] as const) {
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(0.017, 0.0042, 0.006), pal.skinShadow);
+    seg.name = 'mouthSeg';
+    seg.position.set(dx, SKULL_Y - 0.074 + dy, surfaceZ(dx, SKULL_Y - 0.074 + dy, 0.0018));
+    seg.rotation.z = rot;
+    mouth.add(seg);
+  }
+  mouth.position.set(0, 0, 0);
 
-  const upperLip = add(new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.009, 0.008), pal.lips), 'upperLip');
-  upperLip.position.set(0, SKULL_Y - 0.0665, surfaceZ(0, SKULL_Y - 0.0665, 0.0018));
+  // Üst dudak: iki kanat (cupid bow) + hafif gölge.
+  const upperLip = add(new THREE.Group() as unknown as THREE.Mesh, 'upperLip');
+  for (const side of [-1, 1] as const) {
+    const half = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.0095, 0.0085), pal.lips);
+    half.name = 'upperLipHalf';
+    half.position.set(
+      side * 0.0105,
+      SKULL_Y - 0.0672,
+      surfaceZ(side * 0.0105, SKULL_Y - 0.0672, 0.0016),
+    );
+    half.rotation.z = side * -0.12;
+    upperLip.add(half);
+  }
 
-  const lowerLip = add(new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.009, 0.008), pal.lips), 'lowerLip');
-  lowerLip.position.set(0, SKULL_Y - 0.0805, surfaceZ(0, SKULL_Y - 0.0805, 0.0016));
+  // Alt dudak: dolgun, ortası hafif öne çıkan tek parça.
+  const lowerLip = add(new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.0125, 0.0095), pal.lips), 'lowerLip');
+  lowerLip.position.set(0, SKULL_Y - 0.0815, surfaceZ(0, SKULL_Y - 0.0815, 0.0022));
+  lowerLip.rotation.x = 0.12;
+
+  // Dudak altı gölgesi (çene ile dudak arası derinlik).
+  const lipShadow = add(new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.005, 0.006), pal.skinShadow), 'lipShadow');
+  lipShadow.position.set(0, SKULL_Y - 0.0895, surfaceZ(0, SKULL_Y - 0.0895, 0.0008));
 
   // Çene için ayrı parça yok: kafatası elipsoidi + `chinLength` ölçeği yeterli.
   const chin = add(new THREE.Mesh(new THREE.BufferGeometry(), mats.skin), 'chin');

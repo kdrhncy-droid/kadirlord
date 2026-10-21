@@ -579,6 +579,53 @@ function mesh(geo: THREE.BufferGeometry, mat: THREE.Material, shadow = true): TH
 /**
  * Builds distinctive 3D low-poly hair styles that sit cleanly on top of the head ellipsoid.
  */
+
+/**
+ * Saç takkesi — **değişken saç çizgisi**.
+ *
+ * `SphereGeometry` ile yapılan kapak her yönde aynı açıyı kapsıyordu; bu yüzden
+ * portrede saç alnı tamamen örtüyor, kaşlar saça değiyordu (Faz 9f).
+ * Burada üst açı azimuta göre değişir: önde yüksek (alın açık), yanda/arkada
+ * düşük (kulak ve ense örtülü). 8×4 segment = 64 üçgen.
+ */
+function hairCapGeometry(
+  radius: number,
+  thetaSide: number,
+  thetaFront: number,
+  rings = 4,
+  segs = 8,
+): THREE.BufferGeometry {
+  const verts: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i <= rings; i++) {
+    for (let j = 0; j <= segs; j++) {
+      const phi = (j / segs) * Math.PI * 2; // 0 = ön (+Z)
+      // t: 0 önde, 1 arkada
+      const t = (1 - Math.cos(phi)) / 2;
+      const thetaMax = thetaFront + (thetaSide - thetaFront) * t;
+      const theta = (i / rings) * thetaMax;
+      const y = Math.cos(theta) * radius;
+      const rr = Math.sin(theta) * radius;
+      verts.push(Math.sin(phi) * rr, y, Math.cos(phi) * rr);
+    }
+  }
+  const row = segs + 1;
+  for (let i = 0; i < rings; i++) {
+    for (let j = 0; j < segs; j++) {
+      const a = i * row + j;
+      const b = a + 1;
+      const c = a + row;
+      const d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THREE.Group {
   const g = new THREE.Group();
   g.name = `Hair_${style}`;
@@ -591,7 +638,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'short_parted') {
     // Vlandian neat side-parted hair cap
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.016, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.25) / 8),
+      hairCapGeometry(HEAD.r + 0.016, (Math.PI * 3.25) / 8, 1.08, 4, 8),
       hairMat,
       false,
     );
@@ -632,7 +679,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'nordic_braids') {
     // Sturgian hair with side braids hanging over shoulders
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.016, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.6) / 8),
+      hairCapGeometry(HEAD.r + 0.016, (Math.PI * 3.6) / 8, 1.08, 4, 8),
       hairMat,
       false,
     );
@@ -664,7 +711,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'steppe_topknot') {
     // Khuzait shaved temples with high knotted ponytail
     const crownCap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.015, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.26),
+      hairCapGeometry(HEAD.r + 0.015, Math.PI * 0.26, 1.08, 3, 6),
       hairMat,
       false,
     );
@@ -687,7 +734,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'warrior_knot') {
     // Battanian rugged warrior topknot / man-bun
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.018, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.4) / 8),
+      hairCapGeometry(HEAD.r + 0.018, (Math.PI * 3.4) / 8, 1.08, 4, 8),
       hairMat,
       false,
     );
@@ -705,7 +752,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'shoulder_wavy') {
     // Flowing wavy hair covering ears and nape down to shoulders
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.02, 8, 5, 0, Math.PI * 2, 0, (Math.PI * 3.35) / 8),
+      hairCapGeometry(HEAD.r + 0.02, (Math.PI * 3.35) / 8, 1.08, 5, 8),
       hairMat,
       false,
     );
@@ -730,7 +777,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'imperial_crop') {
     // Tight, disciplined Roman/Empire short crop
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.014, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.2) / 8),
+      hairCapGeometry(HEAD.r + 0.014, (Math.PI * 3.2) / 8, 1.08, 4, 8),
       hairMat,
       false,
     );
@@ -748,7 +795,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'royal_braid') {
     // Aristocratic crown braid wrapped around head (Rhagaea style)
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.016, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.25) / 8),
+      hairCapGeometry(HEAD.r + 0.016, (Math.PI * 3.25) / 8, 1.08, 4, 8),
       hairMat,
       false,
     );

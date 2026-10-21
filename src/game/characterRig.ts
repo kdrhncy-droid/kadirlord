@@ -277,17 +277,21 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   // Hair: a cap over the skull (stops above the brow) + a back piece over the nape.
   const hairGroup = new THREE.Group();
   hairGroup.name = 'hair';
+  /*
+   * Saç takkesi 8 halkanın 3'ünü kaplıyordu → portrede alın görünmüyor,
+   * kaşlar saça değiyordu (Faz 9f). 2.5 halka: saç çizgisi kaşın ~1.8 cm
+   * üstünde kalır, alın okunur.
+   */
   const hairCap = mesh(
-    // rings aligned with the head: 3 of 8 rings (stops above the brow)
-    new THREE.SphereGeometry(HEAD.r + 0.014, HEAD.seg, 3, 0, Math.PI * 2, 0, (Math.PI * 3) / HEAD.rings),
+    new THREE.SphereGeometry(HEAD.r + 0.014, HEAD.seg, 3, 0, Math.PI * 2, 0, (Math.PI * 2.05) / HEAD.rings),
     mats.hair,
     false,
   );
   hairCap.scale.set(1, HEAD.sy, HEAD.sz);
   hairCap.position.y = HEAD.cy;
   const hairBack = mesh(
-    // back half (left side -> back -> right side), from the cap edge down to the nape
-    new THREE.SphereGeometry(HEAD.r + 0.011, HEAD.seg / 2, 3, Math.PI, Math.PI, (Math.PI * 3) / HEAD.rings, (Math.PI * 3) / HEAD.rings),
+    // arka yarı: takkenin kenarından enseye kadar
+    new THREE.SphereGeometry(HEAD.r + 0.011, HEAD.seg / 2, 3, Math.PI, Math.PI, (Math.PI * 2.05) / HEAD.rings, (Math.PI * 3) / HEAD.rings),
     mats.hair,
     false,
   );

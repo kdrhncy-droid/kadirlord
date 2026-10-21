@@ -54,7 +54,12 @@ function measure(hero: (typeof heroes)[number]): Frame {
       };
     };
 
-    const headBox = new THREE.Box3().setFromObject(rig.head);
+    // Kadraj ölçütü **kafatası** üzerinden: sakal/saç grubun kutusunu
+    // büyütüp "çene kadraj dışında" yanlış pozitifi üretiyordu (Faz 9f).
+    const coreMesh = rig.head.children.find((c) => (c as THREE.Mesh).isMesh) as
+      | THREE.Mesh
+      | undefined;
+    const headBox = coreMesh ? new THREE.Box3().setFromObject(coreMesh) : new THREE.Box3().setFromObject(rig.head);
     const head = project(headBox);
 
     // Boyun: portrenin alt kısmında görünmeli (baş-göğüs geçişi).
