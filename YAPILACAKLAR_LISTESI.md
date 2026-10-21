@@ -1,6 +1,6 @@
 # ⚔️ SANCAK-I KALRADYA (KADIRLORD) — MİMARİ ARAŞTIRMA, SİSTEM KARNESİ VE YAPILACAKLAR LİSTESİ
 
-> **Son Güncelleme:** Faz 2.5 — Kıta Haritası (Overworld) Kamera Yakınlaştırma/Uzaklaştırma (Zoom) FPS ve Akıcılık Optimizasyonu (Draw Call Birleştirme, DOM Reflow Kaldırma, C2-Sürekli Kamera Eğrisi) Tamamlandı.
+> **Son Güncelleme:** 2026-10-22 — Bölüm 6: kullanıcının Bannerlord arayüz/sistem tarifi, web görsel doğrulaması ve mevcut kodla satır bazlı karşılaştırması eklendi. Bu bölümdeki uygulama işleri, karar sorularının cevapları gelmeden başlatılmayacak.
 
 ---
 
@@ -177,5 +177,244 @@ Tarayıcıda **500v500 (1000 asker)** meydan ve kale kuşatması savaşlarını 
 - [x] **4. Durum Güdümlü Tımarsız Krallık Yıkımı (`Fiefless Kingdom Destruction`), Sadakat/Erzak & İklim:**
   - Son tımar kuşatma, ikna (Parley/Defection) veya takas (Barter) yoluyla kaybedildiğinde `if (kingdom.Fiefs.Count == 0)` durum kontrolüyle krallık yıkımı, 28 günlük (4 hafta) bağımsız klan erimesi ve **Restorasyon İsyanı** eklendi.
   - `DefaultSettlementLoyaltyModel` (Farklı kültür `-3.0` cezası, `Borçların Affı` `+2.0` politikası, `Kraliyet Ayrıcalığı` `-%20` veto maliyeti), `DefaultSettlementFoodModel` (garnizon vs. açlık dengesi) ve İklim/Hava Durumu çarpanları (ıslak/karlı zeminde `2x` kuşatma hazırlık süresi, `-%15` süvari hızı, `-%20` ok hızı, `+%3` Seviye 8 Kaptanlık Perk bonusu) entegre edildi.
+
+---
+
+## 🧭 BÖLÜM 6: BANNERLORD PARİTESİ — KULLANICI TARİFİ, KOD KARŞILAŞTIRMASI VE KARAR BEKLEYEN İŞLER (2026-10-22)
+
+> **Durum:** Denetim tamamlandı; bu bölümde anlatılan yeni uygulama işleri **henüz başlatılmadı**.
+> Kullanıcının açık talimatı gereği belirsiz ürün kararları kendi kendime seçilmeyecek; aşağıdaki
+> Q1–Q6 cevaplanmadan veri modeli ve ekran mimarisi kesinleştirilmeyecek.
+
+### 6.0 Nasıl karşılaştırıldı?
+
+- Kullanıcının gönderdiği **saha envanteri**, **Charas pazarı** ve **harita HUD** görselleri tek tek incelendi.
+- Emin olunmayan **Party**, **Discard/envanter** ve **karakter gelişimi** düzenleri web görselleri ve rehberleriyle ayrıca doğrulandı.
+- Mevcut oyun tarafında yalnız ekran görüntüsüne bakılmadı; `CampaignState`, pazar/envanter kuralları,
+  `GameHud`, hız modeli, birlik terfisi, karakter puanları, krallık/makro durum ve kayıt altyapısı koddan kontrol edildi.
+- Durum etiketleri: **VAR** = hedefe yakın çalışıyor, **KISMEN** = iskelet/varlık var ama kural eksik,
+  **YANLIŞ** = görünen değer ya da davranış hedefle çelişiyor, **YOK** = üretim akışında karşılığı yok.
+
+### 6.1 Kullanıcının anlattıklarınızdan anladığım hedef
+
+#### A) Saha Envanteri (`I`) ve Discard
+
+- Haritada, şehirde olmaya gerek olmadan açılan ekran **üç ana alanlı** olmalı:
+  - **Sol:** `Discard` (bırakılacaklar),
+  - **Orta:** 360° döndürülebilen 3B karakter ve kuşanım slotları,
+  - **Sağ:** partinin ortak envanteri.
+- Üst ortada seçili kahramanın adı ve **sol/sağ oklar** bulunmalı. Oklarla ana karakter, eş ve
+  partideki yoldaşlar arasında geçilecek; sağdaki ortak çanta değişmeden yalnız ortadaki model ve
+  o kahramanın kuşanımı değişecek.
+- Savaş ve sivil kıyafet setleri ayrı olmalı.
+- Slotlar: 4 silah; baş, omuz/pelerin, gövde, eldiven/kol, bacak/ayak; binek ve at koşumu/eğer takımı.
+  Mevcut projedeki ek **sancak** slotunun korunup korunmayacağı uygulama öncesi netleşecek.
+- Eşyalar sürükleyerek ve/veya satır oklarıyla iki taraf arasında taşınmalı; adetli yığınlarda tek,
+  çoklu ve tamamını taşıma davranışları olmalı.
+- Sola bırakılan uygun zırh/silahlar, altta önizlenen miktarda birlik XP'sine dönüşmeli; birliklerin
+  alabileceğinden fazla XP birikirse uyarı rengi değişmeli. Bunun perk şartı ve formülü Q4 ile seçilecek.
+- Alt barda `Cancel` ve `Done` olmalı; işlem modeli Q3 ile seçilecek.
+
+#### B) Birlik / Party ekranı (`P`)
+
+Webden doğrulanan Bannerlord düzeninde:
+
+- **Sol:** sahada `Dismiss`; garnizon değişiminde karşı taraf/garnizon; savaş sonrasında kurtarılanlar ve tutsaklar.
+- **Orta:** seçili kahraman ya da birlik türünün 3B modeli, kademesi ve temel bilgileri.
+- **Sağ:** oyuncu partisi; üstte kahramanlar, altında birlik yığınları, ayrıca tutsaklar bölümü.
+- Başlıkta `Troops (mevcut / kapasite)` ve `Prisoners (mevcut / kapasite)` görünmeli.
+- Kahramanlarda sağlık; birlik yığınlarında sağlıklı + yaralı sayıları ayrılmalı.
+- Her birlik türünün kendi XP havuzu/çubuğu olmalı. XP dolunca terfi seçenekleri açılmalı; dallanan
+  yolda oyuncu hedef türü seçmeli. Terfi altın ve bazı yollarda uygun at gerektirmeli.
+- Bekleyen terfilerin toplamı altta `You will pay …` benzeri gösterilmeli; `Done` onaylamalı,
+  `Cancel` bekleyen değişiklikleri geri almalı.
+- Tutsaklar tür/kademe bazında tutulmalı; hemen değil, zamanla devşirmeye hazır olmalı. Serbest bırakma,
+  fidye, garnizona aktarma ve lord tutsak işlemleri bu yapıyla uyumlu olmalı.
+
+#### C) Pazar ve ganimet ekranları
+
+- Şehir pazarında **sol = şehir/tüccar malları**, **sağ = oyuncu partisinin envanteri**, ortada yine
+  seçili kahraman ve kuşanım slotları olmalı.
+- Savaş sonrası ganimette **sol = ganimet**, sağ = parti envanteri olmalı. Solda bırakılan uygun
+  ekipmanın Discard/XP kuralıyla aynı önizlemeyi göstermesi gerekir.
+- Her satırda simge/tür, ad, adet ve fiyat/değer bulunmalı. Kategori filtreleri:
+  Tümü, Silah, Kalkan, Zırh, Binek/Hayvan, Erzak ve Ticaret Malları.
+- İsim/özellik arama; tür, isim, adet, fiyat, ağırlık ve sayısal hasar/zırh değerine göre sıralama olmalı.
+- Alış/satış fiyat rengi ortalamanın altında/üstünde olmayı göstermeli; ticaret söylentileri korunmalı.
+- Eşya kilidi, kilitli yığının toplu satış/Discard/aktarım işlemlerine katılmasını engellemeli ve kalıcı olmalı.
+- Tüccar kasası satışı sınırlamalı. Altta bekleyen işlemin net sonucu
+  (`… altın ödeyeceksin / … altın alacaksın`) görünmeli.
+
+#### D) Taşıma, atlar, sürü, erzak ve moral
+
+- Eşyalar adetli yığınlar hâlinde temsil edilmeli; toplam ağırlık gerçek yığın ağırlıklarından hesaplanmalı.
+- Taşıma kapasitesini asker sayısı, yedek binekler ve yük hayvanları belirlemeli.
+- Yedek atlar yaya askerleri haritada bindirerek hızı artırmalı. Askerlerin idare edebileceğinden fazla
+  hayvan sürü (`herd`) cezası oluşturmalı.
+- Aşırı yük, yaralılar ve tutsaklar parti hızını düşürmeli; hız tooltip'i bütün bileşenleri tek tek göstermeli.
+- Erzak tek soyut sayı yerine envanterdeki yiyecek yığınlarından tüketilmeli. Yiyecek çeşitliliği
+  moral bileşenlerinden biri olmalı; açlık ayrıca cezalandırılmalı.
+
+#### E) Harita HUD'ı
+
+- Sol altta Bannerlord sırasına uygun ekran girişleri ve kısayollar:
+  Ansiklopedi `N`, Karakter `C`, Envanter `I`, Birlik `P`, Görevler `J`, Klan `L`, Krallık `K`.
+- Alt ortada mevsim/gün/yıl, gerçek gün içi saati gösteren gece-gündüz kadranı ve zaman hızları olmalı.
+- Sağ altta dinar, nüfuz, kahraman sağlığı, asker `mevcut/kapasite`, erzak ve moral bulunmalı.
+  Genişletilmiş alanda hız, yaralı/tutsak ve gereken ek parti bilgileri görünmeli.
+- Her kaynağın hover dökümü olmalı:
+  - dinarda günlük gelir ve gider kalemleri ile beklenen net değişim,
+  - nüfuzda günlük kazanım/kayıp kaynakları,
+  - sağlıkta iyileşme hızı,
+  - askerde sağlıklı/yaralı/tutsak ve kapasite bileşenleri,
+  - erzakta toplam, günlük tüketim ve çeşitlilik,
+  - moralde taban/son olaylar/yiyecek/liderlik vb. bileşenler,
+  - hızda arazi, süvari/bindirilmiş yaya, yük, sürü, yaralı ve tutsak bileşenleri.
+- Krallığa katılınca ordu yönetimi girişi de sağ alt akışla uyumlu olmalı.
+
+#### F) Karakter gelişimi (`C`)
+
+- Altı nitelik: Güç/Dinçlik, Kontrol, Dayanıklılık, Kıvrak Zekâ/Kurnazlık, Sosyal ve Zekâ.
+- On sekiz beceri: Tek Elli, Çift Elli, Gönderli; Yay, Arbalet, Fırlatma; Binicilik, Atletizm,
+  Demircilik; İzcilik, Taktik, Serserilik; Cazibe, Liderlik, Ticaret; İdare, Hekimlik, Mühendislik.
+- Beceriler kullanıldıkça XP almalı. Beceri seviye artışları karakter seviyesini ilerletmeli.
+- Her karakter seviyesinde 1 odak puanı; her 4 karakter seviyesinde 1 nitelik puanı verilmeli.
+  Odak beceri başına en fazla 5, nitelik en fazla 10 olmalı.
+- Odak/nitelik, **öğrenme sınırını ve öğrenme hızını** belirlemeli. Karakter yaratımı dışındaki odak,
+  beceri seviyesini anında artırmamalı.
+- Seçili beceride XP ilerlemesi, öğrenme hızı, yumuşak öğrenme sınırı ve sert üst sınır ayrı gösterilmeli.
+- 25'li eşiklerde perk seçilmeli; çoğu eşikte iki seçenekten biri alınmalı. Perklerin parti lideri,
+  klan rolü, vali, kaptan vb. kapsamları gerçek etkilerinde dikkate alınmalı.
+- Karakter ekranındaki oklar; oyuncu, eş, aile üyeleri ve yoldaşların ayrı nitelik/beceri/perk
+  durumları arasında geçebilmeli.
+
+#### G) Yoldaşlar, klan rolleri ve aile
+
+- Yoldaşlar isimden ibaret olmamalı; kimlik, kültür, yaş, sağlık, beceri, perk, ekipman, ücret,
+  konum/durum ve parti üyeliği taşıyan gerçek kahraman kayıtları olmalı.
+- Meyhanelerden bulunup işe alınabilmeli; envanter/karakter ekranlarında yönetilebilmeli;
+  savaşta yer alabilmeli; ayrı parti, kervan, valilik ve görev akışlarına atanabilmeli.
+- Dört klan rolü gerçek kahramanlara atanmalı:
+  İaşeci/Quartermaster → İdare, Cerrah → Hekimlik, İzci → İzcilik, Mühendis → Mühendislik.
+  Rol etkisi atanan kişinin beceri ve perklerinden hesaplanmalı; rol boşsa parti liderinin ilgili
+  becerisi kullanılmalı.
+- Evlilik, çocuk, yaşlanma, ölüm ve varisle devam etme tek oyuncu aile modeline bağlanmalı.
+
+#### H) Büyük kampanya sistemleri
+
+- **Atölye/kervan:** girdi-çıktı malları, şehir fiyatları/stoğu, sermaye ve günlük net gelir;
+  yoldaş liderli kervanın harita hareketi, alım-satımı, masrafı ve kaybolma riski.
+- **Krallık:** oyuncunun gerçek nüfuzu; politika teklif/oylama ve etkileri; tımar seçimleri;
+  nüfuzla ordu toplama, orduda uyum (cohesion), ortak hareket ve ordu erzak durumu.
+- **Kuşatma:** kuşatma kampı kurma süresi, iki tarafın makineleri, rezerve çekme/konuşlandırma,
+  sur hasarı, yerleşim erzağının tükenmesi, garnizon açlığı ve teslim müzakeresi.
+- **Demircilik:** eritme/arıtma, malzeme kademeleri, parça şemaları, parça seçimiyle üretilen
+  istatistikler, dayanıklılık/enerji, siparişler ve üretilen silaha isim verme.
+- **Dinamik dünya:** canlı klan/yerleşim sahipliğiyle aynı veri üzerinde savaş/barış, fetih,
+  taraf değiştirme, sadakat düşüşü ve isyanlar.
+- **Suç/Serserilik:** krallık bazında suç seviyesi, zamanla azalma, giriş/ilişki sonuçları ve
+  haydutları zorla ya da ikna ile katma yolları.
+
+#### I) En son yapılacaklar (kullanıcı sırası bağlayıcı)
+
+1. Bütün yukarıdaki sistemler bittikten sonra performans testleri: oyunun başlamadan önceki ve
+   başladıktan sonraki durumları aynı senaryolarla karşılaştırmalı ölçülecek.
+2. En son kayıt sistemi Bannerlord düzenine göre geliştirilecek. Performans ve kayıt işleri,
+   önceki fazların arasına alınmayacak.
+
+### 6.2 Web doğrulamasında netleşen düzeltmeler
+
+1. **Discard her zaman XP vermez.** Bannerlord'da zırh bağışı İdare 100 `Paid in Promise`,
+   silah bağışı İdare 125 `Giving Hands` perkine bağlıdır. Güncel oyunda XP'nin eşya kademesine
+   göre sabit ve üst sınırlı olduğu; eski beta analizinde değerin %50'si olduğu raporlanıyor.
+   Kaynaklar çeliştiği için formül Q4 ile kullanıcı tarafından seçilecek.
+2. **Party ekranındaki birlik XP'si ayrı bir havuzdur.** Görselde seçili birlik yığınının XP çubuğu,
+   terfiye hazır asker sayısı ve hedef tür düğmeleri ayrı görünür. Altındaki `You will pay 90`,
+   bekleyen terfilerin toplamıdır.
+3. **Öğrenme sınırı ile sert tavan aynı sayı değildir.** Referans formüller:
+   - Yumuşak öğrenme sınırı = `(nitelik - 1) × 10 + odak × 30`
+   - Sert beceri tavanı = `4 + (nitelik - 1) × 14 + odak × 40`
+4. **Odak, karakter yaratımı dışında anında +10 beceri seviyesi vermez.** Yalnız öğrenme hızını ve sınırları artırır.
+5. Kısayollar `N/C/I/P/J/L/K` olarak doğrulandı. Sağ alt simge sırası para, nüfuz, sağlık, asker,
+   erzak ve moraldir; her simgenin hesap dökümü tooltip ile gösterilir.
+6. Yedek atların iki farklı etkisi vardır: taşıma kapasitesi ve yaya askerleri bindirme hızı.
+   Yük hayvanları daha çok kapasite verir; idare edilebilen hayvan sayısının üstü sürü cezasıdır.
+
+### 6.3 Mevcut kodla karşılaştırma
+
+| Alan | Durum | Kanıt ve fark |
+|---|---|---|
+| Saha envanteri | **KISMEN / YANLIŞ** | `I`, `GameHud.tsx` içinde drawer açıyor. 12 slot kartı ve çanta listesi var; Discard, 3B model, karakter okları, filtre/sıralama ve sürükleme yok. Kapasite satırı sabit `138 / totalTroops*10+300`. Sivil set düğmesi yalnız başlığı değiştiriyor; ikinci ekipman seti yok. |
+| Pazar düzeni | **KISMEN** | `BannerlordMarketModal.tsx` sol pazar, orta döndürülebilir 3B manken, sağ oyuncu listesi sunuyor. Kategori/arama, stok adedi, fiyat tonu/söylentisi ve tüccar kasası var. Ancak yalnız yerleşim akışından açılıyor; karakter okları, set sekmeleri ve sürükle-aktar yok. |
+| Pazar işlem modeli | **YANLIŞ** | Al/sat butonları kampanyayı anında değiştiriyor. Bekleyen sepet, `Cancel` ile geri alma ve satılan malın tüccar stoğuna dönmesi yok. Alt bar yalnız tamamlanmış seansın netini gösteriyor. |
+| Satış fiyatı | **YANLIŞ** | Modal `sellPriceAt` ile yaklaşık %72 gösterir ve tüccar kasasını buna göre kontrol eder; `sellMarketplaceItem` ise oyuncuya `item.value` tutarının tamamını öder. Gösterilen, kontrol edilen ve ödenen tutarlar aynı değildir. |
+| Eşya/ekipman verisi | **YANLIŞ / EKSİK** | `InventoryItem`da `quantity` yok; her satın alma benzersiz tekil kayıt açıyor. Ekipman, item kimliği yerine isim/stat metni (`Record<slot,string>`). `statBonus` serbest metin olduğu için sayısal hasar/zırh sıralaması ve gerçek toplamlar hesaplanamıyor. Slot boşaltınca değer/ağırlık/stat uydurularak kayıplı yeniden üretiliyor. |
+| Slot/zırh gösterimi | **KISMEN / YANLIŞ** | Veri tipinde 12 slot var ve HUD drawer 12 kart gösteriyor. Pazar modalı yalnız 8 slot gösteriyor; merkezdeki baş/gövde/kol/bacak zırhları `+48/+64/+24/+32` sabit metni. |
+| Filtre/arama/sıralama/kilit | **KISMEN** | Pazarda Tümü/Silah/Kalkan/Zırh/Erzak-Emtia/Binek ve arama var. Sıralama yalnız sol pazar listesinde kademe/fiyat/ağırlık; oyuncu listesi sıralanmıyor, hasar/zırh sıralaması yok. Kilit yalnız modalın yerel `useState`'inde, yalnız toplu satışı engelliyor; tekil satışa ve kalıcılığa bağlı değil. |
+| Şehir stoğu | **KISMEN** | Stok, statik katalogdan yerleşime göre deterministik türetilen 1–3 adetlik yerel modal durumu. Kalıcı şehir envanteri, üretim/tüketim ve oyuncunun sattığı malların geri dönmesi yok. Settlement yoksa modalda “Yol Kenarı Pazarı” fallback tanımı da ölü/yanıltıcı bir yol olarak duruyor. |
+| Ganimet/Discard | **YOK** | Savaş sonrası sol=ganimet transfer ekranı yok; ganimet doğrudan envantere/soyut ödüle gidiyor. Discard paneli, bağış XP önizlemesi ve fazla XP uyarısı yok. |
+| Taşıma kapasitesi | **YANLIŞ** | Üç farklı hesap var: çağrılmayan `carryCapacity = troops*12 + pack*60 + 120`; modal `troops*12+350` ve `inventory weight + 110`; HUD sabit `138/(troops*10+300)`. Yük hayvanı/yedek at sayıları yığınlardan türetilmiyor. |
+| At/sürü/hız | **KISMEN / BAĞLANTISIZ** | `calculateBannerlordPartySpeed` içinde sürü ve yük formülü var, fakat oyuncu çağrıları `herdAnimals` göndermiyor. Yedek atla bindirilmiş yaya bonusu yok; yük bileşeni envanter ağırlığını değil `foodUnits` değerini kullanıyor. |
+| Erzak/moral | **KISMEN / YANLIŞ** | Canlı tüketim tek `campaign.food` sayısından yapılıyor. Dört özel yiyecek satın alınınca doğrudan bu sayıya çevriliyor; diğer yemek/emtia kayıtları tüketime bağlı değil. Yiyecek çeşitliliği moral bileşeni yok. |
+| Party ekranı | **YOK** | Ayrı tam ekran `P` akışı yok. `Ordum` drawer'ı dört sayaç kartı gösteriyor. Daha önemlisi `App.tsx` içinde `P`, pause aç/kapat olarak kullanılıyor; Bannerlord'daki Party kısayoluyla doğrudan çelişiyor. |
+| Birlik modeli/terfi | **YANLIŞ / EKSİK** | Roster yalnız `militia/archer/cavalry/guard` sayaçları. `troops.ts` kültür adlarını değiştiriyor ama gerçek kültür ağaçları yok. Terfi doğrusal sınıf dönüşümü ve yalnız altın kullanıyor; yığın XP'si, dallanma, uygun at şartı ve bekleyen toplam ücret yok. |
+| Yaralı/tutsak | **EKSİK** | Lordlarda toplam `wounded` var; oyuncu birlik yığınlarında yaralı alanı yok. Oyuncu tutsakları tek sayı; tür, hazır olma süresi, kapasite, kaçış, fidye ve lord tutsak ayrımı Party modelinde yok. Her tutsak anında `militia` olarak devşirilebiliyor. |
+| HUD düğmeleri | **KISMEN** | `N`, `C`, `I`, `K` var. `P` yanlış işleve bağlı; `J` ve `L` yok. Görevler `V` altındaki dünya panelinde, klan rolleri Birlik drawer'ında. |
+| HUD kaynak/tooltip | **KISMEN / YANLIŞ** | Dinar, HP, asker, erzak, moral, hız ve maaş görünüyor; fakat nüfuz yerine nam var, asker kapasitesi gösterilmiyor. `partyLimit` başka yerde hesaplandığı hâlde HUD kullanmıyor. Günlük gelir-gider, nüfuz ve moral bileşen dökümleri için hover tooltip yok. |
+| Saat kadranı | **YANLIŞ** | `CampaignState.hour` başlangıçta 9 yazılıyor fakat üretimde ilerletilmiyor. Kadran hep aynı güneşi çiziyor; yıl da arayüzde sabit `1084`. |
+| Karakter iskeleti | **KISMEN** | Altı nitelik/18 beceri, serbest puan harcama ve 5 odak sınırı var. Fakat merkezi beceri XP kazanımı ve karakter seviyesi ilerlemesi yok; başlangıç seviyesi 6 ve yüksek beceriler sabit. |
+| Öğrenme/odak kuralı | **YANLIŞ** | `calculateLearningLimit`, yumuşak sınır ile sert tavanı karıştıran `(attr-1)*14 + focus*40 + 10` formülünü kullanıyor. `allocateFocusPoint`, odağa ek olarak beceriye anında +10 seviye veriyor. Nitelik vermek Vigor/Endurance'ta doğrudan +5 HP de veriyor. |
+| Perkler | **YOK** | 25'li eşiklerde çift seçenekli perk tanımı/seçimi/etkisi yok. `unlockedPerks` başlangıçta üç serbest string taşıyor; Discard perkleri de yok. |
+| Yoldaş/rol | **YOK / YANLIŞ** | `CampaignState` içinde gerçek companion listesi yok. `clanRoles`, bonus metni içeren isim string'leri; atama fonksiyonu herhangi bir string kabul ediyor. `partyLimit`, İaşeci'nin İdare becerisini değil, klan kademesi + `renown/40` hesabını kullanıyor. Diğer rol etkilerinin atanan kişinin becerisinden hesaplandığına dair canlı bağ yok. |
+| Oyuncu ailesi | **YOK** | NPC kahramanlar için üretilmiş aile ağacı var. Oyuncu evliliği, hamilelik/çocuk, aile üyesi yaşlanması, oyuncu ölümü ve varisle devam akışı yok. Makro modaldaki veraset gösterimi canlı oyuncu ailesine bağlı değil. |
+| Atölye/kervan | **KISMEN / YOK** | Atölye satın alma ve refaha bağlı sade günlük gelir var. Girdi/çıktı stoğu, fiyat, sermaye ve üretim zinciri yok. Oyuncunun yoldaş liderli canlı kervanı yok. |
+| Krallık/nüfuz/ordu | **KISMEN / İKİ MODEL** | Krallık modalında makro nüfuz, politika ve seçim hesapları var; fakat `CampaignState` içinde oyuncu nüfuzu yok ve makro klanlar canlı yerleşim/hero klan modeliyle tek kaynak değil. Nüfuzla gerçek ordu toplama, uyum ve partilerin birlikte hareketi yok. |
+| Kuşatma | **KISMEN** | Makine üretme/bombardıman fonksiyonları ve dünya simülasyonunda AI kuşatma ilerlemesi/fetih var. Oyuncunun süreye bağlı kuşatma kampı, iki taraflı makine düellosu, makine rezervi, yerleşim erzağıyla garnizon açlığı ve teslim pazarlığı tek canlı akış hâlinde değil. |
+| Demircilik | **YANLIŞ / EKSİK** | Üç sabit şablon; anında kâr ve `WEAPON1`e kuşanma, Demircilik +8. Malzeme, eritme/arıtma, enerji, parça şemaları, parça bazlı istatistik, sipariş ve isimlendirme yok. |
+| Dinamik AI/isyan | **KISMEN** | `worldSim` savaş/barış, lord emirleri, kuşatma, fetih ve takviyeyi ilerletiyor. Sadakat/yemek yardımcısı isyan riski hesaplıyor; canlı isyan partisi/klanı doğurma ve makro klan modeliyle birleşme tamamlanmış değil. |
+| Suç/haydut katma | **YOK / KISMEN** | Serserilik yalnız beceri kaydı. Krallık bazlı suç derecesi ve sonuçları yok. Haydut tarafı savaş/tutsak soyutlamasıyla sınırlı; tür bazlı tutsak devşirme modeli kurulmadan Bannerlord akışı tamamlanamaz. |
+| Performans ölçümü | **SON FAZDA** | Tip/kural/E2E doğrulamaları var; tekrarlanabilir göreli FPS/frame-time karşılaştırma paketi bu görevin sonunda kurulacak. SwiftShader ölçümü gerçek GPU FPS'i sayılmayacak. |
+| Kayıt | **VAR AMA SON FAZDA GELİŞTİRİLECEK** | Sürümlü tek `localStorage` yuvası, elle kayıt ve günlük otomatik kayıt var. Çoklu sefer/slot ve Bannerlord tarzı kayıt yönetimi kullanıcı sırası gereği en son ele alınacak. |
+
+### 6.4 Cevaplar geldikten sonra önerilen iş paketleri
+
+Bu sıra **öneri**dir; Q1 cevabı kesin sırayı belirleyecektir.
+
+- [ ] **P0 — Karar ve göç sözleşmesi:** Q1–Q6 cevaplarını bu bölüme işle; eski kayıtların yeni item/troop/hero
+      modeline deterministik göç kurallarını ve kabul testlerini yaz.
+- [ ] **P1 — Veri temeli:** sayısal stat'lı item tanımları ve adetli envanter yığınları; ekipmanın item
+      kimliğine bağlanması; gerçek hero/yoldaş kayıtları; birlik/esir yığınlarında XP ve yaralı alanları.
+- [ ] **P2 — Envanter + Discard + pazar + ganimet:** tek transfer çekirdeği üzerinde saha envanteri,
+      şehir pazarı ve savaş ganimeti modları; kilit, filtre, arama ve sıralama.
+- [ ] **P3 — Party (`P`):** birlik XP'si, dallanan terfiler, yaralı iyileşmesi, tutsak hazır olma durumu,
+      kapasiteler, garnizon/değişim ve savaş sonrası tutsak akışı.
+- [ ] **P4 — Karakter gelişimi ve roller:** kullanım bazlı beceri XP'si, karakter seviyesi, doğru öğrenme
+      sınır/hız, perk seçimleri ve gerçek klan rolü etkileri.
+- [ ] **P5 — HUD:** `N/C/I/P/J/L/K`, intraday saat, oyuncu nüfuzu, kapasiteli asker göstergesi ve bütün
+      kaynaklar için hesap dökümü tooltip'leri.
+- [ ] **P6 — Büyük sistemler:** yoldaş işe alma/görevleri, aile, atölye girdi-çıktı ekonomisi, kervan,
+      krallık/ordu, kuşatma kampı/açlık, parça bazlı demircilik, canlı isyan ve suç sistemi.
+- [ ] **P7 — Performans testleri (sondan bir önceki iş):** aynı tohum/senaryo ile açılış, harita,
+      envanter/pazar, Party, karakter ve savaş sahnelerinde göreli frame-time/FPS, bellek ve yükleme
+      karşılaştırması; sonuçlar tablo hâlinde bu dosyaya işlenecek.
+- [ ] **P8 — Kayıt sistemi (en son iş):** bütün yeni veri modeli oturduktan sonra Bannerlord tarzı
+      kayıt yönetiminin kapsamı ayrıca netleştirilip uygulanacak.
+
+### 6.5 Karar bekleyen sorular
+
+- [ ] **Q1 — Uygulama sırası:** Temel veri → envanter/Party → gelişim → HUD → büyük sistemler mi,
+      görünen arayüz önce mi, karakter/yoldaş önce mi, büyük kampanya sistemleri önce mi?
+- [ ] **Q2 — Arayüz sadakati:** Bannerlord tam ekran üç sütun düzeni mi, mevcut drawer/modal düzeni
+      korunarak işlev ekleme mi, hibrit mi?
+- [ ] **Q3 — İşlem modeli:** Sürükle/okla bekleyen transfer + `Done` onayı + `Cancel` geri alma mı,
+      mevcut anında al/sat mı, ticarette sepet/ekipmanda anında hibrit mi?
+- [ ] **Q4 — Discard XP:** Güncel Bannerlord perk + kademe bazlı tavanlı XP mi, eski beta perk + değerin
+      %50'si mi, perksiz sade model mi?
+- [ ] **Q5 — Birlik veri modeli:** Tam kültür ağaçları ve yığın bazlı XP/yaralı mı, mevcut dört sınıfı
+      koruyup yığın XP/yaralı ekleme mi, dört sayaç + toplam XP havuzu mu?
+- [ ] **Q6 — Karakter/perk kapsamı:** 18 becerinin bütün çift perk ağaçları ve etkileri mi; önce çekirdek
+      gelişim + kritik perkler, sonra tamamı mı; sadeleştirilmiş perk seti mi?
+
+> Q1–Q6 cevapları bu bölüme tarihli karar kaydı olarak eklendikten sonra uygulamaya başlanacak.
 
 

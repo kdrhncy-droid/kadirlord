@@ -3,6 +3,17 @@ import App from './App.tsx';
 import './index.css';
 import { setArmoryVisualsEnabled, armoryVisualsEnabled } from './game/armoryBridge.ts';
 import { setArmorySoundEnabled, armorySoundEnabled } from './game/armorySound.ts';
+import {
+  installDeterministicRandom,
+  parseE2ERequest,
+} from './game/testHarness.ts';
+
+// E2E yalnız geliştirme derlemesinde ve açık `e2e=1` parametresiyle çalışır.
+// RNG, ilk render'dan önce tohuma bağlanır; üretimde bu blok devre dışıdır.
+const e2eRequest = parseE2ERequest(window.location.search, import.meta.env.DEV);
+if (e2eRequest.enabled) {
+  installDeterministicRandom(e2eRequest.seed);
+}
 
 createRoot(document.getElementById('root')!).render(<App />);
 

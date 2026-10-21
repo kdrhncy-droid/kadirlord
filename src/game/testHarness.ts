@@ -1,0 +1,360 @@
+/**
+ * testHarness.ts — E2E senaryo kurulumu (yalnız geliştirme modu)
+ *
+ * Amaç: Tarayıcı testlerinin bir karşılaşmayı haritada dakikalarca kovalamadan,
+ * deterministik bir başlangıç durumuyla açabilmesi. Bu modül saf veri dönüşümü
+ * yapar; React/DOM erişimi `App.tsx` tarafındadır.
+ *
+ * Güvenlik sınırı:
+ *   - Kanca yalnız `import.meta.env.DEV && ?e2e=1` iken etkinleşir.
+ *   - Üretim derlemesinde URL parametresi tek başına hiçbir şeyi açmaz.
+ *   - E2E oturumunda otomatik kayıt App tarafında kapatılır.
+ */
+import {
+  classifyEncounterScenario,
+  type EncounterScenario,
+} from './encounter.ts';
+import {
+  getTotalTroops,
+  type CampaignState,
+  type LordAgent,
+  type TroopRoster,
+} from './rules.ts';
+
+export const E2E_SCENARIOS = [
+  'boot',
+  'encyclopedia',
+  'bandit-caught-player',
+  'player-caught-bandit',
+  'lord-caught-player',
+] as const;
+
+export type E2EScenarioName = (typeof E2E_SCENARIOS)[number];
+export type E2ETimeScale = 0 | 1 | 2 | 4;
+
+export interface E2ERequest {
+  enabled: boolean;
+  scenario: E2EScenarioName;
+  seed: number;
+  timeScale: E2ETimeScale;
+}
+
+export interface E2EScenarioSetup {
+  campaign: CampaignState;
+  dialogueLord: LordAgent | null;
+  forcedEncounter: boolean;
+  encounterScenario?: EncounterScenario;
+  encyclopediaOpen: boolean;
+}
+
+export interface KadirlordPlayerPatch {
+  gold?: number;
+  food?: number;
+  morale?: number;
+  renown?: number;
+  playerHp?: number;
+  playerMaxHp?: number;
+  prisoners?: number;
+  roster?: Partial<TroopRoster>;
+}
+
+export interface KadirlordLordPatch {
+  armySize?: number;
+  roster?: TroopRoster;
+  relation?: number;
+  isAtWarWithPlayer?: boolean;
+  isAlliedWithPlayer?: boolean;
+  currentAction?: string;
+}
+
+export interface KadirlordTestSnapshot {
+  ready: true;
+  version: 1;
+  scenario: E2EScenarioName;
+  seed: number;
+  gameState: string;
+  subMode: string;
+  timeScale: number;
+  day: number;
+  player: {
+    name: string;
+    x: number;
+    z: number;
+    hp: number;
+    maxHp: number;
+    gold: number;
+    food: number;
+    morale: number;
+    renown: number;
+    prisoners: number;
+    roster: TroopRoster;
+    troops: number;
+  };
+  dialogue: {
+    lordId: string | null;
+    lordName: string | null;
+    forced: boolean;
+    scenario: EncounterScenario | null;
+  };
+  encyclopediaOpen: boolean;
+  counts: {
+    lords: number;
+    settlements: number;
+  };
+}
+
+export interface KadirlordTestApi {
+  version: 1;
+  ready: true;
+  scenario: E2EScenarioName;
+  seed: number;
+  getState: () => KadirlordTestSnapshot;
+  setTimeScale: (scale: E2ETimeScale) => void;
+  setPlayer: (patch: KadirlordPlayerPatch) => void;
+  setLord: (lordId: string, patch: KadirlordLordPatch) => boolean;
+  getLordPosition: (lordId: string) => { x: number; z: number } | null;
+  openDialogue: (
+    lordId: string,
+    options?: { forced?: boolean; scenario?: EncounterScenario },
+  ) => boolean;
+  closeDialogue: () => void;
+  openEncyclopedia: () => void;
+  closeEncyclopedia: () => void;
+}
+
+declare global {
+  interface Window {
+    __kadirlordTest?: KadirlordTestApi;
+  }
+}
+
+const DIALOGUE_SCENARIOS = new Set<E2EScenarioName>([
+  'bandit-caught-player',
+  'player-caught-bandit',
+  'lord-caught-player',
+]);
+
+function isScenario(value: string | null): value is E2EScenarioName {
+  return value !== null && (E2E_SCENARIOS as readonly string[]).includes(value);
+}
+
+function parseTimeScale(value: string | null, scenario: E2EScenarioName): E2ETimeScale {
+  const parsed = Number(value);
+  if (parsed === 0 || parsed === 1 || parsed === 2 || parsed === 4) return parsed;
+  return DIALOGUE_SCENARIOS.has(scenario) ? 0 : 1;
+}
+
+/**
+ * URL isteğini çözümlerken üretim kilidini uygular.
+ * `search` başında `?` olsa da olmasa da kabul edilir (probe kolaylığı).
+ */
+export function parseE2ERequest(search: string, isDev: boolean): E2ERequest {
+  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  const scenarioRaw = params.get('scenario');
+  const scenario: E2EScenarioName = isScenario(scenarioRaw) ? scenarioRaw : 'boot';
+  const seedRaw = Number(params.get('seed'));
+  const seed = Number.isFinite(seedRaw) && params.has('seed') ? Math.trunc(seedRaw) >>> 0 : 42;
+
+  return {
+    enabled: isDev && params.get('e2e') === '1',
+    scenario,
+    seed,
+    timeScale: parseTimeScale(params.get('timeScale'), scenario),
+  };
+}
+
+/** Mulberry32 — küçük, hızlı ve tekrarlanabilir test RNG'si. */
+export function createSeededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+let originalRandom: (() => number) | null = null;
+
+/**
+ * E2E sayfasında `Math.random` akışını tohuma bağlar. Yalnız `main.tsx`,
+ * üretim kilidi açıkken çağırır. Aynı sayfada ikinci çağrı akışı sıfırlar.
+ */
+export function installDeterministicRandom(seed: number): void {
+  if (originalRandom === null) originalRandom = Math.random;
+  Math.random = createSeededRandom(seed);
+}
+
+export function restoreRandom(): void {
+  if (originalRandom !== null) {
+    Math.random = originalRandom;
+    originalRandom = null;
+  }
+}
+
+function withRoster(lord: LordAgent, roster: TroopRoster): LordAgent {
+  return {
+    ...lord,
+    roster,
+    armySize: getTotalTroops(roster),
+  };
+}
+
+function replaceFirstLord(
+  campaign: CampaignState,
+  predicate: (lord: LordAgent) => boolean,
+  update: (lord: LordAgent) => LordAgent,
+): { campaign: CampaignState; lord: LordAgent | null } {
+  const index = campaign.lords.findIndex(predicate);
+  if (index < 0) return { campaign, lord: null };
+
+  const lord = update(campaign.lords[index]);
+  return {
+    campaign: {
+      ...campaign,
+      lords: campaign.lords.map((candidate, i) => (i === index ? lord : candidate)),
+    },
+    lord,
+  };
+}
+
+/** Önce sabit senaryo kimliğini, bulunamazsa aynı türden ilk lordu seçer. */
+function replacePreferredLord(
+  campaign: CampaignState,
+  preferredId: string,
+  fallback: (lord: LordAgent) => boolean,
+  update: (lord: LordAgent) => LordAgent,
+): { campaign: CampaignState; lord: LordAgent | null } {
+  const preferred = replaceFirstLord(campaign, (lord) => lord.id === preferredId, update);
+  return preferred.lord ? preferred : replaceFirstLord(campaign, fallback, update);
+}
+
+function dialogueSetup(campaign: CampaignState, lord: LordAgent | null): E2EScenarioSetup {
+  if (!lord) {
+    return {
+      campaign,
+      dialogueLord: null,
+      forcedEncounter: false,
+      encounterScenario: undefined,
+      encyclopediaOpen: false,
+    };
+  }
+
+  const info = classifyEncounterScenario(lord, campaign);
+  return {
+    campaign,
+    dialogueLord: lord,
+    forcedEncounter: true,
+    encounterScenario: info.scenario,
+    encyclopediaOpen: false,
+  };
+}
+
+function nearPlayer(lord: LordAgent, campaign: CampaignState): LordAgent {
+  const x = campaign.playerX + 2;
+  const z = campaign.playerZ;
+  return {
+    ...lord,
+    x,
+    z,
+    targetX: x,
+    targetZ: z,
+    currentAction: 'E2E senaryosu',
+  };
+}
+
+/**
+ * Başlangıç kampanyasını seçilen E2E sahnesine dönüştürür. Girdi nesnesini
+ * değiştirmez; değiştirilen oyuncu/lord alanları yeni nesnelerdir.
+ */
+export function buildE2EScenario(
+  base: CampaignState,
+  scenario: E2EScenarioName,
+): E2EScenarioSetup {
+  switch (scenario) {
+    case 'boot':
+      return {
+        campaign: base,
+        dialogueLord: null,
+        forcedEncounter: false,
+        encounterScenario: undefined,
+        encyclopediaOpen: false,
+      };
+
+    case 'encyclopedia':
+      return {
+        campaign: base,
+        dialogueLord: null,
+        forcedEncounter: false,
+        encounterScenario: undefined,
+        encyclopediaOpen: true,
+      };
+
+    case 'bandit-caught-player': {
+      const campaign: CampaignState = {
+        ...base,
+        roster: { militia: 6, archer: 0, cavalry: 0, guard: 0 },
+        playerHp: base.playerMaxHp,
+      };
+      const result = replacePreferredLord(
+        campaign,
+        'lord-kargi',
+        (lord) => lord.faction === 'bandits',
+        (lord) =>
+          nearPlayer(
+            withRoster(
+              { ...lord, isAtWarWithPlayer: true, relation: -60 },
+              { militia: 16, archer: 8, cavalry: 6, guard: 2 },
+            ),
+            campaign,
+          ),
+      );
+      return dialogueSetup(result.campaign, result.lord);
+    }
+
+    case 'player-caught-bandit': {
+      const campaign: CampaignState = {
+        ...base,
+        roster: { militia: 20, archer: 20, cavalry: 15, guard: 15 },
+        playerHp: base.playerMaxHp,
+      };
+      const result = replacePreferredLord(
+        campaign,
+        'lord-kargi',
+        (lord) => lord.faction === 'bandits',
+        (lord) =>
+          nearPlayer(
+            withRoster(
+              { ...lord, isAtWarWithPlayer: true, relation: -35 },
+              { militia: 6, archer: 2, cavalry: 0, guard: 0 },
+            ),
+            campaign,
+          ),
+      );
+      return dialogueSetup(result.campaign, result.lord);
+    }
+
+    case 'lord-caught-player': {
+      const campaign: CampaignState = {
+        ...base,
+        roster: { militia: 6, archer: 0, cavalry: 0, guard: 0 },
+        playerHp: base.playerMaxHp,
+      };
+      const result = replacePreferredLord(
+        campaign,
+        'lord-garios',
+        (lord) => lord.faction !== 'bandits',
+        (lord) =>
+          nearPlayer(
+            withRoster(
+              { ...lord, isAtWarWithPlayer: true, relation: -55 },
+              { militia: 16, archer: 14, cavalry: 10, guard: 8 },
+            ),
+            campaign,
+          ),
+      );
+      return dialogueSetup(result.campaign, result.lord);
+    }
+  }
+}

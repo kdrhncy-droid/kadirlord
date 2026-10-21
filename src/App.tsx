@@ -94,24 +94,35 @@ import {
   type UiLayer,
   type UiLayerFlags,
 } from './game/uiSession';
+import {
+  buildE2EScenario,
+  parseE2ERequest,
+  type KadirlordTestApi,
+} from './game/testHarness';
 
 export default function App() {
-  const isAutostart =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('autostart') === '1';
+  const search = typeof window !== 'undefined' ? window.location.search : '';
+  const isAutostart = new URLSearchParams(search).get('autostart') === '1';
+  const [e2eRequest] = useState(() => parseE2ERequest(search, import.meta.env.DEV));
+  const [initialE2ESetup] = useState(() =>
+    buildE2EScenario(
+      createInitialCampaignState('Komutan Demirhan', 'noble'),
+      e2eRequest.enabled ? e2eRequest.scenario : 'boot',
+    ),
+  );
 
   const [gameState, setGameState] = useState<'title' | 'playing' | 'paused' | 'gameover'>(
-    isAutostart ? 'playing' : 'title',
+    isAutostart || e2eRequest.enabled ? 'playing' : 'title',
   );
   const [subMode, setSubMode] = useState<'overworld' | 'battle'>('overworld');
-  const [campaignTimeScale, setCampaignTimeScale] = useState<TimeScale>(1);
+  const [campaignTimeScale, setCampaignTimeScale] = useState<TimeScale>(
+    e2eRequest.enabled ? e2eRequest.timeScale : 1,
+  );
   const [backgroundChoice, setBackgroundChoice] = useState<BackgroundChoice>('noble');
   const [worldToast, setWorldToast] = useState<{ id: string; text: string } | null>(null);
-  const [campaign, setCampaign] = useState<CampaignState>(() =>
-    createInitialCampaignState('Komutan Demirhan', 'noble'),
-  );
+  const [campaign, setCampaign] = useState<CampaignState>(() => initialE2ESetup.campaign);
   const [macroState, setMacroState] = useState<KingdomMacroState>(() =>
-    createInitialKingdomMacroState(createInitialCampaignState('Komutan Demirhan', 'noble')),
+    createInitialKingdomMacroState(initialE2ESetup.campaign),
   );
 
   const cameraActionsRef = useRef<CameraControlActions | null>(null);
@@ -127,18 +138,24 @@ export default function App() {
   const [activeSettlementModal, setActiveSettlementModal] = useState<Settlement | null>(null);
   const [activeDiplomacyLord, setActiveDiplomacyLord] = useState<LordAgent | null>(null);
   // Faz 6: yüz yüze diyalog ekranı (lord veya yerleşim reisi)
-  const [dialogueLord, setDialogueLord] = useState<LordAgent | null>(null);
+  const [dialogueLord, setDialogueLord] = useState<LordAgent | null>(
+    e2eRequest.enabled ? initialE2ESetup.dialogueLord : null,
+  );
   const [dialogueSettlement, setDialogueSettlement] = useState<Settlement | null>(null);
-  const [isForcedEncounter, setIsForcedEncounter] = useState(false);
+  const [isForcedEncounter, setIsForcedEncounter] = useState(
+    e2eRequest.enabled ? initialE2ESetup.forcedEncounter : false,
+  );
   const [encounterScenario, setEncounterScenario] = useState<EncounterScenario | undefined>(
-    undefined,
+    e2eRequest.enabled ? initialE2ESetup.encounterScenario : undefined,
   );
   const [isMarketModalOpen, setIsMarketModalOpen] = useState(false);
   const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
   const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'campaign' | 'character_arena'>('campaign');
   // Faz 1: Bannerlord Ansiklopedisi (N)
-  const [isEncyclopediaOpen, setIsEncyclopediaOpen] = useState(false);
+  const [isEncyclopediaOpen, setIsEncyclopediaOpen] = useState(
+    e2eRequest.enabled ? initialE2ESetup.encyclopediaOpen : false,
+  );
   /** Tanışılan kahramanlar — orta yol fog of war (yaş/beceri açılır). */
   const [metHeroIds, setMetHeroIds] = useState<string[]>([]);
 
@@ -195,6 +212,157 @@ export default function App() {
   } | null>(null);
 
   const [muted, setMuted] = useState(false);
+
+  /* ── E2E test kancası: yalnız DEV + ?e2e=1 (parseE2ERequest kilidi) ── */
+  const testStateRef = useRef({
+    campaign,
+    gameState,
+    subMode,
+    campaignTimeScale,
+    dialogueLord,
+    isForcedEncounter,
+    encounterScenario,
+    isEncyclopediaOpen,
+  });
+  testStateRef.current = {
+    campaign,
+    gameState,
+    subMode,
+    campaignTimeScale,
+    dialogueLord,
+    isForcedEncounter,
+    encounterScenario,
+    isEncyclopediaOpen,
+  };
+
+  useEffect(() => {
+    if (!e2eRequest.enabled) return;
+
+    const api: KadirlordTestApi = {
+      version: 1,
+      ready: true,
+      scenario: e2eRequest.scenario,
+      seed: e2eRequest.seed,
+      getState: () => {
+        const state = testStateRef.current;
+        const current = state.campaign;
+        return {
+          ready: true,
+          version: 1,
+          scenario: e2eRequest.scenario,
+          seed: e2eRequest.seed,
+          gameState: state.gameState,
+          subMode: state.subMode,
+          timeScale: state.campaignTimeScale,
+          day: current.day,
+          player: {
+            name: current.playerName,
+            x: current.playerX,
+            z: current.playerZ,
+            hp: current.playerHp,
+            maxHp: current.playerMaxHp,
+            gold: current.gold,
+            food: current.food,
+            morale: current.morale,
+            renown: current.renown,
+            prisoners: current.prisoners,
+            roster: { ...current.roster },
+            troops: getTotalTroops(current.roster),
+          },
+          dialogue: {
+            lordId: state.dialogueLord?.id ?? null,
+            lordName: state.dialogueLord?.name ?? null,
+            forced: state.isForcedEncounter,
+            scenario: state.encounterScenario ?? null,
+          },
+          encyclopediaOpen: state.isEncyclopediaOpen,
+          counts: {
+            lords: current.lords.length,
+            settlements: current.settlements.length,
+          },
+        };
+      },
+      setTimeScale: (scale) => {
+        if (scale === 0 || scale === 1 || scale === 2 || scale === 4) {
+          setCampaignTimeScale(scale);
+        }
+      },
+      setPlayer: (patch) => {
+        setCampaign((prev) => {
+          const playerMaxHp = patch.playerMaxHp ?? prev.playerMaxHp;
+          return {
+            ...prev,
+            gold: patch.gold ?? prev.gold,
+            food: patch.food ?? prev.food,
+            morale: patch.morale ?? prev.morale,
+            renown: patch.renown ?? prev.renown,
+            prisoners: patch.prisoners ?? prev.prisoners,
+            roster: patch.roster ? { ...prev.roster, ...patch.roster } : prev.roster,
+            playerMaxHp,
+            playerHp: Math.max(
+              0,
+              Math.min(playerMaxHp, patch.playerHp ?? prev.playerHp),
+            ),
+          };
+        });
+      },
+      setLord: (lordId, patch) => {
+        if (!testStateRef.current.campaign.lords.some((lord) => lord.id === lordId)) {
+          return false;
+        }
+        const applyPatch = (lord: LordAgent): LordAgent => {
+          const roster = patch.roster ?? lord.roster;
+          return {
+            ...lord,
+            ...patch,
+            roster,
+            armySize: patch.armySize ?? getTotalTroops(roster),
+          };
+        };
+        setCampaign((prev) => ({
+          ...prev,
+          lords: prev.lords.map((lord) => (lord.id === lordId ? applyPatch(lord) : lord)),
+        }));
+        setDialogueLord((prev) => (prev?.id === lordId ? applyPatch(prev) : prev));
+        return true;
+      },
+      getLordPosition: (lordId) => {
+        const live = lordPositionsRef.current.get(lordId);
+        if (live) return { ...live };
+        const lord = testStateRef.current.campaign.lords.find((item) => item.id === lordId);
+        return lord ? { x: lord.x, z: lord.z } : null;
+      },
+      openDialogue: (lordId, options) => {
+        const current = testStateRef.current.campaign;
+        const lord = current.lords.find((item) => item.id === lordId);
+        if (!lord) return false;
+        const info = classifyEncounterScenario(lord, current);
+        setDialogueSettlement(null);
+        setDialogueLord(lord);
+        setIsForcedEncounter(options?.forced ?? info.forced);
+        setEncounterScenario(options?.scenario ?? info.scenario);
+        return true;
+      },
+      closeDialogue: () => {
+        setDialogueLord(null);
+        setDialogueSettlement(null);
+        setIsForcedEncounter(false);
+        setEncounterScenario(undefined);
+      },
+      openEncyclopedia: () => setIsEncyclopediaOpen(true),
+      closeEncyclopedia: () => setIsEncyclopediaOpen(false),
+    };
+
+    window.__kadirlordTest = api;
+    document.body.dataset.e2eReady = 'true';
+    document.body.dataset.e2eScenario = e2eRequest.scenario;
+
+    return () => {
+      if (window.__kadirlordTest === api) delete window.__kadirlordTest;
+      delete document.body.dataset.e2eReady;
+      delete document.body.dataset.e2eScenario;
+    };
+  }, [e2eRequest]);
 
   useEffect(() => {
     document.body.dataset.state = gameState;
@@ -310,6 +478,8 @@ export default function App() {
   /** Diske yazar; dönen değer başarılı mı? */
   const persist = useCallback(
     (nextCampaign = campaign, nextMacro = macroState) => {
+      // Senaryo durumları oyuncunun gerçek sefer kaydını asla ezmemeli.
+      if (e2eRequest.enabled) return false;
       const ok = writeSave(defaultStorage(), {
         campaign: nextCampaign,
         macroState: nextMacro,
@@ -319,17 +489,18 @@ export default function App() {
       if (ok) setSaveInfo(readSaveSummary(defaultStorage()));
       return ok;
     },
-    [campaign, macroState, metHeroIds, backgroundChoice],
+    [campaign, macroState, metHeroIds, backgroundChoice, e2eRequest.enabled],
   );
 
   /** Otomatik kayıt: her oyun günü geçişinde. */
   const lastAutosaveDayRef = useRef(-1);
   useEffect(() => {
+    if (e2eRequest.enabled) return;
     if (gameState === 'title' || gameState === 'gameover') return;
     if (lastAutosaveDayRef.current === campaign.day) return;
     lastAutosaveDayRef.current = campaign.day;
     persist();
-  }, [campaign.day, gameState, persist]);
+  }, [campaign.day, gameState, persist, e2eRequest.enabled]);
 
   /** Diskteki kaydı yükler. */
   const continueGame = useCallback(() => {
@@ -893,7 +1064,12 @@ export default function App() {
   );
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-[#0d0c0a] select-none">
+    <main
+      className="relative w-screen h-screen overflow-hidden bg-[#0d0c0a] select-none"
+      data-testid="app-root"
+      data-e2e-enabled={e2eRequest.enabled ? 'true' : 'false'}
+      data-e2e-scenario={e2eRequest.enabled ? e2eRequest.scenario : undefined}
+    >
       {/* Persistent 3D WebGL Continental Map & Tactical Battlefield Canvas */}
       <WorldCanvas
         gameState={gameState}

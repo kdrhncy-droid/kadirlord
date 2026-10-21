@@ -60,6 +60,8 @@ export const HeroPortrait: React.FC<HeroPortraitProps> = ({
         <img
           src={url}
           alt={hero.name}
+          data-testid="encyclopedia-hero-portrait"
+          data-hero-id={hero.id}
           draggable={false}
           className="absolute inset-0 w-full h-full object-cover"
         />
