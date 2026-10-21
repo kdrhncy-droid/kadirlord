@@ -909,3 +909,52 @@ Bulgular (gerçek render'da görülen, düzeltilmeye değer):
 1. Portrelerin krallık/klan listelerinde de görünmesi (şu an yalnız kahraman listesi + `HeroRow`).
 2. Ansiklopedi başlığında klan sancağı + hükümdar portresi.
 3. Kısayol ipucu şeridi ve "son görüldü"/"savaşta" rozetlerinin hizası.
+
+## 18. FAZ 1f — BEDEN ORANLARI VE ZIRH OTURMASI (TAMAMLANDI ✅)
+
+Kullanıcı geri bildirimi: "bazı zırhlar lordların vücuduna tam oturmuyor". Kök neden ölçümle bulundu.
+
+### 18.1 Kök neden — ölçeklerin iki kez uygulanması
+
+`applyMorphDNAToRig` omuzları ve bacakları **hem** ebeveyn gruptan **hem** kendi
+`scale`/`position` değerlerinden ölçekliyordu:
+
+| Ölçüm (40 kahraman) | Önce | Sonra |
+| --- | --- | --- |
+| Omuz açıklığı | 0.40–1.32 | **0.55–0.79** |
+| Boy | 1.88–2.70 | **1.91–2.22** (taban iskelet 2.09) |
+| Ayak y | −0.29…+0.03 | **0.00** |
+| Kafatası oranı (y/x) | 0.63–2.11 | **0.90–1.12** |
+| Çene–gövde boşluğu | −0.14…+0.14 | ≈0.02 |
+
+Sonuç: iri karakterlerde kollar gövdeden kopuyor, zırh genişliği omuz açıklığını
+aşıyor, kafalar dikeyde iki katına uzuyordu ("maske" görünümü).
+
+### 18.2 Yapılan düzeltmeler (`characterMorph.ts`)
+
+1. **Her ölçek bir kez:** `pelvis` yalnız derinlik (`wScale`), `torso` genişlik/derinlik
+   (`bScale`), bacak uzunluğu `hScale` (buradan boy gelir), omuz açıklığı taban ölçü ✕
+   yalnız cinsiyet faktörü (0.92).
+2. **Yere oturtma:** ölçeklerden sonra ayak kutusunun `min.y`'si kadar `pelvis` yukarı
+   kaydırılır → ayaklar daima y=0.
+3. **Boyun hizası:** çene (kafatası kutusu) gövde tepesine 0.02 boşlukla oturtulur →
+   "zürafa boyun" / "gömük kafa" salınımı biter. Çene referansı **kafatasıdır**, sakal değil.
+4. **Kafa oranı sınırı:** çene/elmacık DNA'sı 0.86–1.16'ya sıkıştırıldı, `sy/sx` oranı
+   0.9–1.12 ile sınırlandı → oblong kafa yok, şekil çeşitliliği korunur.
+5. **DNA aralıkları daraltıldı:** boy 0.92–1.12, yapı 0.86–1.24, kilo 0.88–1.28.
+
+### 18.3 Portre kadrajı güncellendi
+
+Kadraj artık **baş + omuz**: tepe 0.80 NDC, omuz hattı kadrajın alt yarısında
+(0.08…−0.30 NDC), omuz açıklığı ~1.88 NDC. Saç/sakal taşma payı korunuyor.
+
+### 18.4 Doğrulama
+
+`scripts/probe-body-fit.ts` (9 kontrol): ayaklar yerde, boy 1.9–2.35, omuz 0.50–0.95,
+kafatası oranı 0.85–1.35, lord/hükümdarların tamamı zırhlı (23/23), zırh omuz açıklığının
+içinde, zırh derinliği gövdeyle orantılı, omuz/göğüs 1.15–1.9.
+
+`npx tsx scripts/probe-body-fit.ts` · `npm run verify:body`
+
+Gerçek tarayıcı kontrolü: `docs/renders/portraits-webgl.png` (40 portre) ve
+`docs/renders/arena-player.png` (oyuncu rig'i — regresyon yok).

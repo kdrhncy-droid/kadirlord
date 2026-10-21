@@ -153,6 +153,11 @@ export function createPortraitCamera(rig: CharacterRig): THREE.PerspectiveCamera
   const coreCorners = corners(coreBox);
   const groupCorners = corners(groupBox);
 
+  // Omuz hattı: portre "baş + omuz" olsun (Bannerlord gibi). Çene ile omuz
+  // arasındaki mesafe boydan bağımsız sabitlendiği için kadraj da tutarlı.
+  const shoulderY = new THREE.Vector3();
+  rig.leftShoulder.getWorldPosition(shoulderY);
+
   const angle = 0.35; // ≈20° → yüzün 3/4'ü görünür
   let dist = 1.0;
   let targetY = center.y - 0.05;
@@ -169,7 +174,7 @@ export function createPortraitCamera(rig: CharacterRig): THREE.PerspectiveCamera
     camera.updateProjectionMatrix();
   };
 
-  const TOP_NDC = 0.86; // saçın tepesinde nefes payı
+  const TOP_NDC = 0.80; // saçın tepesinde nefes payı, altta omuzlar
 
   for (let i = 0; i < 8; i++) {
     place(dist, targetY);
@@ -179,11 +184,14 @@ export function createPortraitCamera(rig: CharacterRig): THREE.PerspectiveCamera
     const coreH = Math.max(...c.map((p) => p.y)) - Math.min(...c.map((p) => p.y));
     const coreW = Math.max(...c.map((p) => p.x)) - Math.min(...c.map((p) => p.x));
     const grpTop = Math.max(...g.map((p) => p.y));
-    const grpH = grpTop - Math.min(...g.map((p) => p.y));
+    // Alt sınır: çene (kafatası) — sakal sarkması kadrajı kaydırmasın.
+    const grpBottom = Math.min(...c.map((p) => p.y));
     const grpW = Math.max(...g.map((p) => p.x)) - Math.min(...g.map((p) => p.x));
+    const shoulderNdc = shoulderY.clone().project(camera).y;
 
-    // Ölçek: kafatası kadrajın yarısı (1.0 NDC); saç/sakal 1.85 NDC'yi aşmasın.
-    const overflow = Math.max(coreH / 1.0, coreW / 1.0, grpH / 1.85, grpW / 1.85, 1);
+    // Ölçek: kadraj hem saç/sakalı hem omuz hattını içine alsın.
+    const shoulderSpan = Math.max(grpTop - Math.min(shoulderNdc - 0.06, grpBottom), 0.1);
+    const overflow = Math.max(coreH / 1.0, coreW / 1.0, grpW / 1.7, shoulderSpan / 1.92, 1);
     dist *= overflow;
 
     // Hizalama: saçın tepesi TOP_NDC'de.

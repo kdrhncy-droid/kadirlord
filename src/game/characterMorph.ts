@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CharacterRig, HEAD, TORSO_DEPTH_SCALE } from './characterRig.ts';
+import { CharacterRig, HEAD, RIG_DIMENSIONS, TORSO_DEPTH_SCALE } from './characterRig.ts';
 import { applyFaceDNA, faceShapeScale } from './characterFace.ts';
 import { FactionId } from './rules.ts';
 
@@ -973,42 +973,74 @@ export function applyMorphDNAToRig(rig: CharacterRig, dna: CharacterMorphDNA): v
     rig.materials.hair.color.set(dna.hairColor);
   }
 
-  // 2. Body Scaling & Stature Proportions
-  // Height scales root Y & leg lengths
-  const hScale = Math.max(0.85, Math.min(1.22, dna.height || 1.0));
-  const bScale = Math.max(0.78, Math.min(1.38, dna.build || 1.0)); // Shoulders, chest
-  const wScale = Math.max(0.82, Math.min(1.35, dna.weight || 1.0)); // Belly, girth
+  // 2. Gövde oranları — HER ÖLÇEK BİR KEZ.
+  //    Omuz/kol `torso`nun, bacak `pelvis`in çocuğu; ebeveyn ölçeği zaten
+  //    aşağı yansıyor. Eski kod bScale/hScale'i tekrar çarpıyordu:
+  //    omuz açıklığı 0.40–1.32, boy 1.88–2.70 oluyor ve zırhlar oturmuyordu.
+  const clampN = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  const hScale = clampN(dna.height || 1.0, 0.92, 1.12);
+  const bScale = clampN(dna.build || 1.0, 0.86, 1.24);
+  const wScale = clampN(dna.weight || 1.0, 0.88, 1.28);
 
-  // Scale Pelvis & Torso girth
-  rig.pelvis.scale.set(wScale, hScale, wScale);
+  // Karın/hip derinliği: pelvis yalnız derinlikte büyür (boyu kısaltmaz,
+  // kafayı uzatmaz → oblong kafa sorunu).
+  rig.pelvis.scale.set(1, 1, Math.max(1, wScale * 0.9));
+  // Göğüs: genişlik build'den, derinlik build+weight ortalamasından.
   rig.torso.scale.set(bScale, 1.0, (bScale + wScale) * 0.5);
 
-  // Female silhouette adjustment: slightly narrower shoulders, higher waist taper
-  if (dna.gender === 'female') {
-    rig.leftShoulder.position.x = 0.28 * bScale;
-    rig.rightShoulder.position.x = -0.28 * bScale;
-  } else {
-    rig.leftShoulder.position.x = 0.32 * bScale;
-    rig.rightShoulder.position.x = -0.32 * bScale;
-  }
+  // Omuz açıklığı: taban ölçü ✕ yalnız cinsiyet faktörü.
+  const shoulderX = RIG_DIMENSIONS.shoulderX * (dna.gender === 'female' ? 0.92 : 1.0);
+  rig.leftShoulder.position.x = shoulderX;
+  rig.rightShoulder.position.x = -shoulderX;
 
-  // Legs length scaling
+  // Bacak: boy farkı buradan gelir (uzun bacak = uzun insan).
   const legScale = (dna.legLength || 1.0) * hScale;
   rig.leftThigh.scale.set(1.0, legScale, 1.0);
   rig.rightThigh.scale.set(1.0, legScale, 1.0);
 
-  // Arms length scaling
-  const armScale = dna.armLength || 1.0;
-  rig.leftUpperArm.scale.set(bScale * 0.9, armScale, bScale * 0.9);
-  rig.rightUpperArm.scale.set(bScale * 0.9, armScale, bScale * 0.9);
+  // Kol: yalnız uzunluk; kalınlık `torso` ölçeğinden gelir.
+  const armScale = clampN(dna.armLength || 1.0, 0.88, 1.12);
+  rig.leftUpperArm.scale.set(1.0, armScale, 1.0);
+  rig.rightUpperArm.scale.set(1.0, armScale, 1.0);
 
-  // 3. Head & Facial Morphology Scaling
-  const jaw = Math.max(0.75, Math.min(1.35, dna.jawWidth || 1.0));
-  const chin = Math.max(0.75, Math.min(1.35, dna.chinLength || 1.0));
-  const nose = Math.max(0.7, Math.min(1.4, dna.noseLength || 1.0));
+  // 3. Kafa & yüz morfolojisi.
+  //    Çene/elmacık DNA'sı 0.75–1.35 arası çarpıldığında kafa 1.8 kat uzuyordu
+  //    (yüz "maske" gibi görünüyordu). Oranı sınırlıyoruz: şekil farkı kalır,
+  //    oblong kafa oluşmaz.
+  const jaw = clampN(dna.jawWidth || 1.0, 0.86, 1.16);
+  const chin = clampN(dna.chinLength || 1.0, 0.86, 1.16);
+  const nose = clampN(dna.noseLength || 1.0, 0.85, 1.2);
   const shape = faceShapeScale(dna.faceShape);
 
-  rig.head.scale.set(jaw * shape.x, chin * shape.y, (jaw + nose) * 0.5 * shape.z);
+  const sx = jaw * shape.x;
+  const syNatural = chin * shape.y;
+  const sy = sx * clampN(syNatural / sx, 0.9, 1.12);
+  rig.head.scale.set(sx, sy, (jaw + nose) * 0.5 * shape.z);
+
+  // 3a. Boyun/çene hizası: kafa ölçeği değiştiğinde çene ile gövde arasındaki
+  //     boşluk -0.14…+0.14 arasında salınıyordu (kiminde gömük, kiminde
+  //     "zürafa" boyun). Çeneyi gövde tepesine sabit bir boşlukla oturtuyoruz.
+  rig.root.updateMatrixWorld(true);
+  // Çene referansı **kafatasıdır**: sakal kutuya girerse çene yanlış ölçülür.
+  const skullTmp = rig.head.children.find((c) => (c as THREE.Mesh).isMesh) as
+    | THREE.Mesh
+    | undefined;
+  const torsoMeshTmp = rig.torso.children.find((c) => (c as THREE.Mesh).isMesh) as
+    | THREE.Mesh
+    | undefined;
+  if (skullTmp && torsoMeshTmp) {
+    const chinY = new THREE.Box3().setFromObject(skullTmp).min.y;
+    const torsoTop = new THREE.Box3().setFromObject(torsoMeshTmp).max.y;
+    rig.head.position.y -= chinY - torsoTop - 0.02;
+    rig.root.updateMatrixWorld(true);
+  }
+
+  // 3b. Yere oturt: bacak uzunluğu değiştiğinde ayaklar y=0'da kalsın.
+  rig.root.updateMatrixWorld(true);
+  const feetBox = new THREE.Box3();
+  feetBox.union(new THREE.Box3().setFromObject(rig.leftFoot));
+  feetBox.union(new THREE.Box3().setFromObject(rig.rightFoot));
+  if (!feetBox.isEmpty()) rig.pelvis.position.y -= feetBox.min.y;
 
   // Yüz katmanı: göz rengi, burun, kaş, çene, yanak, ağız DNA'ya göre güncellenir.
   applyFaceDNA(rig.head.getObjectByName('Face') ?? null, dna, { skin: rig.materials.skin, hair: rig.materials.hair });
