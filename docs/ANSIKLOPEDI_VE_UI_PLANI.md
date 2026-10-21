@@ -1243,3 +1243,35 @@ Kullanıcı onayı: "Tam Bannerlord düzeni".
   seçeneği de yalnız yerleşimdeyken görünür.
 
 Doğrulama: `probe-market` (28 kontrol) + `probe-market-ui` (20 kontrol).
+
+## 29. FAZ 8 — ASKER TOPLAMA (TAMAMLANDI ✅)
+
+`src/game/recruitment.ts` (saf kurallar):
+- **Parti kapasitesi**: 20 + klan kademesi bonusu + nam/40. `partyRoom()` boş yeri verir.
+- **İlişki kapısı**: muhtarla ilişki ≤ −20 ise asker verilmez (gerekçe metniyle).
+- **Ücret çarpanı**: ilişki ±%15 indirim/zam (`recruitCostModifier`).
+- `recruitQuote()` → havuz, birim ücret, kapasite/altın sınırı, gerçekte alınabilecek miktar,
+  engel gerekçesi. UI ile testler **aynı** hesabı kullanır.
+- `recruitBatch()` → toplu alma; kapasite/altın/havuz/ilişki birlikte denetlenir,
+  altın tek kaynaktan (totalCost) düşülür.
+- `refreshRecruitPools()` → her 3 günde +1 (asla azaltmaz).
+- `validateRecruitment()` → kapasite taşması ve negatif havuz denetimi.
+
+Arayüz (SettlementModal → "Asker Topla" sekmesi):
+- Parti kapasitesi çubuğu (mevcut/limit), muhtar ilişkisi, boş yer sayısı.
+- Her birlik kartında havuz, ordudaki sayı, **ilişki indirimli ücret** (taban fiyatla birlikte),
+  günlük maaş ve engel gerekçesi.
+- Üç düğme: **+1**, **+5**, **Tümü (n)**.
+
+Gün döngüsüne bağlandı: gün ilerledikçe havuz tazelenir (App `advanceDailyEconomyAndWorld`).
+
+Doğrulama: `probe-recruitment` (28 kontrol) + `probe-recruitment-ui` (10 kontrol).
+
+## 30. SIRADAKİ — FAZ 9 (yüzler ve içerik)
+
+Kalan işler (öncelik sırası):
+1. Ansiklopedide **klan adı tekrarı** (Faz 1i bulgusu): liste satırında klan adı ile
+   hanedan adı aynı görünüyor → tekrar kaldırılacak.
+2. Leydi portrelerinde yüz detayı (göz/kaş/dudak zaten 1h'de ayrıştırıldı) — portre
+   kadrajı kullanıcı onayı olmadan **değişmeyecek**.
+3. Sesler ve diyalog sırasında NPC animasyonu (Faz 6d).

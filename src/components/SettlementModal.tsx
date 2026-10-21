@@ -10,6 +10,7 @@ import {
   UnitTierId,
   WorkshopTypeId,
 } from '../game/rules';
+import { recruitQuote, partyLimit, partySize, partyRoom } from '../game/recruitment';
 import { sound } from '../game/sound';
 
 export type TownTab =
@@ -107,6 +108,12 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   onOpenCharacterArena,
 }) => {
   const [activeTab, setActiveTab] = useState<TownTab>('overview');
+  /** Faz 8: muhtarla ilişki — asker toplama kapısı ve ücret indirimi. */
+  const factionRelation = (() => {
+    const lords = campaign.lords.filter((l) => l.faction === settlement.faction);
+    if (lords.length === 0) return 0;
+    return Math.round(lords.reduce((a, l) => a + l.relation, 0) / lords.length);
+  })();
   const [feedback, setFeedback] = useState<string | null>(null);
   const [selectedNotable, setSelectedNotable] = useState<SettlementNotable | null>(null);
   const [tournamentResult, setTournamentResult] = useState<{
@@ -208,13 +215,15 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   }, [settlement, isTown, isCastle, factionInfo]);
 
   // Tab Action Handlers
-  const handleRecruitClick = (unitId: UnitTierId) => {
-    const err = onRecruit(settlement.id, unitId, 1);
+  const handleRecruitClick = (unitId: UnitTierId, amount = 1) => {
+    const err = onRecruit(settlement.id, unitId, amount);
     if (err) {
       setFeedback(`⚠️ ${err}`);
     } else {
       sound.playCoinChime();
-      setFeedback(`⚔️ ${UNIT_DEFINITIONS[unitId].name} sancağınıza başarıyla katıldı!`);
+      setFeedback(
+        `⚔️ ${amount} × ${UNIT_DEFINITIONS[unitId].name} sancağınıza katıldı!`,
+      );
     }
   };
 
@@ -1077,7 +1086,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
 
             {/* 3.F: RECRUITMENT TAB (ALL SETTLEMENTS) */}
             {activeTab === 'recruit' && (
-              <div className="space-y-4">
+              <div className="space-y-4" data-testid="recruit-panel">
                 <h3 className="text-base font-bold text-[#fef08a]">
                   {isTown
                     ? 'Gönüllü Asker Topla (Kışla & Muhafız Yazımı)'
@@ -1093,44 +1102,113 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'Köyler düşük maliyetli, sadık köylü acemileri sağlar.'}
                 </p>
 
+                {/* Faz 8: parti kapasitesi ve ilişki */}
+                <div className="p-3 rounded bg-[#1f1a14] border border-[#c6a15b]/30">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-[#c6a15b] font-semibold">Parti Kapasitesi</span>
+                    <span className="font-mono-tabular text-[#f8f0df]">
+                      {partySize(campaign)} / {partyLimit(campaign)} asker
+                    </span>
+                  </div>
+                  <div className="w-full h-2 rounded bg-[#26211a] overflow-hidden">
+                    <div
+                      className={`h-full ${partyRoom(campaign) === 0 ? 'bg-[#dc2626]' : 'bg-[#34d399]'}`}
+                      style={{
+                        width: `${Math.min(100, Math.round((partySize(campaign) / partyLimit(campaign)) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] mt-1">
+                    <span className={factionRelation < 0 ? 'text-[#fca5a5]' : 'text-[#34d399]'}>
+                      Muhtarla ilişki: {factionRelation > 0 ? `+${factionRelation}` : factionRelation}
+                    </span>
+                    <span className="text-[#a89b84]">
+                      {partyRoom(campaign) > 0
+                        ? `${partyRoom(campaign)} boş yer`
+                        : 'Parti dolu — terhis et veya kademe yükselt'}
+                    </span>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {(Object.keys(UNIT_DEFINITIONS) as UnitTierId[]).map((unitId) => {
-                    const def = UNIT_DEFINITIONS[unitId];
-                    const available = settlement.recruitPool[unitId];
-                    const owned = campaign.roster[unitId];
-                    const canAfford = campaign.gold >= def.recruitCost && available > 0;
+                    const quote = recruitQuote(campaign, settlement, unitId, factionRelation);
+                    const discount = quote.unitCost !== quote.baseCost;
+                    const max = quote.maxRecruitable;
 
                     return (
                       <div
                         key={unitId}
-                        className="p-3 rounded bg-[#1f1a14] border border-[#c6a15b]/25 flex items-center justify-between"
+                        data-unit={unitId}
+                        className={`p-3 rounded bg-[#1f1a14] border flex flex-col gap-2 ${
+                          max > 0 ? 'border-[#c6a15b]/25' : 'border-[#c6a15b]/10 opacity-80'
+                        }`}
                       >
                         <div>
                           <div className="font-semibold text-sm text-[#f8f0df] flex items-center gap-1.5">
-                            <span>{def.role === 'Süvari' ? '🏇' : def.role === 'Menzilli' ? '🏹' : '🛡️'}</span>
-                            <span>{def.name}</span>
+                            <span>{quote.role === 'Süvari' ? '🏇' : quote.role === 'Menzilli' ? '🏹' : '🛡️'}</span>
+                            <span>{quote.name}</span>
                           </div>
-                          <div className="text-xs text-[#a89b84] mt-0.5">{def.role}</div>
+                          <div className="text-xs text-[#a89b84] mt-0.5">{quote.role}</div>
                           <div className="text-xs text-[#c6a15b] mt-1 font-mono-tabular">
-                            Mevcut: <span className="font-bold text-white">{available}</span> · Orduda: {owned}
+                            Havuz: <span className="font-bold text-white">{quote.available}</span> · Orduda:{' '}
+                            {campaign.roster[unitId] ?? 0}
                           </div>
-                          <div className="text-xs text-[#fbbf24] mt-0.5 font-mono-tabular">
-                            Ücret: {def.recruitCost} Dinar · Maaş: {def.dailyWage}/gün
+                          <div className="text-xs mt-0.5 font-mono-tabular">
+                            <span className={discount ? 'text-[#34d399]' : 'text-[#fbbf24]'}>
+                              Ücret: {quote.unitCost} Dinar
+                              {discount && (
+                                <span className="text-[10px] ml-1">
+                                  (taban {quote.baseCost} — ilişki {quote.unitCost < quote.baseCost ? 'indirimi' : 'zammı'})
+                                </span>
+                              )}
+                            </span>
+                            <span className="text-[#a89b84]"> · Maaş: {quote.dailyWage}/gün</span>
                           </div>
+                          {quote.blockedReason && (
+                            <div className="text-[10px] text-[#fca5a5] mt-1">{quote.blockedReason}</div>
+                          )}
                         </div>
 
-                        <button
-                          type="button"
-                          disabled={!canAfford}
-                          onClick={() => handleRecruitClick(unitId)}
-                          className={`px-3 py-2 rounded text-xs font-bold transition-colors whitespace-nowrap shrink-0 shadow ${
-                            canAfford
-                              ? 'bg-[#b45309] hover:bg-[#d97706] text-white'
-                              : 'bg-[#2a251e] text-[#6e6455] cursor-not-allowed'
-                          }`}
-                        >
-                          Topla ({def.recruitCost} Dinar)
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={max < 1}
+                            onClick={() => handleRecruitClick(unitId, 1)}
+                            className={`flex-1 px-2 py-1.5 rounded text-xs font-bold transition-colors ${
+                              max >= 1
+                                ? 'bg-[#b45309] hover:bg-[#d97706] text-white'
+                                : 'bg-[#2a251e] text-[#6e6455] cursor-not-allowed'
+                            }`}
+                          >
+                            Topla (+1)
+                          </button>
+                          <button
+                            type="button"
+                            disabled={max < 1}
+                            onClick={() => handleRecruitClick(unitId, Math.min(5, max))}
+                            className={`flex-1 px-2 py-1.5 rounded text-xs font-bold transition-colors ${
+                              max >= 1
+                                ? 'bg-[#1e3a5f] hover:bg-[#2563eb] text-white'
+                                : 'bg-[#2a251e] text-[#6e6455] cursor-not-allowed'
+                            }`}
+                          >
+                            +{Math.min(5, Math.max(1, max))} topla
+                          </button>
+                          <button
+                            type="button"
+                            disabled={max < 1}
+                            onClick={() => handleRecruitClick(unitId, max)}
+                            title={`Mümkün olan en fazla: ${max}`}
+                            className={`flex-1 px-2 py-1.5 rounded text-xs font-bold transition-colors ${
+                              max >= 1
+                                ? 'bg-[#15803d] hover:bg-[#16a34a] text-white'
+                                : 'bg-[#2a251e] text-[#6e6455] cursor-not-allowed'
+                            }`}
+                          >
+                            Tümü ({max})
+                          </button>
+                        </div>
                       </div>
                     );
                   })}

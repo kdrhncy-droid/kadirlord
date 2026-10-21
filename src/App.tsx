@@ -66,6 +66,7 @@ import {
   createInitialKingdomMacroState,
 } from './game/kingdomSystem';
 import { sound } from './game/sound';
+import { recruitBatch, refreshRecruitPools } from './game/recruitment';
 
 export default function App() {
   const isAutostart =
@@ -275,7 +276,11 @@ export default function App() {
     if (gameState !== 'playing' || subMode !== 'overworld' || campaignTimeScale === 0) return;
     const intervalMs = Math.round(16000 / campaignTimeScale);
     const timer = setInterval(() => {
-      setCampaign((prev) => advanceDailyEconomyAndWorld(prev));
+      setCampaign((prev) => {
+        const next = advanceDailyEconomyAndWorld(prev);
+        // Faz 8: gönüllü havuzları her 3 günde bir tazelenir.
+        return { ...next, settlements: refreshRecruitPools(next.settlements, next.day) };
+      });
     }, intervalMs);
     return () => clearInterval(timer);
   }, [gameState, subMode, campaignTimeScale]);
@@ -323,7 +328,15 @@ export default function App() {
     (settlementId: string, unitId: UnitTierId, amount: number): string | null => {
       let errorMsg: string | null = null;
       setCampaign((prev) => {
-        const res = recruitUnit(prev, settlementId, unitId, amount);
+        // Faz 8: parti kapasitesi + ilişki kapısı + ilişki indirimi tek yerde.
+        const factionLords = prev.lords.filter(
+          (l) => l.faction === prev.settlements.find((s) => s.id === settlementId)?.faction,
+        );
+        const relation =
+          factionLords.length > 0
+            ? Math.round(factionLords.reduce((a, l) => a + l.relation, 0) / factionLords.length)
+            : 0;
+        const res = recruitBatch(prev, settlementId, unitId, amount, relation);
         if (!res.success) {
           errorMsg = res.reason || 'İşlem başarısız.';
           return prev;
