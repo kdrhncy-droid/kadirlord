@@ -792,7 +792,7 @@ her görev türünün en az 1 üreticisi).
 1. `strict: true`, `noUnusedLocals` (78 uyarı) → **0**.
 2. **Kod bölme**: `App.tsx`'ten `useCampaign`, `useUiLayers`, `useBattleFlow`; arena/harita/ansiklopedi
    `React.lazy` → ilk paket < 700 kB.
-3. **Emoji temizliği** (arena 89, HUD 34, pazar 30, yaratıcı 24) → SVG.
+3. **Emoji temizliği** (arena 89, HUD 34, yaratıcı 24) → SVG. ✅ **Pazar tarafı bitti** (Faz B3).
 4. **Erişilebilirlik**: `role="dialog"`, `aria-modal`, odak tuzağı, `Esc` (B5/B6).
 5. ~~**Mobil kararı**~~ ⛔ **kapsam dışı** — oyun yalnız masaüstü (klavye + fare); dokunmatik kontrol yazılmayacak.
 6. README, lisans, ekran görüntüleri, `SAVE_VERSION` göç notu.
