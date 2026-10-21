@@ -171,18 +171,39 @@ export function deriveOccupation(lord: LordAgent): Occupation {
   return 'LORD';
 }
 
-/** Klan adı: klan id'sinden okunabilir bir isim üretir. */
-const CLAN_STEMS = [
-  'Demirtaç', 'Gümüşyay', 'Kartalpençe', 'Bozkurt', 'Alşahin', 'Karadağ',
-  'Aybora', 'Tuğrul', 'Sırmaok', 'Erguvan', 'Yelkovan', 'Sarpkalkan',
-];
+/**
+ * Klan adı: klan id'sinden okunabilir bir isim üretir.
+ *
+ * Faz 9h — **isim tekilliği**: her (krallık, slot) çiftinin kendi kökü var, yani
+ * 8 krallık × 3 klan = 24 klan adı birbirinden farklı. Eski sürüm tek havuzdan
+ * `hash(faction) + slot` ile seçiyordu ve "Aybora Hanedanı" 4 kez, "Karadağ
+ * Hanedanı" 3 kez çıkıyordu (ansiklopedide aynı adlı klanlar).
+ */
+const CLAN_STEMS: Record<string, [string, string, string]> = {
+  player: ['Demirtaç', 'Gümüşyay', 'Kartalpençe'],
+  vlandia: ['Bozkurt', 'Alşahin', 'Karadağ'],
+  battania: ['Aybora', 'Tuğrul', 'Sırmaok'],
+  sturgia: ['Erguvan', 'Yelkovan', 'Sarpkalkan'],
+  empire: ['Altınkule', 'Mermertaş', 'Ayışığı'],
+  khuzait: ['Tulpar', 'Demirbörü', 'Gökbayrak'],
+  aserai: ['Kumyeli', 'Çölduman', 'Baharatkolu'],
+  bandits: ['Karagölge', 'Paslıkılıç', 'Kırıkdiş'],
+};
+
+/** Tabloda olmayan bir fraksiyon gelirse (mod/gelecek) çakışmasız yedek. */
+const FALLBACK_STEMS: [string, string, string] = ['Sınır', 'Uzak', 'Gezgin'];
+
+/** Haydut klanları "Hanedan" değil "Çete"dir. */
+const CLAN_SUFFIX: Record<string, string> = { bandits: 'Çetesi' };
 
 export function deriveClan(lord: LordAgent, index: number): { clanId: string; clanName: string } {
   // Aynı krallıktaki lordlar 2-3 klana dağılır (Bannerlord'daki gibi).
   const slot = index % 3;
   const clanId = `clan-${lord.faction}-${slot}`;
-  const stem = CLAN_STEMS[(hash32(lord.faction) + slot) % CLAN_STEMS.length];
-  return { clanId, clanName: `${stem} Hanedanı` };
+  const group = CLAN_STEMS[lord.faction] ?? FALLBACK_STEMS;
+  const stem = group[slot];
+  const suffix = CLAN_SUFFIX[lord.faction] ?? 'Hanedanı';
+  return { clanId, clanName: `${stem} ${suffix}` };
 }
 
 export function deriveBirthDay(lordId: string, day: number, occupation: Occupation): number {

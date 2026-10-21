@@ -120,6 +120,15 @@ const count = (haystack: string, needle: string) => {
 const allowedLeaderMentions = (leaderName: string, clanId: string) =>
   1 + clanMembers(index, clanId).filter((h) => h.name === leaderName).length;
 
+/* ───────────────── 0. İçerik: aynı ad iki kez geçmesin ───────────────── */
+
+const clanNames = index.clans.map((c) => c.name);
+ok(
+  new Set(clanNames).size === clanNames.length,
+  'klan adları tekil (ansiklopedide aynı adlı iki klan yok)',
+  `${clanNames.length} klan, ${new Set(clanNames).size} tekil`,
+);
+
 /* ───────────────── 1. Klan sayfası: lider ve krallık ───────────────── */
 
 const clan =

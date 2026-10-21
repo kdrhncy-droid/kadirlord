@@ -1083,7 +1083,7 @@ Portre yoksa (WebGL yok / lider kaydı yok) baş harf rozeti kalır — geri dü
 
 Klan listesinde aynı ad birden çok kez görünüyor: "Aybora Hanedanı" 4, "Karadağ Hanedanı" 3 kez.
 Sebep isim üreticisinin küçük bir havuzdan seçmesi (Faz 0b tohumları). Ansiklopedi doğru
-çalışıyor; **içerik** zenginleştirmesi Faz 9'da yapılacak.
+çalışıyor; **içerik** zenginleştirmesi Faz 9'da yapılacak. → **§39'da çözüldü.**
 
 ### 21.5 Doğrulama
 
@@ -1640,3 +1640,34 @@ sayfasında "Kara Geçit Yağmacıları" krallığı ikinci anılış sanılıyo
 - `verify:all` **26 paket ✅**, `vite build` ✅ (950 ms).
 - Görsel not: bu ortamda tarayıcı (Chromium/NSS) yok; değişiklikler CSS/markup düzeyinde
   olduğu için yapısal doğrulama + metin sayımı kullanıldı, 3B çıktı üretilmedi.
+
+## 39. FAZ 9h — KLAN ADLARININ TEKİLLİĞİ (TAMAMLANDI ✅)
+
+§21.4'te not edilen içerik kusuru: aynı klan adı birden çok kez ("Aybora Hanedanı" 4×,
+"Karadağ Hanedanı" 3×). Ansiklopedide aynı adlı iki klan, tekrar sadeleştirmesini de
+boşa çıkarıyordu (hangi klan olduğu anlaşılmıyor).
+
+**Sebep:** `deriveClan` tek bir 12 köklü havuzdan `hash(faction) + slot` ile seçiyordu;
+8 krallık × 3 klan = 24 klan 12 köke sığdırılıyordu → çakışma kaçınılmaz.
+
+**Çözüm (`src/game/heroes.ts`):** kökler krallık başına 3'lü gruba ayrıldı
+(`CLAN_STEMS: Record<FactionId, [string, string, string]>`), yani 24 klanın 24 ayrı kökü var.
+
+| Krallık | Klan kökleri |
+| --- | --- |
+| player | Demirtaç · Gümüşyay · Kartalpençe |
+| vlandia | Bozkurt · Alşahin · Karadağ |
+| battania | Aybora · Tuğrul · Sırmaok |
+| sturgia | Erguvan · Yelkovan · Sarpkalkan |
+| empire | Altınkule · Mermertaş · Ayışığı |
+| khuzait | Tulpar · Demirbörü · Gökbayrak |
+| aserai | Kumyeli · Çölduman · Baharatkolu |
+| bandits | Karagölge · Paslıkılıç · Kırıkdiş |
+
+- Haydut klanları **"Çetesi"** ekiyle yazılır ("Karagölge Çetesi") — "Hanedan" soylu bir
+  kurumdur, haydutlara uymuyordu.
+- Tabloda olmayan fraksiyon için çakışmasız yedek: `Sınır / Uzak / Gezgin`.
+- `clanId` **değişmedi** (`clan-<faction>-<slot>`) → kayıtlı oyun/veri uyumu korunuyor.
+
+**Doğrulama:** `probe-encyclopedia-dedup`'a 15. kontrol eklendi —
+`klan adları tekil: 21 klan, 21 tekil`. `verify:all` 26 paket ✅.
