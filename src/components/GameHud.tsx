@@ -52,6 +52,7 @@ interface GameHudProps {
   onOpenCharacterArena?: () => void;
   onOpenKingdomModal?: () => void;
   onOpenCharacterCreator?: () => void;
+  onOpenEncyclopedia?: () => void;
 }
 
 export const GameHud: React.FC<GameHudProps> = ({
@@ -84,6 +85,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   onOpenCharacterArena,
   onOpenKingdomModal,
   onOpenCharacterCreator,
+  onOpenEncyclopedia,
 }) => {
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<
@@ -1283,6 +1285,17 @@ export const GameHud: React.FC<GameHudProps> = ({
                     >
                       Vakanüvis
                     </button>
+                    {onOpenEncyclopedia && (
+                      <button
+                        type="button"
+                        onClick={onOpenEncyclopedia}
+                        className="px-2.5 py-1.5 rounded text-xs font-bold bg-[#2a2015] hover:bg-[#3d2e20] text-[#fde68a] border border-[#c6a15b]/60 transition-colors whitespace-nowrap flex items-center gap-1 shadow"
+                        title="Ansiklopedi (N)"
+                      >
+                        <span>📖</span>
+                        <span>Ansiklopedi [N]</span>
+                      </button>
+                    )}
                     {onOpenCharacterCreator && (
                       <button
                         type="button"

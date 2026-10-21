@@ -58,6 +58,7 @@ import { KingdomManagementModal } from './components/KingdomManagementModal';
 import { CharacterArenaView } from './components/CharacterArenaView';
 import { CharacterCreatorModal } from './components/CharacterCreatorModal';
 import { BattlePrewarmModal } from './components/BattlePrewarmModal';
+import { EncyclopediaModal } from './components/encyclopedia/EncyclopediaModal';
 import { BattleMemoryPool, PrewarmStageReport } from './game/battleEnginePool';
 import {
   KingdomMacroState,
@@ -96,6 +97,10 @@ export default function App() {
   const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
   const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'campaign' | 'character_arena'>('campaign');
+  // Faz 1: Bannerlord Ansiklopedisi (N)
+  const [isEncyclopediaOpen, setIsEncyclopediaOpen] = useState(false);
+  /** Tanışılan kahramanlar — orta yol fog of war (yaş/beceri açılır). */
+  const [metHeroIds, setMetHeroIds] = useState<string[]>([]);
 
   const [mapTelemetry, setMapTelemetry] = useState<MapCameraTelemetry>({
     focusX: -24,
@@ -165,6 +170,11 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // Form alanında yazarken kısayollar devre dışı.
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      // Ansiklopedi açıkken kendi tuş yönetimi geçerli (Esc geri, N kapat).
+      if (isEncyclopediaOpen) return;
       if (
         document.activeElement &&
         ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)
@@ -183,6 +193,13 @@ export default function App() {
           e.preventDefault();
           setIsCharacterCreatorOpen((prev) => !prev);
         }
+        return;
+      }
+
+      if (e.code === 'KeyN' && gameState === 'playing') {
+        e.preventDefault();
+        setCampaignTimeScale(0);
+        setIsEncyclopediaOpen(true);
         return;
       }
 
@@ -243,6 +260,7 @@ export default function App() {
     subMode,
     activeSettlementModal,
     activeDiplomacyLord,
+    isEncyclopediaOpen,
     startGame,
   ]);
 
@@ -841,6 +859,10 @@ export default function App() {
             setCampaignTimeScale(0);
             setActiveDiplomacyLord(l);
           }}
+          onOpenEncyclopedia={() => {
+            setCampaignTimeScale(0);
+            setIsEncyclopediaOpen(true);
+          }}
           onStartQuickBattle={handleStartQuickBattle}
           onRetreatBattle={() => setSubMode('overworld')}
           onAdvanceDay={() => {
@@ -1112,6 +1134,18 @@ export default function App() {
       )}
 
       {/* 7. FULL-SCREEN BANNERLORD MARKETPLACE & INVENTORY MODAL */}
+      {/* FAZ 1: BANNERLORD ANSİKLOPEDİSİ (N) */}
+      {isEncyclopediaOpen && (
+        <EncyclopediaModal
+          campaign={campaign}
+          revealedHeroIds={metHeroIds}
+          onMeetHero={(heroId) =>
+            setMetHeroIds((prev) => (prev.includes(heroId) ? prev : [...prev, heroId]))
+          }
+          onClose={() => setIsEncyclopediaOpen(false)}
+        />
+      )}
+
       {isMarketModalOpen && (
         <BannerlordMarketModal
           settlement={activeSettlementModal || nearSettlement}

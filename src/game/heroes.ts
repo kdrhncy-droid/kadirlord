@@ -90,6 +90,9 @@ export interface HeroRecord {
   lastSeen: LastSeen;
   status: HeroStatus;
   prisonerOf?: string;
+  /** Oyuncuyla savaşta mı? (Ansiklopedide "durum" sütunu) */
+  atWarWithPlayer: boolean;
+  alliedWithPlayer: boolean;
 
   bannerColor: string;
   bio: string;
@@ -273,6 +276,8 @@ export function heroFromLord(
       status,
     },
     status,
+    atWarWithPlayer: lord.isAtWarWithPlayer,
+    alliedWithPlayer: lord.isAlliedWithPlayer,
     bannerColor: lord.bannerColor,
     bio: lord.personality,
     revealed: false,

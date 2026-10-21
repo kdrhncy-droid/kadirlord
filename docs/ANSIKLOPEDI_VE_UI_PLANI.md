@@ -726,8 +726,63 @@ kampanya kurulumu: 1.7 ms      40 lord için A* toplam: 9.4 ms (0.24 ms/lord)
 
 ---
 
-## 15. SONRAKİ ADIM
+## 15. FAZ 1a — ANSİKLOPEDİ KABUĞU (TAMAMLANDI ✅)
 
-**Faz 1 — Ansiklopedi kabuğu:**
-`N` tuşu, `EncyclopediaModal`, breadcrumb + gezinme yığını, ana sayfa kart karuseli,
-arama kutusu. Veri tarafı hazır (`buildHeroRegistry` + `searchHeroes`).
+### Eklenen dosyalar
+
+| Dosya | Satır | İçerik |
+| :--- | ---: | :--- |
+| `src/game/encyclopedia.ts` | ~380 | **Saf mantık** (React/Three yok): rota tipleri, gezinme yığını (`pushRoute`/`goBack`/`jumpTo`), dizin (`buildEncyclopediaIndex`), arama (`searchEncyclopedia`), filtre/sıralama (`filterHeroes`), breadcrumb |
+| `src/components/encyclopedia/EncyclopediaModal.tsx` | ~560 | Arayüz kabuğu: plaka başlık, arama, breadcrumb + geri, ana sayfa kart karuseli, kahraman listesi (filtre + sıralama), kahraman detay sayfası |
+| `scripts/probe-encyclopedia.ts` | ~140 | 30 mantık doğrulaması |
+| `scripts/probe-encyclopedia-ui.tsx` | ~90 | **26 arayüz duman testi** (`renderToStaticMarkup`, tarayıcısız) |
+
+### Kullanım
+
+- **`N`** → ansiklopedi aç/kapat · **`Esc`** → bir sayfa geri (kök sayfada kapatır)
+- **`/`** → aramaya odaklan
+- Üst barda **📖 Ansiklopedi [N]** düğmesi
+- Açılırken kampanya zamanı durur (`campaignTimeScale = 0`)
+
+### Ne çalışıyor
+
+| Özellik | Durum |
+| :--- | :--- |
+| Ana sayfa kart karuseli (Kahramanlar / Krallıklar / Klanlar / Yerleşimler / Kavramlar) | ✅ |
+| Arama (kahraman + klan + krallık + yerleşim, tür etiketli) | ✅ |
+| Breadcrumb + geri yığını (`Ansiklopedi / Kahramanlar / Rhagaea`) | ✅ |
+| Kahraman listesi: meslek filtresi, krallık filtresi, 5 sıralama | ✅ |
+| Kahraman detayı: bilgi ızgarası, son görülme (tıklanabilir), klan/krallık bağlantısı, kişilik, beceri, açıklama | ✅ |
+| Orta yol fog: yaş + beceri gizli, "Tanış" düğmesiyle açılıyor | ✅ |
+| Krallık / Klan / Yerleşim / Kavram sayfaları | 🚧 Faz 2 (yer tutucu) |
+| Portreler | 🚧 Faz 1b (şu an baş harf + sancak rengi) |
+
+### Doğrulama
+
+```
+✓ tsc --noEmit                      ✓ vite build (536 ms)
+✓ rules.test.ts 28/28               ✓ probe-heroes (40 kahraman)
+✓ probe-encyclopedia (30 kontrol)   ✓ probe-encyclopedia-ui (26 kontrol)
+```
+
+`probe-encyclopedia-ui` örnek çıktısı:
+
+```
+✓ başlık plakası render edildi        ✓ detayda Bilgi bölümü
+✓ ana sayfa kartı: Kahramanlar        ✓ detayda son görülme satırı
+✓ ana sayfa kartı: Krallıklar         ✓ fog: beceriler gizli
+✓ liste başlığı ("N kayıt")           ✓ tanışılmışta beceriler açık
+✓ fog: tanışılmamışta yaş gizli       ✓ geçersiz hero id çökmüyor
+```
+
+Yeni komutlar: `npm run verify:heroes`, `npm run verify:encyclopedia`
+
+---
+
+## 16. SONRAKİ ADIM — Faz 1b
+
+1. **Baked portreler:** tek offscreen WebGL bağlamı + `CanvasTexture` önbelleği (LRU 64);
+   kahraman listesinde 36×36, detayda 240×320. `LordPortraitCanvas`'ın DNA/morph hattı yeniden kullanılacak.
+2. **Krallık / Klan / Yerleşim sayfaları:** dizin verisi hazır (`kingdomById`, `clanById`, `settlementById`),
+   yalnızca düzen yazılacak.
+3. **Aile ağacı** (Faz 3) için `HeroFamily` alanlarının içerikle doldurulması.
