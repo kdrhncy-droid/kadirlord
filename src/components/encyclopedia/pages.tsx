@@ -6,6 +6,7 @@ import {
   kingdomClans,
   kingdomFiefs,
   kingdomMembers,
+  kingdomDiplomacy,
   settlementHeroes,
   settlementKingdom,
   type ClanSummary,
@@ -132,6 +133,8 @@ export const KingdomDetailPage: React.FC<PageProps & { kingdomId?: string }> = (
   const clans = kingdomClans(index, kingdom.id);
   const members = kingdomMembers(index, kingdom.id);
   const fiefs = kingdomFiefs(index, kingdom.id);
+  const diplomacy = kingdomDiplomacy(index, kingdom);
+  const warLords = members.filter((m) => m.atWarWithPlayer).length;
 
   return (
     <div className="h-full overflow-y-auto p-4">
@@ -154,6 +157,11 @@ export const KingdomDetailPage: React.FC<PageProps & { kingdomId?: string }> = (
             )}
             <Chip>{kingdom.clanIds.length} klan</Chip>
             <Chip>{kingdom.memberIds.length} lord</Chip>
+            {warLords > 0 && (
+              <Chip className="text-[#fbbf24] border-[#b45309]/50 bg-[#b45309]/15">
+                {warLords} lord savaşta
+              </Chip>
+            )}
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2 w-[220px] shrink-0">
@@ -206,6 +214,65 @@ export const KingdomDetailPage: React.FC<PageProps & { kingdomId?: string }> = (
               </div>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Faz 2: diplomatik durum */}
+      <div className="mt-3 rounded border border-[#c6a15b]/30 p-3">
+        <SectionTitle>Diplomatik Durum</SectionTitle>
+        <div className="grid grid-cols-2 gap-2 mt-1">
+          <div>
+            <div className="text-[9px] uppercase tracking-[0.12em] text-[#a2957f] mb-1">
+              Oyuncuyla savaşta olan krallıklar
+            </div>
+            {diplomacy.atWarWith.length === 0 ? (
+              <div className="text-[10px] text-[#8b8072]">
+                {kingdom.atWarWithPlayer
+                  ? 'Bu krallık sizinle savaşta.'
+                  : 'Oyuncuyla savaşta olan krallık yok.'}
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-1">
+                {diplomacy.atWarWith.map((k) => (
+                  <button
+                    key={k.id}
+                    type="button"
+                    onClick={() => onNavigate({ section: 'KINGDOM', id: k.id })}
+                    className="text-[10px] px-1.5 py-0.5 rounded border border-[#f87171]/40 text-[#fca5a5] hover:bg-[#f87171]/10"
+                  >
+                    {k.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <div className="text-[9px] uppercase tracking-[0.12em] text-[#a2957f] mb-1">
+              Aynı kültürden krallıklar
+            </div>
+            {diplomacy.sameCulture.length === 0 ? (
+              <div className="text-[10px] text-[#8b8072]">Yok.</div>
+            ) : (
+              <div className="flex flex-wrap gap-1">
+                {diplomacy.sameCulture.map((k) => (
+                  <button
+                    key={k.id}
+                    type="button"
+                    onClick={() => onNavigate({ section: 'KINGDOM', id: k.id })}
+                    className="text-[10px] px-1.5 py-0.5 rounded border border-[#c6a15b]/40 text-[#e2d6c1] hover:bg-[#c6a15b]/10"
+                  >
+                    {k.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="mt-2 pt-2 border-t border-[#c6a15b]/20 grid grid-cols-4 gap-2">
+          <InfoCell label="Klan" value={`${diplomacy.totalMembers > 0 ? kingdom.clanIds.length : 0}`} />
+          <InfoCell label="Lord" value={`${diplomacy.totalMembers}`} />
+          <InfoCell label="Tımar" value={`${diplomacy.totalFiefs}`} />
+          <InfoCell label="Savaşan lord" value={`${warLords}`} />
         </div>
       </div>
 
@@ -303,6 +370,45 @@ export const ClanDetailPage: React.FC<PageProps & { clanId?: string }> = ({
           onClick={() => leader && onNavigate({ section: 'HERO', id: leader.id })}
           disabled={!leader}
         />
+      </div>
+
+      {/* Faz 2: klan soy bağı — lider → en yaşlı üyeler → gençler */}
+      <div className="rounded border border-[#c6a15b]/30 p-3 mb-3">
+        <SectionTitle>Aile Bağı</SectionTitle>
+        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+          {[...members]
+            .sort((a, b) => {
+              if (a.id === leader?.id) return -1;
+              if (b.id === leader?.id) return 1;
+              return a.birthDay - b.birthDay;
+            })
+            .slice(0, 8)
+            .map((h, i) => (
+              <React.Fragment key={h.id}>
+                {i > 0 && <span className="text-[10px] text-[#6f6559]">·</span>}
+                <button
+                  type="button"
+                  onClick={() => onNavigate({ section: 'HERO', id: h.id })}
+                  className={`text-[10px] px-1.5 py-0.5 rounded border hover:bg-[#c6a15b]/10 ${
+                    h.id === leader?.id
+                      ? 'border-[#fbbf24]/50 text-[#fbbf24]'
+                      : 'border-[#c6a15b]/30 text-[#e2d6c1]'
+                  }`}
+                >
+                  {h.name}
+                  <span className="text-[8px] text-[#8b8072] ml-1">
+                    {Math.max(0, Math.floor((index.day - h.birthDay) / 365))}y
+                  </span>
+                </button>
+              </React.Fragment>
+            ))}
+          {members.length > 8 && (
+            <span className="text-[9px] text-[#8b8072]">+{members.length - 8}</span>
+          )}
+        </div>
+        <div className="text-[9px] text-[#8b8072] mt-1">
+          Lider altın çerçeveli; yaşlar gün sayısından hesaplanır.
+        </div>
       </div>
 
       <div className="rounded border border-[#c6a15b]/30">

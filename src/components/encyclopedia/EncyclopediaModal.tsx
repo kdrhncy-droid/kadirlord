@@ -17,6 +17,10 @@ import {
   type EncyclopediaRoute,
   type HeroSort,
   type NavState,
+  heroKin,
+  heroAllies,
+  heroRivals,
+  prisonerInfo,
 } from '../../game/encyclopedia';
 import {
   OCCUPATION_LABELS,
@@ -372,6 +376,10 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
       return <div className="p-8 text-center text-xs text-[#a2957f]">Kahraman bulunamadı.</div>;
     }
     const info = visibleHeroInfo(hero, index.day);
+    const kin = heroKin(index, hero);
+    const allies = heroAllies(index, hero, 2);
+    const rivals = heroRivals(index, hero, 2);
+    const prisoner = prisonerInfo(index, hero);
     // `visibleHeroInfo` gizliyken null döner; gösterimde bunu '—' yapıyoruz.
     const traits: { key: keyof typeof hero.traits; label: string }[] = [
       { key: 'valor', label: 'Cesaret' },
@@ -494,6 +502,94 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
                     <span className="text-[9px] text-[#a2957f] capitalize">{key}</span>
                     <span className="text-[10px] text-[#e2d6c1]">{val?.level ?? 0}</span>
                   </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Faz 2: aile & yakınlar */}
+          <div className="rounded border border-[#c6a15b]/30 p-3 mb-3">
+            <div className="text-[10px] uppercase tracking-[0.15em] text-[#c6a15b] mb-2">
+              Aile & Yakınlar
+            </div>
+            {kin.length === 0 ? (
+              <div className="text-[11px] text-[#8b8072]">Klanında başka kayıtlı üye yok.</div>
+            ) : (
+              <div className="space-y-1">
+                {kin.map((k) => (
+                  <button
+                    key={k.id}
+                    type="button"
+                    onClick={() => go({ section: 'HERO', id: k.id })}
+                    className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-[#c6a15b]/10 text-left"
+                  >
+                    <HeroPortrait hero={k} width={22} square />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] text-[#e2d6c1] truncate">{k.name}</span>
+                      <span className="block text-[9px] text-[#a2957f] truncate">{k.title}</span>
+                    </span>
+                    <span className="shrink-0 text-[9px] text-[#8b8072]">
+                      {k.relation >= 0 ? `+${k.relation}` : k.relation}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Faz 2: diplomatik durum (esir / savaş / müttefik) */}
+          <div className="rounded border border-[#c6a15b]/30 p-3 mb-3">
+            <div className="text-[10px] uppercase tracking-[0.15em] text-[#c6a15b] mb-2">
+              Durum & İlişkiler
+            </div>
+            <div className="space-y-1 text-[11px]">
+              {prisoner.isPrisoner ? (
+                <div className="flex justify-between">
+                  <span className="text-[#a2957f]">Esir</span>
+                  <span className="text-[#fca5a5]">
+                    {prisoner.captorName} · {prisoner.daysHeld} gün
+                  </span>
+                </div>
+              ) : (
+                <div className="flex justify-between">
+                  <span className="text-[#a2957f]">Esaret</span>
+                  <span className="text-[#34d399]">Serbest</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-[#a2957f]">Oyuncuya karşı</span>
+                <span className={hero.atWarWithPlayer ? 'text-[#fca5a5]' : 'text-[#34d399]'}>
+                  {hero.atWarWithPlayer ? 'Savaşta' : hero.alliedWithPlayer ? 'Müttefik' : 'Barış'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#a2957f]">Son görüldüğü yer</span>
+                <span className="text-[#e2d6c1] truncate max-w-[180px] text-right">
+                  {lastSeenLabel(hero, index.day)}
+                </span>
+              </div>
+            </div>
+            {(allies.length > 0 || rivals.length > 0) && (
+              <div className="mt-2 pt-2 border-t border-[#c6a15b]/20 flex flex-wrap gap-1">
+                {allies.slice(0, 2).map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => go({ section: 'HERO', id: a.id })}
+                    className="text-[9px] px-1.5 py-0.5 rounded border border-[#34d399]/40 text-[#34d399] hover:bg-[#34d399]/10"
+                  >
+                    Müttefik: {a.name} (+{a.relation})
+                  </button>
+                ))}
+                {rivals.slice(0, 2).map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => go({ section: 'HERO', id: r.id })}
+                    className="text-[9px] px-1.5 py-0.5 rounded border border-[#f87171]/40 text-[#fca5a5] hover:bg-[#f87171]/10"
+                  >
+                    Rakip: {r.name} ({r.relation})
+                  </button>
                 ))}
               </div>
             )}

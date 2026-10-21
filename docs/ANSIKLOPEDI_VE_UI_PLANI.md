@@ -1127,3 +1127,35 @@ Görsel: `docs/renders/hud-inventory.png`.
 
 Araştırma ve plan: **`docs/PAZAR_VE_HARITA_ARASTIRMASI.md`** (pazar üç sütun düzeni, şehir
 altını, söylenti, renk kodu; harita HUD sadeleştirmesi 9 → 5 düğme; diyalog fazı).
+
+## 24. FAZ 2 — ENTITY SAYFALARI (TAMAMLANDI ✅)
+
+`src/game/encyclopedia.ts` yeni yardımcılar (saf, deterministik):
+
+| Fonksiyon | Ne yapar |
+| --- | --- |
+| `heroKin(index, hero)` | Aynı klandaki diğer üyeler (kendisi hariç) — "Aile & Yakınlar" |
+| `heroAllies(index, hero, limit)` | İlişkisi **pozitif** kahramanlar (yüksek önce) |
+| `heroRivals(index, hero, limit)` | İlişkisi **negatif** kahramanlar (düşük önce) |
+| `prisonerInfo(index, hero)` | Esir mi, kimin esiri, kaç gündür |
+| `kingdomDiplomacy(index, kingdom)` | Oyuncuyla savaş, aynı kültür krallıkları, klan/lord/tımar sayıları |
+
+Kahraman detayı (sağ kolon):
+- **Aile & Yakınlar** — portreli, tıklanabilir satırlar (ilişki değeri sağda).
+- **Durum & İlişkiler** — esaret (kimin esiri + gün), oyuncuya karşı (savaş/müttefik/barış),
+  son görüldüğü yer, müttefik/rakip çipleri (tıklanınca o kahramana gider).
+
+Krallık detayı:
+- Başlıkta "N lord savaşta" çipi.
+- **Diplomatik Durum** kartı: oyuncuyla savaşta olan krallıklar, aynı kültürden krallıklar,
+  Klan / Lord / Tımar / Savaşan lord sayaçları.
+
+Klan detayı:
+- **Aile Bağı** — lider altın çerçeveli, üyeler yaş sırasıyla, yaş gün sayısından hesaplanır.
+
+Not (dürüstlük): kampanya modeli krallıklar arası savaş matrisi tutmuyor; bu yüzden
+"krallıklar arası savaş" uydurulmadı, yalnız gerçek (oyuncuya karşı) savaşlar gösteriliyor.
+AI-AI diplomasi Faz 5+ (quest/dünya simülasyonu) ile gelecek.
+
+Doğrulama: `probe-encyclopedia-ui` **75/75** (17 yeni kontrol), `tsc` ✓, `rules.test` 28/28,
+`vite build` ✓. Görseller: `enc-heroes-list.png`, `enc-hero-detail.png`, `enc-kingdom-diplomacy.png`.

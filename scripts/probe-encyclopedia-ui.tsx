@@ -10,7 +10,14 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createInitialCampaignState } from '../src/game/rules.ts';
 import { EncyclopediaModal } from '../src/components/encyclopedia/EncyclopediaModal.tsx';
-import { buildEncyclopediaIndex } from '../src/game/encyclopedia.ts';
+import {
+  buildEncyclopediaIndex,
+  heroKin,
+  heroAllies,
+  heroRivals,
+  prisonerInfo,
+  kingdomDiplomacy,
+} from '../src/game/encyclopedia.ts';
 import { FACTION_INFO } from '../src/game/rules.ts';
 
 const campaign = createInitialCampaignState('Komutan Demirhan', 'noble');
@@ -138,6 +145,63 @@ ok(
   !home.includes('#6b6154') && !kingdomsPage.includes('#6b6154'),
   'düşük kontrastlı #6b6154 metin kalmadı',
 );
+
+/* 8. Faz 2: entity ilişkileri (aile, müttefik/rakip, esaret, son görüldüğü yer) */
+const targetHero = index.heroes.find((h) => heroKin(index, h).length > 0) ?? index.heroes[0];
+const kin = heroKin(index, targetHero);
+ok(kin.length > 0, 'kahramanın klanında yakınları listeleniyor', `${kin.length} kişi`);
+ok(
+  kin.every((k) => k.id !== targetHero.id),
+  'yakınlar listesi kahramanın kendisini içermiyor',
+);
+ok(
+  kin.every((k) => k.clanId === targetHero.clanId),
+  'yakınlar aynı klandan',
+);
+const heroPage = render({ initialRoute: { section: 'HERO', id: targetHero.id } });
+ok(heroPage.includes('Aile &amp; Yakınlar') || heroPage.includes('Aile & Yakınlar'), 'aile bölümü var');
+ok(heroPage.includes('Durum &amp; İlişkiler') || heroPage.includes('Durum & İlişkiler'), 'durum bölümü var');
+ok(
+  heroPage.includes('Serbest') || heroPage.includes('Esir'),
+  'esaret durumu gösteriliyor',
+);
+ok(
+  heroPage.includes('Son görüldüğü yer'),
+  'son görüldüğü yer satırı var',
+);
+ok(
+  !heroPage.includes('🚧'),
+  'kahraman detayında "Faz 2" yer tutucusu kalmadı',
+);
+
+const allies = heroAllies(index, targetHero, 2);
+ok(allies.every((a) => a.relation > 0), 'müttefikler yalnız pozitif ilişkili');
+const rivals = heroRivals(index, targetHero, 2);
+ok(rivals.every((r) => r.relation < 0), 'rakipler yalnız negatif ilişkili');
+ok(rivals.length <= 2 && allies.length <= 2, 'müttefik/rakip listesi limitle sınırlı');
+
+const pris = prisonerInfo(index, targetHero);
+ok(!pris.isPrisoner || !!pris.captorName, 'esir bilgisi tutarlı');
+
+const kd = kingdomDiplomacy(index, index.kingdoms[0]);
+ok(kd.totalMembers >= 0 && kd.totalFiefs >= 0, 'krallık diplomasi özeti sayısal');
+ok(
+  kd.sameCulture.every((k) => k.id !== index.kingdoms[0].id),
+  'aynı kültür listesi krallığın kendisini içermiyor',
+);
+
+const kdPage = render({ initialRoute: { section: 'KINGDOM', id: index.kingdoms[0].id } });
+ok(kdPage.includes('Diplomatik Durum'), 'krallık detayında diplomatik durum bölümü');
+ok(
+  kdPage.includes('Aynı kültürden krallıklar'),
+  'aynı kültür krallıkları listeleniyor',
+);
+ok(kdPage.includes('Savaşan lord'), 'savaşan lord sayacı var');
+
+/* 9. Faz 2: klan detayında aile bağı */
+const clanWithMembers = index.clans.find((c) => c.memberIds.length > 1) ?? index.clans[0];
+const clanPage = render({ initialRoute: { section: 'CLAN', id: clanWithMembers.id } });
+ok(clanPage.includes('Aile Bağı'), 'klan detayında aile bağı bölümü');
 
 console.log(fails === 0 ? '\n✅ ANSİKLOPEDİ ARAYÜZÜ DOĞRU' : `\n❌ ${fails} hata`);
 process.exit(fails === 0 ? 0 : 1);

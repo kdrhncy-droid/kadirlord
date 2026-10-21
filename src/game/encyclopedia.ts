@@ -279,6 +279,87 @@ export function settlementKingdom(
 }
 
 /** Oyuncuyla savaşta olan krallıklar. */
+/* ─────────────────────────── Faz 2: entity ilişkileri ─────────────────────────── */
+
+/**
+ * Kahramanın **yakınları**: aynı klandaki diğer üyeler (lider ilk).
+ * Ansiklopedi "Aile & Yakınlar" bölümü bunu kullanır.
+ */
+export function heroKin(index: EncyclopediaIndex, hero: HeroRecord): HeroRecord[] {
+  return clanMembers(index, hero.clanId).filter((h) => h.id !== hero.id);
+}
+
+/**
+ * Kahramanın **rakipleri**: ilişkisi negatif olan ve aynı krallıkta ya da
+ * sınır komşusu krallıkta bulunan kahramanlar. En düşük ilişki önce.
+ */
+export function heroRivals(index: EncyclopediaIndex, hero: HeroRecord, limit = 4): HeroRecord[] {
+  return index.heroes
+    .filter((h) => h.id !== hero.id && h.relation < 0)
+    .sort((a, b) => a.relation - b.relation)
+    .slice(0, limit);
+}
+
+/**
+ * Kahramanın **müttefikleri**: ilişkisi pozitif olanlar (en yüksek önce).
+ */
+export function heroAllies(index: EncyclopediaIndex, hero: HeroRecord, limit = 4): HeroRecord[] {
+  return index.heroes
+    .filter((h) => h.id !== hero.id && h.relation > 0)
+    .sort((a, b) => b.relation - a.relation)
+    .slice(0, limit);
+}
+
+export interface KingdomDiplomacy {
+  /** Oyuncuyla savaşta mı? */
+  atWarWithPlayer: boolean;
+  /**
+   * Oyuncuyla savaş hâlindeki **diğer** krallıklar.
+   * Not: kampanya modeli krallıklar arası savaşı tutmuyor; uydurma veri
+   * göstermemek için burada yalnız gerçek (oyuncuya karşı) savaşlar listelenir.
+   */
+  atWarWith: KingdomSummary[];
+  /** Aynı kültürden krallıklar (kültürel yakınlık). */
+  sameCulture: KingdomSummary[];
+  totalFiefs: number;
+  totalMembers: number;
+}
+
+/**
+ * Krallık diplomatik durumu. Kampanya modelinde savaş yalnız oyuncuya karşı
+ * tutulduğu için krallıklar arası savaş **kültür + oyuncu savaşı** üzerinden
+ * türetilir; ileride gerçek diplomasi matrisi geldiğinde burası genişler.
+ */
+export function kingdomDiplomacy(
+  index: EncyclopediaIndex,
+  kingdom: KingdomSummary,
+): KingdomDiplomacy {
+  const others = index.kingdoms.filter((k) => k.id !== kingdom.id);
+  return {
+    atWarWithPlayer: kingdom.atWarWithPlayer,
+    atWarWith: others.filter((k) => k.atWarWithPlayer),
+    sameCulture: others.filter((k) => k.culture === kingdom.culture),
+    totalFiefs: kingdom.fiefCount,
+    totalMembers: kingdom.memberIds.length,
+  };
+}
+
+/** Esir durumu: kimin esiri, kaç gündür. */
+export function prisonerInfo(
+  index: EncyclopediaIndex,
+  hero: HeroRecord,
+): { isPrisoner: boolean; captorName: string | null; daysHeld: number } {
+  if (hero.status !== 'PRISONER' || !hero.prisonerOf) {
+    return { isPrisoner: false, captorName: null, daysHeld: 0 };
+  }
+  const captor = index.heroById[hero.prisonerOf];
+  return {
+    isPrisoner: true,
+    captorName: captor?.name ?? 'Bilinmeyen',
+    daysHeld: Math.max(0, index.day - hero.lastSeen.day),
+  };
+}
+
 export function warringKingdoms(index: EncyclopediaIndex): KingdomSummary[] {
   return index.kingdoms.filter((k) => k.atWarWithPlayer);
 }
