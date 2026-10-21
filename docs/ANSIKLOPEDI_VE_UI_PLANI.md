@@ -1304,3 +1304,41 @@ Tümü tek komutla: `npm run verify:all` (tsc + 19 test/probe dosyası).
 2. Klan/klan lideri bilgisinin tekrarlandığı yerlerin sadeleştirilmesi.
 3. Diyalog sırasında NPC kamera yaklaşımı ve baş/el animasyonu (6d).
 4. Ses: diyalog açılış/kapanış ve teklif kabulü için kısa efektler.
+
+## 32. FAZ 9a — KATAFRAKT MİĞFERİ VE KALKANLAR (TAMAMLANDI ✅)
+
+Kullanıcı bulgusu: *"katafrakt kask görseli bozuk, mühim ve birkaç kalkan da öyle."*
+
+### Kök nedenler
+
+| Belirti | Kök neden |
+| --- | --- |
+| Katafrakt kaskı "kova gibi" ve yüz kapalı | BannerForge `greatHelm` modeli bizim kafatasımıza göre fazla büyüktü (y 1.71–2.17; kafa 1.74–2.02) ve göz yarıkları göz hizasının ~3 cm altına düşüyordu |
+| Kaskta ten sızması | Yüz plakaları tek tek **kutu** olarak yerleştirilmişti; aralarında 1–2 cm boşluk kalıyordu. Ayrıca 10 kenarlı silindirin **iç yarıçapı** kafatasına eşitlendiği için köşelerde ten dışarı taşıyordu |
+| Uçurtma (kite) ve pavise kalkanı yan yatıyor | İki ayrı yerde `holder.rotation.z = π/2` vardı: `buildShield` ve `createArmoryShield`. Ayrıca `setRigSheathed` kınından çıkarırken aynı hatayı **yeniden** uyguluyordu |
+| Kalkan çok büyük / yere değiyor | Uçurtma kalkan 1.24 m, pavise 1.08 m'ydi (Bannerlord ~0.9 m) |
+| Pavise deseni görünmüyor | Sancak rengi şerit levhanın **içine** gömülüydü (z 0.025 < levha yarısı 0.02 + kalınlık) |
+
+### Yapılan düzeltmeler
+
+1. **Katafrakt miğferi sıfırdan yazıldı** (`characterRig.buildHelmet`, BannerForge modeli devre dışı):
+   kubbe (alın hizasında biter) → 12 kenarlı **alın halkası** → **içe gömük koyu göz yarığı** →
+   **çene halkası** → boyun zırhı → altın burun sırtı → metal sırt + kızıl yele.
+   Halkalar tam tur olduğu için yüz hiçbir açıdan açıkta kalmıyor.
+2. **Kalkan duruşu tek kaynağa taşındı**: `src/game/equipmentPose.ts`
+   (`SHIELD_REST_POSITION`, `SHIELD_REST_ROTATION`, `SHIELD_SCALE`). Legacy model,
+   BannerForge modeli ve `setRigSheathed` bu sabitleri kullanıyor → yan yatma tamamen bitti.
+3. **Kalkan ölçüleri**: yuvarlak 0.68 m, uçurtma 0.92 m, pavise 0.80 m; hepsi dik (üst = +Y),
+   yüzü ileri (+Z), yere değmiyor, gövdenin önünde duruyor.
+4. **Pavise** üç çelik kuşak + görünür sancak şeridi kazandı.
+5. **Kettle hat** siperliği 0.58 m'den 0.49 m'ye indirildi ve göz hizasının üstüne alındı
+   (yüzü kesiyordu).
+
+### Doğrulama
+
+- `scripts/probe-equipment.ts` — **44 kontrol**: miğfer yükseklik/genişlik oranı, göz yarığının
+  göz hizasında olması (Δ 12 mm), tam tur halka sayısı, üç kalkanın dik duruşu, ölçüleri,
+  yere değmemesi ve kılıftan çıkarınca duruşun korunması.
+- `scripts/render-equipment.ts` — **tarayıcısız yazılımsal render** (three.js geometrisi +
+  kendi z-buffer rasterizer'ı, harici bağımlılık yok). Çıktı: `docs/renders/equip-fixed.png`
+  (9 karo: katafrakt ön + 3/4, üç kalkan × iki açı, tam vücut).

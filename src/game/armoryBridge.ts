@@ -181,7 +181,15 @@ export const HELMET_MODEL_MAP: Record<HelmetType, ArmoryItemId | null> = {
   NONE: null,
   KETTLE_HAT: 'kettleHat',
   SPANGENHELM: 'nasalHelm',
-  IMPERIAL_VISOR: 'greatHelm',
+  /*
+   * Katafrakt miğferi için BannerForge'un `greatHelm` modeli KULLANILMIYOR:
+   * model bizim kafatasımıza göre fazla büyük (yükseklik 0.40 m, kafatası 0.28)
+   * ve göz yarıkları göz hizasının ~3 cm altına düşüyordu. Sonuç: kafada kova
+   * gibi duran, yüzü kapatan bozuk bir miğfer. `null` döndürünce
+   * `characterRig.buildHelmet` içindeki kendi katafrakt modelimiz kullanılır
+   * (kubbe + alın plakası + göz yarığı + yanak plakası + boyun zırhı + tepelik).
+   */
+  IMPERIAL_VISOR: null,
 };
 
 /** Bizim zırh kadememiz → BannerForge zırh kademesi. CIVILIAN = zırhsız. */
@@ -337,15 +345,21 @@ export function createArmoryWeapon(weapon: WeaponType, ctx: ArmoryContext = {}):
 }
 
 /** Sol ele takılacak kalkan modeli (yüzey normali +Z, üst +Y). */
+import { SHIELD_REST_POSITION, SHIELD_SCALE } from './equipmentPose.ts';
+
 export function createArmoryShield(shield: ShieldType, ctx: ArmoryContext = {}): THREE.Group | null {
   const id = SHIELD_MODEL_MAP[shield];
   if (!id) return null;
   const item = buildArmoryItem(id, ctx);
-  // Legacy kalkanla BİREBİR aynı duruş: yüz +Z, üst +Y, sonra +Z ekseninde
-  // 90° döndürülerek üst kenar elin -X yönüne getirilir.
+  /*
+   * ESKİ HATA: burada `rotation.z = π/2` vardı → uçurtma (kiteShield) ve
+   * pavise kalkanları yan yatmış, uzun ekseni yere paralel görünüyordu.
+   * BannerForge modelleri zaten "yüz +Z, üst +Y" yazıldığı için dönüş
+   * gereksizdi. Ölçek ve konum legacy modelle aynı sabitlerden gelir.
+   */
   const holder = mountFromAuthor(item, { rotateX: 0 });
-  holder.rotation.z = Math.PI / 2;
-  holder.position.set(0, 0.08, 0.07);
+  if (shield !== 'NONE') holder.scale.setScalar(SHIELD_SCALE[shield]);
+  holder.position.set(...SHIELD_REST_POSITION);
   return holder;
 }
 
@@ -375,7 +389,8 @@ export function createArmoryHelmet(helmet: HelmetType, ctx: ArmoryContext = {}):
 /** Miğfer tipine göre ölçek / dikey ofset (kafa eklemi yerel uzayı). */
 const HELMET_FIT: Record<Exclude<HelmetType, 'NONE'>, { scale: number; y: number; z?: number }> = {
   // Siperlik alın üstünde kalmalı (göz hizasına inmemeli) → daha küçük + yukarı.
-  KETTLE_HAT: { scale: 0.72, y: 0.115 },
+  // Siperlik alın hizasında (gözlerin üstünde, tepenin altında) durmalı.
+  KETTLE_HAT: { scale: 0.7, y: 0.082 },
   SPANGENHELM: { scale: 0.92, y: 0.05 },
   IMPERIAL_VISOR: { scale: 0.98, y: 0.048 },
 };

@@ -13,6 +13,11 @@ import {
   type ArmoryContext,
 } from './armoryBridge.ts';
 import type { CharacterAnimState } from './characterAnimator.ts';
+import {
+  SHIELD_REST_POSITION,
+  SHIELD_REST_ROTATION,
+  SHIELD_SCALE,
+} from './equipmentPose.ts';
 
 export type { CharacterAnimState } from './characterAnimator.ts';
 
@@ -522,14 +527,15 @@ function buildHelmet(type: HelmetType, m: CharacterRig['materials']): THREE.Grou
     dome.scale.set(1, HEAD.sy, HEAD.sz);
     dome.position.y = 0.01;
 
-    // Sloping brim
-    const brim = mesh(new THREE.CylinderGeometry(0.23, 0.29, 0.018, 10), metal);
-    brim.position.y = 0.015;
+    // Sloping brim — 0.58 m çap göz hizasını kesiyordu; 0.49 m'ye indirildi
+    // ve kaşların biraz üstüne alındı.
+    const brim = mesh(new THREE.CylinderGeometry(0.196, 0.245, 0.016, 12), metal);
+    brim.position.y = 0.052;
 
     // Rim reinforcement
-    const rim = mesh(new THREE.TorusGeometry(0.29, 0.007, 4, 10), gold, false);
+    const rim = mesh(new THREE.TorusGeometry(0.245, 0.006, 4, 12), gold, false);
     rim.rotation.x = Math.PI / 2;
-    rim.position.y = 0.012;
+    rim.position.y = 0.05;
 
     g.add(dome, brim, rim);
     return g;
@@ -554,43 +560,80 @@ function buildHelmet(type: HelmetType, m: CharacterRig['materials']): THREE.Grou
     nasal.position.set(0, -0.015, (HEAD.r + 0.022) * HEAD.sz + 0.005);
 
     // Mail aventail / coif covering nape and neck
-    const mailCoif = mesh(new THREE.CylinderGeometry(HEAD.r + 0.018, HEAD.r + 0.045, 0.18, 8, 1, true), metal);
+    const mailCoif = mesh(new THREE.CylinderGeometry(0.146, 0.17, 0.17, 8, 1, true), metal);
     mailCoif.scale.set(1, 1, HEAD.sz);
-    mailCoif.position.set(0, -0.08, -0.015);
+    mailCoif.position.set(0, -0.075, -0.012);
 
     g.add(cone, band, nasal, mailCoif);
     return g;
   }
 
   if (type === 'IMPERIAL_VISOR') {
-    // Heavy Cataphract enclosed visor with horsehair crest
+    /*
+     * Katafrakt miğferi — üçüncü (son) sürüm.
+     *
+     * İlk iki denemede sorun şuydu: yüz plakaları **kutu** olarak tek tek
+     * yerleştiriliyordu; arada ten kalıyor, plakalar birbirine değmiyor ve
+     * "yüz açıkta" görünüyordu. Artık maske, kafatasını saran **halka**
+     * (silindir) parçalarından kurulur:
+     *   kubbe → alın halkası → göz yarığı (içe gömük koyu halka) → çene
+     *   halkası → boyun zırhı.
+     * Halkalar tam tur olduğu için yüz hiçbir açıdan açıkta kalmaz; göz
+     * yarığı yalnızca **içe gömük** koyu halka olarak okunur.
+     */
     const g = new THREE.Group();
 
-    // Rounded iron skull bowl
-    const bowl = mesh(new THREE.SphereGeometry(HEAD.r + 0.02, 8, 6), metal);
-    bowl.scale.set(1, HEAD.sy, HEAD.sz);
-    bowl.position.y = 0.01;
+    // 1) Kubbe: alın hizasında biten yarım küre (yüzü kapatmaz).
+    const dome = mesh(
+      new THREE.SphereGeometry(0.132, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.46),
+      metal,
+    );
+    dome.scale.set(1, 1.12, 1.06);
+    dome.position.y = 0.012;
 
-    // Brass face mask with eye slits
-    const mask = mesh(new THREE.BoxGeometry(0.165, 0.17, 0.04), gold, false);
-    mask.position.set(0, -0.04, (HEAD.r + 0.015) * HEAD.sz + 0.005);
+    // 2) Alın halkası — göz yarığının üstü.
+    // 12 kenar: 10 kenarda çokgenin iç yarıçapı kafatasına eşitleniyor ve
+    // ten, plakaların arasından "sızıyordu" (kulak/göz hizasında bej lekeler).
+    const browBand = mesh(new THREE.CylinderGeometry(0.139, 0.141, 0.05, 12), metal, false);
+    browBand.scale.z = 1.05;
+    browBand.position.y = 0.043;
 
-    // Eye slits
-    const slitMat = new THREE.MeshBasicMaterial({ color: '#000000' });
-    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.012, 0.05), slitMat);
-    slit.position.set(0, -0.015, (HEAD.r + 0.015) * HEAD.sz + 0.008);
+    // 3) Göz yarığı: 6 mm daha içeride koyu halka → gerçek "yuva" hissi.
+    const slitMat = new THREE.MeshBasicMaterial({ color: '#0a0908' });
+    const eyeSlit = new THREE.Mesh(new THREE.CylinderGeometry(0.1355, 0.1355, 0.03, 12), slitMat);
+    eyeSlit.scale.z = 1.05;
+    eyeSlit.position.y = 0.0;
+    eyeSlit.name = 'visorEyeSlit';
 
-    // Mail aventail covering neck
-    const aventail = mesh(new THREE.CylinderGeometry(HEAD.r + 0.02, HEAD.r + 0.05, 0.2, 8, 1, true), metal);
-    aventail.scale.set(1, 1, HEAD.sz);
-    aventail.position.set(0, -0.09, -0.01);
+    // 4) Çene halkası — ağız ve çeneyi tamamen örter, çeneye doğru daralır.
+    const jawBand = mesh(new THREE.CylinderGeometry(0.138, 0.104, 0.15, 12), metal, false);
+    jawBand.scale.z = 1.05;
+    jawBand.position.y = -0.091;
 
-    // Red horsehair crest
-    const plumeMat = new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.8, flatShading: true });
-    const plume = mesh(new THREE.BoxGeometry(0.035, 0.14, 0.26), plumeMat);
-    plume.position.set(0, 0.18, 0);
+    // 5) Burun sırtı — göz yarığını ortadan ikiye bölen ince altın çubuk.
+    const nasal = mesh(new THREE.BoxGeometry(0.022, 0.088, 0.014), gold, false);
+    nasal.position.set(0, 0.002, 0.139);
 
-    g.add(bowl, mask, slit, aventail, plume);
+    // 6) Boyun zırhı (aventail) — çene altından omuzlara, hafif daralan.
+    const aventail = mesh(new THREE.CylinderGeometry(0.11, 0.148, 0.13, 12, 1, true), metal);
+    aventail.scale.z = 1.04;
+    aventail.position.set(0, -0.172, -0.008);
+
+    // 7) Tepelik: ince metal sırt + kısa kızıl at kılı yelesi (arkada).
+    const ridge = mesh(new THREE.BoxGeometry(0.018, 0.03, 0.16), metal, false);
+    ridge.position.set(0, 0.152, -0.01);
+    const knob = mesh(new THREE.SphereGeometry(0.018, 6, 4), gold, false);
+    knob.position.set(0, 0.168, 0.052);
+    const plumeMat = new THREE.MeshStandardMaterial({
+      color: '#dc2626',
+      roughness: 0.9,
+      flatShading: true,
+    });
+    const plume = mesh(new THREE.BoxGeometry(0.024, 0.045, 0.1), plumeMat, false);
+    plume.position.set(0, 0.128, -0.112);
+    plume.rotation.x = -0.35;
+
+    g.add(dome, browBand, eyeSlit, jawBand, nasal, aventail, ridge, knob, plume);
     return g;
   }
 
@@ -690,21 +733,37 @@ function buildShield(type: ShieldType, m: CharacterRig['materials']): THREE.Grou
     body.position.y = 0.08;
   } else if (type === 'PAVISE') {
     const board = mesh(new THREE.BoxGeometry(0.46, 0.92, 0.04), wood);
-    const stripe = mesh(new THREE.BoxGeometry(0.16, 0.9, 0.01), faction, false);
-    stripe.position.z = 0.025;
-    const r1 = mesh(new THREE.BoxGeometry(0.48, 0.04, 0.05), metal, false);
-    r1.position.y = 0.34;
-    const r2 = r1.clone();
-    r2.position.y = -0.34;
-    body.add(board, stripe, r1, r2);
+    // Sancak rengi dikey şerit — eskiden gövdenin içinde kalıyordu (z 0.025,
+    // levha 0.04 kalın → yarısı gömülü). Şimdi levhanın önünde duruyor.
+    const stripe = mesh(new THREE.BoxGeometry(0.14, 0.88, 0.012), faction, false);
+    stripe.position.z = 0.026;
+    // Üç çelik kuşak — pavise kalkanının karakteristik çaprazsız takviyesi.
+    const bands = [-0.32, 0, 0.32].map((y) => {
+      const band = mesh(new THREE.BoxGeometry(0.47, 0.045, 0.052), metal, false);
+      band.position.y = y;
+      return band;
+    });
+    // Köşe demirleri (üst ve alt).
+    const corner = mesh(new THREE.BoxGeometry(0.1, 0.1, 0.05), metal, false);
+    corner.position.set(0, 0.41, 0);
+    body.add(board, stripe, ...bands, corner);
     body.position.y = 0.06;
   }
 
+  /*
+   * ESKİ HATA: `holder.rotation.z = π/2` kalkanı kendi yüzey normali etrafında
+   * 90° yatırıyordu. Sonuç: uçurtma ve pavise kalkanları **yan yatmış** (uzun
+   * ekseni yere paralel) görünüyordu; yuvarlak kalkanda ise sadece gereksiz
+   * dönüş vardı. Kalkanın yüzü elin +Z ekseni (ileri) olmalı, üstü de dünya
+   * yukarısı. Bu yüzden dönüş kaldırıldı; bunun yerine kalkan gövdeye göre
+   * dışa ve öne kaydırılıp ölçeklendi (aksi halde 1.24 m'lik uçurtma kalkan
+   * neredeyse yere değiyordu).
+   */
+  body.scale.setScalar(SHIELD_SCALE[type]);
   const holder = new THREE.Group();
   holder.name = 'Shield';
   holder.add(body);
-  holder.rotation.z = Math.PI / 2; // shield top (+Y) -> hand -X
-  holder.position.set(0, 0.08, 0.07); // forearm sits behind the shield, slightly toward the elbow
+  holder.position.set(...SHIELD_REST_POSITION);
   return holder;
 }
 
@@ -1005,8 +1064,10 @@ export function setRigSheathed(rig: CharacterRig, sheathed: boolean): void {
     } else {
       rig.leftShieldSocket.add(off);
       if (off.name === 'Shield') {
-        off.position.set(0, 0.08, 0.07);
-        off.rotation.set(0, 0, Math.PI / 2);
+        // ESKİ HATA: burada rotation.z = π/2 yazıyordu; kalkanı yan yatırıyor
+        // ve modelin kendi duruşunu eziyordu (uçurtma/pavise yere paralel).
+        off.position.set(...SHIELD_REST_POSITION);
+        off.rotation.set(...SHIELD_REST_ROTATION);
       } else {
         off.position.set(0, -0.05, 0);
         off.rotation.set(0, 0, 0);
