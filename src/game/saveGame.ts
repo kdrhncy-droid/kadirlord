@@ -10,9 +10,15 @@
  */
 import type { CampaignState } from './rules';
 import type { KingdomMacroState } from './kingdomSystem';
+import { ensureWorld } from './worldSim';
 
-/** Kayıt biçimi sürümü. Uyumsuz kayıt yüklenmez (ileride göç ettirilebilir). */
-export const SAVE_VERSION = 1;
+/**
+ * Kayıt biçimi sürümü.
+ * v1 → v2 (Faz 11): `CampaignState.world` (savaşlar, sayaçlar, kuşatma bekleme süreleri)
+ * eklendi. v1 kayıtları **reddedilmez**, yükleme sırasında `ensureWorld` ile göç ettirilir.
+ */
+export const SAVE_VERSION = 2;
+export const MIN_SUPPORTED_VERSION = 1;
 export const SAVE_KEY = 'sancak-kalradya/sefer-v1';
 
 export type BackgroundChoice = 'noble' | 'steppe' | 'tactician';
@@ -87,9 +93,13 @@ export function parseSave(raw: string | null | undefined): SaveData | null {
     return null;
   }
   if (!isObject(parsed)) return null;
-  if (parsed.version !== SAVE_VERSION) return null;
+  const version = typeof parsed.version === 'number' ? parsed.version : 0;
+  if (version < MIN_SUPPORTED_VERSION || version > SAVE_VERSION) return null;
   if (!isValidCampaign(parsed.campaign)) return null;
   if (!isValidMacroState(parsed.macroState)) return null;
+  // v1 → v2 göçü: dünya durumu yoksa güvenli varsayılanla doldurulur.
+  const migratedCampaign: CampaignState =
+    version < 2 ? { ...parsed.campaign, world: ensureWorld(parsed.campaign) } : parsed.campaign;
   const metHeroIds = Array.isArray(parsed.metHeroIds)
     ? parsed.metHeroIds.filter((id): id is string => typeof id === 'string')
     : [];
@@ -102,7 +112,7 @@ export function parseSave(raw: string | null | undefined): SaveData | null {
     savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
     backgroundChoice: background,
     metHeroIds,
-    campaign: parsed.campaign,
+    campaign: migratedCampaign,
     macroState: parsed.macroState,
   };
 }

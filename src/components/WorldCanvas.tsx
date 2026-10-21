@@ -32,6 +32,7 @@ import {
 } from '../game/navigation';
 import {
   type LordLiveRouteState,
+  applyLordOrderToRoute,
   calculateBannerlordPartySpeed,
   computePlayerSpottingRange,
   getLordDetailedIntel,
@@ -82,6 +83,8 @@ interface WorldCanvasProps {
   activeDiplomacyLordId?: string | null;
   activeSettlementModalId?: string | null;
   cameraActionsRef: React.MutableRefObject<CameraControlActions | null>;
+  /** Faz 11: lord konumları her karede buraya yazılır (dünya simülasyonu okur). */
+  lordPositionsRef?: React.MutableRefObject<Map<string, { x: number; z: number }>>;
   onSetTimeScale?: (timeScale: 0 | 1 | 2 | 4) => void;
   onUpdatePlayerPos: (
     x: number,
@@ -152,6 +155,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   activeDiplomacyLordId,
   activeSettlementModalId,
   cameraActionsRef,
+  lordPositionsRef,
   onSetTimeScale,
   onUpdatePlayerPos,
   onOpenSettlement,
@@ -340,6 +344,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
       const flag = model.getObjectByName('bannerFlag') as THREE.Mesh | undefined;
       if (flag) {
+        // Malzeme kültür başına önbelleklenir; fetih sonrası rengi değiştirmek
+        // aynı kültürdeki tüm sancakları boyamasın diye her yerleşime kopya verilir.
+        flag.material = (flag.material as THREE.Material).clone();
         settlementFlagHandles.set(s.id, { flag, lastFaction: s.faction });
       }
 
@@ -681,6 +688,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       lastSx: number;
       lastSy: number;
       lastText: string;
+      bannerEl: HTMLElement | null;
+      lastFaction: string;
     }
 
     const settlementLabelRecords: SettlementLabelRecord[] = [];
@@ -699,7 +708,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       const isVillage = s.type === 'VILLAGE';
 
       el.innerHTML = `
-        <div style="background-color: ${fac.color}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
+        <div data-role="banner-shield" data-faction="${s.faction}" style="background-color: ${fac.color}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
              class="${isVillage ? 'w-4 h-5' : isCastle ? 'w-5 h-6' : 'w-6 h-7'} flex items-center justify-center border border-[#d4af37] z-10 shrink-0 shadow">
           <svg viewBox="0 0 16 16" class="w-3 h-3 fill-[#fde68a]">
             ${
@@ -829,6 +838,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         lastSx: -9999,
         lastSy: -9999,
         lastText: String(s.garrison),
+        bannerEl: el.querySelector('[data-role="banner-shield"]'),
+        lastFaction: s.faction,
       });
     });
 
@@ -1683,8 +1694,21 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
           const isThisLordTalking = activeTalkingLordId === l.id;
           if (!isWorldEffectivelyPaused && !isThisLordTalking && timeScale > 0) {
+            // Faz 11: stratejik emir (savaş/kuşatma/av) rotayı belirler.
+            applyLordOrderToRoute(l, route, camp.settlements, {
+              x: playerOverworldX,
+              z: playerOverworldZ,
+            });
             stepLordCampaignRoute(l, route, dt, timeScale, camp.settlements);
             route.cachedY = Math.max(0.25, groundHeightAt(route.x, route.z));
+          }
+          // Faz 11: dünya simülasyonu için gerçek konumları paylaş (React state'e dokunmaz).
+          if (lordPositionsRef) {
+            const store = lordPositionsRef.current;
+            const prevPos = store.get(l.id);
+            if (!prevPos || Math.abs(prevPos.x - route.x) > 0.05 || Math.abs(prevPos.z - route.z) > 0.05) {
+              store.set(l.id, { x: route.x, z: route.z });
+            }
           }
 
           const lx = route.x;
@@ -2007,6 +2031,15 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             if (rec.lastText !== expectedText) {
               rec.lastText = expectedText;
               rec.gSpan.textContent = expectedText;
+            }
+          }
+
+          // Fetih sonrası harita etiketi yeni sahibin rengini alır (Faz 11).
+          if (rec.lastFaction !== s.faction) {
+            rec.lastFaction = s.faction;
+            if (rec.bannerEl) {
+              rec.bannerEl.style.backgroundColor = FACTION_INFO[s.faction].color;
+              rec.bannerEl.setAttribute('data-faction', s.faction);
             }
           }
 

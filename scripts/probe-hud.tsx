@@ -8,8 +8,9 @@
  */
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { createInitialCampaignState } from '../src/game/rules.ts';
+import { FACTION_INFO, createInitialCampaignState } from '../src/game/rules.ts';
 import { GameHud } from '../src/components/GameHud.tsx';
+import { WorldWarPanel } from '../src/components/WorldWarPanel.tsx';
 
 const campaign = createInitialCampaignState('Komutan Demirhan', 'noble');
 
@@ -107,6 +108,33 @@ ok(text.includes('Asker'), 'sağ alt şeritte asker sayısı var');
 
 /* 7. Zaman kontrolü korunuyor */
 ok(html.includes('▶▶▶') && html.includes('||'), 'zaman ölçeği düğmeleri duruyor');
+
+/* 8. Faz 11: canlı dünya panosu (WorldWarPanel) */
+const warHtml = renderToStaticMarkup(React.createElement(WorldWarPanel, { campaign }));
+ok(campaign.world!.wars.length === 2, 'başlangıçta iki aktif savaş var', `${campaign.world!.wars.length}`);
+ok(warHtml.includes('Aktif Savaşlar (2)'), 'savaş panosu aktif savaş sayısını yazıyor');
+ok(
+  warHtml.includes(FACTION_INFO.vlandia.name) && warHtml.includes(FACTION_INFO.battania.name),
+  'savaş etiketinde iki tarafın adı geçiyor',
+);
+ok(/·\s\d+ gün/.test(warHtml), 'savaşın kaç gündür sürdüğü yazılı');
+ok(warHtml.includes('data-testid="active-wars"'), 'savaş panosu işaretli');
+ok(!warHtml.includes('data-testid="world-stats"'), 'olay yokken sayaç şeridi gizleniyor');
+
+const withEvents = {
+  ...campaign,
+  world: {
+    ...campaign.world!,
+    stats: { ...campaign.world!.stats, events: 12, fiefsChangedHands: 3, warsDeclared: 2, warsEnded: 1, siegesWon: 2, reinforcements: 5 },
+  },
+};
+const statsHtml = renderToStaticMarkup(React.createElement(WorldWarPanel, { campaign: withEvents }));
+ok(statsHtml.includes('data-testid="world-stats"'), 'olay birikince sayaç şeridi görünüyor');
+ok(statsHtml.includes('FETİH 3') && statsHtml.includes('OLAY 12'), 'sayaçlar doğru değerleri yazıyor');
+ok(statsHtml.includes('KUŞATMA 2') && statsHtml.includes('BARIŞ 1'), 'kuşatma ve barış sayaçları yazılı');
+
+const noWars = { ...campaign, world: { ...campaign.world!, wars: [], stats: { ...campaign.world!.stats, events: 0 } } };
+ok(renderToStaticMarkup(React.createElement(WorldWarPanel, { campaign: noWars })) === '', 'savaş ve olay yokken panel boş');
 
 console.log(fails === 0 ? '\n✅ HUD SADELEŞTİRME DOĞRU' : `\n❌ ${fails} hata`);
 process.exit(fails === 0 ? 0 : 1);

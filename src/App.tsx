@@ -65,6 +65,7 @@ import {
   KingdomMacroState,
   createInitialKingdomMacroState,
 } from './game/kingdomSystem';
+import { advanceWorldDay } from './game/worldSim';
 import { sound } from './game/sound';
 import { recruitBatch, refreshRecruitPools } from './game/recruitment';
 import {
@@ -96,6 +97,7 @@ export default function App() {
   const [subMode, setSubMode] = useState<'overworld' | 'battle'>('overworld');
   const [campaignTimeScale, setCampaignTimeScale] = useState<TimeScale>(1);
   const [backgroundChoice, setBackgroundChoice] = useState<BackgroundChoice>('noble');
+  const [worldToast, setWorldToast] = useState<{ id: string; text: string } | null>(null);
   const [campaign, setCampaign] = useState<CampaignState>(() =>
     createInitialCampaignState('Komutan Demirhan', 'noble'),
   );
@@ -104,6 +106,11 @@ export default function App() {
   );
 
   const cameraActionsRef = useRef<CameraControlActions | null>(null);
+  /** Faz 11: harita katmanı lordların gerçek konumlarını buraya yazar (React render'ı yok). */
+  const lordPositionsRef = useRef<Map<string, { x: number; z: number }>>(new Map());
+  /** Faz 11: savaş isteği hesabı için klan kayıtları (interval kapanışında bayatlamasın). */
+  const macroStateRef = useRef<KingdomMacroState | null>(null);
+  macroStateRef.current = macroState;
 
   // Proximity & Active Modals
   const [nearSettlement, setNearSettlement] = useState<Settlement | null>(null);
@@ -258,6 +265,29 @@ export default function App() {
     const timer = window.setTimeout(() => setToast(null), 2400);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  // Faz 11: fetih haberini vakayinamenin en yeni kaydından türet (updater içinde yan etki yok).
+  const lastChronicleIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const latest = campaign.chronicle[0];
+    if (!latest) return;
+    if (lastChronicleIdRef.current === null) {
+      lastChronicleIdRef.current = latest.id; // ilk yüklemede geçmişi duyurma
+      return;
+    }
+    if (lastChronicleIdRef.current === latest.id) return;
+    lastChronicleIdRef.current = latest.id;
+    if (latest.category === 'CONQUEST') {
+      setWorldToast({ id: latest.id, text: latest.text });
+    }
+  }, [campaign.chronicle]);
+
+  // Faz 11: dünya olayları (fetih/harp) 7 sn görünür.
+  useEffect(() => {
+    if (!worldToast) return;
+    const timer = window.setTimeout(() => setWorldToast(null), 7000);
+    return () => window.clearTimeout(timer);
+  }, [worldToast]);
 
   /** Diske yazar; dönen değer başarılı mı? */
   const persist = useCallback(
@@ -453,13 +483,19 @@ export default function App() {
     saveInfo,
   ]);
 
-  // Living World Periodic Tick scaled by campaignTimeScale
+  // Living World Periodic Tick scaled by campaignTimeScale (Faz 11: canlı dünya)
   useEffect(() => {
     if (gameState !== 'playing' || subMode !== 'overworld' || campaignTimeScale === 0) return;
     const intervalMs = Math.round(16000 / campaignTimeScale);
     const timer = setInterval(() => {
       setCampaign((prev) => {
-        const next = advanceDailyEconomyAndWorld(prev);
+        const tick = advanceWorldDay(prev, {
+          lordPositions: lordPositionsRef.current,
+          clans: macroStateRef.current?.clans,
+          playerPos: { x: prev.playerX, z: prev.playerZ },
+        });
+        // Fetih bildirimi, vakayinameye düşen en yeni olaydan türetilir (aşağıdaki effect).
+        const next = tick.state;
         // Faz 8: gönüllü havuzları her 3 günde bir tazelenir.
         return { ...next, settlements: refreshRecruitPools(next.settlements, next.day) };
       });
@@ -847,6 +883,7 @@ export default function App() {
         battleTargetLordId={battleTargetLordId}
         battleTargetSettlementId={battleTargetSettlementId}
         cameraActionsRef={cameraActionsRef}
+        lordPositionsRef={lordPositionsRef}
         activeDiplomacyLordId={activeDiplomacyLord?.id ?? null}
         activeSettlementModalId={activeSettlementModal?.id ?? null}
         onSetTimeScale={setCampaignTimeScale}
@@ -1466,6 +1503,18 @@ export default function App() {
           className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[90] rounded border border-[#34d399]/50 bg-[#0f1a13]/95 px-4 py-2 text-xs text-[#d1fae5] shadow-lg pointer-events-none"
         >
           {toast}
+        </div>
+      )}
+
+      {/* 9b. FAZ 11 — CANLI DÜNYA HABERİ (fetih / savaş) */}
+      {worldToast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-24 left-1/2 -translate-x-1/2 z-[90] max-w-2xl rounded border border-[#f59e0b]/60 bg-[#1a1208]/95 px-4 py-2 text-xs text-[#fde68a] shadow-lg pointer-events-none"
+        >
+          <span className="font-bold tracking-[0.18em] mr-2 text-[#f59e0b]">SAVAŞ HABERİ</span>
+          {worldToast.text}
         </div>
       )}
 

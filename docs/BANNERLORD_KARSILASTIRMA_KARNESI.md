@@ -43,7 +43,7 @@
 | :--- | :--- | :--- |
 | Kaynak dosya | **62** (42 `.ts`, 20 `.tsx`) | `find src -name "*.ts*"` |
 | Toplam satır | **47.912** | `wc -l` |
-| En büyük 5 dosya | `rules.ts` 3.546 · `CharacterArenaView.tsx` 2.936 · `Armory.ts` 2.930 · `WorldCanvas.tsx` 2.624 · `characterRig.ts` 1.995 | `wc -l` |
+| En büyük 5 dosya | `rules.ts` 3.615 · `CharacterArenaView.tsx` 2.936 · `Armory.ts` 2.930 · `WorldCanvas.tsx` 2.657 · `characterRig.ts` 1.995 | `wc -l` |
 | Üretim paketi | **1.566 kB** (gzip 437 kB), tek chunk | `vite build` |
 | Tip denetimi | `tsc --noEmit` **0 hata** · `tsc --strict` **0 hata** · `--noUnusedLocals` **78 hata** | `npx tsc` |
 | Birim testi | **28 test / 267 doğrulama** | `rules.test.ts` |
@@ -679,7 +679,13 @@ yaşatmak"** olmalı. Dikey dilim tam olarak bunu hedefliyor.
 
 > Sıra **etki / efor** oranına göre. Her faz sonunda: `tsc` + `verify:all` + yeni probe + `vite build`.
 
-### Faz A — Canlı dünya (2 hafta, en yüksek etki) 🔴
+### Faz A — Canlı dünya (2 hafta, en yüksek etki) ✅ **UYGULANDI**
+
+> **Durum (2026-10-21):** çekirdek tamam. `src/game/worldSim.ts` (775 satır) + `applyLordOrderToRoute()`
+> + `WorldWarPanel` + v2 kayıt + `scripts/probe-world-sim.ts`. Ölçüm: 365 günde **254 sahiplik
+> değişimi**, **813 olay**, **100 kuşatma zaferi**, **27 savaş ilanı / 27 barış**, 6 krallığın hepsi
+> fetih yaptı; sahipsiz yerleşim 0, determinizm ve "girdi değişmez" (saf fonksiyon) doğrulandı.
+> Aşağıdaki plan, uygulanan hâliyle karşılaştırma için korunmuştur — sapmalar madde sonlarında.
 
 **Hedef:** Oyuncu 30 gün oynadığında haritanın rengi değişsin.
 
@@ -698,6 +704,17 @@ yaşatmak"** olmalı. Dikey dilim tam olarak bunu hedefliyor.
 **Dosyalar:** `campaignSystem.ts`, `kingdomSystem.ts`, `rules.ts`, `WorldCanvas.tsx`, `App.tsx`
 **Doğrulama:** yeni `probe-world-sim.ts` — 365 gün sonunda `≥15` sahiplik değişimi, `≥120` olay,
 `0` sahipsiz yerleşim, determinizm (aynı seed → aynı sonuç).
+
+**Uygulamada çıkan sapmalar (ve nedenleri):**
+
+| Plan | Uygulanan | Neden |
+|---|---|---|
+| `CampaignState.wars: Record<FactionId, FactionId[]>` | `WorldState.wars: KingdomWarRecord[]` (`a`, `b`, `sinceDay`, `score`, `tribute`) | Savaşın başlangıç günü ve skoru gerekiyordu; matris tek yönlü yazımda çift kayıt üretiyordu. |
+| 3–10 günde kale düşer | günlük `clamp(8+(saldırı×1.1−savunma)×0.45, 4, 26)` puan; 100 puanda fetih | Sabit süre, garnizonu 70'e şişiriyordu (364 günde 398 fetih). Kalibrasyon: garnizon ağırlığı `0.7/0.3`, tavan TOWN 70 / CASTLE 50 / VILLAGE 12, fetih sonrası **30 gün kuşatma yasağı**. |
+| 6 durumlu FSM | `PATROL / REINFORCE / SIEGE / DEFEND / HUNT_PLAYER / FLEE` + **süren kuşatma emri korunur** | Emir her gün yeniden seçilince lord hedefe hiç varamıyordu (`SIEGE` sayısı ~0). |
+| — | `saveGame.ts` **v2** + v1→v2 göçü (`ensureWorld`) | `world` alanı olmayan eski kayıtlar açılabilsin. |
+| — | `WorldWarPanel` (Divan panosu) + üstte 7 sn "SAVAŞ HABERİ" bandı | Fetih sessiz kalmasın; Bannerlord'da da harita olayı bildirim olarak düşer. |
+| — | Fetih sonrası sancak malzemesi **kopyalanır**, harita etiketi rengi kare döngüsünde tazelenir | Malzeme kültür başına önbellekliydi; tek kale el değiştirince o kültürün **tüm** sancakları boyanıyordu. |
 
 ### Faz B — İçerik patlaması (2 hafta) 🔴
 
@@ -831,24 +848,28 @@ arayüz, test) zaten bitmiş durumda; kalan kısım **içerik ve simülasyon**, 
 npx tsc --noEmit                                   # 0 hata
 npx tsc --noEmit --strict                          # 0 hata (config'de kapalı)
 npx tsc --noEmit --noUnusedLocals --noUnusedParameters   # 78 uyarı
-npm run verify:all                                 # 29 paket ✅
+npm run verify:all                                 # 30 paket ✅
 npx vite build                                     # 1.566 kB (437 kB gzip)
 npx tsx scripts/probe-content.ts                   # 10 kontrol
+npx tsx scripts/probe-world-sim.ts                 # 20 kontrol (365 gün canlı dünya)
 ```
 
 ## EK B — Dosya envanteri (satır sayıları)
 
 `rules.ts` 3.546 · `CharacterArenaView.tsx` 2.936 · `Armory.ts` 2.930 · `WorldCanvas.tsx` 2.624 ·
-`characterRig.ts` 1.995 · `SettlementModal.tsx` 1.873 · `characterAnimator.ts` 1.872 · `GameHud.tsx` 1.568 ·
-`App.tsx` 1.493 · `KingdomManagementModal.tsx` 1.411 · `characterMorph.ts` 1.299 · `kingdomSystem.ts` 1.275 ·
+`characterRig.ts` 1.995 · `SettlementModal.tsx` 1.873 · `characterAnimator.ts` 1.872 · `GameHud.tsx` 1.571 ·
+`App.tsx` 1.542 · `KingdomManagementModal.tsx` 1.411 · `characterMorph.ts` 1.299 · `kingdomSystem.ts` 1.275 ·
 `Core.ts` 1.242 · `proceduralModels.ts` 1.225 · `mapGen.ts` 1.161 · `CharacterCreatorModal.tsx` 1.131 ·
 `rules.test.ts` 1.112 · `BattleSoundFX.ts` 985 · `Armor.ts` 906 · `battleEnginePool.ts` 858 · `Horse.ts` 825 ·
 `Character.ts` 817 · `Faction.ts` 803 · `BannerlordMarketModal.tsx` 802 · `Rig.ts` 778 · `EncyclopediaModal.tsx` 757 ·
 `armoryBridge.ts` 619 · `pages.tsx` 619 · `marketRules.ts` 580 · `encyclopedia.ts` 543 · `instancedArmyRenderer.ts` 520 ·
 `DiplomacyModal.tsx` 467 · `dialogue.ts` 450 · `characterFace.ts` 412 · `navigation.ts` 391 · `heroes.ts` 389 ·
-`quests.ts` 384 · `tacticalFormation.ts` 356 · `campaignSystem.ts` 356 · `sound.ts` 350 · `conversation.ts` 330 ·
+`quests.ts` 384 · `tacticalFormation.ts` 356 · `campaignSystem.ts` 428 · `sound.ts` 350 · `conversation.ts` 330 ·
 `portraitRenderer.ts` 314 · `DialogueModal.tsx` 272 · `familyTree.ts` 257 · `market.ts` 236 · `recruitment.ts` 222 ·
-`BattlePrewarmModal.tsx` 202 · `heroGen.ts` 197 · `LordPortraitCanvas.tsx` 168 · `saveGame.ts` 166 · `ik.ts` 163 ·
+`BattlePrewarmModal.tsx` 202 · `heroGen.ts` 197 · `LordPortraitCanvas.tsx` 168 · `saveGame.ts` 176 · `ik.ts` 163 ·
 `armorySound.ts` 131 · `ConversationCanvas.tsx` 124 · `HeroPortrait.tsx` 84 · `parts.tsx` 81 · `types.ts` 68 ·
 `uiSession.ts` 61 · `FactionCrest.tsx` 55 · `icons.tsx` 52 · `main.tsx` 48 · `equipmentPose.ts` 20 ·
 `characterRig.types.ts` 1 — **toplam 47.912**
+
+**Faz A eklemeleri:** `worldSim.ts` 775 · `WorldWarPanel.tsx` 56 · `probe-world-sim.ts` (betik, sayılmadı)
+→ **toplam 48.979** (+1.067 satır).

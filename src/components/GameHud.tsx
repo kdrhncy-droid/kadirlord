@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { WorldWarPanel } from './WorldWarPanel';
 import {
   AttributeId,
   BannerlordSkillId,
@@ -855,7 +856,7 @@ export const GameHud: React.FC<GameHudProps> = ({
               <div className="p-2 rounded bg-[#14110d] border border-[#c6a15b]/20">
                 <span className="text-[#c6a15b] font-bold block">⚙️ Mühendis (Engineer)</span>
                 <span className="text-[#e2d6c1]">
-                  {campaign.clanRoles?.ENGINEER ?? 'Mimar Торвальд (+%30 Kuşatma İnşası)'}
+                  {campaign.clanRoles?.ENGINEER ?? 'Mimar Torvald (+%30 Kuşatma İnşası)'}
                 </span>
               </div>
             </div>
@@ -1351,6 +1352,8 @@ export const GameHud: React.FC<GameHudProps> = ({
                 {councilAdvice}
               </div>
             )}
+
+            <WorldWarPanel campaign={campaign} />
 
             <div className="space-y-1.5 max-h-32 overflow-y-auto text-xs">
               {campaign.chronicle.map((ev) => (

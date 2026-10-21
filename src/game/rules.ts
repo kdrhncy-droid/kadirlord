@@ -165,6 +165,62 @@ export function getSettlementArrivalRadius(type: 'TOWN' | 'CASTLE' | 'VILLAGE'):
   }
 }
 
+/** Lord'un stratejik emri (Faz 11 — canlı dünya). */
+export type LordOrderKind =
+  | 'PATROL' // kendi bölgesinde devriye
+  | 'REINFORCE' // kendi yerleşiminde asker topla
+  | 'SIEGE' // düşman yerleşimini kuşat
+  | 'DEFEND' // kuşatılan kendi yerleşimini savun
+  | 'HUNT_PLAYER' // oyuncuyu avla
+  | 'FLEE'; // güçsüzken kaç
+
+export interface LordOrder {
+  kind: LordOrderKind;
+  /** SIEGE / DEFEND / REINFORCE / PATROL hedefi. */
+  targetSettlementId?: string;
+  /** Emrin verildiği gün (churn'ü önlemek için). */
+  sinceDay: number;
+  /** Kuşatma ilerlemesi 0..100 (yalnız SIEGE). */
+  siegeProgress?: number;
+}
+
+/** İki krallık arasındaki savaş kaydı (Faz 11). */
+export interface KingdomWarRecord {
+  a: FactionId;
+  b: FactionId;
+  sinceDay: number;
+  /** + ise `a` üstün, − ise `b` üstün (−100..+100). */
+  score: number;
+  sieges: number;
+}
+
+export interface WorldStats {
+  events: number;
+  warsDeclared: number;
+  warsEnded: number;
+  siegesWon: number;
+  fiefsChangedHands: number;
+  reinforcements: number;
+}
+
+/** Seferin canlı dünya durumu (kayda yazılır). */
+export interface WorldState {
+  seed: number;
+  wars: KingdomWarRecord[];
+  stats: WorldStats;
+  /** Yeni fethedilen yerleşim → yeniden kuşatılamayacağı gün (ping-pong önleyici). */
+  siegeCooldowns?: Record<string, number>;
+}
+
+export const EMPTY_WORLD_STATS: WorldStats = {
+  events: 0,
+  warsDeclared: 0,
+  warsEnded: 0,
+  siegesWon: 0,
+  fiefsChangedHands: 0,
+  reinforcements: 0,
+};
+
 export interface LordAgent {
   id: string;
   name: string;
@@ -188,6 +244,8 @@ export interface LordAgent {
   bannerColor: string;
   persuasionPips?: number;
   morphDNA?: CharacterMorphDNA;
+  /** Faz 11: stratejik emir (canlı dünya simülasyonu yazar, harita uygular). */
+  order?: LordOrder;
 }
 
 export interface ChronicleEvent {
@@ -228,6 +286,8 @@ export interface CampaignState {
   inventoryItems?: InventoryItem[];
   clanRoles?: Record<ClanRoleId, string>;
   playerMorphDNA?: CharacterMorphDNA;
+  /** Faz 11: savaşlar + sayaçlar (kayda yazılır). */
+  world?: WorldState;
 }
 
 export const FACTION_INFO: Record<
@@ -2742,6 +2802,15 @@ export function createInitialCampaignState(
       morphDNA: l.morphDNA || getLordDNA(l.id, l.faction),
     })),
     chronicle,
+    world: {
+      seed: 20261021,
+      // Faz 11: kıta başlangıçta iki sınır savaşıyla açılır (Bannerlord'un açılış durumu gibi).
+      wars: [
+        { a: 'vlandia', b: 'battania', sinceDay: 1, score: 4, sieges: 0 },
+        { a: 'empire', b: 'sturgia', sinceDay: 1, score: -3, sieges: 0 },
+      ],
+      stats: { ...EMPTY_WORLD_STATS },
+    },
     playerMorphDNA: cloneDNA(PLAYER_DEFAULT_DNA),
     characterLevel: 6,
     freeAttributePoints: 2,
@@ -2850,7 +2919,7 @@ export function createInitialCampaignState(
       QUARTERMASTER: 'Komutan Demirhan (+45 Birlik Kapasitesi)',
       SCOUT: 'İzci Aybars (+%12 Harita Görüşü & Hız)',
       SURGEON: 'Hekim Helena (+%25 Yaralı Kurtarma)',
-      ENGINEER: 'Mimar Торвальд (+%30 Kuşatma İnşası)',
+      ENGINEER: 'Mimar Torvald (+%30 Kuşatma İnşası)',
     },
   };
 }

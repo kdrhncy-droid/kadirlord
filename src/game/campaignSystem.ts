@@ -258,6 +258,8 @@ export interface LordLiveRouteState {
   targetSettlementId: string | null;
   waypoints: Array<{ x: number; z: number }>;
   currentAction: string;
+  /** Faz 11: uygulanan emrin anahtarı (aynı emir için yeniden A* yapılmaz). */
+  orderKey?: string;
 }
 
 /**
@@ -352,5 +354,75 @@ export function stepLordCampaignRoute(
     } else {
       route.waypoints.shift();
     }
+  }
+}
+
+/* ─────────────────── Faz 11: stratejik emir → rota ─────────────────── */
+
+/**
+ * Lord'un stratejik emrini (`lord.order`) harita rotasına çevirir.
+ *
+ * Faz 11'de emirleri **dünya simülasyonu** (`worldSim.ts`) yazar; harita katmanı
+ * (ve başsız testler) yalnızca bu fonksiyonu çağırır. Böylece "lord nereye gidiyor"
+ * mantığı tek yerde kalır ve Node üzerinde de aynı şekilde test edilebilir.
+ *
+ * Emir değişmediyse rota korunur (her karede A* çalışmaz).
+ */
+export function applyLordOrderToRoute(
+  lord: LordAgent,
+  route: LordLiveRouteState,
+  settlements: Settlement[],
+  playerPos?: { x: number; z: number },
+): void {
+  const order = lord.order;
+  if (!order) return;
+
+  let targetX: number | null = null;
+  let targetZ: number | null = null;
+  let key = '';
+  let action = route.currentAction;
+
+  if (order.kind === 'HUNT_PLAYER' && playerPos) {
+    // 16 birimlik ızgaraya yuvarla: her karede yeni A* hesaplanmasın.
+    const qx = Math.round(playerPos.x / 16) * 16;
+    const qz = Math.round(playerPos.z / 16) * 16;
+    targetX = qx;
+    targetZ = qz;
+    key = `hunt:${qx}:${qz}`;
+    action = 'Sancağını senin üzerine sürüyor';
+  } else if (order.kind === 'FLEE' && playerPos) {
+    const dx = route.x - playerPos.x;
+    const dz = route.z - playerPos.z;
+    const len = Math.hypot(dx, dz) || 1;
+    targetX = route.x + (dx / len) * 40;
+    targetZ = route.z + (dz / len) * 40;
+    key = `flee:${Math.round(targetX / 20)}:${Math.round(targetZ / 20)}`;
+    action = 'Geri çekiliyor';
+  } else if (order.targetSettlementId) {
+    const target = settlements.find((s) => s.id === order.targetSettlementId);
+    if (target) {
+      targetX = target.x + 4.5;
+      targetZ = target.z + 4.5;
+      key = `set:${target.id}`;
+      action =
+        order.kind === 'SIEGE'
+          ? `${target.name} kuşatma hattına ilerliyor`
+          : order.kind === 'DEFEND'
+            ? `${target.name} savunmasına koşuyor`
+            : order.kind === 'REINFORCE'
+              ? `${target.name} garnizonunda asker topluyor`
+              : `${target.name} bölgesini denetliyor`;
+    }
+  }
+
+  if (targetX === null || targetZ === null) return;
+
+  if (route.orderKey !== key || route.waypoints.length === 0) {
+    route.orderKey = key;
+    route.targetSettlementId = order.targetSettlementId ?? null;
+    route.currentAction = action;
+    route.waypoints = computeLandPath(route.x, route.z, targetX, targetZ);
+  } else if (route.currentAction !== action) {
+    route.currentAction = action;
   }
 }
