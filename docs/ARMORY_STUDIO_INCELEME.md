@@ -127,3 +127,37 @@ armory-studio/
 - Ancak **doğrudan savaş sahnesine takılmamalı**. Sıra: **Faz A (vitrin) → Faz B (pazar/karakter) → Faz C (arena + kalabalık)**.
 - En kritik iki teknik iş: (1) three 0.186 + Vite uyumu, (2) eklem eşleme katmanı (`rigBridge.ts`).
 - Bonus: zip'in `BattleSoundFX.ts` ve `Faction.ts` heraldik motoru, oyuna **dosya eklemeden** büyük oranda "Bannerlord hissi" katar.
+
+---
+
+## 8. UYGULAMA DURUMU (2026-10-21 — ilk entegrasyon turu)
+
+### ✅ Tamamlananlar
+
+| # | İş | Dosya |
+| :--- | :--- | :--- |
+| 1 | BannerForge motoru (8 modül, ~9.300 satır) repoya alındı, derlenir durumda | `src/armory/` |
+| 2 | Eklem köprüsü + kalibrasyon tablosu (BannerForge eklemleri → bizim rig) | `src/game/armoryBridge.ts` |
+| 3 | **Zırh** (hafif/orta/ağır, 10 bölge) oyuncu rig'ine takılıyor | `applyArmoryArmor` |
+| 4 | **Silah** (kılıç, çift elli, mızrak/kargı — fraksiyona göre klan/balta/topuz) | `createArmoryWeapon` |
+| 5 | **Kalkan** (yuvarlak / uçurtma / pavise) | `createArmoryShield` |
+| 6 | **Miğfer** (kettle hat / nasal / great helm) | `createArmoryHelmet` |
+| 7 | **Ok** (uçan mermi + sırtta sadak) | `createArmoryArrow` / `createArmoryQuiver` |
+| 8 | **Savaş sesleri** (6 efekt, prosedürel, reverb + limiter) `sound.ts`'e bağlandı | `src/game/armorySound.ts` |
+| 9 | **At** üreticisi hazır (3 ırk, zırhlı barding) — sahneye bağlanmadı | `createArmoryHorse` |
+| 10 | Tarayıcısız doğrulama betiği: `npm run verify:armory` | `scripts/verify-armory.ts` |
+
+**Doğrulama sonuçları (hepsi geçiyor):**
+- 66 ekipman (22 × 3 LOD): NaN yok, üçgen bütçesi aşılmıyor.
+- Yerleşim paritesi: BannerForge modeli, eski modelin **tam olarak durduğu yerde** (kayma 0.00–0.23 m, boyut oranı 0.77–1.30).
+- Zırh kapsama: tüm uzuv zırhları vücudu dışarıdan sarıyor (+9…+12 mm marj).
+- Mevcut birim testleri: **28/28 geçiyor**, `tsc --noEmit` temiz, `vite build` başarılı.
+
+**Kıyaslama anahtarı:** konsolda `__bannerforge.off()` / `__bannerforge.on()` ile eski ↔ yeni görseller arasında geçiş yapılabilir (değişiklik bir sonraki ekran girişinde etkili olur).
+
+### ⏳ Sıradaki tur
+
+1. **Yaylar:** Mekanik yaya bağlı (`stringGeo`, `restNock`, `nockedArrow` animasyonu). BannerForge yayının uç noktaları farklı eksende; kirişin uçlara oturması için dönüş + ölçek çözülmeli. Yanlış hizalanırsa kiriş havada asılı kalır → ayrı ve dikkatli bir tur gerekiyor.
+2. **At:** `createArmoryHorse` hazır ama arena'nın `WarHorseRig` sistemi kendi iskeleti/animasyonuyla çalışıyor. İki at sistemini birleştirmek yerine, BannerForge atını **kalabalık süvarileri** için kullanmak daha güvenli.
+3. **Vitrin ekranı:** 22 ekipmanı 360° mankenle gösteren React ekranı (zip'in `demo/app.ts`'i port edilmeden, sıfırdan).
+4. **Gövde:** Şu an bizim "kalın" gövdemiz + BannerForge zırhı kullanılıyor. BannerForge gövdesine geçilirse zırh kalibrasyonu gereksizleşir ve görsel bütünlük artar (riskli, ölçümle yapılmalı).
