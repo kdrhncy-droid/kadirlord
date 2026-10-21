@@ -958,3 +958,50 @@ içinde, zırh derinliği gövdeyle orantılı, omuz/göğüs 1.15–1.9.
 
 Gerçek tarayıcı kontrolü: `docs/renders/portraits-webgl.png` (40 portre) ve
 `docs/renders/arena-player.png` (oyuncu rig'i — regresyon yok).
+
+## 19. FAZ 1g — YÜZ İZLERİ (YARA / SAVAŞ BOYASI) (TAMAMLANDI ✅)
+
+Gerçek tarayıcı görüntüsünde yara izleri yakın planda yüzeyden kopuk, kalın bir "X"
+gibi görünüyordu. Nedeni: `createScarAndWarPaintMesh` düz `BoxGeometry` kullanıyor ve
+tüm izleri **sabit z** (`HEAD.r * HEAD.sz ± 0.008`) değerine koyuyordu. Kafa ölçeği,
+elmacık DNA'sı ve alın/burun derinliği değiştiğinde izler yüzeyin ya içine gömülüyor ya
+da havada kalıyordu.
+
+### 19.1 Yeni yaklaşım — elipsoide projekte edilen şerit (ribbon)
+
+1. Yüz düzleminde `(x, y)` yolu tanımlanır (`linePath`, hafif kavisli).
+2. Her nokta kafatası elipsoidine projekte edilir: `skullPoint()` → `nx² + ny² + nz² = 1`.
+3. Dışa bakan normal (`skullNormal`) boyunca **1.8–2.8 mm** pay eklenir (z-fighting yok).
+4. Nokta dizisi enine kesitlerle birleştirilir; kesit genişliği uçlarda `sin(πt)` ile
+   sivrilir → yara izi görünümü, keskin uçlu kutu değil.
+5. Malzeme: `polygonOffset`, `DoubleSide`, yara rengi **deri tonundan türetilir**
+   (`scarColor`, %42 iyileşmiş doku) → her ten renginde tutarlı.
+
+### 19.2 Ölçüm (`scripts/probe-face-decals.ts`, 33 kontrol)
+
+| İz | r (min..max) | dışa pay | göz ihlali | sivrilme |
+| --- | --- | --- | --- | --- |
+| eye_slash | 1.0170..1.0181 | 2.26 mm | 0 | ✓ |
+| cheek_cross | 1.0166..1.0175 | 2.19 mm | 0 | ✓ |
+| jaw_gash | 1.0164..1.0174 | 2.17 mm | 0 | ✓ |
+| battle_brow | 1.0167..1.0173 | 2.16 mm | 0 | ✓ |
+| woad_lines | 1.0133..1.0144 | 1.80 mm | 0 | ✓ |
+| steppe_chevrons | 1.0135..1.0144 | 1.79 mm | 0 | ✓ |
+| imperial_mark | 1.0131..1.0153 | 1.91 mm | 0 | ✓ |
+| ash_smear | 1.0139..1.0226 | 2.83 mm | 0 | ✓ |
+
+`r=1` tam yüzey demek: hiçbir iz gömülmüyor (min 1.013) ve hiçbiri 3 mm'den fazla
+havada durmuyor. Göz bölgesine giren köşe yok (ilk sürümde `cheek_cross`, `woad_lines`
+ve `steppe_chevrons` gözün içinden geçiyordu → yollar aşağı kaydırıldı).
+
+### 19.3 Doğrulama
+
+`npx tsx scripts/probe-face-decals.ts` · `npm run verify:decals` ·
+görsel: `docs/renders/scars-preview.png` (CPU yakın plan) ve
+`docs/renders/portraits-webgl.png` (gerçek WebGL, 40 portre).
+
+### 19.4 Not — modül döngüsü tuzağı
+
+`HEAD` sabiti modül yüklenirken hazır olmayabilir (`characterRig` ↔ `characterMorph`
+döngüsel import) → `ReferenceError: Cannot access 'HEAD' before initialization`.
+Bu yüzden elipsoid sabitleri **çağrı anında** okunur (`skull()`), modül düzeyinde değil.

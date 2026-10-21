@@ -91,11 +91,6 @@ try {
   mkdirSync(OUT, { recursive: true });
   await page.screenshot({ path: `${OUT}/encyclopedia-heroes.png` });
 
-  // Detay sayfası
-  await page.evaluate(() => [...document.querySelectorAll('button')].filter((b) => b.querySelector('img'))[0]?.click());
-  await wait(2500);
-  await page.screenshot({ path: `${OUT}/encyclopedia-hero-detail.png` });
-
   // 40 portrenin iletişim sayfası
   const sheet = await page.evaluate(() => {
     const imgs = [...document.querySelectorAll('img')].slice(0, 40);
@@ -120,6 +115,12 @@ try {
     return canvas.toDataURL('image/png');
   });
   writeFileSync(`${OUT}/portraits-webgl.png`, Buffer.from(sheet.split(',')[1], 'base64'));
+
+
+  // Detay sayfası
+  await page.evaluate(() => [...document.querySelectorAll('button')].filter((b) => b.querySelector('img'))[0]?.click());
+  await wait(2500);
+  await page.screenshot({ path: `${OUT}/encyclopedia-hero-detail.png` });
 
   const problems = logs.filter((l) => /pageerror|\[error\]/i.test(l) && !/ERR_CONNECTION_CLOSED/.test(l));
   console.log(problems.length ? `\n⚠️ konsol hataları:\n${problems.slice(0, 5).join('\n')}` : '\n✅ konsol temiz');

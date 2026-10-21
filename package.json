@@ -14,7 +14,8 @@
     "verify:encyclopedia": "tsx scripts/probe-encyclopedia.ts && tsx scripts/probe-encyclopedia-ui.tsx && tsx scripts/probe-portrait.ts && tsx scripts/probe-portrait-frame.ts",
     "verify:heroes": "tsx scripts/probe-heroes.ts",
     "verify:portrait": "tsx scripts/probe-portrait.ts && tsx scripts/probe-portrait-frame.ts",
-    "verify:body": "tsx scripts/probe-body-fit.ts"
+    "verify:body": "tsx scripts/probe-body-fit.ts",
+    "verify:decals": "tsx scripts/probe-face-decals.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -865,92 +865,191 @@ export function createBeardMesh(style: BeardStyleId, beardMat: THREE.Material): 
   return g;
 }
 
+/* -----------------------------------------------------------------------
+ * YÜZEYE OTURAN İZLER (yara izi & savaş boyası)
+ *
+ * Eski sürüm düz `BoxGeometry` kutuları sabit z'ye koyuyordu: kafa ölçeği ve
+ * elmacık DNA'sı değişince izler yüzeyden kopuyor, ön planda kalın bir "X"
+ * gibi duruyordu. Yeni sürüm izleri kafatası elipsoidinin **üzerinde** üretir:
+ * yüz yüzeyindeki 2B noktalar elipsoide projekte edilir, normal boyunca çok
+ * küçük bir pay kadar dışa taşınır ve nokta dizisi ince bir şerit (ribbon)
+ * olarak birleştirilir — uçları sivrilir, iz yüzeye yapışık görünür.
+ * ----------------------------------------------------------------------- */
+
+// NOT: `HEAD` modül yüklenirken hazır olmayabilir (characterRig ↔ characterMorph
+// döngüsel import). Bu yüzden sabitleri **çağrı anında** okuyoruz.
+const skull = () => ({
+  rx: HEAD.r,
+  ry: HEAD.r * HEAD.sy,
+  rz: HEAD.r * HEAD.sz,
+  cy: HEAD.cy,
+});
+
+/** Yüz düzlemindeki (x, y) → kafatası yüzey noktası. */
+function skullPoint(x: number, y: number): THREE.Vector3 {
+  const S = skull();
+  const nx = THREE.MathUtils.clamp(x / S.rx, -0.98, 0.98);
+  const ny = THREE.MathUtils.clamp((y - S.cy) / S.ry, -0.98, 0.98);
+  const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+  return new THREE.Vector3(nx * S.rx, S.cy + ny * S.ry, nz * S.rz);
+}
+
+/** Elipsoidin dışa bakan normali. */
+function skullNormal(p: THREE.Vector3): THREE.Vector3 {
+  const S = skull();
+  const n = new THREE.Vector3(
+    p.x / (S.rx * S.rx),
+    (p.y - S.cy) / (S.ry * S.ry),
+    p.z / (S.rz * S.rz),
+  );
+  return n.normalize();
+}
+
 /**
- * Builds battle scar and war paint decals that stick to facial planes.
+ * Bir (x, y) nokta dizisini yüzeye oturan ince şeride çevirir.
+ *  - `width` ortadaki genişlik; uçlar sivrilir (yara izi görünümü).
+ *  - `lift` yüzeyden dışa pay (z-fighting olmasın diye çok küçük).
+ */
+function surfaceRibbon(
+  path: [number, number][],
+  width: number,
+  lift: number,
+  color: string,
+  opacity = 1,
+): THREE.Mesh | null {
+  if (path.length < 2) return null;
+
+  const pts = path.map(([x, y]) => skullPoint(x, y));
+  const normals = pts.map(skullNormal);
+  const positions: number[] = [];
+  const indices: number[] = [];
+
+  for (let i = 0; i < pts.length; i++) {
+    const prev = pts[Math.max(0, i - 1)];
+    const next = pts[Math.min(pts.length - 1, i + 1)];
+    const tangent = new THREE.Vector3().subVectors(next, prev).normalize();
+    const side = new THREE.Vector3().crossVectors(normals[i], tangent).normalize();
+    // Uçlarda sivril; en fazla ortada tam genişlik.
+    const t = i / (pts.length - 1);
+    const taper = Math.sin(Math.PI * t); // 0 → 1 → 0
+    const half = (width * (0.25 + 0.75 * taper)) / 2;
+    const base = pts[i].clone().addScaledVector(normals[i], lift);
+    const a = base.clone().addScaledVector(side, half);
+    const b = base.clone().addScaledVector(side, -half);
+    positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+    if (i < pts.length - 1) {
+      const k = i * 2;
+      indices.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.88,
+    metalness: 0,
+    transparent: opacity < 1,
+    opacity,
+    // Yüzeye yapışık olduğu için z-fighting'e karşı hafif öteleme.
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+    side: THREE.DoubleSide,
+  });
+  const m = new THREE.Mesh(geo, mat);
+  m.name = 'decal_strip';
+  m.castShadow = false;
+  m.receiveShadow = false;
+  return m;
+}
+
+/** Yara izi rengi: deri tonundan açık, pembemsi beyaza doğru (iyileşmiş iz). */
+function scarColor(skinHex: string): string {
+  const skin = new THREE.Color(skinHex);
+  const healed = new THREE.Color('#f0d9cd');
+  return `#${skin.lerp(healed, 0.42).getHexString()}`;
+}
+
+/** Çizgi yardımcısı: iki uç arasında N noktalı, hafif kavisli yol. */
+function linePath(
+  from: [number, number],
+  to: [number, number],
+  steps = 7,
+  bow = 0.006,
+): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i < steps; i++) {
+    const t = i / (steps - 1);
+    const x = from[0] + (to[0] - from[0]) * t;
+    const y = from[1] + (to[1] - from[1]) * t + Math.sin(Math.PI * t) * bow * (from[0] < 0 ? -1 : 1);
+    out.push([x, y]);
+  }
+  return out;
+}
+
+/**
+ * Savaş izleri (yara) ve savaş boyası. Dönen grup `Face_Decals` adını taşır;
+ * `applyMorphDNAToRig` bunu bulup yenisiyle değiştirir.
  */
 export function createScarAndWarPaintMesh(
   scar: ScarType,
   warPaint: WarPaintType,
   warPaintColor: string,
+  skinTone = '#e8be99',
 ): THREE.Group {
   const g = new THREE.Group();
   g.name = 'Face_Decals';
 
-  // --- SCARS (Darkened skin ridge) ---
-  if (scar !== 'none') {
-    const scarMat = new THREE.MeshStandardMaterial({
-      color: '#652d27',
-      roughness: 0.9,
-      flatShading: true,
-    });
+  const CY = HEAD.cy;
+  const scarHex = scarColor(skinTone);
+  const LIFT = 0.0022;
 
-    if (scar === 'eye_slash') {
-      const slash = mesh(new THREE.BoxGeometry(0.012, 0.08, 0.02), scarMat, false);
-      slash.position.set(0.052, HEAD.cy + 0.025, HEAD.r * HEAD.sz + 0.008);
-      slash.rotation.z = -0.25;
-      slash.rotation.y = 0.2;
-      g.add(slash);
-    } else if (scar === 'cheek_cross') {
-      const bar1 = mesh(new THREE.BoxGeometry(0.012, 0.06, 0.02), scarMat, false);
-      bar1.position.set(-0.065, HEAD.cy - 0.04, HEAD.r * HEAD.sz - 0.005);
-      bar1.rotation.z = 0.78;
-      const bar2 = mesh(new THREE.BoxGeometry(0.012, 0.06, 0.02), scarMat, false);
-      bar2.position.set(-0.065, HEAD.cy - 0.04, HEAD.r * HEAD.sz - 0.005);
-      bar2.rotation.z = -0.78;
-      g.add(bar1, bar2);
-    } else if (scar === 'jaw_gash') {
-      const gash = mesh(new THREE.BoxGeometry(0.06, 0.014, 0.02), scarMat, false);
-      gash.position.set(0.04, HEAD.cy - 0.08, HEAD.r * HEAD.sz + 0.005);
-      gash.rotation.z = 0.2;
-      g.add(gash);
-    } else if (scar === 'battle_brow') {
-      const browSlash = mesh(new THREE.BoxGeometry(0.07, 0.012, 0.02), scarMat, false);
-      browSlash.position.set(-0.02, HEAD.cy + 0.06, HEAD.r * HEAD.sz + 0.005);
-      browSlash.rotation.z = -0.15;
-      g.add(browSlash);
+  // --- YARA İZLERİ (yüzeye oturan, uçları sivrilen şeritler) ---
+  const scarPaths: Record<Exclude<ScarType, 'none'>, { path: [number, number][]; width: number }[]> = {
+    // Şakak → elmacık: gözün dışından geçer, göze değmez.
+    eye_slash: [{ path: linePath([0.084, CY + 0.055], [0.096, CY - 0.062], 8, 0.004), width: 0.011 }],
+    // Yanakta çapraz iki ince çizik.
+    cheek_cross: [
+      { path: linePath([-0.09, CY - 0.032], [-0.052, CY - 0.084], 6, 0.003), width: 0.0095 },
+      { path: linePath([-0.055, CY - 0.034], [-0.094, CY - 0.082], 6, 0.003), width: 0.0095 },
+    ],
+    // Çene hattı boyunca yatay iz.
+    jaw_gash: [{ path: linePath([0.006, CY - 0.083], [0.082, CY - 0.062], 7, 0.004), width: 0.0105 }],
+    // Kaş üstünden geçen eski kesik.
+    battle_brow: [{ path: linePath([-0.062, CY + 0.075], [0.004, CY + 0.052], 7, 0.004), width: 0.010 }],
+  };
+
+  if (scar !== 'none') {
+    for (const { path, width } of scarPaths[scar]) {
+      const strip = surfaceRibbon(path, width, LIFT, scarHex, 0.96);
+      if (strip) g.add(strip);
     }
   }
 
-  // --- WAR PAINT (Vivid ceremonial pigments) ---
-  if (warPaint !== 'none') {
-    const paintMat = new THREE.MeshStandardMaterial({
-      color: warPaintColor || '#0284c7',
-      roughness: 0.6,
-      flatShading: true,
-    });
+  // --- SAVAŞ BOYASI (aynı şerit tekniği, daha geniş ve mat) ---
+  const paintHex = warPaintColor || '#0284c7';
+  const paint = (path: [number, number][], width: number) => {
+    const strip = surfaceRibbon(path, width, LIFT * 0.8, paintHex, 0.92);
+    if (strip) g.add(strip);
+  };
 
-    if (warPaint === 'woad_lines') {
-      // Celtic stripes on cheeks
-      for (let i = 0; i < 2; i++) {
-        const stripeL = mesh(new THREE.BoxGeometry(0.045, 0.01, 0.02), paintMat, false);
-        stripeL.position.set(0.06, HEAD.cy - 0.02 - i * 0.025, HEAD.r * HEAD.sz + 0.002);
-        stripeL.rotation.y = 0.35;
-        const stripeR = mesh(new THREE.BoxGeometry(0.045, 0.01, 0.02), paintMat, false);
-        stripeR.position.set(-0.06, HEAD.cy - 0.02 - i * 0.025, HEAD.r * HEAD.sz + 0.002);
-        stripeR.rotation.y = -0.35;
-        g.add(stripeL, stripeR);
-      }
-    } else if (warPaint === 'steppe_chevrons') {
-      // Khuzait arrow markings under eyes
-      const chevL = mesh(new THREE.BoxGeometry(0.04, 0.012, 0.02), paintMat, false);
-      chevL.position.set(0.05, HEAD.cy, HEAD.r * HEAD.sz);
-      chevL.rotation.z = -0.4;
-      const chevR = mesh(new THREE.BoxGeometry(0.04, 0.012, 0.02), paintMat, false);
-      chevR.position.set(-0.05, HEAD.cy, HEAD.r * HEAD.sz);
-      chevR.rotation.z = 0.4;
-      g.add(chevL, chevR);
-    } else if (warPaint === 'imperial_mark') {
-      // Vertical red mark down the forehead to the nose bridge
-      const stripe = mesh(new THREE.BoxGeometry(0.018, 0.09, 0.02), paintMat, false);
-      stripe.position.set(0, HEAD.cy + 0.045, HEAD.r * HEAD.sz + 0.005);
-      g.add(stripe);
-    } else if (warPaint === 'ash_smear') {
-      const ashMat = new THREE.MeshStandardMaterial({ color: '#262626', roughness: 0.9 });
-      const smear = mesh(new THREE.BoxGeometry(0.1, 0.04, 0.02), ashMat, false);
-      smear.position.set(-0.02, HEAD.cy - 0.03, HEAD.r * HEAD.sz);
-      smear.rotation.z = 0.15;
-      g.add(smear);
+  if (warPaint === 'woad_lines') {
+    for (let i = 0; i < 2; i++) {
+      const y = CY - 0.036 - i * 0.026;
+      paint(linePath([0.032, y], [0.094, y - 0.008], 6, 0.002), 0.012);
+      paint(linePath([-0.032, y], [-0.094, y - 0.008], 6, 0.002), 0.012);
     }
+  } else if (warPaint === 'steppe_chevrons') {
+    paint(linePath([0.048, CY - 0.032], [0.094, CY - 0.052], 6, 0.002), 0.011);
+    paint(linePath([-0.048, CY - 0.032], [-0.094, CY - 0.052], 6, 0.002), 0.011);
+  } else if (warPaint === 'imperial_mark') {
+    paint(linePath([0, CY + 0.098], [0, CY + 0.028], 7, 0.0), 0.016);
+  } else if (warPaint === 'ash_smear') {
+    paint(linePath([-0.07, CY - 0.028], [0.02, CY - 0.042], 7, 0.006), 0.038);
   }
 
   return g;
@@ -1085,7 +1184,12 @@ export function applyMorphDNAToRig(rig: CharacterRig, dna: CharacterMorphDNA): v
   }
 
   if (dna.scar !== 'none' || dna.warPaint !== 'none') {
-    const decals = createScarAndWarPaintMesh(dna.scar, dna.warPaint, dna.warPaintColor);
+    const decals = createScarAndWarPaintMesh(
+      dna.scar,
+      dna.warPaint,
+      dna.warPaintColor,
+      `#${rig.materials.skin.color.getHexString()}`,
+    );
     rig.head.add(decals);
   }
 }

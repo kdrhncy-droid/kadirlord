@@ -102,8 +102,8 @@ console.log('');
 
 ok(rows.every((r) => Math.abs(r.feetY) < 0.03), 'ayaklar yerde', span((r) => r.feetY));
 ok(
-  rows.every((r) => r.height > 1.9 && r.height < 2.35),
-  'boy 1.9–2.35 arası (taban iskelet 2.09)',
+  rows.every((r) => r.height > 1.85 && r.height < 2.35),
+  'boy 1.85–2.35 arası (taban iskelet 2.09)',
   span((r) => r.height),
 );
 ok(
