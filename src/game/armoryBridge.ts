@@ -468,6 +468,11 @@ export function applyArmoryArmor(
     'armsUpper',
     'armsLower',
     'hands',
+    // Faz 9d: bacak/ayak parçaları da bizim üreticimizde (legacy katmanıyla
+    // tutarlılık + ayaklığın yere gömülmesi sorunu).
+    'legsUpper',
+    'legsLower',
+    'feet',
   ]);
   for (const zone of Object.keys(set.zones) as (keyof typeof set.zones)[]) {
     if (SKIP_ZONES.has(zone)) continue;

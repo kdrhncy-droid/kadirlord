@@ -823,6 +823,7 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     );
     sleeve.position.y = -RIG_DIMENSIONS.upperArm / 2;
     sleeve.userData.armArmor = true;
+    sleeve.userData.limbArmor = true;
     upper.add(sleeve);
 
     const bracer = mesh(
@@ -832,6 +833,7 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     );
     bracer.position.y = -RIG_DIMENSIONS.forearm / 2;
     bracer.userData.armArmor = true;
+    bracer.userData.limbArmor = true;
     fore.add(bracer);
 
     // Dirsek kapağı (postacı/levha).
@@ -851,6 +853,70 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
       trim.position.y = -RIG_DIMENSIONS.upperArm + 0.028;
       upper.add(trim);
       void side;
+    }
+  }
+
+  /* ── Bacak zırhı (uyluk + baldır + ayaklık) ──
+     BannerForge bacak parçaları gövdeye göre daha iyi oturuyordu ama iki
+     sorun vardı: (a) legacy katmanında hiç bacak zırhı yoktu (çıplak bacak),
+     (b) ayaklık yere 1.6 cm gömülüyordu. Artık iki katmanda da buradan gelir. */
+  const legBody = { thighR: 0.09, thighRb: 0.072, shinR: 0.071, shinRb: 0.062 };
+  for (const side of ['left', 'right'] as const) {
+    const thigh = rig[`${side}Thigh`];
+    const shin = rig[`${side}Shin`];
+    const foot = rig[`${side}Foot`];
+
+    const thighMat = tier === 'LEATHER' ? padded : tier === 'CHAINMAIL' ? metal : metal;
+    const thighPad = tier === 'PLATE' ? 0.013 : 0.008;
+
+    // Uyluk: 8 kenarlı, gövde silindirinin üstünde.
+    const thighArmor = mesh(
+      new THREE.CylinderGeometry(legBody.thighR + thighPad, legBody.thighRb + thighPad, 0.4, 8, 1, true),
+      thighMat,
+      false,
+    );
+    thighArmor.position.y = -0.21;
+    thighArmor.scale.z = 1.06;
+    thighArmor.userData.limbArmor = true;
+    thigh.add(thighArmor);
+
+    // Baldır: tozluk / greave.
+    const shinPad = tier === 'PLATE' ? 0.011 : 0.007;
+    const shinArmor = mesh(
+      new THREE.CylinderGeometry(legBody.shinR + shinPad, legBody.shinRb + shinPad, 0.4, 8, 1, true),
+      tier === 'LEATHER' ? leather : metal,
+      false,
+    );
+    shinArmor.position.y = -0.21;
+    shinArmor.scale.z = 1.06;
+    shinArmor.userData.limbArmor = true;
+    shin.add(shinArmor);
+
+    // Diz kapağı (levha/postacı).
+    if (tier !== 'LEATHER') {
+      const knee = mesh(new THREE.SphereGeometry(0.082, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.55), metal, false);
+      knee.scale.set(1, 0.85, 1.05);
+      knee.position.y = -0.01;
+      knee.userData.limbArmor = true;
+      thigh.add(knee);
+    }
+
+    // Ayaklık: ayakkabının üstüne oturur, yere gömülmez.
+    if (tier === 'PLATE') {
+      const sabaton = mesh(new THREE.BoxGeometry(0.108, 0.082, 0.228), metal, false);
+      sabaton.position.set(0, -0.042, 0.05);
+      sabaton.userData.limbArmor = true;
+      foot.add(sabaton);
+      const toe = mesh(new THREE.BoxGeometry(0.092, 0.03, 0.05), gold, false);
+      toe.position.set(0, -0.062, 0.145);
+      toe.userData.limbArmor = true;
+      foot.add(toe);
+    } else if (tier === 'CHAINMAIL') {
+      // Postacı çizmesi: ayağın üstüne oturan kalın deri kap.
+      const boot = mesh(new THREE.BoxGeometry(0.104, 0.08, 0.222), leather, false);
+      boot.position.set(0, -0.042, 0.05);
+      boot.userData.limbArmor = true;
+      foot.add(boot);
     }
   }
 

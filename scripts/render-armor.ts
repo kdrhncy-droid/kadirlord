@@ -63,6 +63,14 @@ for (const tier of TIERS) {
   tiles.push(shot(rig, Math.PI / 5, 1.5, 1.35, 1.5));
 }
 
+/* Bacak/ayak yakın planı (Faz 9d) — tam boy, dizden aşağı odaklı */
+for (const tier of TIERS) {
+  const rig = createCharacterRig({ ...base, armorTier: tier } as CharacterVisualOptions);
+  rig.root.updateMatrixWorld(true);
+  tiles.push(shot(rig, 0, 0.9, 1.6, 0.55));
+  tiles.push(shot(rig, Math.PI / 4, 0.9, 1.6, 0.55));
+}
+
 // 4 kolonlu ızgara: 6 satır × 4
 const sheet = montage(tiles, 4, 4);
 writePng('docs/renders/armor-chest.png', sheet);

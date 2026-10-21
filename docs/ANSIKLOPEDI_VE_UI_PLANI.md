@@ -1447,3 +1447,37 @@ iniyor — sabit yükseklikli yaka orada da ağzı örtüyordu.
   zırh tepesi çenenin ≥ 1 cm altında (Δ = −0.02 m).
 - `scripts/render-face.ts` → `docs/renders/face-cover.png`; `render-armor.ts` →
   `docs/renders/armor-chest.png` yenilendi. `verify:all` 21 paket ✅, `vite build` ✅.
+
+## 35. FAZ 9d — BACAK VE AYAK ZIRHI (TAMAMLANDI ✅)
+
+Göğüs (9b) ve yüz (9c) düzeltmelerinin devamı: aynı iskelet uyumsuzluğunun
+bacaklarda da olup olmadığı ölçüldü (`scripts/probe-armor-legs.ts`).
+
+### Bulgular
+
+| Sorun | Önce |
+|---|---|
+| Legacy katmanında bacak zırhı | **hiç yok** (çıplak bacak, deri çizme yalnız ten rengi) |
+| BannerForge ayaklığı | yere **16 mm gömülü** (y −0.056) |
+| BannerForge ayak parçaları | `armory_footL` hem `leftShin` hem `leftThigh` altında **iki kez** sayılıyordu |
+
+Bacakların kendisi (uyluk/baldır) BannerForge'da iyi oturuyordu — asıl sorun
+katman tutarsızlığı ve ayaklığın yere gömülmesiydi.
+
+### Çözüm
+
+`characterRig.buildArmor` artık bacak zırhını da üretiyor (iki katmanda aynı):
+- **Uyluk**: 8 kenarlı zırh silindiri (deri +8 mm, postacı +8 mm, levha +13 mm pay)
+- **Baldır**: tozluk/greave (+7 / +11 mm), levha ve postacıda **diz kapağı**
+- **Ayak**: levhada sabaton + altın burun, postacıda kalın deri konç;
+  hepsi ayağın tabanıyla **hizalı** (ne havada ne gömülü)
+- `armsUpper/armsLower/hands` gibi `legsUpper/legsLower/feet` bölgeleri de
+  BannerForge'dan alınmıyor (`SKIP_ZONES`), böylece iki katman aynı görünüyor.
+
+### Doğrulama
+
+`probe-armor-legs.ts` — **43 kontrol** (3 kademe × 2 katman): zırh parçası var,
+uzvu örtüyor (pay 0.043–0.050 m), uzvun boyunca oturuyor (kayma yok), iki bacağın
+zırhı kesişmiyor (0 mm), ayaklık ayağı örtüyor ve tabanla hizalı.
+`render-armor.ts` 36 karoya çıktı (6 satır gövde + 6 karo bacak yakın planı).
+`verify:all` 22 paket ✅, `vite build` ✅.
