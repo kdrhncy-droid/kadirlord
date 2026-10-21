@@ -1218,3 +1218,28 @@ pazaryeri seçeneği pazar modalını yalnız yerleşim içinde açar.
 baş/el animasyonu — mevcut `CharacterArenaView` rig'i yeniden kullanılacak.
 
 Doğrulama: `probe-dialogue` (25 kontrol) + `probe-dialogue-ui` (12 kontrol).
+
+## 28. FAZ 7 — PAZARYERİ (TAMAMLANDI ✅)
+
+Kullanıcı onayı: "Tam Bannerlord düzeni".
+
+**Ekonomi** (`src/game/market.ts`, saf + deterministik):
+- `marketProfile(settlement)` → fiyat çarpanı (0.82–1.28), tüccar kesesi, stok oranı.
+  Refah 5000 = ortalama; yağmalanmış yerleşkede +%18 kıtlık; yerleşim id'sinden ±%8 sapma.
+- `buyPriceAt` / `sellPriceAt` (satış ≈ alışın %72'si — lonca payı).
+- `priceTone` → **CHEAP (yeşil) / FAIR / PRICEY (kırmızı)** + `PRICE_TONE_LABEL`.
+- `buildMarketStock` → tezgahtaki mal alt kümesi ve 1–3 adet stok; erzak her yerde var.
+- `tradeRumours` → en yakın 3 şehirdeki fiyat (ticaret söylentisi).
+- `sellableItems` (kilit), `cappedSale` (tüccar altını satışı sınırlar), `carryCapacity`,
+  `MarketSession` (alış/satış/net).
+
+**Arayüz** (`BannerlordMarketModal.tsx`):
+- Başlıkta **refah** ve **fiyat endeksi (×1.07)**; tüccar kesesi artık sabit 14.800 değil,
+  yerleşkeden türetiliyor ve satışta azalıyor.
+- Mal satırında: **renkli alış fiyatı**, taban fiyat, **stok adedi**, **ticaret söylentisi**.
+- Envanter satırında: **kilit (🔒/🔓)** — kilitli mal toplu satışta korunur, tahmini satış fiyatı.
+- Alt bar: **net sonuç** şeridi (`+80 D · 1 alış / 1 satış`) + **Bitir**.
+- Pazar yalnız yerleşim içinden açılır (Faz 1k kuralı) — diyalogdaki "Pazaryerini göster"
+  seçeneği de yalnız yerleşimdeyken görünür.
+
+Doğrulama: `probe-market` (28 kontrol) + `probe-market-ui` (20 kontrol).
