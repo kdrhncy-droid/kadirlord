@@ -173,7 +173,11 @@ export function renderTriangles(
         const w1 = ((px - pa.x) * (pc.y - pa.y) - (py - pa.y) * (pc.x - pa.x)) / area;
         const w2 = 1 - w0 - w1;
         if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-        const z = pa.z * w2 + pb.z * w0 + pc.z * w1;
+        // DİKKAT: w0 ↔ c, w1 ↔ b köşelerine ait (yukarıdaki çapraz çarpımlardan).
+        // Önceden `pb.z * w0 + pc.z * w1` yazılıydı → b/c ağırlıkları yer
+        // değiştiriyordu; perspektifte NDC z doğrusal olmadığı için iç yüzeyler
+        // dış yüzeylerin **önüne** geçiyordu (zırhın içinden ten görünmesi).
+        const z = pa.z * w2 + pb.z * w1 + pc.z * w0;
         const idx = y * width + x;
         if (z >= depth[idx]) continue;
         depth[idx] = z;

@@ -446,10 +446,31 @@ export function applyArmoryArmor(
   mats.setFaction(faction);
 
   const attached: THREE.Object3D[] = [];
+  /*
+   * Faz 9b: 'head', 'torso', 'neck' ve 'shoulders' BannerForge'dan ALINMIYOR.
+   *   · head  → kendi miğfer modelimiz kullanılıyor (çifte miğfer olmasın),
+   *   · torso → BannerForge gövde zırhı başka iskelet için yazılmış: bizim
+   *     göğsümüzü kapatmıyor (belin altına kayıyor), göğüs levhası 0.57 m
+   *     genişliğinde düz bir levha olarak 10 cm önde duruyor ve surcoat
+   *     panelleri karton tabela gibi kalıyor,
+   *   · neck / shoulders → aynı ölçek sorunu (kolların içine 33 cm giriyor),
+   *   · armsUpper / armsLower / hands → bizim kolumuzdan ~1 cm küçük; 6 kenarlı
+   *     kol silindirinin köşeleri zırhın içinden geçiyor (kırmızı çizikler).
+   * Gövde ve omuz zırhı artık `characterRig.buildArmor` içinde gövdemize
+   * oturan lathe kabuğu olarak üretiliyor; BannerForge kol/bacak/el/ayak
+   * parçaları korunuyor (onlar doğru oturuyor).
+   */
+  const SKIP_ZONES = new Set([
+    'head',
+    'torso',
+    'neck',
+    'shoulders',
+    'armsUpper',
+    'armsLower',
+    'hands',
+  ]);
   for (const zone of Object.keys(set.zones) as (keyof typeof set.zones)[]) {
-    // 'head' bölgesi BannerForge'un kendi miğferini de getirir; miğferi ayrı
-    // `createArmoryHelmet` ile taktığımız için burada atlanır (çifte miğfer olmasın).
-    if (zone === 'head') continue;
+    if (SKIP_ZONES.has(zone)) continue;
     for (const piece of set.zones[zone] ?? []) {
       const node = attachArmorPiece(rig, piece, mats);
       if (node) attached.push(node);

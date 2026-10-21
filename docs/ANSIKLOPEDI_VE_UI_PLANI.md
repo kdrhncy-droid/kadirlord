@@ -1342,3 +1342,62 @@ Kullanıcı bulgusu: *"katafrakt kask görseli bozuk, mühim ve birkaç kalkan d
 - `scripts/render-equipment.ts` — **tarayıcısız yazılımsal render** (three.js geometrisi +
   kendi z-buffer rasterizer'ı, harici bağımlılık yok). Çıktı: `docs/renders/equip-fixed.png`
   (9 karo: katafrakt ön + 3/4, üç kalkan × iki açı, tam vücut).
+
+## 33. FAZ 9b — ASKER ZIRHININ GÖĞÜS BÖLÜMÜ (TAMAMLANDI ✅)
+
+### Sorun (kullanıcı bulgusu)
+
+"Askerlerin zırhlarını kontrol eder misin, göğüs kısımlarını." Ölçüm yapıldığında
+BannerForge zırh katmanı **14 kontrolde** kırmızıydı, legacy katman ise temizdi:
+
+| Kademe | Ölçüm | Sorun |
+|---|---|---|
+| LEATHER | ön/arka `z ±0.082` (gövde `±0.192`) | göğsün önü **kapalı değil** |
+| LEATHER | genişlik gövdenin **1.89×** | palto gibi, kolların içine 0.336 m giriyor |
+| CHAINMAIL | genişlik **1.90×**, kol kesişimi 0.336 m | aynı |
+| PLATE | genişlik **1.94×**, ters normal **24 dış / 22 iç** | iç yüzey görünüyor |
+
+### Kök nedenler (dört ayrı hata)
+
+1. **Yanlış iskelet**: BannerForge'un `buildTorso` parçaları `joint: 'pelvis'` ile geliyor;
+   gövde zırhı belin altına kayıyor (y 0.77–1.34, göğüs 1.14–1.60). Göğüs levhası ise
+   `armory_chest` üzerinde 0.57 × 0.52 × **0.06** m'lik **düz bir pul** — hacimsiz ve gövdenin
+   10 cm önünde. Kolların içine 33 cm giriyor (ölçek 1.16–1.94 arası şişirilmiş).
+2. **Surcoat**: `applyArmoryArmor` `surcoat: tier !== 'LEATHER'` veriyordu; `buildSurcoat`
+   panelleri `zones.torso` içine ekleniyor → 0.53 × 0.65 × 0.04 m'lik ön/arka levhalar
+   `z 0.19..0.22`'de durup **gerçek zırhı gizliyordu** (görselde "göğüs = kırmızı tabela").
+3. **Kol zırhı**: BannerForge kol parçaları bizim kolumuzdan ~1 cm küçüktü; 6 kenarlı kol
+   silindirinin köşeleri zırhın içinden geçiyordu (görselde kırmızı çizikler).
+4. **Yazılımsal render hatası** (`scripts/lib/softRender.ts`): derinlik interpolasyonunda
+   barycentric ağırlıkları yer değiştirmişti (`pb.z*w0 + pc.z*w1`). Perspektifte NDC z
+   doğrusal olmadığı için **iç yüzeyler dış yüzeylerin önüne geçiyordu** — zırhın içinden
+   ten/kumaş görünmesinin asıl sebebi buydu. Düzeltme: `pa.z*w2 + pb.z*w1 + pc.z*w0`.
+
+### Çözüm
+
+- **Gövde ve kol zırhı artık bizim üreticimizde**: `characterRig.buildArmor` gövde
+  profilini (`PROFILE`) takip eden tek yüzlü bir **lathe kabuğu** üretiyor.
+  Her kademe için pay: deri +0.016 m, postacı +0.020 m, levha +0.028 m.
+  Kuşak/omurga/arma gibi ek parçalar kabuğun **dışına** (`frontZ()` ile) yerleştiriliyor —
+  içeride kalınca z-fighting yapıp "çizik" gibi görünüyordu.
+- `armoryBridge.applyArmoryArmor` artık `head`, `torso`, `neck`, `shoulders`,
+  `armsUpper`, `armsLower`, `hands` bölgelerini **atlıyor**; BannerForge'dan yalnız
+  bacak/ayak parçaları kullanılıyor.
+- Üç kademe: **deri** kapitone keten gambeson (yeni `padded` materyali) + deri kuşak/askı;
+  **postacı** zırh gömleği + etek + boyun zırhı + çapraz göğüs kayışı;
+  **levha** tam göğüslük + omurga + iki altın kuşak + gorget + arma.
+- Omuz zırhları (pauldron) omuz eklemine oturan yarım küre kapaklar; levhada çift katman + altın çember.
+
+### Doğrulama (`scripts/probe-armor-chest.ts`, 62 kontrol)
+
+Her kademe × iki katman için: ön/arka kapama (`z ≥ gövde z`), bele kadar iniş (alt ≤ 1.22 m),
+köprücük kemiğine çıkış, taşma oranı (**1.15× / 1.18× / 1.22×** — hedef ≤ 1.35×),
+kol kesişimi (**0.000 m** — hedef < 0.09 m), ters normal oranı (iç 0 / dış 33),
+kol zırhının kolu örtmesi (+0.035 m) ve göğse girmemesi (giriş ≤ 9 mm).
+
+`scripts/render-armor.ts` → `docs/renders/armor-chest.png` (30 karo: 2 katman × 3 kademe ×
+4 açı + 6 yakın plan). `probe-body-fit.ts` zırh derinliği ölçütü gövde **genişliği** yerine
+gövde **derinliği**ne bağlandı (oran 1.09–1.19).
+
+Not: `npm run verify:all` tüm `scripts/probe-*.ts` dosyalarını otomatik koştuğu için yeni
+probe ek bir kayıt gerektirmiyor.

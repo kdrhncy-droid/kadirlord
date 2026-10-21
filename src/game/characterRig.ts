@@ -150,6 +150,8 @@ export interface CharacterRig {
     gold: THREE.MeshStandardMaterial;
     wood: THREE.MeshStandardMaterial;
     faction: THREE.MeshStandardMaterial;
+    /** Kapitone keten (gambeson / dolgun zırh astarı). */
+    padded: THREE.MeshStandardMaterial;
   };
 }
 
@@ -165,6 +167,7 @@ function createRigMaterials(options: CharacterVisualOptions) {
     gold: std('#fbbf24', 0.3, 0.9),
     wood: std('#78350f', 0.8, 0.05),
     faction: std(options.factionColor || '#b45309', 0.65, 0.1),
+    padded: std('#9c7a52', 0.88, 0.03),
     // Ten gölgesi: burun deliği, ağız çizgisi ve parmak olukları için.
     skinShadow: std('#b8825f', 0.9, 0),
   };
@@ -640,68 +643,222 @@ function buildHelmet(type: HelmetType, m: CharacterRig['materials']): THREE.Grou
   return null;
 }
 
+/**
+ * Göğüs zırhı — Faz 9b.
+ *
+ * Neden yeniden yazıldı: BannerForge'un gövde parçaları **başka bir iskelet**
+ * için yazılmış. Bizim gövdemize takıldığında:
+ *   · postacı zırhı belin altına kayıyor (y 0.77–1.34, göğüs 1.38–1.60),
+ *   · göğüs levhası 0.57 m genişliğinde **düz bir levha** olarak göğsün
+ *     10 cm önünde duruyor (gövde genişliği 0.42),
+ *   · surcoat panelleri ön/arka 0.19 m uzakta **karton tabela** gibi kalıyor,
+ *   · levhalar kolların içine 33 cm giriyor.
+ * Bu yüzden gövde zırhı artık gövdemizin kendi silindirine oturan **lathe
+ * kabuğu** olarak üretiliyor (gövde: y 0..0.46, r 0.18→0.24, z ölçeği 0.8).
+ */
 function buildArmor(rig: CharacterRig, tier: ArmorTier) {
-  const { metal, gold, leather } = rig.materials;
-  const dScale = TORSO_DEPTH_SCALE + 0.02; // matches torso depth so armors don't bulge into arms
+  const { metal, gold, leather, cloth, padded } = rig.materials;
+  if (tier === 'CIVILIAN') return;
+
+  /**
+   * Gövde profili: (y, gövde yarıçapı). Gövde silindiri y 0..0.46 arasında
+   * 0.18 → 0.24 arası açılıyor; zırh kabuğu bu profilin üstüne oturuyor.
+   */
+  const PROFILE: Array<[number, number]> = [
+    [-0.22, 0.194],
+    [-0.14, 0.196],
+    [-0.04, 0.202],
+    [0.09, 0.214],
+    [0.24, 0.228],
+    [0.34, 0.230],
+    // Omuz hizasında hafif daralma: kabuk kolların üstüne binmesin.
+    [0.4, 0.222],
+    [0.45, 0.208],
+    [0.49, 0.186],
+  ];
+  const radiusAt = (y: number) => {
+    if (y <= PROFILE[0][0]) return PROFILE[0][1];
+    for (let i = 1; i < PROFILE.length; i++) {
+      const [y1, r1] = PROFILE[i];
+      if (y <= y1) {
+        const [y0, r0] = PROFILE[i - 1];
+        const t = (y - y0) / (y1 - y0 || 1);
+        return r0 + (r1 - r0) * t;
+      }
+    }
+    return PROFILE[PROFILE.length - 1][1];
+  };
+  const DEPTH = TORSO_DEPTH_SCALE + 0.02;
+  /** Kabuğun ön yüzü (z) — ek parçalar bu mesafeye göre yerleştirilir. */
+  const frontZ = (y: number, pad: number, out = 0) => (radiusAt(y) + pad + out) * DEPTH;
+
+  const pieces: THREE.Mesh[] = [];
+
+  /** Gövdeye oturan kabuk. */
+  const shell = (pad: number, mat: THREE.Material) => {
+    const pts = PROFILE.map(([y, r]) => new THREE.Vector2(r + pad, y));
+    const geo = new THREE.LatheGeometry(pts, 10);
+    geo.computeVertexNormals();
+    const m = mesh(geo, mat);
+    m.scale.z = DEPTH;
+    return m;
+  };
+
+  /** Kabuğun üstüne binen kuşak (tek yüzlü şerit). */
+  const band = (y: number, pad: number, h: number, mat: THREE.Material) => {
+    const r = radiusAt(y) + pad;
+    const m = mesh(new THREE.CylinderGeometry(r, r, h, 10, 1, true), mat, false);
+    m.position.y = y;
+    m.scale.z = DEPTH;
+    return m;
+  };
 
   if (tier === 'LEATHER') {
-    const c = mesh(new THREE.CylinderGeometry(0.245, 0.19, 0.44, 6), leather);
-    c.position.y = -0.02;
-    c.scale.z = dScale;
-    rig.chestArmorSocket.add(c);
-
-    // Pauldrons positioned cleanly over the shoulder top without penetrating upper arm
-    const pGeo = new THREE.BoxGeometry(0.13, 0.055, 0.15);
-    const lp = mesh(pGeo, leather);
-    lp.position.set(0.03, 0.02, 0);
-    rig.leftPauldronSocket.add(lp);
-
-    const rp = mesh(pGeo.clone(), leather);
-    rp.position.set(-0.03, 0.02, 0);
-    rig.rightPauldronSocket.add(rp);
+    // Dolgun gambeson: kapitone keten gövde + deri kuşak + kapitone dikişler.
+    pieces.push(shell(0.016, padded));
+    for (const y of [-0.14, 0.02, 0.18, 0.34]) {
+      pieces.push(band(y, 0.022, 0.008, leather));
+    }
+    // Omuz askıları: ön göğüsten geçen iki deri şerit.
+    for (const side of [-1, 1]) {
+      const strap = mesh(new THREE.BoxGeometry(0.03, 0.34, 0.012), leather, false);
+      strap.position.set(side * 0.062, 0.24, frontZ(0.24, 0.02, 0.004));
+      strap.rotation.z = side * 0.1;
+      pieces.push(strap);
+    }
+    pieces.push(band(-0.02, 0.03, 0.042, leather));
+    // Sancak işareti: göğsün ortasında küçük bir arma pulu.
+    const badge = mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.012, 8), cloth, false);
+    badge.rotation.x = Math.PI / 2;
+    badge.position.set(0, 0.3, frontZ(0.3, 0.02, 0.008));
+    pieces.push(badge);
   } else if (tier === 'CHAINMAIL') {
-    const mail = mesh(new THREE.CylinderGeometry(0.25, 0.2, 0.47, 6), metal);
-    mail.position.y = -0.04;
-    mail.scale.z = dScale;
-
-    const coif = mesh(new THREE.CylinderGeometry(0.14, 0.21, 0.12, 6), metal);
-    coif.position.y = 0.2;
-    coif.scale.z = dScale;
-    rig.chestArmorSocket.add(mail, coif);
-
-    const pGeo = new THREE.CylinderGeometry(0.08, 0.065, 0.09, 6);
-    const lp = mesh(pGeo, metal);
-    lp.position.set(0.03, 0.015, 0);
-    rig.leftPauldronSocket.add(lp);
-
-    const rp = mesh(pGeo.clone(), metal);
-    rp.position.set(-0.03, 0.015, 0);
-    rig.rightPauldronSocket.add(rp);
+    // Postacı: gövde + etek + boyun zırhı + omuz askısı.
+    pieces.push(shell(0.02, metal));
+    const skirt = mesh(new THREE.CylinderGeometry(0.214, 0.242, 0.2, 10, 1, true), metal);
+    skirt.position.y = -0.14;
+    skirt.scale.z = DEPTH;
+    pieces.push(skirt);
+    const collar = mesh(new THREE.CylinderGeometry(0.158, 0.202, 0.1, 10, 1, true), metal);
+    collar.position.y = 0.475;
+    collar.scale.z = DEPTH;
+    pieces.push(collar);
+    // Göğüs kayışı: kabuğun önünde, çapraz.
+    const strap = mesh(new THREE.BoxGeometry(0.036, 0.42, 0.016), leather, false);
+    strap.position.set(0.055, 0.2, frontZ(0.2, 0.02, 0.006));
+    strap.rotation.z = 0.32;
+    pieces.push(strap);
+    pieces.push(band(0.02, 0.026, 0.03, leather));
   } else if (tier === 'PLATE') {
-    const plate = mesh(new THREE.CylinderGeometry(0.255, 0.21, 0.46, 6), metal);
-    plate.position.y = -0.02;
-    plate.scale.z = dScale;
-    rig.chestArmorSocket.add(plate);
+    // Tam levha: kabuk + omurga + iki kuşak + gorget + arma.
+    pieces.push(shell(0.028, metal));
+    const keel = mesh(new THREE.BoxGeometry(0.032, 0.42, 0.03), metal, false);
+    keel.position.set(0, 0.2, frontZ(0.2, 0.028, 0.008));
+    pieces.push(keel);
+    pieces.push(band(0.09, 0.034, 0.032, gold));
+    pieces.push(band(0.34, 0.034, 0.032, gold));
+    const gorget = mesh(new THREE.CylinderGeometry(0.156, 0.206, 0.09, 10), metal, false);
+    gorget.position.y = 0.485;
+    gorget.scale.z = DEPTH;
+    pieces.push(gorget);
+    // Sancak arması: öne bakan dört yüzlü piramit.
+    const crest = mesh(new THREE.ConeGeometry(0.055, 0.034, 4), gold, false);
+    crest.rotation.x = Math.PI / 2;
+    crest.position.set(0, 0.26, frontZ(0.26, 0.028, 0.014));
+    pieces.push(crest);
+  }
 
-    const crest = mesh(new THREE.BoxGeometry(0.11, 0.11, 0.03), gold, false);
-    crest.position.set(0, 0.04, 0.21 * dScale);
-    rig.chestArmorSocket.add(crest);
+  rig.chestArmorSocket.add(...pieces);
+  for (const p of pieces) p.userData.chestArmor = true;
 
-    // Layered plate spaulders
-    for (const [sock, side] of [[rig.leftPauldronSocket, 1], [rig.rightPauldronSocket, -1]] as const) {
-      const p = mesh(new THREE.BoxGeometry(0.15, 0.09, 0.16), metal);
-      p.position.set(side * 0.035, 0.025, 0);
-      const t = mesh(new THREE.BoxGeometry(0.16, 0.02, 0.17), gold, false);
-      t.position.set(side * 0.035, 0.07, 0);
-      sock.add(p, t);
+  /* ── Kol zırhları (üst kol + ön kol) ──
+     Bunlar da BannerForge'dan alınmıyor: onun kol parçaları bizim kollarımıza
+     göre 1 cm kadar küçük kalıyor ve 6 kenarlı kol silindirinin köşeleri zırhın
+     içinden geçiyor (görselde kırmızı çizikler). Kendi üreticimizde zırh yarıçapı
+     kolun köşe yarıçapından en az 6 mm büyük. */
+  const armMat = tier === 'LEATHER' ? padded : metal;
+  const upperR = [0.078, 0.07] as const;
+  const foreR = [0.072, 0.058] as const;
+  for (const [upper, fore, side] of [
+    [rig.leftUpperArm, rig.leftForearm, 1],
+    [rig.rightUpperArm, rig.rightForearm, -1],
+  ] as const) {
+    const sleeve = mesh(
+      new THREE.CylinderGeometry(upperR[0], upperR[1], RIG_DIMENSIONS.upperArm - 0.012, 8, 1, true),
+      armMat,
+      false,
+    );
+    sleeve.position.y = -RIG_DIMENSIONS.upperArm / 2;
+    sleeve.userData.armArmor = true;
+    upper.add(sleeve);
+
+    const bracer = mesh(
+      new THREE.CylinderGeometry(foreR[0], foreR[1], RIG_DIMENSIONS.forearm - 0.01, 8, 1, true),
+      tier === 'LEATHER' ? leather : metal,
+      false,
+    );
+    bracer.position.y = -RIG_DIMENSIONS.forearm / 2;
+    bracer.userData.armArmor = true;
+    fore.add(bracer);
+
+    // Dirsek kapağı (postacı/levha).
+    if (tier !== 'LEATHER') {
+      const cop = mesh(new THREE.SphereGeometry(0.078, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.62), metal, false);
+      cop.scale.set(1, 0.8, 1);
+      cop.position.y = 0.005;
+      upper.add(cop);
+    } else {
+      // Deri bileklik.
+      const cuff = mesh(new THREE.CylinderGeometry(foreR[1] + 0.008, foreR[1] + 0.006, 0.05, 8, 1, true), leather, false);
+      cuff.position.y = -RIG_DIMENSIONS.forearm + 0.03;
+      fore.add(cuff);
+    }
+    if (tier === 'PLATE') {
+      const trim = mesh(new THREE.CylinderGeometry(upperR[1] + 0.01, upperR[1] + 0.01, 0.026, 8, 1, true), gold, false);
+      trim.position.y = -RIG_DIMENSIONS.upperArm + 0.028;
+      upper.add(trim);
+      void side;
+    }
+  }
+
+  /* ── Omuz zırhları (pauldron) ── */
+  const pauldronMat = tier === 'LEATHER' ? padded : metal;
+  for (const [sock, side] of [
+    [rig.leftPauldronSocket, 1],
+    [rig.rightPauldronSocket, -1],
+  ] as const) {
+    if (tier === 'PLATE') {
+      for (const [r, dy] of [
+        [0.108, 0.012],
+        [0.094, 0.052],
+      ] as const) {
+        const cap = mesh(
+          new THREE.SphereGeometry(r, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.52),
+          metal,
+          false,
+        );
+        cap.scale.set(1, 0.82, 1.02);
+        cap.position.set(side * 0.018, dy, 0);
+        sock.add(cap);
+      }
+      const trim = mesh(new THREE.TorusGeometry(0.1, 0.008, 4, 10), gold, false);
+      trim.rotation.x = Math.PI / 2;
+      trim.position.set(side * 0.018, 0.028, 0);
+      sock.add(trim);
+    } else if (tier === 'CHAINMAIL') {
+      const cap = mesh(new THREE.SphereGeometry(0.1, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.6), metal, false);
+      cap.scale.set(1, 0.9, 1.05);
+      cap.position.set(side * 0.015, 0.01, 0);
+      sock.add(cap);
+    } else {
+      const pad = mesh(new THREE.SphereGeometry(0.095, 8, 3, 0, Math.PI * 2, 0, Math.PI * 0.45), pauldronMat, false);
+      pad.scale.set(1, 0.7, 1.05);
+      pad.position.set(side * 0.012, 0.008, 0);
+      sock.add(pad);
     }
   }
 }
 
-/**
- * Shields are authored face-normal +Z, top +Y, then rotated so the top points along hand -X.
- * (With the left forearm held horizontally across the chest, hand -X is world-up.)
- */
 function buildShield(type: ShieldType, m: CharacterRig['materials']): THREE.Group | null {
   if (type === 'NONE') return null;
   const { faction, metal, wood } = m;
@@ -973,9 +1130,14 @@ export function applyEquipmentToRig(rig: CharacterRig, options: CharacterVisualO
       clearArmoryArmor(rig);
       buildArmor(rig, options.armorTier);
     }
-  } else {
-    buildArmor(rig, options.armorTier);
   }
+  /*
+   * Gövde zırhı + omuzluklar HER İKİ katmanda da bizim üreticimizden gelir.
+   * BannerForge'un gövde/omuz parçaları başka bir iskelet için yazılmış
+   * (göğsü kapatmıyor, kolların içine giriyor) → `applyArmoryArmor` bu
+   * bölgeleri atlıyor, yerlerini `buildArmor` dolduruyor.
+   */
+  buildArmor(rig, options.armorTier);
 
   if (options.weaponType === 'BOW') {
     const bow = buildBow(m);

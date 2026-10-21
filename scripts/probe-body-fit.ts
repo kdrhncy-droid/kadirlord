@@ -40,6 +40,7 @@ interface Row {
   armorW: number;
   armorD: number;
   torsoW: number;
+  torsoD: number;
 }
 
 const rows: Row[] = heroes.map((hero) => {
@@ -81,6 +82,7 @@ const rows: Row[] = heroes.map((hero) => {
       armorW: armorSize.x,
       armorD: armorSize.z,
       torsoW: torsoSize.x,
+      torsoD: torsoSize.z,
     };
   } finally {
     disposeRig(rig);
@@ -127,9 +129,9 @@ ok(
   armored.map((r) => (r.armorW / r.shoulderDist).toFixed(2)).join(' '),
 );
 ok(
-  armored.every((r) => r.armorD < r.torsoW * 0.8),
-  'zırh derinliği gövdeyle orantılı',
-  span((r) => r.armorD),
+  armored.every((r) => r.armorD < r.torsoD * 1.35),
+  'zırh derinliği gövde derinliğiyle orantılı',
+  armored.map((r) => (r.armorD / r.torsoD).toFixed(2)).join(' '),
 );
 
 // Omuz açıklığı gövde genişliğiyle tutarlı olmalı (zırh/gövde ayrışmasın).
