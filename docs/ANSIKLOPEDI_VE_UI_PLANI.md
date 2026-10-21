@@ -594,18 +594,24 @@ export interface ClanRecord {
 
 ---
 
-## 11. BÖLÜM I — SANA SORACAKLARIM (karar bekleyen)
+## 11. BÖLÜM I — KARARLAR (onaylandı: 2026-10-21)
 
-Aşağıdaki maddelerde **kendi başıma karar vermiyorum**:
+Sorduğum 4 soru yanıtlandı; aşağıdaki kararlar **bağlayıcıdır**:
 
-1. **Görsel dil:** Bannerlord'a **birebir** mi (parşömen dokusu, kart sanatları, ağır çerçeve),
-   yoksa bizim mevcut **sade koyu-altın** temamızı koruyup yalnızca **düzeni** mi kopyalayalım?
-2. **Fog of war:** Ansiklopedide herkes baştan görünsün mü, Bannerlord gibi **"hiç görülmemiş"** karakterler
-   gizlensin mi, yoksa orta yol (isim/klan görünür, beceri ve konum gizli) mu?
-3. **Portreler:** Ansiklopedi kartlarında **canlı 3B render** (dönen karakter) mi, yoksa **tek kare üretilmiş
-   portre** (hafif, hızlı) mı?
-4. **Sıra:** Senin verdiğin sırayla mı gidelim (Ansiklopedi → HUD → Quest → Diyalog → Pazar → Asker),
-   yoksa **diyalog** daha mı önce gelsin?
+| # | Soru | Karar | Sonuç |
+| :--- | :--- | :--- | :--- |
+| 1 | Görsel dil | **Hibrit** | Düzen/çerçeve Bannerlord gibi, ağır parşömen yerine hafif dokulu **koyu yüzey**. Mevcut `#c6a15b` + Cinzel korunur. |
+| 2 | Fog of war | **Orta yol** | İsim, unvan, klan, krallık, ilişki **her zaman** görünür. **Yaş ve beceriler** yalnızca kahramanla tanışılınca (`revealed`). |
+| 3 | Portreler | **Tek kare (baked)** | Portreler bir kez render edilip doku olarak önbelleğe alınır (LRU ~64). Canlı 3B yalnızca detay sayfasında opsiyonel. |
+| 4 | Sıra | **Önce veri temeli** | `Faz 0 → Faz 1 (Ansiklopedi kabuğu) → …` Kullanıcının verdiği içerik sırası korunur. |
+
+### ⚠️ Faz 0 sırasında çıkan kritik bulgu
+
+Depoda **yalnızca 9 lord** var (`rules.test.ts:83` → `state.lords.length === 9`).
+Bannerlord'da bir krallıkta tek başına 10–20 klan/lord bulunur; ansiklopedi 9 kayıtla **boş görünür**.
+
+**Karar gerekiyor:** kahraman sayısı (§14'te soru olarak duruyor). Faz 0 bunu **veri üretimini
+tek yerden** yapabilecek şekilde kurguladı: `buildHeroRegistry()` kaç lord olursa olsun çalışır.
 
 ---
 
@@ -639,7 +645,51 @@ Aşağıdaki maddelerde **kendi başıma karar vermiyorum**:
 
 ---
 
-## 13. SONRAKİ ADIM
+## 13. FAZ 0 — VERİ TEMELİ (TAMAMLANDI ✅)
 
-Bu doküman onaylandığında **Faz 0 (veri temeli)** ile başlanır. Faz 0 bitmeden hiçbir arayüz yazılmaz;
-çünkü ansiklopedinin göstereceği alanların yarısı bugün veri modelinde **yok**.
+### Eklenen dosyalar
+
+| Dosya | İçerik |
+| :--- | :--- |
+| `src/game/heroes.ts` (~330 satır) | `HeroRecord`, `LastSeen`, `HeroTraits`, `HeroFamily`, `HeroRegistry` tipleri; `buildHeroRegistry()`, `ageOf()`, `locative()`, `lastSeenLabel()`, `revealHero()`, `visibleHeroInfo()`, `searchHeroes()` |
+| `scripts/probe-heroes.ts` | 14 doğrulama: kapsam, zorunlu alanlar, yaş, **determinizm**, son görülme, krallık/klan, beceri, kişilik, fog, arama, durum |
+
+### Tasarım notları
+
+- **Deterministik türetim:** yaş, beceri ve kişilik `hash32(heroId)` üzerinden üretilir →
+  aynı lord her açılışta aynı yaşta/beceride. Save dosyasına yazmak gerekmez.
+- **`LordAgent` şeması değişmedi** → oyunun geri kalanı ve mevcut testler etkilenmedi.
+- **Türkçe bulunma hâli:** `locative()` ünlü uyumu + ünsüz sertleşmesi uygular.
+  `Lycaron'da · Chanos'ta · Marunath'ta · Pravend'de · Sotysia'da` (çok sözcüklü adlarda
+  `… yerleşiminde` güvenli biçimi).
+- **Durum çıkarımı:** `LordAgent.currentAction` metninden (`esir`, `kuşatma`, `ordu` …) +
+  en yakın yerleşime uzaklıktan `HeroStatus` üretilir.
+
+### Ölçüm sonucu
+
+```
+✓ her lord için kayıt var (9/9)          ✓ son görülme yerleşimi geçerli (9/9)
+✓ zorunlu alanlar dolu                   ✓ her kahramanda 18 beceri
+✓ yaşlar 37–61, tam sayı                 ✓ beceri seviyeleri 30–173
+✓ iki kez üretim birebir aynı            ✓ kişilik özellikleri -2..+2
+✓ krallık adları FACTION_INFO uyumlu     ✓ tanışılmamışta yaş+beceri gizli
+```
+
+Örnek çıktı:
+
+```
+Rhagaea    58  RULER        Kalradya İmparatorluğu   Lycaron'da bugün görüldü
+Kargı      50  GANG_LEADER  Kara Geçit Yağmacıları   Chanos'ta bugün görüldü
+Derthert   46  RULER        Vlandiya Krallığı        Pravend'de bugün görüldü
+Unqid      58  RULER        Aserai Sultanlığı        Tubilis Köyü yerleşiminde …
+```
+
+---
+
+## 14. SONRAKİ ADIM (karar bekliyor)
+
+1. **Kahraman sayısı:** 9 mevcut lord kalsın mı, yoksa krallık başına 2–3 klan + 30–50 yeni
+   lord/leydi üretilsin mi? (Ansiklopedi ve aile ağacı bu sayıya göre dolu/boş görünür.)
+2. **Üretilen lordlar simüle edilsin mi?** Haritada ordularıyla dolaşan gerçek partiler mi olsun,
+   yoksa şimdilik yalnızca ansiklopedi kaydı olarak mı dursun?
+3. Bunlar netleşince **Faz 1 (Ansiklopedi kabuğu)** başlar.
