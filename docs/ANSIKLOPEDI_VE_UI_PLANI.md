@@ -870,7 +870,26 @@ kafa yatayda ±0.9 içinde, boyun ve omuz hattı kadrajda.
 kırılmaz. Node/SSR probe'ları bunu doğrular (`!html.includes('<img')`). GPU bağlamı kaybolursa
 (`webglcontextlost`) üretim `null`'a düşer, arayüz rozette kalır.
 
-### 17.5 Bilinen sınırlar
+### 17.5 Gerçek tarayıcı doğrulaması (2026-10-21)
+
+Ajan sandbox'ında başsız Chromium (SwiftShader WebGL) çalıştırıldı; portreler **gerçek**
+`WebGLRenderer` ile üretildi. Akış: ana menü → "Seferi Başlat" → `N` → Kahramanlar.
+
+- 40/40 portre hazır, `naturalWidth/Height = 256×320`, ~1 kare/portre.
+- Konsol temiz (portre hataları yok), şeffaf zemin UI'da sancak renkli gradyanı gösteriyor.
+- Görseller: `docs/renders/portraits-webgl.png`, `encyclopedia-heroes.png`,
+  `encyclopedia-hero-detail.png`. Araç: `scripts/visual-check.mjs` (verify zincirinde değil).
+
+Bulgular (gerçek render'da görülen, düzeltilmeye değer):
+
+1. **Yara izi (scar) deseni** yakın planda yüzeyden kopuk, kalın bir "X" gibi duruyor
+   (`characterFace` decal'leri); portre ölçeğinde yapay görünüyor.
+2. Yüz hatları yakın planda maskeye benziyor: gözler büyük ve düz, burun neredeyse kayboluyor,
+   boyun ince/uzun. Düzeltme "Faz 9 yüzler" kapsamında ama portreler bunu erken gösteriyor.
+3. Ansiklopedideki **emoji ikonlar** emoji fontu olmayan sistemlerde tofu (□) çıkıyor.
+4. Mikro etiketler (`KÜLTÜR`, `YAŞ` …) koyu zeminde düşük kontrastlı.
+
+### 17.6 Bilinen sınırlar
 
 - Portreler **statik**: yara/yaşlanma/teçhizat değişimi yansımaz (önbellek anahtarı `id:sancak:meslek`).
 - `PORTRAIT_W/H = 256×320`; 208px'lik detayda retina ekranda hafif yumuşama olabilir.
@@ -879,13 +898,13 @@ kırılmaz. Node/SSR probe'ları bunu doğrular (`!html.includes('<img')`). GPU 
 - Chromium/Playwright olmadığı için gerçek piksel çıktısı otomatik test edilemiyor; bu yüzden kadraj
   sayısal olarak (NDC) ölçülüyor.
 
-### 17.6 Doğrulama
+### 17.7 Doğrulama
 
 `tsc --noEmit` ✓ · `rules.test` 28/28 ✓ · `probe-heroes` ✓ · `probe-encyclopedia` 44/44 ✓ ·
 `probe-encyclopedia-ui` 52/52 ✓ · `probe-portrait` 15/15 ✓ · `probe-portrait-frame` 12/12 ✓ ·
 `vite build` ✓
 
-### 17.7 Sonraki adım — Faz 1d (cila)
+### 17.8 Sonraki adım — Faz 1d (cila)
 
 1. Portrelerin krallık/klan listelerinde de görünmesi (şu an yalnız kahraman listesi + `HeroRow`).
 2. Ansiklopedi başlığında klan sancağı + hükümdar portresi.
