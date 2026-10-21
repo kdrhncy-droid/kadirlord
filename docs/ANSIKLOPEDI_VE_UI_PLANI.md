@@ -1275,3 +1275,32 @@ Kalan işler (öncelik sırası):
 2. Leydi portrelerinde yüz detayı (göz/kaş/dudak zaten 1h'de ayrıştırıldı) — portre
    kadrajı kullanıcı onayı olmadan **değişmeyecek**.
 3. Sesler ve diyalog sırasında NPC animasyonu (Faz 6d).
+
+## 31. DURUM TABLOSU (2026-10-21, bu oturum sonu)
+
+| Faz | Konu | Durum | Ana doğrulama |
+| --- | --- | --- | --- |
+| 0 / 0b | Veri temeli, dünya nüfusu | ✅ | `probe-heroes` |
+| 1a–1c | Ansiklopedi kabuğu, krallık/klan/yerleşim, baked portreler | ✅ | `probe-encyclopedia`, `probe-portrait` |
+| 1f | Beden oranları ve zırh oturması | ✅ | `probe-body-fit` 9/9 |
+| 1g | Yara izleri | ✅ | `probe-face-decals` 33/33 |
+| 1h | Leydi yüzleri | ✅ | `probe-ladies` 10/10 |
+| 1i | Ansiklopedi UI cilası | ✅ | `probe-encyclopedia-ui` |
+| 1j | Eller | ✅ | `probe-hands` 10/10 |
+| 1k | **Pazar yalnız yerleşimde** | ✅ | `probe-hud` |
+| 2 | Entity sayfaları (aile, müttefik/rakip, esaret, diplomasi) | ✅ | `probe-encyclopedia-ui` 75 |
+| 3 | Aile ağacı (eş/ebeveyn/çocuk) | ✅ | `probe-encyclopedia-ui` 84 |
+| 4 | HUD sadeleştirme (9 → 6 giriş) | ✅ | `probe-hud` 18 |
+| 5 | Görev sistemi | ✅ | `probe-quests` 17 |
+| 6 | Diyalog ekranı | ✅ | `probe-dialogue` 25 + UI 12 |
+| 7 | Pazaryeri (tam Bannerlord düzeni) | ✅ | `probe-market` 28 + UI 20 |
+| 8 | Asker toplama | ✅ | `probe-recruitment` 28 + UI 10 |
+| 9 | Yüzler / içerik / sesler | 🟡 sırada | — |
+
+Tümü tek komutla: `npm run verify:all` (tsc + 19 test/probe dosyası).
+
+**Faz 9 için planlanan küçük işler**
+1. Portre yüz detayı (göz/kaş/dudak) — kadraj **değişmeyecek** (kullanıcı kararı).
+2. Klan/klan lideri bilgisinin tekrarlandığı yerlerin sadeleştirilmesi.
+3. Diyalog sırasında NPC kamera yaklaşımı ve baş/el animasyonu (6d).
+4. Ses: diyalog açılış/kapanış ve teklif kabulü için kısa efektler.
