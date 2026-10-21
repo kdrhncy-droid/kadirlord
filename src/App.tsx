@@ -1125,7 +1125,8 @@ export default function App() {
           onTalkToLord={(l) => {
             setDialogueLord(l);
           }}
-          canTrade={!!(activeSettlementModal || nearSettlement)}
+          // Bannerlord: pazaryeri yalnız **yerleşim menüsünden** açılır (haritada yakınlık yetmez).
+          canTrade={!!activeSettlementModal}
           onOpenCharacterArena={() => setViewMode('character_arena')}
           onOpenKingdomModal={() => setIsKingdomModalOpen(true)}
           onOpenCharacterCreator={() => setIsCharacterCreatorOpen(true)}
@@ -1424,9 +1425,9 @@ export default function App() {
         />
       )}
 
-      {isMarketModalOpen && (activeSettlementModal || nearSettlement) && (
+      {isMarketModalOpen && activeSettlementModal && (
         <BannerlordMarketModal
-          settlement={activeSettlementModal || nearSettlement}
+          settlement={activeSettlementModal}
           campaign={campaign}
           onClose={() => setIsMarketModalOpen(false)}
           onUpdateCampaign={(next) => setCampaign(next)}

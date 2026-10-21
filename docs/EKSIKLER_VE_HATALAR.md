@@ -73,6 +73,10 @@
 - **Not:** Yerleşim menüsü açıkken zaten `activeSettlementModal` dolu olduğu için (a) seçeneği
   hiçbir akışı bozmaz. **Onayınızı bekliyorum.**
 
+> **✅ DÜZELTİLDİ (Faz 10b):** (a) seçeneği uygulandı — `App.tsx` `canTrade={!!activeSettlementModal}`,
+> pazar modalı yalnız `isMarketModalOpen && activeSettlementModal` iken render ediliyor ve
+> `settlement={activeSettlementModal}` alıyor. Yakınlık artık pazar açmıyor; kurala birebir uyumlu.
+
 ### A5. 🏰 Klan tımar sayıları uydurma ve krallık toplamıyla tutmuyor
 - **Kanıt:** `src/game/encyclopedia.ts:173` → `fiefCount: Math.round((fiefCountByFaction[kingdomId] ?? 0) / 3)`.
   Ölçüm (birim testi çıktısı):
@@ -125,7 +129,14 @@
 
 ## B. ORTA — içerik, erişilebilirlik, tutarlılık
 
-### B1. 🏯 28/29 kale adı İngilizce "… Castle" ve tür etiketiyle çakışıyor
+### B1. 🏯 28/29 kale adı İngilizce "… Castle" ve tür etiketiyle çakışıyor — ✅ DÜZELTİLDİ (Faz 10b)
+
+> **Araştırma sonucu:** Bu bir **veri hatası değildi.** Bannerlord'un İngilizce sürümünde kale
+> etiketi gerçekten *"Lochana Castle"* (`mountandblade.fandom.com/wiki/Lochana_Castle`); resmî
+> **Türkçe** çeviride ise *"Lochana Kalesi"* (Steam TR yerelleştirme rehberi). Hata, TR arayüzde
+> İngilizce ekin görünmesiydi.
+> **Çözüm:** 28 kale `<Ad> Kalesi` biçimine çevrildi (`Karageçit Hisarı` gibi Türkçe adlar korundu),
+> köy türetmesi `Kalesi|Castle|Hisarı` eklerinin hepsini temizliyor. Doğrulama: `probe-content.ts`.
 - **Kanıt:** `rules.ts:1451` `'Lochana Castle'`, `:1464` `'Hertogea Castle'` … (29 kalenin 28'i).
   Ölçüm: `CASTLE` tipinde 29 yerleşim, 28'i "Castle" içeriyor; `TOWN` ve `VILLAGE`'da 0.
 - **Etki:** Türkçe arayüzde ("Kale" ikonu + "Kale" etiketi) ad da "… Castle" → aynı bilgi iki kez
@@ -222,12 +233,12 @@
 
 ## E. ⚖️ KARAR GEREKTİREN ÜÇ BAŞLIK
 
-1. **A4 — Pazar:** yakınlıkta açılması kalsın mı, yoksa yalnız yerleşim menüsünden mi açılsın?
-2. **B7 — Mobil:** dokunmatik kontrol mü, "masaüstü gerekli" bilgi ekranı mı?
-3. **B1 — Kale adları:** "Lochana Castle" → "Lochana" olarak **veri** değişsin mi
-   (28 kayıt), yoksa yalnız gösterimde mi kırpılsın?
+1. ~~**A4 — Pazar**~~ ✅ yalnız yerleşim menüsünden (Faz 10b).
+2. **B7 — Mobil:** dokunmatik kontrol mü, "masaüstü gerekli" bilgi ekranı mı? **Hâlâ açık.**
+3. ~~**B1 — Kale adları**~~ ✅ veri `<Ad> Kalesi` (Faz 10b) — Bannerlord TR çevirisiyle aynı.
 
-> **Durum:** Paket 1 (A1 + A2 + A8) tamamlandı → MD §40. Kalan paketler aşağıdaki tabloda.
+> **Durum:** Paket 1 (A1 + A2 + A8) → MD §40; Bannerlord yerleşim menüsü + adlandırma → MD §41.
+> Kalan paketler aşağıdaki tabloda.
 
 ## F. ÖNERİLEN DÜZELTME SIRASI (her adım kendi doğrulamasıyla)
 
@@ -236,8 +247,8 @@
 | 1 | **Zaman & kayıt** ✅ | A1 + A2 + A8 (kayıt, pause/restore, modal yığını + Esc) | `probe-save` 30 ✅, `probe-ui-session` 29 ✅ |
 | 2 | **Fog** | A3 (metHeroIds kampanyaya taşı, diyalog = tanışma) | `probe-fog` |
 | 3 | **Veri doğruluğu** | A5 (klan tımarı), A6 (tek klan modeli) | `Σ klan.fiefCount === krallık.fiefCount`, aynı `clanId` aynı ad |
-| 4 | **İçerik** | B1 (kale adları), B2 (bağımsız klan kartı), B9 | `probe-content` |
+| 4 | **İçerik** ⏳ | B1 ✅ (kale adları — Faz 10b), B2 (bağımsız klan kartı), B9 | `probe-content` 10 ✅ |
 | 5 | **Erişilebilirlik** | B5 + B6 + A8 ile birlikte ortak `<Modal>` | `probe-a11y` (role/aria/label ölçümü) |
 | 6 | **Temizlik** | C1, C5, C6, B8 (README) | `tsc --noUnusedLocals` 0 hata, README kontrol listesi |
 | 7 | **Performans** | C2 (kod bölme), C3 (renk token'ları — kademeli) | `vite build` çıktısı: ilk paket < 700 KB |
-| 8 | **Test kapsamı** | C4 (5 büyük bileşene duman probu) | `verify:all` sayısı 26 → 31 |
+| 8 | **Test kapsamı** | C4 (5 büyük bileşene duman probu) | `verify:all` sayısı 29 → 34 |

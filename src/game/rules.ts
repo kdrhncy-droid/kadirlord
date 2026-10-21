@@ -1448,7 +1448,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'lochana_castle',
-      name: 'Lochana Castle',
+      name: 'Lochana Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: 105,
@@ -1461,7 +1461,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'hertogea_castle',
-      name: 'Hertogea Castle',
+      name: 'Hertogea Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: -95,
@@ -1474,7 +1474,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'veron_castle',
-      name: 'Veron Castle',
+      name: 'Veron Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: -32,
@@ -1487,7 +1487,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'lavenia_castle',
-      name: 'Lavenia Castle',
+      name: 'Lavenia Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: 142,
@@ -1500,7 +1500,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'gersegos_castle',
-      name: 'Gersegos Castle',
+      name: 'Gersegos Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: -162,
@@ -1513,7 +1513,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'gaos_castle',
-      name: 'Gaos Castle',
+      name: 'Gaos Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: -18,
@@ -1526,7 +1526,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'melion_castle',
-      name: 'Melion Castle',
+      name: 'Melion Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: 152,
@@ -1539,7 +1539,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'morenia_castle',
-      name: 'Morenia Castle',
+      name: 'Morenia Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: 68,
@@ -1552,7 +1552,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'onica_castle',
-      name: 'Onica Castle',
+      name: 'Onica Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: -178,
@@ -1671,7 +1671,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'caleus_castle',
-      name: 'Caleus Castle',
+      name: 'Caleus Kalesi',
       type: 'CASTLE',
       faction: 'vlandia',
       x: -412,
@@ -1684,7 +1684,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'hongard_castle',
-      name: 'Hongard Castle',
+      name: 'Hongard Kalesi',
       type: 'CASTLE',
       faction: 'vlandia',
       x: -395,
@@ -1697,7 +1697,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'tirby_castle',
-      name: 'Tirby Castle',
+      name: 'Tirby Kalesi',
       type: 'CASTLE',
       faction: 'vlandia',
       x: -352,
@@ -1710,7 +1710,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'ormanfard_castle',
-      name: 'Ormanfard Castle',
+      name: 'Ormanfard Kalesi',
       type: 'CASTLE',
       faction: 'vlandia',
       x: -445,
@@ -1820,7 +1820,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'llanoc_hen_castle',
-      name: 'Llanoc Hen Castle',
+      name: 'Llanoc Hen Kalesi',
       type: 'CASTLE',
       faction: 'battania',
       x: -268,
@@ -1833,7 +1833,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'garontor_castle',
-      name: 'Garontor Castle',
+      name: 'Garontor Kalesi',
       type: 'CASTLE',
       faction: 'battania',
       x: -195,
@@ -1846,7 +1846,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'ab_comer_castle',
-      name: 'Ab Comer Castle',
+      name: 'Ab Comer Kalesi',
       type: 'CASTLE',
       faction: 'battania',
       x: -342,
@@ -1859,7 +1859,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'pendraic_castle',
-      name: 'Pendraic Castle',
+      name: 'Pendraic Kalesi',
       type: 'CASTLE',
       faction: 'battania',
       x: -188,
@@ -1980,7 +1980,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'ov_castle',
-      name: 'Ov Castle',
+      name: 'Ov Kalesi',
       type: 'CASTLE',
       faction: 'sturgia',
       x: -85,
@@ -1993,7 +1993,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'urikskala_castle',
-      name: 'Urikskala Castle',
+      name: 'Urikskala Kalesi',
       type: 'CASTLE',
       faction: 'sturgia',
       x: 92,
@@ -2006,7 +2006,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'vladiv_castle',
-      name: 'Vladiv Castle',
+      name: 'Vladiv Kalesi',
       type: 'CASTLE',
       faction: 'sturgia',
       x: 134,
@@ -2019,7 +2019,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'mazolm_castle',
-      name: 'Mazolm Castle',
+      name: 'Mazolm Kalesi',
       type: 'CASTLE',
       faction: 'sturgia',
       x: -152,
@@ -2142,7 +2142,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'simira_castle',
-      name: 'Simira Castle',
+      name: 'Simira Kalesi',
       type: 'CASTLE',
       faction: 'khuzait',
       x: 278,
@@ -2155,7 +2155,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'kaysar_castle',
-      name: 'Kaysar Castle',
+      name: 'Kaysar Kalesi',
       type: 'CASTLE',
       faction: 'khuzait',
       x: 282,
@@ -2168,7 +2168,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'tepes_castle',
-      name: 'Tepes Castle',
+      name: 'Tepes Kalesi',
       type: 'CASTLE',
       faction: 'khuzait',
       x: 288,
@@ -2181,7 +2181,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'khimli_castle',
-      name: 'Khimli Castle',
+      name: 'Khimli Kalesi',
       type: 'CASTLE',
       faction: 'khuzait',
       x: 268,
@@ -2289,7 +2289,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'tubilis_castle',
-      name: 'Tubilis Castle',
+      name: 'Tubilis Kalesi',
       type: 'CASTLE',
       faction: 'aserai',
       x: -198,
@@ -2302,7 +2302,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'barihal_castle',
-      name: 'Barihal Castle',
+      name: 'Barihal Kalesi',
       type: 'CASTLE',
       faction: 'aserai',
       x: -48,
@@ -2315,7 +2315,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'medeni_castle',
-      name: 'Medeni Castle',
+      name: 'Medeni Kalesi',
       type: 'CASTLE',
       faction: 'aserai',
       x: 58,
@@ -2426,7 +2426,10 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
         }
       }
       if (!vName) {
-        const baseClean = parent.name.replace(' Castle', '').replace(' Hisarı', '');
+        const baseClean = parent.name
+          .replace(' Kalesi', '')
+          .replace(' Castle', '')
+          .replace(' Hisarı', '');
         vName = v === 0 && needed === 1 ? `${baseClean} Köyü` : `${baseClean} ${v + 1}. Köyü`;
       }
       usedNames.add(vName);

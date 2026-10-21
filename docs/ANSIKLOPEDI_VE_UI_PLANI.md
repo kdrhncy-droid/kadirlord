@@ -1728,3 +1728,75 @@ Yeni modül: **`src/game/uiSession.ts`** (`speedBeforeUi`, `speedAfterUi`).
 
 - `verify:all` **28 paket ✅**, `vite build` ✅ (961 ms), `tsc` temiz.
 - `renderToStaticMarkup(<App/>)` ✅ (kayıt yokken başlık ekranı çöküyor değil).
+
+---
+
+## 41. FAZ 10b — BANNERLORD YERLEŞİM MENÜSÜ VE ADLANDIRMA (TAMAMLANDI ✅)
+
+### 41.1 Kaynak araştırması (uygulamadan önce)
+
+| Kaynak | Bulgu |
+| --- | --- |
+| `taleworlds.com/…/Blog/85` | Şehir bölgeleri: **Marketplace** (lonca, demirci, atölye), **Slums & backstreets** (kaçakçı/haydut), **Keep** (soylular, vali, esirler), **Military district** (garnizon, eğitim, kuşatma stoğu), **Tavern** (maceraperest, paralı asker, yol arkadaşı). Kuşatma sırasında "siege state" (boş sokaklar, kapalı dükkânlar). |
+| `taleworlds.com/…/Blog/67` | Yerleşim menüsü **tam ekran değil**: harita üzerine **overlay**; kampanya arayüzü arkada çalışmaya devam eder. Menü **bölgelere (districts)** ayrılır, her bölge kendi alt menüsüdür (ör. Arena → turnuvaya katıl). NPC'ler **sağ üst portre panelinden** doğrudan çağrılır. |
+| `mountandblade.fandom.com/wiki/Lochana_Castle` | Harita/ansiklopedi etiketi **"Lochana Castle"**; bağlı köyler Lochana + Nortanisa. Aynı ad hem kale hem köy olabilir. |
+| `steamcommunity.com` TR yerelleştirme rehberi | Resmî Türkçe çeviri: kale = **"Lochana Kalesi"**, şehir = yalın (**"Ortongard"**), köy = yalın. "Kalesi/Şehri/Köyü" ekleri Bannerlord'da ayrı bir mod gerektirir. |
+
+**Sonuç:** B1 bir **veri hatası değildi** — `Lochana Castle` İngilizce sürümün doğru etiketidir.
+Hata, TR arayüzde İngilizce ekin görünmesiydi. Düzeltme **veri katmanında** yapıldı: 28 kale
+`<Ad> Kalesi` biçimine çevrildi, `Karageçit Hisarı` gibi Türkçe adlar korundu.
+
+### 41.2 Adlandırma kuralı (uygulandı)
+
+| Tür | Kural | Örnek |
+| --- | --- | --- |
+| TOWN | yalın ad | `Lycaron`, `Ortongard` |
+| CASTLE | **"… Kalesi"** / "… Hisarı" | `Lochana Kalesi`, `Karageçit Hisarı` |
+| VILLAGE | yalın ad | `Sancaktepe`, `Canterion` |
+
+- `rules.ts`'te köy adı havuzu tükendiğinde köy, bağlı yerleşimden türetilir; türetme artık
+  **`Kalesi` + `Castle` + `Hisarı`** eklerinin hepsini temizler → **çift ek ("Kalesi Kalesi") yok**.
+- 211 yerleşim adı tekil, İngilizce tür eki kalmadı.
+
+### 41.3 Yerleşim menüsü — Bannerlord bölge yapısı
+
+| Bannerlord bölgesi | Bizdeki sekme | Durum |
+| --- | --- | --- |
+| Meydan / town center | `overview` "Meydan & Genel Durum" | ✅ |
+| Marketplace | `market` "Pazaryeri" | ✅ |
+| Tavern | `tavern` "Meyhane" | ✅ |
+| Arena | `arena` "Arena" | ✅ |
+| Keep | `keep` "Kale" | ✅ |
+| Military district | `garrison` "Garnizon" + `recruit` "Gönüllü Asker Topla" | ✅ |
+| Dungeon | `dungeon` "Zindan" | ✅ |
+| Manage town/castle | `buildings` "Mülk Yönetimi" | ✅ |
+| (eylem) | `wait` "Burada Bekle", `siege` "Kuşatma Kampı", `hostile` "Kuşat ve Taarruz" | ✅ |
+| Smithy / workshops | `smithy` "Demirci" | ✅ |
+| **Slums & backstreets** | — | ❌ **henüz yok** (ayrı adım) |
+
+Etiketler Bannerlord'daki gibi **tek sözcüklü** hâle getirildi (uzun açıklamalar bölge başlığında).
+
+### 41.4 Görsel dil: emoji → SVG
+
+- `SettlementModal.tsx`: **152 emoji → 0**. Sekme ve eylem ikonları `lucide-react`
+  (`Castle, Scale, Beer, Swords, Hammer, Lock, Shield, Construction, Wheat, AlertTriangle, Tent, Target`).
+- İleri gelenlerin (notable) avatarı emoji yerine **tek renk ikon** (`NOTABLE_ICONS`): taç, kalkan, kese, maşrapa, kılıç, mazgallı kule, pranga, buğday.
+- Yeni `src/components/FactionCrest.tsx`: krallık arması = **renkli sancak + tek renk SVG arma**
+  (kartal, taç, kılıç, çam, kalkan, yel, güneş, kurukafa). `FACTION_INFO.glyph` emojisi arayüzde kullanılmıyor.
+- Geri bildirim (toast) metinlerindeki emojiler kaldırıldı; metin sade, Bannerlord'un süslemesiz üslubunda.
+
+### 41.5 Pazar kuralı (A4 tamamlandı)
+
+- `App.tsx`: `canTrade={!!activeSettlementModal}` — pazar **yalnız** yerleşim menüsü açıkken erişilebilir.
+- Pazar modalı yalnız `isMarketModalOpen && activeSettlementModal` iken render edilir ve
+  `settlement={activeSettlementModal}` alır (envanter ile pazar aynı katmanda değil).
+
+### 41.6 Doğrulama
+
+| Kontrol | Sonuç |
+| --- | --- |
+| `npx tsc --noEmit` | ✅ temiz |
+| `scripts/probe-content.ts` (**yeni**) | ✅ 10 kontrol: İngilizce ek yok, 29/29 kale eki, ad tekilliği 211/211, köy bağı, şehir 2 / kale 1 köy |
+| `npm run verify:all` | ✅ **29 paket** |
+| `npx vite build` | ✅ 891 ms |
+| SSR smoke (TOWN/CASTLE/VILLAGE) | ✅ 13511 / 10040 / 8640 bayt, **0 emoji**, 17 SVG ikon |
