@@ -11,13 +11,17 @@
 import type { CampaignState } from './rules';
 import type { KingdomMacroState } from './kingdomSystem';
 import { ensureWorld } from './worldSim';
+import { ensureNotables } from './notables';
 
 /**
  * Kayıt biçimi sürümü.
- * v1 → v2 (Faz 11): `CampaignState.world` (savaşlar, sayaçlar, kuşatma bekleme süreleri)
- * eklendi. v1 kayıtları **reddedilmez**, yükleme sırasında `ensureWorld` ile göç ettirilir.
+ * v1 → v2 (Faz 11): `CampaignState.world` (savaşlar, sayaçlar, kuşatma bekleme süreleri).
+ * v2 → v3 (Faz B0): her `Settlement` için `notables` (ileri gelenler, nüfuz, ilişki).
+ * Eski kayıtlar **reddedilmez**; yükleme sırasında `ensureWorld` + `ensureNotables` ile
+ * göç ettirilir. Üretim deterministik olduğu için eski seferdeki ileri gelenler de
+ * aynı tohumdan çıkar.
  */
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 export const MIN_SUPPORTED_VERSION = 1;
 export const SAVE_KEY = 'sancak-kalradya/sefer-v1';
 
@@ -97,9 +101,20 @@ export function parseSave(raw: string | null | undefined): SaveData | null {
   if (version < MIN_SUPPORTED_VERSION || version > SAVE_VERSION) return null;
   if (!isValidCampaign(parsed.campaign)) return null;
   if (!isValidMacroState(parsed.macroState)) return null;
-  // v1 → v2 göçü: dünya durumu yoksa güvenli varsayılanla doldurulur.
+  // Göç: dünya durumu ve ileri gelenler eksikse tamamlanır (sürümden bağımsız,
+  // çünkü elle düzenlenmiş bir kayıt da eksik alanla gelebilir).
+  const world = ensureWorld(parsed.campaign);
+  const settlements = ensureNotables(parsed.campaign.settlements, world.seed);
+  const needsWorld = version < 2 || !parsed.campaign.world;
+  const needsNotables = settlements !== parsed.campaign.settlements;
   const migratedCampaign: CampaignState =
-    version < 2 ? { ...parsed.campaign, world: ensureWorld(parsed.campaign) } : parsed.campaign;
+    needsWorld || needsNotables
+      ? {
+          ...parsed.campaign,
+          ...(needsWorld ? { world } : {}),
+          ...(needsNotables ? { settlements } : {}),
+        }
+      : parsed.campaign;
   const metHeroIds = Array.isArray(parsed.metHeroIds)
     ? parsed.metHeroIds.filter((id): id is string => typeof id === 'string')
     : [];

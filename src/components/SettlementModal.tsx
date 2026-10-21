@@ -15,6 +15,7 @@ import {
   Swords,
   Target,
   Tent,
+  Truck,
   Wheat,
 } from 'lucide-react';
 import {
@@ -30,6 +31,7 @@ import {
 } from '../game/rules';
 import { recruitQuote, partyLimit, partySize, partyRoom } from '../game/recruitment';
 import { sound } from '../game/sound';
+import { generateNotables, type NotableIconKey, type SettlementNotable } from '../game/notables';
 
 export type TownTab =
   | 'overview'
@@ -46,16 +48,52 @@ export type TownTab =
   | 'dungeon'
   | 'hostile';
 
-export type NotableIconKey =
-  | 'crown'
-  | 'landmark'
-  | 'shield'
-  | 'coins'
-  | 'beer'
-  | 'swords'
-  | 'castle'
-  | 'lock'
-  | 'wheat';
+export type { NotableIconKey, SettlementNotable };
+
+/**
+ * İleri gelen konuşma kartı. Ayrı bileşen çünkü hem yerleşim modalında hem
+ * probe'da (seçim olmadan) doğrudan render edilebilsin.
+ */
+export function NotableSpeechCard({
+  notable,
+  onClose,
+}: {
+  notable: SettlementNotable;
+  onClose?: () => void;
+}) {
+  const relationLabel =
+    notable.relation > 0 ? `+${notable.relation}` : String(notable.relation);
+  return (
+    <div
+      data-testid="notable-speech"
+      className="px-4 py-3 bg-[#1d1811] border-b border-[#d97706]/40 flex items-start justify-between gap-3 text-xs"
+    >
+      <div className="flex items-start gap-2.5">
+        <span className="text-[#c6a15b] mt-0.5">{NOTABLE_ICONS[notable.avatarIcon]}</span>
+        <div>
+          <span className="font-bold text-[#fde68a] block">
+            {notable.name} ({notable.title})
+          </span>
+          <p className="text-[#e2d7c3] italic mt-0.5">"{notable.speech}"</p>
+          <div className="mt-1 flex items-center gap-3 text-[10px] text-[#c6a15b] font-mono-tabular">
+            <span>NÜFUZ {notable.power}</span>
+            <span>İLİŞKİ {relationLabel}</span>
+          </div>
+        </div>
+      </div>
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="İleri geleni kapat"
+          className="text-[#9ca3af] hover:text-white font-bold px-1 text-base leading-none"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
 
 const NOTABLE_ICONS: Record<NotableIconKey, React.ReactNode>= {
   crown: <Crown size={16} strokeWidth={1.6} />,
@@ -67,18 +105,9 @@ const NOTABLE_ICONS: Record<NotableIconKey, React.ReactNode>= {
   castle: <Castle size={16} strokeWidth={1.6} />,
   lock: <Lock size={16} strokeWidth={1.6} />,
   wheat: <Wheat size={16} strokeWidth={1.6} />,
+  hammer: <Hammer size={16} strokeWidth={1.6} />,
+  cart: <Truck size={16} strokeWidth={1.6} />,
 };
-
-export interface SettlementNotable {
-  id: string;
-  name: string;
-  title: string;
-  role: 'ruler'| 'commander'| 'merchant'| 'tavernkeeper'| 'gladiator'| 'elder'| 'warden';
-  /** Lucide ikon anahtarı (Bannerlord portreleri tek renk ikon dilini kullanır). */
-  avatarIcon: NotableIconKey;
-  relation: number;
-  speech: string;
-}
 
 interface SettlementModalProps {
   settlement: Settlement;
@@ -170,91 +199,14 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
   const isCastle = settlement.type === 'CASTLE';
   const isTown = settlement.type === 'TOWN';
 
-  // Generate Authentic Notables Present in Settlement
-  const notables: SettlementNotable[] = React.useMemo(() =>{
-    if (isTown) {
-      return [
-        {
-          id: 'gov',
-          name: settlement.faction === 'empire'? 'Rhagaea': `${factionInfo.name} Beyi`,
-          title: 'Şehir Hakimi & Valisi',
-          role: 'ruler',
-          avatarIcon: settlement.faction === 'empire'? 'crown': 'landmark',
-          relation: 15,
-          speech: `Hoş geldiniz Komutan. ${settlement.name} surları arkasında asayiş ve ticaret lehimize işliyor. Şehrimize dostane niyetle mi geldiniz?`,
-        },
-        {
-          id: 'watch',
-          name: 'Yüzbaşı Valerius',
-          title: 'Garnizon ve Sur Muhafız Başı',
-          role: 'commander',
-          avatarIcon: 'shield',
-          relation: 10,
-          speech: `Surlarımız sağlam, garnizonumuz teyakkuzda. Dış vadilerdeki haydut hareketliliklerini yakından izliyoruz.`,
-        },
-        {
-          id: 'merchant',
-          name: 'Tüccar Belisarios',
-          title: 'Lonca Temsilcisi & İleri Gelen',
-          role: 'merchant',
-          avatarIcon: 'coins',
-          relation: 5,
-          speech: `Kervanlarımız doğudan batıya tuz, tahıl ve kaliteli demir taşıyor. Pazaryerimize her zaman taze erzak ve ganimet alımı yaparız.`,
-        },
-        {
-          id: 'innkeeper',
-          name: 'Hancı Goran',
-          title: 'Meyhaneci & Bilgi Kaynağı',
-          role: 'tavernkeeper',
-          avatarIcon: 'beer',
-          relation: 20,
-          speech: `Ocağımızın başı her zaman sıcak! Kiralık paralı kılıçlar, dağlardan gelen esir fidyecileri hepsi masalarımızda.`,
-        },
-        {
-          id: 'champion',
-          name: 'Dragan Çekiçkıran',
-          title: 'Arena Dövüş Ustası',
-          role: 'gladiator',
-          avatarIcon: 'swords',
-          relation: 0,
-          speech: `Kum havuzuna çıkacak cesaretin var mı genç komutan? Arenada sadece çelik ve bilek gücü konuşur!`,
-        },
-      ];
-    } else if (isCastle) {
-      return [
-        {
-          id: 'castell',
-          name: 'Kumandan Orestes',
-          title: 'Kale Dizdarı & Komutanı',
-          role: 'commander',
-          avatarIcon: 'castle',
-          relation: 12,
-          speech: `Bu taş burçlar yüzyıllık kuşatmalara direndi. Garnizonumuz her daim nöbettedir.`,
-        },
-        {
-          id: 'warden',
-          name: 'Zindancı Vask',
-          title: 'Hisar Zindan Başı',
-          role: 'warden',
-          avatarIcon: 'lock',
-          relation: 0,
-          speech: `Demir parmaklıklarımız arkasında hiçbir esir gün ışığı göremez. Saygılar komutanım.`,
-        },
-      ];
-    } else {
-      return [
-        {
-          id: 'elder',
-          name: 'Köy Muhtarı Kalan',
-          title: 'Köy İhtiyarı ve Temsilcisi',
-          role: 'elder',
-          avatarIcon: 'wheat',
-          relation: 8,
-          speech: `Hoş sefa geldiniz beyim. Köyümüzün buğday hasadı bereketli şükür; gençlerimiz de yiğittir, sancağınızda yer varsa yazılmak isterler.`,
-        },
-      ];
-    }
-  }, [settlement, isTown, isCastle, factionInfo]);
+  // Faz B0: ileri gelenler artık sefer verisinde (her yerleşime özgü, deterministik).
+  const notables: SettlementNotable[] = React.useMemo(
+    () =>
+      settlement.notables && settlement.notables.length > 0
+        ? settlement.notables
+        : generateNotables(settlement, campaign.world?.seed ?? 20261021),
+    [settlement, campaign.world?.seed],
+  );
 
   // Tab Action Handlers
   const handleRecruitClick = (unitId: UnitTierId, amount = 1) =>{
@@ -492,6 +444,7 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
             <button
               key={n.id}
               type="button"
+              title={`${n.name} — ${n.title}`}
               onClick={() =>{
                 setSelectedNotable(n);
                 setFeedback(null);
@@ -510,24 +463,7 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
 
         {/* NOTABLE SPEECH POPUP (IF CLICKED) */}
         {selectedNotable && (
-          <div className="px-4 py-3 bg-[#1d1811] border-b border-[#d97706]/40 flex items-start justify-between gap-3 text-xs">
-            <div className="flex items-start gap-2.5">
-              <span className="text-[#c6a15b] mt-0.5">{NOTABLE_ICONS[selectedNotable.avatarIcon]}</span>
-              <div>
-                <span className="font-bold text-[#fde68a] block">
-                  {selectedNotable.name} ({selectedNotable.title})
-                </span>
-                <p className="text-[#e2d7c3] italic mt-0.5">"{selectedNotable.speech}"</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() =>setSelectedNotable(null)}
-              className="text-[#9ca3af] hover:text-white font-bold px-1"
-            >
-              
-            </button>
-          </div>
+          <NotableSpeechCard notable={selectedNotable} onClose={() => setSelectedNotable(null)} />
         )}
 
         {/* 3. MAIN WORKSPACE: LEFT ACTION MENU + RIGHT ACTIVE PANEL */}

@@ -43,7 +43,7 @@
 | :--- | :--- | :--- |
 | Kaynak dosya | **62** (42 `.ts`, 20 `.tsx`) | `find src -name "*.ts*"` |
 | Toplam satır | **47.912** | `wc -l` |
-| En büyük 5 dosya | `rules.ts` 3.615 · `CharacterArenaView.tsx` 2.936 · `Armory.ts` 2.930 · `WorldCanvas.tsx` 2.657 · `characterRig.ts` 1.995 | `wc -l` |
+| En büyük 5 dosya | `rules.ts` 3.619 · `CharacterArenaView.tsx` 2.936 · `Armory.ts` 2.930 · `WorldCanvas.tsx` 2.657 · `characterRig.ts` 1.995 | `wc -l` |
 | Üretim paketi | **1.566 kB** (gzip 437 kB), tek chunk | `vite build` |
 | Tip denetimi | `tsc --noEmit` **0 hata** · `tsc --strict` **0 hata** · `--noUnusedLocals` **78 hata** | `npx tsc` |
 | Birim testi | **28 test / 267 doğrulama** | `rules.test.ts` |
@@ -716,7 +716,15 @@ yaşatmak"** olmalı. Dikey dilim tam olarak bunu hedefliyor.
 | — | `WorldWarPanel` (Divan panosu) + üstte 7 sn "SAVAŞ HABERİ" bandı | Fetih sessiz kalmasın; Bannerlord'da da harita olayı bildirim olarak düşer. |
 | — | Fetih sonrası sancak malzemesi **kopyalanır**, harita etiketi rengi kare döngüsünde tazelenir | Malzeme kültür başına önbellekliydi; tek kale el değiştirince o kültürün **tüm** sancakları boyanıyordu. |
 
-### Faz B — İçerik patlaması (2 hafta) 🔴
+### Faz B — İçerik patlaması (2 hafta) 🟡 **B0 ilk dilim uygulandı**
+
+> **Durum (2026-10-21):** **B0'ın ileri gelenler (notables) dilimi tamam.**
+> `src/game/notables.ts` — her yerleşime özgü, kültüre duyarlı, deterministik ileri gelenler
+> (kasaba 3–4, kale 2–3, köy 1–2; toplam **440 kişi**). Her kayıtta `power` (nüfuz 0–100),
+> `relation` (−100…+100) ve kendine ait replik var. Önceden `SettlementModal` içinde sabit
+> yazılmış 5 kişi **her** imparatorluk kasabasında aynıydı (Rhagaea, Valerius, Belisarios…).
+> Arayüz artık veriyi okuyor (`NotableSpeechCard`), kayıt **v3** + v1/v2 göçü.
+> Kalan B0 kalemleri: `garrisonRoster`, `ownerClanId`, `workshops`, kalıcı `quests`.
 
 1. **B0 Veri genişletme** (önce!): `Settlement.garrisonRoster: TroopRoster`, `ownerClanId`,
    `workshops: Array<{type, owner}>`, `notables: Array<{id, power, relation}>`,
@@ -794,6 +802,7 @@ performans profili, hata avı, telemetri (isteğe bağlı, kapalı varsayılan),
 | :--- | :-: | :-: | :-: | :-: |
 | 365 günde sahiplik değişimi | **0** | ≥15 | ≥25 | ≥40 |
 | 365 günde vakayiname olayı | **3** | ≥120 | ≥200 | ≥400 |
+| İleri gelen (notable) | **440** (isim/unvan/nüfuz/ilişki) | 440 | 440 + seçim | 440 + seçim |
 | Asker tipi | 4 | 4 | 40 | 60 |
 | Eşya (ikonlu) | 29 (0 ikon) | 29 | 120 | 160 |
 | Diyalog repliği | 12 | 12 | 300 | 600 |
@@ -848,16 +857,17 @@ arayüz, test) zaten bitmiş durumda; kalan kısım **içerik ve simülasyon**, 
 npx tsc --noEmit                                   # 0 hata
 npx tsc --noEmit --strict                          # 0 hata (config'de kapalı)
 npx tsc --noEmit --noUnusedLocals --noUnusedParameters   # 78 uyarı
-npm run verify:all                                 # 30 paket ✅
+npm run verify:all                                 # 31 paket ✅
 npx vite build                                     # 1.566 kB (437 kB gzip)
 npx tsx scripts/probe-content.ts                   # 10 kontrol
 npx tsx scripts/probe-world-sim.ts                 # 20 kontrol (365 gün canlı dünya)
+npx tsx scripts/probe-notables.ts                  # 30 kontrol (ileri gelenler + kayıt göçü)
 ```
 
 ## EK B — Dosya envanteri (satır sayıları)
 
 `rules.ts` 3.546 · `CharacterArenaView.tsx` 2.936 · `Armory.ts` 2.930 · `WorldCanvas.tsx` 2.624 ·
-`characterRig.ts` 1.995 · `SettlementModal.tsx` 1.873 · `characterAnimator.ts` 1.872 · `GameHud.tsx` 1.571 ·
+`characterRig.ts` 1.995 · `SettlementModal.tsx` 1.809 · `characterAnimator.ts` 1.872 · `GameHud.tsx` 1.571 ·
 `App.tsx` 1.542 · `KingdomManagementModal.tsx` 1.411 · `characterMorph.ts` 1.299 · `kingdomSystem.ts` 1.275 ·
 `Core.ts` 1.242 · `proceduralModels.ts` 1.225 · `mapGen.ts` 1.161 · `CharacterCreatorModal.tsx` 1.131 ·
 `rules.test.ts` 1.112 · `BattleSoundFX.ts` 985 · `Armor.ts` 906 · `battleEnginePool.ts` 858 · `Horse.ts` 825 ·
@@ -866,10 +876,10 @@ npx tsx scripts/probe-world-sim.ts                 # 20 kontrol (365 gün canlı
 `DiplomacyModal.tsx` 467 · `dialogue.ts` 450 · `characterFace.ts` 412 · `navigation.ts` 391 · `heroes.ts` 389 ·
 `quests.ts` 384 · `tacticalFormation.ts` 356 · `campaignSystem.ts` 428 · `sound.ts` 350 · `conversation.ts` 330 ·
 `portraitRenderer.ts` 314 · `DialogueModal.tsx` 272 · `familyTree.ts` 257 · `market.ts` 236 · `recruitment.ts` 222 ·
-`BattlePrewarmModal.tsx` 202 · `heroGen.ts` 197 · `LordPortraitCanvas.tsx` 168 · `saveGame.ts` 176 · `ik.ts` 163 ·
+`BattlePrewarmModal.tsx` 202 · `heroGen.ts` 197 · `LordPortraitCanvas.tsx` 168 · `saveGame.ts` 191 · `ik.ts` 163 ·
 `armorySound.ts` 131 · `ConversationCanvas.tsx` 124 · `HeroPortrait.tsx` 84 · `parts.tsx` 81 · `types.ts` 68 ·
 `uiSession.ts` 61 · `FactionCrest.tsx` 55 · `icons.tsx` 52 · `main.tsx` 48 · `equipmentPose.ts` 20 ·
 `characterRig.types.ts` 1 — **toplam 47.912**
 
-**Faz A eklemeleri:** `worldSim.ts` 775 · `WorldWarPanel.tsx` 56 · `probe-world-sim.ts` (betik, sayılmadı)
-→ **toplam 48.979** (+1.067 satır).
+**Faz A eklemeleri:** `worldSim.ts` 757 · `WorldWarPanel.tsx` 56 · `probe-world-sim.ts` (betik, sayılmadı)
+`notables.ts` 284 · `rng.ts` 38 → **toplam 49.238** (+1.326 satır).

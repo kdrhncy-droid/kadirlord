@@ -5,6 +5,7 @@ import {
   registerSettlementTerrace,
 } from './mapGen.ts';
 import { snapToNearestLand } from './navigation.ts';
+import { ensureNotables, type SettlementNotable } from './notables';
 import {
   CharacterMorphDNA,
   cloneDNA,
@@ -152,6 +153,8 @@ export interface Settlement {
   siegeEngines?: SiegeEngineType[];
   reserveEngines?: SiegeEngineType[];
   wallHealth?: number;
+  /** Faz B0: yerleşimin ileri gelenleri (deterministik üretilir, kayda yazılır). */
+  notables?: SettlementNotable[];
 }
 
 export function getSettlementArrivalRadius(type: 'TOWN' | 'CASTLE' | 'VILLAGE'): number {
@@ -2555,7 +2558,8 @@ export function createInitialCampaignState(
   const initialGold = backgroundId === 'noble' ? 680 : backgroundId === 'tactician' ? 620 : 550;
   const initialRenown = backgroundId === 'noble' ? 65 : 45;
 
-  const settlements: Settlement[] = buildCanonicalCalradiaSettlements();
+  // Faz B0: her yerleşimin kendi ileri gelenleri (deterministik, kayda yazılır).
+  const settlements: Settlement[] = ensureNotables(buildCanonicalCalradiaSettlements());
 
   const lords: LordAgent[] = [
     {
