@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AttributeId,
   BannerlordSkillId,
@@ -21,6 +21,13 @@ import type {
   MapCameraTelemetry,
 } from '../game/types';
 import { isSettlementLabelVisible } from '../game/mapGen';
+import {
+  QUEST_KIND_ICONS,
+  QUEST_KIND_LABELS,
+  buildQuestLog,
+  daysLeft,
+  questProgress,
+} from '../game/quests';
 
 interface GameHudProps {
   subMode: 'overworld' | 'battle';
@@ -60,6 +67,37 @@ interface GameHudProps {
   onOpenEncyclopedia?: () => void;
 }
 
+type WorldPane = 'atlas' | 'chronicle' | 'quests';
+
+/** "Harita & Günlük" panelinin sekmeleri — Faz 4/5. */
+const WorldTabs: React.FC<{ pane: WorldPane; onChange: (p: WorldPane) => void }> = ({
+  pane,
+  onChange,
+}) => (
+  <div className="flex items-center gap-1 mt-1" data-testid="world-tabs">
+    {(
+      [
+        { id: 'atlas' as const, label: 'Atlas' },
+        { id: 'chronicle' as const, label: 'Vakanüvis' },
+        { id: 'quests' as const, label: 'Görevler' },
+      ] as const
+    ).map((t) => (
+      <button
+        key={t.id}
+        type="button"
+        onClick={() => onChange(t.id)}
+        className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors ${
+          pane === t.id
+            ? 'bg-[#b45309] text-white font-bold'
+            : 'bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]'
+        }`}
+      >
+        {t.label}
+      </button>
+    ))}
+  </div>
+);
+
 export const GameHud: React.FC<GameHudProps> = ({
   subMode,
   campaignTimeScale,
@@ -95,7 +133,7 @@ export const GameHud: React.FC<GameHudProps> = ({
 }) => {
   const [dockCollapsed, setDockCollapsed] = useState(false);
   /** Faz 4: Atlas ve Vakanüvis tek "Harita & Günlük" panelinde birleşti. */
-  const [worldPane, setWorldPane] = useState<'atlas' | 'chronicle'>('atlas');
+  const [worldPane, setWorldPane] = useState<'atlas' | 'chronicle' | 'quests'>('atlas');
   const [activeTab, setActiveTab] = useState<
     'none' | 'army' | 'character' | 'inventory' | 'world'
   >('none');
@@ -142,6 +180,7 @@ export const GameHud: React.FC<GameHudProps> = ({
     return () => window.removeEventListener('keydown', onKeyH);
   }, [onOpenKingdomModal, onOpenCharacterCreator, onOpenCharacterArena, onStartQuickBattle]);
 
+  const questLog = useMemo(() => buildQuestLog(campaign), [campaign]);
   const totalTroops = getTotalTroops(campaign.roster);
   const partyStrength = calculatePartyStrength(
     campaign.roster,
@@ -632,18 +671,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                 <h3 className="text-sm font-bold text-[#f8f0df]">
                   Kalradya Kıta Atlası ve Stratejik Kamera Rehberi
                 </h3>
-                <div className="flex items-center gap-1 mt-1">
-                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-[#b45309] text-white">
-                    Atlas
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setWorldPane('chronicle')}
-                    className="px-2 py-0.5 rounded text-[11px] font-semibold bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]"
-                  >
-                    Vakanüvis
-                  </button>
-                </div>
+                <WorldTabs pane={worldPane} onChange={setWorldPane} />
                 <p className="text-xs text-[#b5a890]">
                   WASD: Harita Kamerasını Kaydır · Q/E veya Sağ Tık Sürükle: Kamerayı Döndür · Fare Tekerleği (Z/X): Stratejik Yakınlaştır/Uzaklaştır · Sol Tık: Ordunu Yürüt
                 </p>
@@ -1151,6 +1179,133 @@ export const GameHud: React.FC<GameHudProps> = ({
           </div>
         )}
 
+        {subMode === 'overworld' && activeTab === 'world' && worldPane === 'quests' && !dockCollapsed && (
+          <div
+            data-testid="quest-log"
+            className="hud-panel rounded-lg p-4 w-full max-w-4xl pointer-events-auto max-h-[68vh] overflow-y-auto"
+          >
+            <div className="flex items-start justify-between border-b border-[#c6a15b]/25 pb-2 mb-3 gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-[#f8f0df]">Görev Günlüğü</h3>
+                <p className="text-xs text-[#b5a890]">
+                  {questLog.summary} · Kampanya günü {campaign.day}
+                </p>
+                <WorldTabs pane={worldPane} onChange={setWorldPane} />
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('none')}
+                className="text-xs text-[#c6a15b] hover:underline whitespace-nowrap shrink-0"
+              >
+                Kapat
+              </button>
+            </div>
+
+            {questLog.active.length === 0 ? (
+              <div className="text-[11px] text-[#8b8072] py-6 text-center">
+                Şu an aktif görev yok. Lordlarla konuştuğunda (Faz 6) yeni görevler açılacak.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {questLog.active.map((q) => {
+                  const progress = questProgress(q);
+                  const left = daysLeft(q, campaign.day);
+                  const late = left <= 3;
+                  return (
+                    <div
+                      key={q.id}
+                      data-quest={q.id}
+                      className="rounded border border-[#c6a15b]/30 bg-[#181510] p-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[#fbbf24]" aria-hidden="true">
+                              {QUEST_KIND_ICONS[q.kind]}
+                            </span>
+                            <span className="text-xs font-bold text-[#f8f0df] truncate">
+                              {q.title}
+                            </span>
+                            <span className="text-[9px] px-1 py-0.5 rounded bg-[#241c12] text-[#c6a15b] shrink-0">
+                              {QUEST_KIND_LABELS[q.kind]}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-[#a2957f] mt-0.5">
+                            Veren: {q.giverName}
+                            {q.targetSettlementName ? ` · Hedef: ${q.targetSettlementName}` : ''}
+                          </div>
+                        </div>
+                        <div className={`text-[10px] shrink-0 ${late ? 'text-[#fca5a5]' : 'text-[#8b8072]'}`}>
+                          {left >= 0 ? `${left} gün kaldı` : 'Süresi geçti'}
+                        </div>
+                      </div>
+
+                      <p className="text-[11px] text-[#c9bda8] mt-1 leading-relaxed">
+                        {q.description}
+                      </p>
+
+                      <div className="mt-2 space-y-1">
+                        {q.objectives.map((o) => (
+                          <div key={o.key} className="flex items-center gap-2">
+                            <span className="text-[10px] text-[#a2957f] w-44 truncate">
+                              {o.done ? '✓' : '•'} {o.label}
+                            </span>
+                            <span className="flex-1 h-1.5 rounded bg-[#241c12] overflow-hidden">
+                              <span
+                                className={`block h-full ${o.done ? 'bg-[#34d399]' : 'bg-[#c6a15b]'}`}
+                                style={{
+                                  width: `${Math.min(100, (o.current / Math.max(1, o.target)) * 100)}%`,
+                                }}
+                              />
+                            </span>
+                            <span className="text-[9px] text-[#8b8072] font-mono-tabular w-12 text-right">
+                              {Math.min(o.current, o.target)}/{o.target}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
+                        <span className="text-[#8b8072] italic truncate">{q.hint}</span>
+                        <span className="shrink-0 text-[#fbbf24] font-mono-tabular">
+                          {q.reward.gold} dinar · +{q.reward.renown} nam · +{q.reward.relation} ilişki
+                        </span>
+                      </div>
+                      <div className="mt-1 h-0.5 rounded bg-[#241c12] overflow-hidden">
+                        <span
+                          className="block h-full bg-[#b45309]"
+                          style={{ width: `${Math.round(progress * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {(questLog.completed.length > 0 || questLog.failed.length > 0) && (
+              <div className="mt-3 pt-2 border-t border-[#c6a15b]/20 text-[10px] flex flex-wrap gap-2">
+                {questLog.completed.map((q) => (
+                  <span
+                    key={q.id}
+                    className="px-1.5 py-0.5 rounded border border-[#34d399]/40 text-[#34d399]"
+                  >
+                    ✓ {q.title}
+                  </span>
+                ))}
+                {questLog.failed.map((q) => (
+                  <span
+                    key={q.id}
+                    className="px-1.5 py-0.5 rounded border border-[#f87171]/40 text-[#fca5a5]"
+                  >
+                    ✕ {q.title}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {subMode === 'overworld' && activeTab === 'world' && worldPane === 'chronicle' && !dockCollapsed && (
           <div className="hud-panel rounded-lg p-4 w-full max-w-4xl pointer-events-auto">
             <div className="flex items-center justify-between border-b border-[#c6a15b]/25 pb-2 mb-3">
@@ -1158,18 +1313,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                 <h3 className="text-sm font-bold text-[#f8f0df]">
                   Kalradya Vakanüvis Günlüğü ve Krallık Divanı
                 </h3>
-                <div className="flex items-center gap-1 mt-1">
-                  <button
-                    type="button"
-                    onClick={() => setWorldPane('atlas')}
-                    className="px-2 py-0.5 rounded text-[11px] font-semibold bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]"
-                  >
-                    Atlas
-                  </button>
-                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-[#b45309] text-white">
-                    Vakanüvis
-                  </span>
-                </div>
+                <WorldTabs pane={worldPane} onChange={setWorldPane} />
               </div>
               <div className="flex items-center gap-3">
                 <button

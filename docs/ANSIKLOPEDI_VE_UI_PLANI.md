@@ -1159,3 +1159,35 @@ AI-AI diplomasi Faz 5+ (quest/dünya simülasyonu) ile gelecek.
 
 Doğrulama: `probe-encyclopedia-ui` **75/75** (17 yeni kontrol), `tsc` ✓, `rules.test` 28/28,
 `vite build` ✓. Görseller: `enc-heroes-list.png`, `enc-hero-detail.png`, `enc-kingdom-diplomacy.png`.
+
+## 25. FAZ 4 — HUD SADELEŞTİRME (TAMAMLANDI ✅)
+
+Kullanıcı onayı: "5 düğmeye indir" seçeneği.
+
+| Önce (9 düğme + 2 şerit) | Sonra (6 giriş) |
+| --- | --- |
+| Karakter · Envanter · Ordum · Kıta Atlası · Vakanüvis · Ansiklopedi · Berber · Krallık & Divan · Arena | Karakter [C] · Envanter [I] · Ordum (n) · **Harita & Günlük** · Divan [K] · Ansiklopedi [N] |
+| Üstte "Sancak [C] / Tam Kıta [V]" kamera pill'i | kaldırıldı (atlas panelinde kamera düğmeleri var) |
+| Üstte ikinci "Savaş & Karakter Arenası" düğmesi | kaldırıldı (ana menüde var, `F9` test kısayolu) |
+| "Meydan Savaşı" düğmesi | Ordum paneli içine taşındı (`F10`) |
+| Berber & Suret düğmesi | Karakter panelinin içinde zaten var → ayrı düğme kalktı |
+| Atlas ve Vakanüvis ayrı paneller | tek panel, üç sekme: **Atlas · Vakanüvis · Görevler** (`V`) |
+
+Doğrulama: `scripts/probe-hud.tsx` — 18 yapısal kontrol (menüde 6 düğme, kaldırılan
+öğelerin yokluğu, sağ alt durum şeridinin korunması, pazar kuralı).
+
+## 26. FAZ 5 — GÖREV SİSTEMİ (TAMAMLANDI ✅)
+
+`src/game/quests.ts`:
+- `Quest { id, kind, title, description, giver, targetSettlement, deadlineDay, status, objectives[], reward }`
+- Türler: `BOUNTY` (haydut avı), `DELIVER` (kargo), `ESCORT` (kervan), `PATROL` (devriye), `RECRUIT` (asker toplama).
+- İlerleme **saklanmaz**, kampanya durumundan türetilir: savaş sayısı, ordu mevcudu,
+  oyuncunun hedefe uzaklığı (`ARRIVAL_RADIUS = 6`). Böylece kayıt uyumsuzluğu olmaz.
+- `summarize()` → aktif/tamamlanan/başarısız + tek satır özet; `questProgress()`, `daysLeft()`, `totalReward()`.
+
+Arayüz: "Harita & Günlük" → **Görevler** sekmesi. Her görev kartında tür ikonu, veren,
+hedef yerleşim, kalan gün (≤3 gün kırmızı), açıklama, hedef çubukları (x/y), ipucu ve ödül.
+Altta tamamlanan/başarısız çipleri.
+
+Doğrulama: `scripts/probe-quests.ts` — 17 kontrol (determinizm, ilerleme sınırları,
+süre dolması, hedefe varış, ödül toplamı).
