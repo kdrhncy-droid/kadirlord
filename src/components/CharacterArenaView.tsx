@@ -2163,13 +2163,16 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             </button>
 
             {onOpenMarket && (
+              // Arena bir yerleşim değil: pazar buradan açılmaz (Bannerlord'da
+              // pazaryeri yalnız şehir/kale/köy menüsündedir). Yalnız envanter.
               <button
                 type="button"
                 onClick={onOpenMarket}
-                className="px-3 py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fbbf24]/50 shadow transition-colors flex items-center gap-1.5"
+                title="Savaş alanında pazaryeri yok — yalnız envanter"
+                className="px-3 py-1.5 rounded text-xs font-bold bg-[#2a2015] hover:bg-[#3d2e20] text-[#fde68a] border border-[#c6a15b]/50 shadow transition-colors flex items-center gap-1.5"
               >
-                <span>⚖️</span>
-                <span>Pazar & Envanter</span>
+                <span aria-hidden="true">⚖</span>
+                <span>Envanter</span>
               </button>
             )}
 

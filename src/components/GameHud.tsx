@@ -49,6 +49,11 @@ interface GameHudProps {
   onUpgradeTroop?: (fromTier: UnitTierId, toTier: UnitTierId) => string | null;
   onRecruitPrisoners?: () => string | null;
   onOpenMarketModal?: () => void;
+  /**
+   * Oyuncu bir yerleşimin içinde mi? Bannerlord'da pazar yalnızca şehir/kale/köy
+   * menüsünden açılır; haritada gezerken pazar yok.
+   */
+  canTrade?: boolean;
   onOpenCharacterArena?: () => void;
   onOpenKingdomModal?: () => void;
   onOpenCharacterCreator?: () => void;
@@ -82,6 +87,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   onUpgradeTroop,
   onRecruitPrisoners,
   onOpenMarketModal,
+  canTrade = false,
   onOpenCharacterArena,
   onOpenKingdomModal,
   onOpenCharacterCreator,
@@ -114,11 +120,9 @@ export const GameHud: React.FC<GameHudProps> = ({
           onOpenCharacterCreator();
         }
       } else if (e.code === 'KeyI') {
-        if (onOpenMarketModal) {
-          onOpenMarketModal();
-        } else {
-          setActiveTab((prev) => (prev === 'inventory' ? 'none' : 'inventory'));
-        }
+        // Bannerlord'da I yalnız envanteri açar. Pazar **yalnızca yerleşim
+        // içindeyken** erişilebilir (bkz. canTrade); burada pazar açılmaz.
+        setActiveTab((prev) => (prev === 'inventory' ? 'none' : 'inventory'));
       } else if (e.code === 'KeyK') {
         if (onOpenKingdomModal) {
           onOpenKingdomModal();
@@ -127,7 +131,7 @@ export const GameHud: React.FC<GameHudProps> = ({
     };
     window.addEventListener('keydown', onKeyH);
     return () => window.removeEventListener('keydown', onKeyH);
-  }, [onOpenMarketModal, onOpenKingdomModal, onOpenCharacterCreator]);
+  }, [onOpenKingdomModal, onOpenCharacterCreator]);
 
   const totalTroops = getTotalTroops(campaign.roster);
   const partyStrength = calculatePartyStrength(
@@ -1045,11 +1049,21 @@ export const GameHud: React.FC<GameHudProps> = ({
                 {onOpenMarketModal && (
                   <button
                     type="button"
-                    onClick={onOpenMarketModal}
-                    className="px-3 py-1 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#f59e0b]/40 flex items-center gap-1.5 shadow"
+                    disabled={!canTrade}
+                    onClick={canTrade ? onOpenMarketModal : undefined}
+                    title={
+                      canTrade
+                        ? 'Pazaryeri (yalnız yerleşim içinde)'
+                        : 'Pazara girmek için bir şehir, kale veya köye girin'
+                    }
+                    className={`px-3 py-1 rounded text-xs font-bold border flex items-center gap-1.5 shadow ${
+                      canTrade
+                        ? 'bg-[#b45309] hover:bg-[#d97706] text-white border-[#f59e0b]/40'
+                        : 'bg-[#241f19] text-[#8b8072] border-[#c6a15b]/20 cursor-not-allowed'
+                    }`}
                   >
-                    <span>⚖️</span>
-                    <span>Bannerlord Ticaret & Envanter Pazarı</span>
+                    <span aria-hidden="true">⚖</span>
+                    <span>Pazaryeri {canTrade ? '' : '(yerleşimde)'}</span>
                   </button>
                 )}
                 <button
@@ -1235,20 +1249,16 @@ export const GameHud: React.FC<GameHudProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (onOpenMarketModal) {
-                          onOpenMarketModal();
-                        } else {
-                          setActiveTab(activeTab === 'inventory' ? 'none' : 'inventory');
-                        }
-                      }}
+                      onClick={() =>
+                        setActiveTab(activeTab === 'inventory' ? 'none' : 'inventory')
+                      }
                       className={`px-2.5 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap ${
                         activeTab === 'inventory'
                           ? 'bg-[#b45309] text-white'
                           : 'bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]'
                       }`}
                     >
-                      Envanter & Pazar [I]
+                      Envanter [I]
                     </button>
                     <button
                       type="button"

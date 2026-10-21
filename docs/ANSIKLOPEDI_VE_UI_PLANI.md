@@ -1111,3 +1111,19 @@ Yakın planda "tuğla" gibi görünüyor, başparmak/parmak ayrımı yok.
 ön kol çapını (0.139) aşmıyor, kavrama yuvası elin içinde → kılıç/kalkan kopmuyor.
 
 `npm run verify:hands` · görsel: `docs/renders/hands-creator.png` (atölye, tam boy)
+
+## 23. FAZ 1k — PAZAR YERLEŞİM ŞARTI + ARAŞTIRMA NOTU (TAMAMLANDI ✅)
+
+Kullanıcı: "envanter ve pazar neden aynı yerde, oyuncu bir yerleşkeye girmeden pazara giremez".
+
+Düzeltme:
+- `I` yalnız envanter açar (pazar açmaz), etiket "Envanter [I]".
+- Pazaryeri düğmesi yerleşim dışında **pasif**: "Pazaryeri (yerleşimde)" + ipucu.
+- `App.tsx`: pazar modalı yalnız `activeSettlementModal || nearSettlement` iken render edilir.
+- Arena ekranındaki "Pazar & Envanter" → "Envanter".
+
+Gerçek tarayıcı doğrulaması: haritada `I` → envanter açık, pazar **kapalı**, düğme `disabled`.
+Görsel: `docs/renders/hud-inventory.png`.
+
+Araştırma ve plan: **`docs/PAZAR_VE_HARITA_ARASTIRMASI.md`** (pazar üç sütun düzeni, şehir
+altını, söylenti, renk kodu; harita HUD sadeleştirmesi 9 → 5 düğme; diyalog fazı).

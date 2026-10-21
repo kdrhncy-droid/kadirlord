@@ -895,6 +895,7 @@ export default function App() {
             return res.reason || null;
           }}
           onOpenMarketModal={() => setIsMarketModalOpen(true)}
+          canTrade={!!(activeSettlementModal || nearSettlement)}
           onOpenCharacterArena={() => setViewMode('character_arena')}
           onOpenKingdomModal={() => setIsKingdomModalOpen(true)}
           onOpenCharacterCreator={() => setIsCharacterCreatorOpen(true)}
@@ -1146,7 +1147,7 @@ export default function App() {
         />
       )}
 
-      {isMarketModalOpen && (
+      {isMarketModalOpen && (activeSettlementModal || nearSettlement) && (
         <BannerlordMarketModal
           settlement={activeSettlementModal || nearSettlement}
           campaign={campaign}
