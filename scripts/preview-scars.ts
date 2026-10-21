@@ -125,7 +125,7 @@ function rasterize(tris: Tri[], w: number, h: number): Uint8ClampedArray {
         const w1 = ((cx - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (cy - p0.y)) / area;
         const w2 = 1 - w0 - w1;
         if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-        const z = w1 * p0.z + w2 * p1.z + w0 * p2.z;
+        const z = w2 * p0.z + w1 * p1.z + w0 * p2.z; // w2→p0, w1→p1, w0→p2
         const idx = y * w + x;
         if (z >= zbuf[idx]) continue;
         zbuf[idx] = z;

@@ -59,6 +59,13 @@ function chestPieces(rig: ReturnType<typeof createCharacterRig>): THREE.Mesh[] {
   return out;
 }
 
+/**
+ * Yaka/gorget ayrı ölçülür: gövde genişliği testine katılırsa "palto gibi"
+ * yanlış pozitifi verir (yaka omuz boyunduruğu olduğu için doğal olarak geniş).
+ */
+const isCollar = (m: THREE.Mesh) => m.parent?.name === 'armorCollar';
+const shellPieces = (rig: ReturnType<typeof createCharacterRig>) => chestPieces(rig).filter((m) => !isCollar(m));
+
 const TIERS: ArmorTier[] = ['LEATHER', 'CHAINMAIL', 'PLATE'];
 
 for (const armory of [true, false]) {
@@ -88,7 +95,8 @@ for (const armory of [true, false]) {
     if (pieces.length === 0) continue;
 
     const group = new THREE.Group();
-    pieces.forEach((p) => {
+    // Yaka hariç kabuk parçaları (yaka omuz boyunduruğu, genişliği ayrı ölçülür).
+    shellPieces(rig).forEach((p) => {
       const clone = new THREE.Mesh(p.geometry, p.material);
       clone.applyMatrix4(p.matrixWorld);
       group.add(clone);
@@ -108,16 +116,40 @@ for (const armory of [true, false]) {
       `${aSize.x.toFixed(3)} vs ${tSize.x.toFixed(3)}`,
     );
 
+
     // 3) Dikey kapsama: göğüsten bele kadar (kemer üstüne kadar iniyor mu?)
     const beltTop = bare.torso.getWorldPosition(new THREE.Vector3()).y + 0.08;
     ok(aBox.min.y <= beltTop + 0.02, `${tier}: bele kadar iniyor (karın açıkta değil)`, `alt ${aBox.min.y.toFixed(3)} ≤ ${beltTop.toFixed(3)}`);
+
+    // Yaka: omuz açıklığını aşmamalı (boyunduruk gibi ama palto değil).
+    const collar = pieces.filter(isCollar);
+    if (collar.length) {
+      const cBox = new THREE.Box3();
+      for (const p of collar) cBox.union(box(p));
+      const shoulderDist = bare.leftShoulder
+        .getWorldPosition(new THREE.Vector3())
+        .distanceTo(bare.rightShoulder.getWorldPosition(new THREE.Vector3()));
+      ok(
+        cBox.getSize(new THREE.Vector3()).x <= shoulderDist,
+        `${tier}: yaka omuz açıklığından geniş değil`,
+        `${cBox.getSize(new THREE.Vector3()).x.toFixed(3)} ≤ ${shoulderDist.toFixed(3)}`,
+      );
+    }
     ok(aBox.max.y >= shoulderY - 0.09, `${tier}: köprücük kemiğine kadar çıkıyor`, `üst ${aBox.max.y.toFixed(3)}`);
 
-    // 4) Aşırı taşma: zırh gövdeden %35'ten fazla genişse "palto" gibi durur
+    /*
+     * 4) Aşırı taşma. Kutular farklı kenar sayılı silindirlerden geliyor
+     *    (gövde 6 kenar, zırh 10 kenar); kutu genişliği köşe sayısına göre
+     *    değiştiği için doğrudan oranlamak yanıltıcı. İkisini de **çevrel
+     *    yarıçapa** çevirip karşılaştırıyoruz.
+     */
+    const circumR = (width: number, sides: number) => width / (2 * Math.cos(Math.PI / sides));
+    const bodyR = circumR(tSize.x, 6);
+    const armorR = circumR(aSize.x, 10);
     ok(
-      aSize.x <= tSize.x * 1.35,
+      armorR <= bodyR * 1.35,
       `${tier}: gövdeden aşırı taşmıyor`,
-      `${(aSize.x / tSize.x).toFixed(2)}×`,
+      `çevrel yarıçap ${armorR.toFixed(3)} vs ${bodyR.toFixed(3)} (${(armorR / bodyR).toFixed(2)}×)`,
     );
     ok(
       aSize.z <= tFront - tBack + 0.16,

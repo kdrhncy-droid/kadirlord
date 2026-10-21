@@ -226,7 +226,7 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   torso.position.y = 0.16;
   pelvis.add(torso);
 
-  const torsoMesh = mesh(new THREE.CylinderGeometry(0.24, 0.18, 0.46, 6), mats.cloth);
+  const torsoMesh = mesh(new THREE.CylinderGeometry(0.2, 0.18, 0.46, 6), mats.cloth);
   torsoMesh.position.y = 0.23;
   torsoMesh.scale.z = TORSO_DEPTH_SCALE; // flatter chest -> arms don't sink into the body
   torso.add(torsoMesh);
@@ -462,6 +462,8 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   };
 
   applyEquipmentToRig(rig, options);
+  // Yaka/gorget temel iskelette de çeneye göre oturtulur (DNA'sız rig'ler için).
+  refitArmorToHead(rig);
   return rig;
 }
 
@@ -671,14 +673,14 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
    * eski profil 1.87'ye çıkıyordu ve levhada göz altına dayanıyordu).
    */
   const PROFILE: Array<[number, number]> = [
-    [-0.24, 0.196],
-    [-0.16, 0.2],
-    [-0.06, 0.208],
-    [0.04, 0.214],
-    [0.14, 0.222],
-    [0.18, 0.216],
-    [0.21, 0.196],
-    [0.225, 0.17],
+    [-0.24, 0.176],
+    [-0.16, 0.183],
+    [-0.06, 0.192],
+    [0.04, 0.2],
+    [0.12, 0.207],
+    [0.18, 0.212],
+    [0.21, 0.214],
+    [0.225, 0.185],
   ];
   const radiusAt = (y: number) => {
     if (y <= PROFILE[0][0]) return PROFILE[0][1];
@@ -700,13 +702,27 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
    * Yaka/gorget: tabanı köprücük kemiğinde, boynu saran ince halka.
    * Grubun içinde durur ki `refitArmorToHead` yüksekliğini çeneye göre kısatlsın.
    */
-  const COLLAR = { bottom: 0.14, height: 0.17 };
+  /**
+   * Üst kapak (shoulder yoke): lathe açık bir yüzey olduğu için gövdenin üst
+   * kapağı içinden görünüyordu (portrede mor halka). Bu halka çukuru kapatır ve
+   * omuz hizasında zırh plakası gibi durur.
+   */
+  const topPlate = (pad: number, mat: THREE.Material) => {
+    const geo = new THREE.RingGeometry(0.1, radiusAt(0.21) + pad, 10, 1);
+    geo.rotateX(-Math.PI / 2);
+    const m = mesh(geo, mat, false);
+    m.position.y = 0.21;
+    m.scale.z = DEPTH;
+    return m;
+  };
+
+  const COLLAR = { bottom: 0.19, height: 0.17 };
   const makeCollar = (mat: THREE.Material) => {
     const g = new THREE.Group();
     g.name = 'armorCollar';
     g.position.y = COLLAR.bottom; // dünya ≈1.52 — köprücük kemiği
     const ring = mesh(
-      new THREE.CylinderGeometry(0.112, 0.15, COLLAR.height, 10, 1, true),
+      new THREE.CylinderGeometry(0.105, 0.216, COLLAR.height, 10, 1, true),
       mat,
       false,
     );
@@ -743,7 +759,7 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
 
   if (tier === 'LEATHER') {
     // Dolgun gambeson: kapitone keten gövde + deri kuşak + kapitone dikişler.
-    pieces.push(shell(0.016, padded));
+    pieces.push(shell(0.016, padded), topPlate(0.016, padded));
     for (const y of [-0.16, -0.06, 0.04, 0.14]) {
       pieces.push(band(y, 0.022, 0.008, leather));
     }
@@ -763,7 +779,7 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     pieces.push(badge);
   } else if (tier === 'CHAINMAIL') {
     // Postacı: gövde + etek + boyun zırhı + omuz askısı.
-    pieces.push(shell(0.02, metal));
+    pieces.push(shell(0.02, metal), topPlate(0.02, metal));
     const skirt = mesh(new THREE.CylinderGeometry(0.214, 0.242, 0.2, 10, 1, true), metal);
     skirt.position.y = -0.16;
     skirt.scale.z = DEPTH;
@@ -777,7 +793,7 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     pieces.push(band(0.02, 0.026, 0.03, leather));
   } else if (tier === 'PLATE') {
     // Tam levha: kabuk + omurga + iki kuşak + gorget + arma.
-    pieces.push(shell(0.028, metal));
+    pieces.push(shell(0.028, metal), topPlate(0.028, metal));
     const keel = mesh(new THREE.BoxGeometry(0.032, 0.36, 0.03), metal, false);
     keel.position.set(0, 0.08, frontZ(0.08, 0.028, 0.008));
     pieces.push(keel);
@@ -803,6 +819,19 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
   chestGroup.add(...pieces);
   rig.chestArmorSocket.add(chestGroup);
   for (const p of pieces) p.userData.chestArmor = true;
+
+  /*
+   * Zırh gövdeyi tamamen örtüyorsa altındaki tunik mesh'i gizlenir.
+   * Aksi hâlde tunikin üst kapağı/kenarı zırhın üstünden taşıp portrede
+   * "mor halka" olarak görünüyordu (Faz 9e).
+   */
+  for (const c of rig.torso.children) {
+    const m = c as THREE.Mesh;
+    if (m.isMesh && m.material === cloth) {
+      m.userData.hiddenByArmor = true;
+      m.visible = false;
+    }
+  }
 
   /* ── Kol zırhları (üst kol + ön kol) ──
      Bunlar da BannerForge'dan alınmıyor: onun kol parçaları bizim kollarımıza
