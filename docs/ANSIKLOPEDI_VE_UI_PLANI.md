@@ -1520,3 +1520,53 @@ alt dudak ≥ 10 mm, göz kapakları var, portre kamerası 30° FOV ve kafanın 
 `verify:all` **23 paket ✅**, `vite build` ✅.
 Çıktılar: `docs/renders/portrait-face.png` (8 yüz), `portrait-preview.png`,
 `scars-preview.png`.
+
+## 37. FAZ 6d — DİYALOG SAHNESİ VE SESLER (TAMAMLANDI ✅)
+
+Bannerlord'da konuşma başladığında kamera muhataba yaklaşır; muhatap başını
+çevirir, konuşurken ağzı oynar, eliyle jest yapar. Bu faz o sahneyi ekledi.
+
+### Yeni modül: `src/game/conversation.ts`
+
+Bir `ConversationScene` kurar (oynanış koduna dokunmaz):
+
+| Parça | Davranış |
+|---|---|
+| **Kamera** | omuz üstü kadraj; 3.22 m → 1.59 m yaklaşma (1.15 sn, ease-in-out, **tek yönlü**), hafif el kamerası |
+| **Muhatap** | `createHeroPortraitRig` (DNA + zırh + saç/sakal) — portre hattının aynısı |
+| **Baş takibi** | kameraya döner; yaw ≤ 0.55 rad, pitch ≤ 0.32 rad (boyun kırılmaz) |
+| **Konuşma** | alt dudak **8.5 mm** açılıp kapanır, ağız çizgisi eşlik eder |
+| **Jest** | seçim yapılınca sağ el **+30 cm** kalkar, 0.75 sn'de geri döner (taban açı + genlik; eski sürüm `-=` ile biriktiriyordu) |
+| **Göz kırpma** | 2.6–6 sn arası rastgele, göz ölçeği 1 → 0.11 |
+| **Nefes** | gövde 10.8 mrad genlik (canlı ama abartısız) |
+| **Oyuncu** | sol önde sırtı dönük ikinci rig (omuz üstü kadraj) |
+
+### Arayüz
+
+`DialogueModal`'daki statik SVG portre yerine **canlı 3B sahne**
+(`ConversationCanvas`, 300×168) geldi. WebGL yoksa sessizce yedek siluete düşer.
+Her seçimde jest, her metinde 2.6 sn konuşma penceresi tetiklenir.
+
+### Sesler (`sound.ts` — hepsi prosedürel, dosya yok)
+
+| Ses | Kullanım |
+|---|---|
+| `playDialogueOpen` | diyalog açılırken (196 + 293.7 Hz) |
+| `playDialogueClose` | kapanırken (330 → 160 Hz iniş) |
+| `playDialogueChoice('good'/'bad'/'neutral')` | seçim: kabul **yukarı**, ret **aşağı** iki nota |
+| `playDialogueBlip` | yeni metin belirdiğinde çok hafif tık (≤ 0.04) |
+| `playAgreement` | görev kabulü / anlaşma (yükselen ton + para çınlaması) |
+
+### Doğrulama
+
+- `probe-conversation.ts` — **14 kontrol**: yaklaşma tek yönlü ve %50 kısalıyor,
+  baş kameraya dönüyor (cos 1.000) ve sınır içinde, ağız 8.5 mm oynuyor ve
+  susunca kapanıyor, jest +30 cm / geri dönüş Δ 0, göz kırpma, nefes, oyuncu
+  figürü, sahne temizliği.
+- `probe-dialogue-sound.ts` — **18 kontrol**: sahte AudioContext ile her sesin
+  osilatör sayısı, kazanç tavanı, sıfıra inişi (sızıntı yok), sessiz mod ve
+  **0.5 sn süre sınırı** (metni maskeliyordu).
+- `probe-dialogue-ui.tsx` — sahne katmanı, "3B sahne" etiketi, eski statik
+  portrenin kaldırıldığı doğrulandı.
+- `docs/renders/conversation.png` — 3 lord × 4 kolon (yaklaşma %0/%50/%100 + jest).
+- `verify:all` **25 paket ✅**, `vite build` ✅.

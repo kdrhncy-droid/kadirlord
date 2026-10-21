@@ -36,6 +36,11 @@ ok(text.includes('İlişki'), 'ilişki göstergesi var');
 ok(/1–\d+ tuşlarıyla seç/.test(text), 'klavye ipucu görünüyor');
 ok(text.includes('Kese:'), 'kese (altın) göstergesi var');
 
+// Faz 6d: canlı 3B konuşma sahnesi (omuz üstü kadraj) eklendi mi?
+ok(html.includes('data-testid="conversation-canvas"'), 'konuşma sahnesi (3B) diyalogta yer alıyor');
+ok(text.includes('3B sahne'), 'sahne etiketi var');
+ok(!html.includes('<svg viewBox="0 0 64 64" class="w-16 h-16"'), 'eski statik portre kaldırıldı');
+
 const numbered = [...html.matchAll(/rounded bg-\[#241c12\][^>]*>(\d)<\/span>/g)].map((m) => m[1]);
 ok(numbered.length >= 4, 'numaralı seçenekler var', numbered.join(','));
 ok(numbered[0] === '1', 'ilk seçenek 1 numaralı');

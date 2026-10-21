@@ -229,6 +229,117 @@ class SoundManager {
     this.playCoinChime();
   }
 
+  /* ─────────────────── diyalog sesleri (Faz 6d) ───────────────────
+   * Hepsi prosedürel: harici dosya yok, tarayıcı autoplay kilidi `unlock()`
+   * ile açılıyor. Sesler kısa (≤ 0.4 sn) ve birbirini maskelemiyor.
+   */
+
+  /** Diyalog açılışı: alçak, sıcak bir "perde açıldı" tonu. */
+  public playDialogueOpen() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [
+      { f: 196, t: 0, d: 0.34, gain: 0.1 },
+      { f: 293.7, t: 0.07, d: 0.3, gain: 0.085 },
+    ].forEach(({ f, t, d, gain: g }) => {
+      const osc = ctx.createOscillator();
+      const vca = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(f, now + t);
+      vca.gain.setValueAtTime(0.0001, now + t);
+      vca.gain.exponentialRampToValueAtTime(g, now + t + 0.03);
+      vca.gain.exponentialRampToValueAtTime(0.0001, now + t + d);
+      osc.connect(vca);
+      vca.connect(ctx.destination);
+      osc.start(now + t);
+      osc.stop(now + t + d + 0.02);
+    });
+  }
+
+  /** Diyalog kapanışı: inen, yumuşak bir kapanış. */
+  public playDialogueClose() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const vca = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(330, now);
+    osc.frequency.exponentialRampToValueAtTime(160, now + 0.24);
+    vca.gain.setValueAtTime(0.09, now);
+    vca.gain.exponentialRampToValueAtTime(0.0001, now + 0.26);
+    osc.connect(vca);
+    vca.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.27);
+  }
+
+  /**
+   * Seçenek seçildi: kısa tık + yükselen iki nota.
+   * `tone` = 'neutral' | 'good' | 'bad' → teklif kabul/ret ayrımı.
+   */
+  public playDialogueChoice(tone: 'neutral' | 'good' | 'bad' = 'neutral') {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const seq =
+      tone === 'good'
+        ? [523.3, 784] // kabul: yukarı çıkış
+        : tone === 'bad'
+          ? [392, 261.6] // ret: aşağı iniş
+          : [440, 587.3]; // nötr: hafif yükseliş
+    seq.forEach((f, i) => {
+      const osc = ctx.createOscillator();
+      const vca = ctx.createGain();
+      osc.type = tone === 'bad' ? 'square' : 'sine';
+      osc.frequency.setValueAtTime(f, now + i * 0.075);
+      vca.gain.setValueAtTime(0.0001, now + i * 0.075);
+      vca.gain.exponentialRampToValueAtTime(0.085, now + i * 0.075 + 0.012);
+      vca.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.075 + 0.17);
+      osc.connect(vca);
+      vca.connect(ctx.destination);
+      osc.start(now + i * 0.075);
+      osc.stop(now + i * 0.075 + 0.18);
+    });
+  }
+
+  /** Diyalog metni belirdi: kısa "yazıldı" tıkı (çok hafif). */
+  public playDialogueBlip() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const vca = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(620 + Math.random() * 110, now);
+    vca.gain.setValueAtTime(0.035, now);
+    vca.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+    osc.connect(vca);
+    vca.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.055);
+  }
+
+  /** Görev kabul / anlaşma: kısa mürekkep-mühür vurgusu. */
+  public playAgreement() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const vca = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(196, now);
+    osc.frequency.exponentialRampToValueAtTime(392, now + 0.12);
+    vca.gain.setValueAtTime(0.13, now);
+    vca.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+    osc.connect(vca);
+    vca.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.31);
+    this.playCoinChime();
+  }
+
   public playHit() {
     if (!this.muted && playImpact('swordClash', { intensity: 0.8 })) return;
     this.playHeavyHit(false);

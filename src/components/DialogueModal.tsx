@@ -5,7 +5,7 @@
  * solda muhatabın portresi, ortada konuşma metni, altta numaralı seçenekler.
  * Klavyeden 1–9 ile seçilir, Esc ile çıkılır.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FACTION_INFO, type CampaignState, type LordAgent, type Settlement } from '../game/rules';
 import { buildQuestLog } from '../game/quests';
 import {
@@ -15,6 +15,9 @@ import {
   persuadeChance,
   type DialogueGraph,
 } from '../game/dialogue';
+import { heroFromLord } from '../game/conversation';
+import { sound } from '../game/sound';
+import { ConversationCanvas } from './ConversationCanvas';
 
 interface DialogueModalProps {
   campaign: CampaignState;
@@ -45,6 +48,13 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   const [gold, setGold] = useState(campaign.gold);
   const [nodeId, setNodeId] = useState<string>('root');
   const [lastOutcome, setLastOutcome] = useState<string | null>(null);
+  /**
+   * Faz 6d: muhatap konuşuyor mu? Yeni metin geldiğinde 2.6 sn ağız hareketi,
+   * her seçimde bir el jesti. (Ses dosyası yok; "konuşuyor" görsel ritmi.)
+   */
+  const [speaking, setSpeaking] = useState(true);
+  const [gestureKey, setGestureKey] = useState(0);
+  const speakTimer = useRef<number | null>(null);
 
   const graph: DialogueGraph = useMemo(
     () =>
@@ -72,6 +82,24 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   const relationColor =
     relation >= 40 ? '#34d399' : relation > 0 ? '#a3e635' : relation > -40 ? '#fbbf24' : '#f87171';
 
+  // Diyalog açılışı: yumuşak perde sesi (tarayıcı autoplay kilidi için
+  // kullanıcı jesti zaten tıklama/klavye ile geliyor).
+  useEffect(() => {
+    sound.unlock();
+    sound.playDialogueOpen();
+    return () => sound.playDialogueClose();
+  }, []);
+
+  useEffect(() => {
+    setSpeaking(true);
+    sound.playDialogueBlip();
+    if (speakTimer.current) window.clearTimeout(speakTimer.current);
+    speakTimer.current = window.setTimeout(() => setSpeaking(false), 2600);
+    return () => {
+      if (speakTimer.current) window.clearTimeout(speakTimer.current);
+    };
+  }, [nodeId]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -91,13 +119,17 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   }, [options.length, nodeId, relation, gold]);
 
   const choose = (optionId: string) => {
+    setGestureKey((k) => k + 1); // muhatap eliyle jest yapar
     const res = applyOption(graph, node.id, optionId, { relation, gold });
+    const delta = res.relation - relation;
+    sound.playDialogueChoice(delta > 0 ? 'good' : delta < 0 ? 'bad' : 'neutral');
     setRelation(res.relation);
     setGold(res.gold);
     if (res.relation !== relation && lord && onRelationChange) {
       onRelationChange(lord.id, res.relation - relation);
     }
     if (res.acceptedQuestId) {
+      sound.playAgreement();
       setLastOutcome('Görev günlüğe eklendi.');
       // kısa süre göster, sonra temizle
       window.setTimeout(() => setLastOutcome(null), 2500);
@@ -132,21 +164,34 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
       <div className="absolute inset-0 bg-black/35 pointer-events-auto" onClick={onClose} />
 
       <div className="relative w-full max-w-5xl pointer-events-auto px-3">
-        {/* muhatap kartı */}
+        {/* muhatap sahnesi — omuz üstü kadraj, kamera yaklaşır (Faz 6d) */}
         <div className="flex items-end gap-3">
           <div
-            className="shrink-0 w-[104px] rounded-t-lg border-2 border-[#c6a15b]/70 shadow-2xl overflow-hidden"
+            className="shrink-0 w-[300px] rounded-t-lg border-2 border-[#c6a15b]/70 shadow-2xl overflow-hidden"
             style={{ background: `linear-gradient(180deg, ${faction?.color ?? '#3b2f1d'} 0%, #14100c 100%)` }}
           >
-            <div className="h-[104px] flex items-center justify-center">
-              <svg viewBox="0 0 64 64" className="w-16 h-16" aria-hidden="true">
-                <circle cx="32" cy="24" r="12" fill="#d7c3a0" />
-                <path d="M12 64c2-14 10-20 20-20s18 6 20 20z" fill="#d7c3a0" opacity="0.9" />
-              </svg>
-            </div>
-            <div className="bg-[#0d0b08]/85 px-1 py-1 text-center">
-              <div className="font-display text-[11px] text-[#f8f0df] truncate">{initials}</div>
-              <div className="text-[9px] text-[#c6a15b] truncate">{graph.speakerTitle}</div>
+            <ConversationCanvas
+              hero={
+                lord
+                  ? heroFromLord(lord)
+                  : {
+                      id: settlement?.id ?? 'settlement',
+                      name: graph.speakerName,
+                      occupation: 'NOTABLE',
+                      culture: (settlement?.faction ?? 'player') as never,
+                      bannerColor: faction?.color ?? '#7f1d1d',
+                    }
+              }
+              speaking={speaking}
+              gestureKey={gestureKey}
+              className="h-[168px] w-full"
+            />
+            <div className="bg-[#0d0b08]/85 px-1 py-1 flex items-center justify-between">
+              <div className="min-w-0">
+                <div className="font-display text-[11px] text-[#f8f0df] truncate">{initials}</div>
+                <div className="text-[9px] text-[#c6a15b] truncate">{graph.speakerTitle}</div>
+              </div>
+              <span className="text-[9px] text-[#8b8072] shrink-0">3B sahne</span>
             </div>
           </div>
 
