@@ -27,6 +27,16 @@ import {
   type HeroRecord,
   type Occupation,
 } from '../../game/heroes';
+import { Chip, InfoCell, LinkCard, occupationColor, initials } from './parts';
+import {
+  ClanDetailPage,
+  ClanListPage,
+  ConceptsPage,
+  KingdomDetailPage,
+  KingdomListPage,
+  SettlementDetailPage,
+  SettlementListPage,
+} from './pages';
 
 interface EncyclopediaModalProps {
   campaign: CampaignState;
@@ -51,27 +61,6 @@ const CARD_DEFS: {
   { section: 'SETTLEMENTS', title: 'Yerleşimler', glyph: '🏰', art: 'from-[#1f3320] via-[#12200f] to-[#120f0b]', desc: 'Şehirler, kaleler, köyler' },
   { section: 'CONCEPTS', title: 'Kavramlar', glyph: '📖', art: 'from-[#2b2b3b] via-[#1a1a24] to-[#120f0b]', desc: 'Sözlük ve terimler' },
 ];
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toLocaleUpperCase('tr') ?? '')
-    .join('');
-}
-
-const occupationColor: Record<Occupation, string> = {
-  RULER: 'text-[#fbbf24] border-[#fbbf24]/50 bg-[#fbbf24]/10',
-  LORD: 'text-[#e2d6c1] border-[#c6a15b]/40 bg-[#c6a15b]/10',
-  LADY: 'text-[#f9a8d4] border-[#f9a8d4]/40 bg-[#f9a8d4]/10',
-  CLAN_LEADER: 'text-[#fbbf24] border-[#fbbf24]/40 bg-[#fbbf24]/10',
-  WANDERER: 'text-[#a89b84] border-[#a89b84]/40 bg-[#a89b84]/10',
-  NOTABLE: 'text-[#93c5fd] border-[#93c5fd]/40 bg-[#93c5fd]/10',
-  MERCHANT: 'text-[#fcd34d] border-[#fcd34d]/40 bg-[#fcd34d]/10',
-  GANG_LEADER: 'text-[#fca5a5] border-[#fca5a5]/40 bg-[#fca5a5]/10',
-  HEADMAN: 'text-[#bef264] border-[#bef264]/40 bg-[#bef264]/10',
-};
 
 export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
   campaign,
@@ -543,13 +532,19 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
       case 'HERO':
         return heroDetail(index.heroById[route.id ?? '']);
       case 'KINGDOMS':
-        return placeholder('Krallıklar');
+        return <KingdomListPage index={index} onNavigate={go} />;
+      case 'KINGDOM':
+        return <KingdomDetailPage index={index} kingdomId={route.id} onNavigate={go} />;
       case 'CLANS':
-        return placeholder('Klanlar');
+        return <ClanListPage index={index} onNavigate={go} />;
+      case 'CLAN':
+        return <ClanDetailPage index={index} clanId={route.id} onNavigate={go} />;
       case 'SETTLEMENTS':
-        return placeholder('Yerleşimler');
+        return <SettlementListPage index={index} onNavigate={go} />;
+      case 'SETTLEMENT':
+        return <SettlementDetailPage index={index} settlementId={route.id} onNavigate={go} />;
       case 'CONCEPTS':
-        return placeholder('Kavramlar');
+        return <ConceptsPage />;
       default:
         return placeholder(route.section);
     }
@@ -569,29 +564,3 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
     </div>
   );
 };
-
-const InfoCell: React.FC<{ label: string; value: string }> = ({ label, value }) => (
-  <div className="bg-[#0d0b08] rounded px-2 py-1">
-    <div className="text-[9px] uppercase tracking-wider text-[#6b6154]">{label}</div>
-    <div className="text-[11px] text-[#e2d6c1]">{value}</div>
-  </div>
-);
-
-const LinkCard: React.FC<{ label: string; value: string; onClick: () => void; disabled?: boolean }> = ({
-  label,
-  value,
-  onClick,
-  disabled,
-}) => (
-  <button
-    type="button"
-    onClick={onClick}
-    disabled={disabled}
-    className={`rounded border border-[#c6a15b]/30 px-2 py-1.5 text-left ${
-      disabled ? 'opacity-40 cursor-default' : 'hover:border-[#fbbf24]/60 hover:bg-[#c6a15b]/10'
-    }`}
-  >
-    <div className="text-[9px] uppercase tracking-wider text-[#6b6154]">{label}</div>
-    <div className="text-[11px] text-[#e2d6c1] truncate">{value}</div>
-  </button>
-);

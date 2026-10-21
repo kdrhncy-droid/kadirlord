@@ -6,6 +6,14 @@
 import { FACTION_INFO, createInitialCampaignState, type Settlement } from '../src/game/rules.ts';
 import { ageOf } from '../src/game/heroes.ts';
 import {
+  SETTLEMENT_TYPE_LABELS,
+  clanMembers,
+  kingdomClans,
+  kingdomFiefs,
+  kingdomMembers,
+  settlementHeroes,
+  settlementKingdom,
+  warringKingdoms,
   HOME_ROUTE,
   breadcrumb,
   buildEncyclopediaIndex,
@@ -139,6 +147,40 @@ ok(
   'tek kademe breadcrumb',
 );
 ok(HOME_ROUTE.section === 'HOME', 'HOME_ROUTE sabiti');
+
+/* 8. Varlık yardımcıları (Faz 1b) */
+const k0 = index.kingdoms[0];
+const kClans = kingdomClans(index, k0.id);
+const kMembers = kingdomMembers(index, k0.id);
+const kFiefs = kingdomFiefs(index, k0.id);
+ok(kClans.length > 0 && kClans.every((c) => c.kingdomId === k0.id), `krallığın klanları (${kClans.length})`);
+ok(kMembers.length > 0 && kMembers.every((h) => h.kingdomId === k0.id), `krallığın lordları (${kMembers.length})`);
+ok(kMembers[0].occupation === 'RULER', 'lordlar listesinde hükümdar ilk sırada');
+ok(kFiefs.length > 0 && kFiefs.every((s) => s.faction === k0.id), `krallığın toprakları (${kFiefs.length})`);
+const orderOk = kFiefs.every((s, i) => {
+  const order = { TOWN: 0, CASTLE: 1, VILLAGE: 2 } as const;
+  return i === 0 || order[kFiefs[i - 1].type] <= order[s.type];
+});
+ok(orderOk, 'topraklar şehir → kale → köy sırasında');
+
+const c0 = index.clans[0];
+const cMembers = clanMembers(index, c0.id);
+ok(cMembers.length > 0 && cMembers.every((h) => h.clanId === c0.id), `klanın üyeleri (${cMembers.length})`);
+ok(!c0.leaderId || cMembers[0].id === c0.leaderId, 'klan listesinde lider ilk sırada');
+
+const s0 = index.settlements[0];
+const sHeroes = settlementHeroes(index, s0.id);
+ok(sHeroes.every((h) => h.lastSeen.settlementId === s0.id), `yerleşimde son görülenler (${sHeroes.length})`);
+ok(settlementKingdom(index, s0) === null || true, 'yerleşim→krallık çözümü çöküyor mu');
+ok(
+  index.settlements.every((s) => ['TOWN', 'CASTLE', 'VILLAGE'].includes(s.type)),
+  'yerleşim türleri geçerli',
+);
+ok(SETTLEMENT_TYPE_LABELS.TOWN === 'Şehir' && SETTLEMENT_TYPE_LABELS.CASTLE === 'Kale', 'tür etiketleri Türkçe');
+ok(Array.isArray(warringKingdoms(index)), 'savaş hâlindeki krallıklar listesi');
+
+const totalMembers = index.kingdoms.reduce((n, k) => n + k.memberIds.length, 0);
+ok(totalMembers === index.heroes.filter((h) => h.kingdomId).length, `krallık üye toplamı tutarlı (${totalMembers})`);
 
 console.log(fails === 0 ? '\n✅ ANSİKLOPEDİ MANTIĞI DOĞRU' : `\n❌ ${fails} hata`);
 process.exit(fails === 0 ? 0 : 1);

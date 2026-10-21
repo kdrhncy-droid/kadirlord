@@ -67,14 +67,49 @@ ok(!revealed.includes('Tanış (bilgileri aç)'), 'tanışılmışta tanış dü
 ok(revealed.includes('Cesaret'), 'tanışılmışta kişilik değerleri');
 ok(!revealed.includes('beceriler gizli'), 'tanışılmışta beceriler açık');
 
-/* 4. Yer tutucu sayfalar */
+/* 4. Krallık / klan / yerleşim / kavram sayfaları (Faz 1b) */
+const k = index.kingdoms[0];
 const kingdoms = render({ initialRoute: { section: 'KINGDOMS' } });
-ok(kingdoms.includes('Krallıklar'), 'krallık bölümü açılıyor');
-ok(kingdoms.includes('Faz 2'), 'yer tutucu mesajı');
+ok(kingdoms.includes(k.name), 'krallık listesinde krallık adı');
+ok(kingdoms.includes('Hükümdar:'), 'krallık satırında hükümdar');
+ok(kingdoms.includes('kayıt'), 'krallık listesi kayıt sayısı');
 
-/* 5. Bilinmeyen id güvenli */
-const broken = render({ initialRoute: { section: 'HERO', id: 'yok-boyle-bir-id' } });
-ok(broken.includes('Kahraman bulunamadı'), 'geçersiz hero id çökmüyor');
+const kingdomDetail = render({ initialRoute: { section: 'KINGDOM', id: k.id } });
+ok(kingdomDetail.includes(k.name), 'krallık detayında ad');
+ok(kingdomDetail.includes('Klanlar'), 'krallık detayında Klanlar bölümü');
+ok(kingdomDetail.includes('Topraklar'), 'krallık detayında Topraklar bölümü');
+ok(kingdomDetail.includes('Lordlar ve leydiler'), 'krallık detayında üyeler');
+ok(kingdomDetail.includes(k.rulerName), 'krallık detayında hükümdar adı');
+
+const clan = index.clans[0];
+const clans = render({ initialRoute: { section: 'CLANS' } });
+ok(clans.includes(clan.name), 'klan listesinde klan adı');
+
+const clanDetail = render({ initialRoute: { section: 'CLAN', id: clan.id } });
+ok(clanDetail.includes(clan.name), 'klan detayında ad');
+ok(clanDetail.includes('Üyeler'), 'klan detayında Üyeler bölümü');
+ok(clanDetail.includes('Lider'), 'klan detayında lider');
+
+const settlements = render({ initialRoute: { section: 'SETTLEMENTS' } });
+ok(settlements.includes('Tür'), 'yerleşim filtresi var');
+ok(settlements.includes('🏙️') || settlements.includes('🏰') || settlements.includes('🏡'), 'yerleşim tür ikonları');
+
+const st = index.settlements[0];
+const settlementDetail = render({ initialRoute: { section: 'SETTLEMENT', id: st.id } });
+ok(settlementDetail.includes(st.name), 'yerleşim detayında ad');
+ok(settlementDetail.includes('Açıklama'), 'yerleşim detayında açıklama');
+ok(settlementDetail.includes('Burada son görülenler'), 'yerleşim detayında son görülenler');
+
+const concepts = render({ initialRoute: { section: 'CONCEPTS' } });
+ok(concepts.includes('Renown'), 'kavramlar: Renown');
+ok(concepts.includes('Kalkan Duvarı'), 'kavramlar: Kalkan Duvarı');
+ok(concepts.includes('Gruplar'), 'kavramlar filtre grubu');
+
+/* 5. Bozuk id güvenliği */
+ok(render({ initialRoute: { section: 'HERO', id: 'yok' } }).includes('Kahraman bulunamadı'), 'geçersiz hero id çökmüyor');
+ok(render({ initialRoute: { section: 'KINGDOM', id: 'yok' } }).includes('Krallık bulunamadı'), 'geçersiz kingdom id çökmüyor');
+ok(render({ initialRoute: { section: 'CLAN', id: 'yok' } }).includes('Klan bulunamadı'), 'geçersiz clan id çökmüyor');
+ok(render({ initialRoute: { section: 'SETTLEMENT', id: 'yok' } }).includes('Yerleşim bulunamadı'), 'geçersiz settlement id çökmüyor');
 
 console.log(fails === 0 ? '\n✅ ANSİKLOPEDİ ARAYÜZÜ DOĞRU' : `\n❌ ${fails} hata`);
 process.exit(fails === 0 ? 0 : 1);

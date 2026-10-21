@@ -221,6 +221,68 @@ export function buildEncyclopediaIndex(
   };
 }
 
+/* ─────────────────────────── varlık yardımcıları ─────────────────────────── */
+
+export const SETTLEMENT_TYPE_LABELS: Record<Settlement['type'], string> = {
+  TOWN: 'Şehir',
+  CASTLE: 'Kale',
+  VILLAGE: 'Köy',
+};
+
+/** Krallığa bağlı klanlar (alfabetik). */
+export function kingdomClans(index: EncyclopediaIndex, kingdomId: string): ClanSummary[] {
+  return index.clans.filter((c) => c.kingdomId === kingdomId);
+}
+
+/** Krallığın lordları — hükümdar en başta. */
+export function kingdomMembers(index: EncyclopediaIndex, kingdomId: string): HeroRecord[] {
+  const list = index.heroes.filter((h) => h.kingdomId === kingdomId);
+  return list.sort((a, b) => {
+    if (a.occupation === 'RULER' && b.occupation !== 'RULER') return -1;
+    if (b.occupation === 'RULER' && a.occupation !== 'RULER') return 1;
+    return a.name.localeCompare(b.name, 'tr');
+  });
+}
+
+/** Krallığın toprakları: şehir → kale → köy, sonra isim. */
+export function kingdomFiefs(index: EncyclopediaIndex, faction: string): Settlement[] {
+  const order: Record<Settlement['type'], number> = { TOWN: 0, CASTLE: 1, VILLAGE: 2 };
+  return index.settlements
+    .filter((s) => s.faction === faction)
+    .sort((a, b) => order[a.type] - order[b.type] || a.name.localeCompare(b.name, 'tr'));
+}
+
+/** Klanın üyeleri — lider en başta. */
+export function clanMembers(index: EncyclopediaIndex, clanId: string): HeroRecord[] {
+  const clan = index.clanById[clanId];
+  const list = index.heroes.filter((h) => h.clanId === clanId);
+  return list.sort((a, b) => {
+    if (clan?.leaderId === a.id) return -1;
+    if (clan?.leaderId === b.id) return 1;
+    return a.name.localeCompare(b.name, 'tr');
+  });
+}
+
+/** Bir yerleşimde son görülen kahramanlar. */
+export function settlementHeroes(index: EncyclopediaIndex, settlementId: string): HeroRecord[] {
+  return index.heroes
+    .filter((h) => h.lastSeen.settlementId === settlementId)
+    .sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+}
+
+/** Yerleşimin bağlı olduğu krallık kaydı (haydut/bağımsız ise null). */
+export function settlementKingdom(
+  index: EncyclopediaIndex,
+  settlement: Settlement,
+): KingdomSummary | null {
+  return index.kingdomById[settlement.faction] ?? null;
+}
+
+/** Oyuncuyla savaşta olan krallıklar. */
+export function warringKingdoms(index: EncyclopediaIndex): KingdomSummary[] {
+  return index.kingdoms.filter((k) => k.atWarWithPlayer);
+}
+
 /* ─────────────────────────── arama ─────────────────────────── */
 
 export type SearchKind = 'HERO' | 'CLAN' | 'KINGDOM' | 'SETTLEMENT';

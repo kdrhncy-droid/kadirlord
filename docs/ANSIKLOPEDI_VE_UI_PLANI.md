@@ -779,10 +779,58 @@ Yeni komutlar: `npm run verify:heroes`, `npm run verify:encyclopedia`
 
 ---
 
-## 16. SONRAKİ ADIM — Faz 1b
+## 16. FAZ 1b — KRALLIK / KLAN / YERLEŞİM / KAVRAM SAYFALARI (TAMAMLANDI ✅)
 
-1. **Baked portreler:** tek offscreen WebGL bağlamı + `CanvasTexture` önbelleği (LRU 64);
-   kahraman listesinde 36×36, detayda 240×320. `LordPortraitCanvas`'ın DNA/morph hattı yeniden kullanılacak.
-2. **Krallık / Klan / Yerleşim sayfaları:** dizin verisi hazır (`kingdomById`, `clanById`, `settlementById`),
-   yalnızca düzen yazılacak.
-3. **Aile ağacı** (Faz 3) için `HeroFamily` alanlarının içerikle doldurulması.
+### Eklenen dosyalar
+
+| Dosya | Satır | İçerik |
+| :--- | ---: | :--- |
+| `src/components/encyclopedia/parts.tsx` | ~95 | Ortak parçalar: `initials`, `occupationColor`, `InfoCell`, `LinkCard`, `Chip`, `SectionTitle`, `BannerBadge` |
+| `src/components/encyclopedia/pages.tsx` | ~600 | Krallık listesi+detayı, Klan listesi+detayı, Yerleşim listesi+detayı, Kavramlar sözlüğü |
+| `src/game/encyclopedia.ts` | +90 | `kingdomClans`, `kingdomMembers`, `kingdomFiefs`, `clanMembers`, `settlementHeroes`, `settlementKingdom`, `warringKingdoms`, `SETTLEMENT_TYPE_LABELS` |
+
+### Sayfa içerikleri
+
+| Sayfa | Gösterilen |
+| :--- | :--- |
+| **Krallık listesi** | Sancak rozeti, ad, hükümdar, klan/lord sayısı, tımar sayısı, "Savaşta" etiketi |
+| **Krallık detayı** | Kültür, savaş/barış durumu, hükümdar kartı, **klanlar**, **topraklar** (şehir → kale → köy), **lordlar ve leydiler** listesi |
+| **Klan listesi/detayı** | Klan adı, krallık, üye sayısı, lider (en üstte), üye listesi |
+| **Yerleşim listesi** | Tür filtresi (Şehir/Kale/Köy) + ada göre arama, refah değeri |
+| **Yerleşim detayı** | Tür, krallık bağlantısı, refah/garnizon/erzak, yağma durumu, açıklama, **"burada son görülenler"** |
+| **Kavramlar** | 16 terim, 4 grup (Savaş / Ekonomi / Siyaset / Karakter) filtresi |
+
+Tüm sayfalar birbirine bağlı: yerleşim → krallık → klan → lord → son görüldüğü yerleşim.
+Breadcrumb her kademeyi gösteriyor (`Ansiklopedi / Krallıklar / Kalradya İmparatorluğu`).
+
+### Doğrulama
+
+```
+✓ tsc --noEmit                       ✓ vite build (604 ms)
+✓ rules.test 28/28                   ✓ probe-heroes
+✓ probe-encyclopedia  (44 kontrol)   ✓ probe-encyclopedia-ui (40 kontrol)
+```
+
+Yeni arayüz kontrolleri (örnek):
+
+```
+✓ krallık listesinde krallık adı      ✓ yerleşim detayında "Burada son görülenler"
+✓ krallık detayında Topraklar         ✓ kavramlar: Kalkan Duvarı
+✓ klan detayında Lider                ✓ geçersiz kingdom/clan/settlement id çökmüyor
+```
+
+### Bilinen sınırlar
+
+- **Portreler** hâlâ baş harf + sancak rengi (Faz 1c).
+- **Klan üye sayıları düşük** (kraliyet dışı klanlarda 2–4). Faz 3'te aile/hane üretimiyle dolacak.
+- **Yerleşim başına kahraman** az (40 kahraman / 211 yerleşim) → detayda çoğu zaman 0–1 kişi görünür.
+  İçerik üretimi (Faz 9) bunu çözecek.
+
+---
+
+## 17. SONRAKİ ADIM — Faz 1c (portreler)
+
+1. **Baked portre hattı:** tek offscreen `WebGLRenderer`, kahraman başına `createCharacterRig` + DNA +
+   teçhizat → 128×160 render → `CanvasTexture`/data URL, LRU 64 önbellek.
+2. Kullanım yerleri: kahraman listesi (36×36), kahraman detayı (240×320), krallık/klan üye listeleri (32×32).
+3. Portre hazır olana kadar mevcut baş harf rozeti "iskelet" olarak kalacak (kademeli yükleme).
