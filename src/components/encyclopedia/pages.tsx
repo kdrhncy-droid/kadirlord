@@ -15,6 +15,7 @@ import {
 } from '../../game/encyclopedia';
 import { OCCUPATION_LABELS, lastSeenLabel, type HeroRecord } from '../../game/heroes';
 import { BannerBadge, Chip, InfoCell, LinkCard, SectionTitle, initials, occupationColor } from './parts';
+import { HeroPortrait } from './HeroPortrait';
 
 interface PageProps {
   index: EncyclopediaIndex;
@@ -33,7 +34,7 @@ const HeroRow: React.FC<{ hero: HeroRecord; day: number; onOpen: () => void }> =
     onClick={onOpen}
     className="w-full flex items-center gap-3 px-3 py-2 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10 text-left"
   >
-    <BannerBadge color={hero.bannerColor} text={initials(hero.name)} size={32} />
+    <HeroPortrait hero={hero} width={32} square />
     <span className="min-w-0 flex-1">
       <span className="flex items-center gap-2">
         <span className="text-xs text-[#f8f0df] truncate">{hero.name}</span>

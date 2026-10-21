@@ -100,6 +100,13 @@ ok(settlementDetail.includes(st.name), 'yerleşim detayında ad');
 ok(settlementDetail.includes('Açıklama'), 'yerleşim detayında açıklama');
 ok(settlementDetail.includes('Burada son görülenler'), 'yerleşim detayında son görülenler');
 
+/* 4b. Portreler (Faz 1c) — WebGL yokken baş harf rozeti, kadraj bozulmadan */
+ok(list.includes('width:36px'), 'kahraman listesinde 36px portre kutusu');
+ok(list.includes(index.heroes[0].bannerColor), 'liste portresi sancak rengini taşıyor');
+ok(detail.includes('width:208px'), 'kahraman detayında 208px portre');
+ok(detail.includes('height:260px'), 'detay portresi 4:5 oranında (208×260)');
+ok(!detail.includes('<img'), 'WebGL yokken detayda <img> yok (rozet fallback)');
+
 const concepts = render({ initialRoute: { section: 'CONCEPTS' } });
 ok(concepts.includes('Renown'), 'kavramlar: Renown');
 ok(concepts.includes('Kalkan Duvarı'), 'kavramlar: Kalkan Duvarı');

@@ -828,9 +828,65 @@ Yeni arayüz kontrolleri (örnek):
 
 ---
 
-## 17. SONRAKİ ADIM — Faz 1c (portreler)
+## 17. FAZ 1c — BAKED PORTRELER (TAMAMLANDI ✅)
 
-1. **Baked portre hattı:** tek offscreen `WebGLRenderer`, kahraman başına `createCharacterRig` + DNA +
-   teçhizat → 128×160 render → `CanvasTexture`/data URL, LRU 64 önbellek.
-2. Kullanım yerleri: kahraman listesi (36×36), kahraman detayı (240×320), krallık/klan üye listeleri (32×32).
-3. Portre hazır olana kadar mevcut baş harf rozeti "iskelet" olarak kalacak (kademeli yükleme).
+Karar: portreler **tek kare (baked)** üretilir, `data:image/png` olarak önbelleğe alınır; ansiklopedide
+canlı 3B yok. 40 kahraman için 40 WebGL bağlamı açılmaz.
+
+### 17.1 Dosyalar
+
+| Dosya | Satır | İçerik |
+| --- | --- | --- |
+| `src/game/portraitRenderer.ts` | ~300 | Tek offscreen `WebGLRenderer` (256×320, `alpha:true`, sRGB), iş kuyruğu (kare/s `requestAnimationFrame` ile **1** portre), LRU 64 önbellek, `pending` ile aynı portrenin iki kez üretilmesini engelleme, sayısal kadraj çözücü |
+| `src/components/encyclopedia/HeroPortrait.tsx` | ~80 | Portre bileşeni: önbellekte varsa **senkron** gösterir, yoksa kuyruğa girer; hazır olana kadar baş harf rozeti; PNG şeffaf olduğu için arkada sancak renkli radyal zemin |
+| `scripts/probe-portrait.ts` | ~95 | 15 mantık/arayüz kontrolü (anahtar tekilliği, WebGL yokken `null`, rozet fallback) |
+| `scripts/probe-portrait-frame.ts` | ~120 | 12 **geometrik kadraj** kontrolü (NDC uzayında kafa/boyun/omuz sınırları) |
+| `scripts/preview-portraits.ts` | ~215 | WebGL'siz CPU rasterizer → `docs/renders/portrait-preview.png` (6 kahraman); geliştirici aracı, `verify` zincirinde değil |
+
+### 17.2 Kadraj çözücü (neden gerekli?)
+
+`applyMorphDNAToRig` kafa kutusunu 2.5 kata kadar değiştiriyor (DNA + saç + sakal). Sabit kamera
+mesafesiyle bazı kahramanlar taşıyor, bazıları minicik kalıyordu. Çözüm (`createPortraitCamera`):
+
+1. Ölçek **kafatası** kutusundan alınır (yüzler 40 portrede aynı boyut; DNA farkı yüzde kalır).
+2. Saç/sakal 1.85 NDC'yi aşarsa kamera uzaklaşır.
+3. Saçın tepesi 0.86 NDC'ye hizalanır (üstte nefes payı).
+4. 8 iterasyonda yakınsar; kamera 20° yörüngede döner → yüzün 3/4'ü.
+
+Ölçülen sonuç (40 kahraman): tepe **0.86** (sapma 0.00), kafa yüksekliği ≈1.0 NDC, çene −0.25…−0.75,
+kafa yatayda ±0.9 içinde, boyun ve omuz hattı kadrajda.
+
+### 17.3 Kullanım yerleri
+
+| Yer | Boyut | Not |
+| --- | --- | --- |
+| Kahraman listesi (ansiklopedi) | 36×36 | sancak renkli zemin, yuvarlak köşe |
+| Kahraman detayı (sol kolon) | 208×260 (4:5) | altta meslek şeridi |
+| Klan/yerleşim üye satırları | 32×32 | `HeroRow` üzerinden aynı bileşen |
+
+### 17.4 Geri düşme (WebGL yoksa)
+
+`document`/WebGL yoksa `requestPortrait` sessizce `null` döner → baş harf rozeti kalır, hiçbir şey
+kırılmaz. Node/SSR probe'ları bunu doğrular (`!html.includes('<img')`). GPU bağlamı kaybolursa
+(`webglcontextlost`) üretim `null`'a düşer, arayüz rozette kalır.
+
+### 17.5 Bilinen sınırlar
+
+- Portreler **statik**: yara/yaşlanma/teçhizat değişimi yansımaz (önbellek anahtarı `id:sancak:meslek`).
+- `PORTRAIT_W/H = 256×320`; 208px'lik detayda retina ekranda hafif yumuşama olabilir.
+- Gölgelendirme WebGL'de (`MeshStandardMaterial` + key/fill/ambient) yapılır; `preview-portraits.ts`
+  CPU yaklaşımıdır, **estetik referans değil kadraj referansıdır**.
+- Chromium/Playwright olmadığı için gerçek piksel çıktısı otomatik test edilemiyor; bu yüzden kadraj
+  sayısal olarak (NDC) ölçülüyor.
+
+### 17.6 Doğrulama
+
+`tsc --noEmit` ✓ · `rules.test` 28/28 ✓ · `probe-heroes` ✓ · `probe-encyclopedia` 44/44 ✓ ·
+`probe-encyclopedia-ui` 52/52 ✓ · `probe-portrait` 15/15 ✓ · `probe-portrait-frame` 12/12 ✓ ·
+`vite build` ✓
+
+### 17.7 Sonraki adım — Faz 1d (cila)
+
+1. Portrelerin krallık/klan listelerinde de görünmesi (şu an yalnız kahraman listesi + `HeroRow`).
+2. Ansiklopedi başlığında klan sancağı + hükümdar portresi.
+3. Kısayol ipucu şeridi ve "son görüldü"/"savaşta" rozetlerinin hizası.

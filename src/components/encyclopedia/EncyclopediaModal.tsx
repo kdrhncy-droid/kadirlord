@@ -27,7 +27,8 @@ import {
   type HeroRecord,
   type Occupation,
 } from '../../game/heroes';
-import { Chip, InfoCell, LinkCard, occupationColor, initials } from './parts';
+import { Chip, InfoCell, LinkCard, occupationColor } from './parts';
+import { HeroPortrait } from './HeroPortrait';
 import {
   ClanDetailPage,
   ClanListPage,
@@ -334,12 +335,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
                 onClick={() => go({ section: 'HERO', id: h.id })}
                 className="w-full flex items-center gap-3 px-3 py-2 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10 text-left"
               >
-                <span
-                  className="w-9 h-9 shrink-0 rounded-sm border border-[#c6a15b]/40 flex items-center justify-center text-[11px] font-bold text-[#f8f0df]"
-                  style={{ background: `linear-gradient(160deg, ${h.bannerColor}, #120f0b)` }}
-                >
-                  {initials(h.name)}
-                </span>
+                <HeroPortrait hero={h} width={36} square />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
                     <span className="text-xs text-[#f8f0df] truncate">{h.name}</span>
@@ -387,12 +383,13 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
     return (
       <div className="flex h-full min-h-0">
         <div className="w-[240px] shrink-0 border-r border-[#c6a15b]/25 p-4 flex flex-col items-center">
-          <div
-            className="w-full h-[240px] rounded-sm border border-[#c6a15b]/40 flex items-center justify-center relative overflow-hidden"
-            style={{ background: `linear-gradient(170deg, ${hero.bannerColor}, #0d0b08 75%)` }}
-          >
-            <span className="font-display text-4xl text-[#f8f0df]/85">{initials(hero.name)}</span>
-            <span className="absolute inset-x-0 bottom-0 py-1 text-center text-[10px] bg-black/45 text-[#e2d6c1]">
+          <div className="relative">
+            <HeroPortrait
+              hero={hero}
+              width={208}
+              className="!border-[#c6a15b]/50"
+            />
+            <span className="absolute inset-x-0 bottom-0 py-1 text-center text-[10px] bg-black/55 text-[#e2d6c1] rounded-b-sm">
               {OCCUPATION_LABELS[hero.occupation]}
             </span>
           </div>
