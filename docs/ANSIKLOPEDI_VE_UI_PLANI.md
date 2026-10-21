@@ -1295,9 +1295,10 @@ Kalan işler (öncelik sırası):
 | 6 | Diyalog ekranı | ✅ | `probe-dialogue` 25 + UI 12 |
 | 7 | Pazaryeri (tam Bannerlord düzeni) | ✅ | `probe-market` 28 + UI 20 |
 | 8 | Asker toplama | ✅ | `probe-recruitment` 28 + UI 10 |
-| 9a–9g | Yüzler / içerik / sesler / sadeleştirme | ✅ | `probe-face-cover`, `probe-conversation`, `probe-encyclopedia-dedup` |
+| 9a–9h | Yüzler / içerik / sesler / sadeleştirme | ✅ | `probe-face-cover`, `probe-conversation`, `probe-encyclopedia-dedup` |
+| 10a | Kalıcılık + zaman yönetimi + Esc katmanları | ✅ | `probe-save` 30, `probe-ui-session` 29 |
 
-Tümü tek komutla: `npm run verify:all` (tsc + 26 test/probe dosyası, 26 paket).
+Tümü tek komutla: `npm run verify:all` (tsc + 28 test/probe dosyası, 28 paket).
 
 **Faz 9 için planlanan küçük işler** (hepsi tamamlandı → §32–§38)
 1. ✅ Portre yüz detayı (göz/kaş/dudak) — kadraj **değişmedi** (kullanıcı kararı).
@@ -1671,3 +1672,59 @@ boşa çıkarıyordu (hangi klan olduğu anlaşılmıyor).
 
 **Doğrulama:** `probe-encyclopedia-dedup`'a 15. kontrol eklendi —
 `klan adları tekil: 21 klan, 21 tekil`. `verify:all` 26 paket ✅.
+
+## 40. FAZ 10a — KAYIT, ZAMAN YÖNETİMİ VE ESC KATMANLARI (TAMAMLANDI ✅)
+
+Denetim raporunun (`docs/EKSIKLER_VE_HATALAR.md`) ilk üç kritik bulgusu kapatıldı.
+
+### 40.1 A1 — Sefer artık kaydediliyor
+
+Yeni modül: **`src/game/saveGame.ts`** (DOM'a bağımlı değil, depolama enjekte edilir).
+
+| Parça | Davranış |
+| --- | --- |
+| `SAVE_KEY` | `sancak-kalradya/sefer-v1` — tek yuva (Bannerlord "Save 1") |
+| `SAVE_VERSION` | `1`; farklı sürüm **yüklenmez** (ileride göç için kapı açık) |
+| `writeSave` | `campaign` + `macroState` + `metHeroIds` + `backgroundChoice` + `savedAt` |
+| `readSave` / `parseSave` | Bozuk JSON, eksik alan, yanlış tip, eski sürüm → **sessizce `null`** |
+| `defaultStorage` | Gizli mod / SSR / kapalı depolama → `null` (oyun kayıtsız devam eder) |
+
+**Arayüz:**
+- **Otomatik kayıt:** her oyun günü geçişinde (16 s'de bir 1x'te).
+- **Başlık ekranı:** kayıt varsa yeşil **"SEFERE DEVAM ET · GÜN N [ENTER]"** kartı
+  (ad · altın · son kayıt saati). `Enter` artık **devam eder**, yeni sefer düğmeyle başlar.
+- **Duraklatma menüsü:** **"Seferi Kaydet"** + "Son kayıt: Gün N" satırı + onaylı
+  **"Yeni Sefer (kayıt silinir)"** + **"Kaydet ve Ana Ekrana Dön"**.
+- **`R`** ve zafer/yenilgi ekranındaki yeni sefer artık **onay istiyor** (eski sürüm sessizce siliyordu).
+- Seçilen **karakter adı** korunuyor (`playerName` state + kayıt) — yeni seferde
+  "Komutan Demirhan"a dönmüyor.
+- Kayıt/yükleme sonrası alt ortada 2.4 s'lik bildirim (`role="status"`, `aria-live`).
+
+Kayıt boyutu: **119 KB** (211 yerleşim + 40 lord + kronik) → localStorage sınırının çok altında.
+
+### 40.2 A2 — Zaman geri yükleniyor
+
+Yeni modül: **`src/game/uiSession.ts`** (`speedBeforeUi`, `speedAfterUi`).
+
+- Eskiden dört ayrı yerde `setCampaignTimeScale(0)` çağrılıyor, kapanışta **hiç** geri
+  alınmıyordu → ansiklopediyi kapatınca oyun "donuyordu". Bu elle çağrılar kaldırıldı.
+- Artık tek bir effect: açık UI katmanı varsa hız saklanıp 0'a iner, katman kapanınca
+  **önceki hıza** (1x/2x/4x) dönülür. Elle duraklatılmışken (0) UI açılıp kapanırsa 1x'e döner.
+- Diyalog artık **dünyayı duraklatıyor** (eskiden konuşurken ordular yürümeye devam ediyordu).
+- UI açıkken `Space / 1 / 2 / 3` dünya kısayolları devre dışı.
+
+### 40.3 A8 — Esc tek yerden yönetiliyor
+
+- `topLayer()` öncelik sırası: `creator → market → kingdom → dialogue → settlement → diplomacy → pause`.
+- `Esc` **en üstteki** katmanı kapatır; hiç katman yoksa seferi duraklatır/devam ettirir.
+- Pazar, divan, karakter yaratıcı artık `Esc` ile kapanıyor (eskiden açık kalıyordu).
+
+### 40.4 Doğrulama
+
+| Probe | Kontrol | Kapsam |
+| --- | --- | --- |
+| `probe-save.ts` | **30** | tur (round-trip) derin eşitlik, 400 günlük sefer, bozuk/eski/eksik kayıt, depolama yok/dolu, silme, SSR güvenliği |
+| `probe-ui-session.ts` | **29** | hız saklama/geri verme, aç→kapa döngüsü, iki katman üst üste, Esc öncelik tablosu, katman tekilliği |
+
+- `verify:all` **28 paket ✅**, `vite build` ✅ (961 ms), `tsc` temiz.
+- `renderToStaticMarkup(<App/>)` ✅ (kayıt yokken başlık ekranı çöküyor değil).

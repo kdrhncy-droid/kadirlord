@@ -24,7 +24,7 @@
 
 ## A. KRİTİK — bozuk veya kuralla çelişen
 
-### A1. 💾 Hiç kayıt/yükleme yok — sekmeyi yenileyince sefer sıfırlanıyor
+### A1. 💾 Hiç kayıt/yükleme yok — sekmeyi yenileyince sefer sıfırlanıyor — **✅ DÜZELTİLDİ (Faz 10a)**
 - **Kanıt:** `grep -rn "localStorage\|indexedDB\|sessionStorage" src` → **0 sonuç**.
   Duraklatma menüsünde (`App.tsx:1029`) yalnız "Devam Et / Yeniden Başlat" var, "Kaydet" yok.
 - **Etki:** Uzun bir sefer (yüzlerce gün) sayfa yenilemesi, tarayıcı çökmesi veya R tuşu ile
@@ -37,7 +37,7 @@
   menüsüne **Kaydet / Yükle / Yeni Sefer** ekle; `R` yalnız onaylı çalışsın.
   Doğrulama: `probe-save.ts` (kaydet → state'i yeniden kur → derin eşitlik; bozuk JSON → sessiz yeni sefer).
 
-### A2. ⏸️ Zaman yönetimi tutarsız: 4 modal duraklatıyor, **hiçbiri geri açmıyor**; diyalog hiç duraklatmıyor
+### A2. ⏸️ Zaman yönetimi tutarsız: 4 modal duraklatıyor, **hiçbiri geri açmıyor**; diyalog hiç duraklatmıyor — **✅ DÜZELTİLDİ (Faz 10a)**
 - **Kanıt:** `setCampaignTimeScale(0)` → `App.tsx:208` (N), `:673` (yerleşim), `:677` (diplomasi),
   `:881/:883` (HUD → diplomasi/ansiklopedi). Kapatma yolları: `App.tsx:1173` (ansiklopedi),
   `:1203` (pazar), `:1219` (divan) → **hiçbirinde hız geri yüklenmiyor**.
@@ -112,7 +112,7 @@
   göster ("AI" / "yerel yanıt" etiketiyle). Doğrulama: anahtar yokken fallback, anahtar varken
   `aiPowered:true`; hata durumunda log.
 
-### A8. ⎋ Escape yalnızca 2 modalı kapatıyor
+### A8. ⎋ Escape yalnızca 2 modalı kapatıyor — **✅ DÜZELTİLDİ (Faz 10a)**
 - **Kanıt:** `App.tsx:226-238` yalnız `activeSettlementModal` ve `activeDiplomacyLord` için kapatma
   yapıyor. `isMarketModalOpen`, `isKingdomModalOpen`, `isCharacterCreatorOpen` için dal **yok**.
   Bu modallerde de kendi Escape dinleyicisi yok (`grep -c "Escape" BannerlordMarketModal.tsx → 0`).
@@ -227,11 +227,13 @@
 3. **B1 — Kale adları:** "Lochana Castle" → "Lochana" olarak **veri** değişsin mi
    (28 kayıt), yoksa yalnız gösterimde mi kırpılsın?
 
+> **Durum:** Paket 1 (A1 + A2 + A8) tamamlandı → MD §40. Kalan paketler aşağıdaki tabloda.
+
 ## F. ÖNERİLEN DÜZELTME SIRASI (her adım kendi doğrulamasıyla)
 
 | Sıra | Paket | İçerik | Doğrulama |
 | --- | --- | --- | --- |
-| 1 | **Zaman & kayıt** | A1 + A2 + A8 (kayıt, pause/restore, modal yığını + Esc) | `probe-save`, `probe-time-flow`, `probe-modal-stack` |
+| 1 | **Zaman & kayıt** ✅ | A1 + A2 + A8 (kayıt, pause/restore, modal yığını + Esc) | `probe-save` 30 ✅, `probe-ui-session` 29 ✅ |
 | 2 | **Fog** | A3 (metHeroIds kampanyaya taşı, diyalog = tanışma) | `probe-fog` |
 | 3 | **Veri doğruluğu** | A5 (klan tımarı), A6 (tek klan modeli) | `Σ klan.fiefCount === krallık.fiefCount`, aynı `clanId` aynı ad |
 | 4 | **İçerik** | B1 (kale adları), B2 (bağımsız klan kartı), B9 | `probe-content` |
