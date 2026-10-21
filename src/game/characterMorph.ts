@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { CharacterRig, HEAD, TORSO_DEPTH_SCALE } from './characterRig.ts';
+import { CharacterRig, HEAD, RIG_DIMENSIONS, TORSO_DEPTH_SCALE, refitArmorToHead } from './characterRig.ts';
+import { applyFaceDNA, faceShapeScale } from './characterFace.ts';
 import { FactionId } from './rules.ts';
 
 /* =======================================================================
@@ -412,19 +413,72 @@ export const PLAYER_DEFAULT_DNA: CharacterMorphDNA = {
  * GET DNA HELPER & RANDOMIZER
  * ----------------------------------------------------------------------- */
 
+/* -----------------------------------------------------------------------
+ * Deterministik DNA
+ *
+ * Üretilen kahramanların DNA'sı `Math.random()` ile seçiliyordu → aynı lord
+ * her sayfa yenilemesinde başka bir yüze sahip oluyordu (portre önbelleği de
+ * anlamsızlaşıyordu). Artık tohum **lord id'sinden** türetilir: aynı id her
+ * zaman aynı yüz. `Math.random()` yalnız rastgele asker/soygun üretiminde
+ * (tohum verilmediğinde) kullanılır.
+ * ----------------------------------------------------------------------- */
+
+function hashString(text: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/** mulberry32 — tohumlu, hızlı, deterministik PRNG. */
+export function seededRandom(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export function getLordDNA(lordId: string, factionFallback: FactionId = 'empire'): CharacterMorphDNA {
   if (LORD_DNA_PRESETS[lordId]) {
     return cloneDNA(LORD_DNA_PRESETS[lordId]);
   }
-  return generateRandomDNA(factionFallback);
+  return generateRandomDNA(factionFallback, undefined, seededRandom(hashString(lordId)));
+}
+
+/**
+ * Kahraman portresi için DNA: **tohumlu** ve cinsiyeti meslekten gelen.
+ * Leydi portrelerinde erkek yüzü çıkmasını da engeller.
+ */
+export function getHeroDNA(
+  heroId: string,
+  culture: FactionId,
+  gender?: GenderType,
+): CharacterMorphDNA {
+  const preset = LORD_DNA_PRESETS[heroId];
+  if (preset) {
+    const dna = cloneDNA(preset);
+    if (gender) dna.gender = gender;
+    return dna;
+  }
+  return generateRandomDNA(culture, gender, seededRandom(hashString(`${heroId}|${culture}`)));
 }
 
 export function cloneDNA(dna: CharacterMorphDNA): CharacterMorphDNA {
   return JSON.parse(JSON.stringify(dna));
 }
 
-export function generateRandomDNA(culture: FactionId, gender?: GenderType): CharacterMorphDNA {
-  const chosenGender: GenderType = gender || (Math.random() > 0.4 ? 'male' : 'female');
+export function generateRandomDNA(
+  culture: FactionId,
+  gender?: GenderType,
+  random: () => number = Math.random,
+): CharacterMorphDNA {
+  const chosenGender: GenderType = gender || (random() > 0.4 ? 'male' : 'female');
 
   // Culture-specific defaults
   let skinTone = '#dfa882';
@@ -434,20 +488,20 @@ export function generateRandomDNA(culture: FactionId, gender?: GenderType): Char
   let beardStyle: BeardStyleId = chosenGender === 'female' ? 'clean_shaven' : 'stubble';
 
   if (culture === 'vlandia') {
-    skinTone = Math.random() > 0.5 ? '#f5d0b5' : '#e8be99';
-    hairColor = Math.random() > 0.5 ? '#382212' : '#573319';
-    eyeColor = Math.random() > 0.4 ? '#0284c7' : '#78350f';
+    skinTone = random() > 0.5 ? '#f5d0b5' : '#e8be99';
+    hairColor = random() > 0.5 ? '#382212' : '#573319';
+    eyeColor = random() > 0.4 ? '#0284c7' : '#78350f';
     hairStyle = chosenGender === 'female' ? 'royal_braid' : 'short_parted';
-    if (chosenGender === 'male') beardStyle = Math.random() > 0.5 ? 'full_beard' : 'stubble';
+    if (chosenGender === 'male') beardStyle = random() > 0.5 ? 'full_beard' : 'stubble';
   } else if (culture === 'sturgia') {
     skinTone = '#f5d0b5';
-    hairColor = Math.random() > 0.4 ? '#d8b065' : '#7a7a7a';
+    hairColor = random() > 0.4 ? '#d8b065' : '#7a7a7a';
     eyeColor = '#0284c7';
     hairStyle = chosenGender === 'female' ? 'shoulder_wavy' : 'nordic_braids';
     if (chosenGender === 'male') beardStyle = 'braided_viking';
   } else if (culture === 'battania') {
     skinTone = '#f5d0b5';
-    hairColor = Math.random() > 0.5 ? '#883317' : '#382212';
+    hairColor = random() > 0.5 ? '#883317' : '#382212';
     eyeColor = '#15803d';
     hairStyle = 'warrior_knot';
     if (chosenGender === 'male') beardStyle = 'full_beard';
@@ -458,7 +512,7 @@ export function generateRandomDNA(culture: FactionId, gender?: GenderType): Char
     hairStyle = 'steppe_topknot';
     if (chosenGender === 'male') beardStyle = 'nomad_goatee';
   } else if (culture === 'aserai') {
-    skinTone = Math.random() > 0.5 ? '#9d6840' : '#704626';
+    skinTone = random() > 0.5 ? '#9d6840' : '#704626';
     hairColor = '#171412';
     eyeColor = '#78350f';
     hairStyle = 'short_parted';
@@ -469,10 +523,10 @@ export function generateRandomDNA(culture: FactionId, gender?: GenderType): Char
     hairColor = '#382212';
     eyeColor = '#475569';
     hairStyle = chosenGender === 'female' ? 'royal_braid' : 'imperial_crop';
-    if (chosenGender === 'male') beardStyle = Math.random() > 0.5 ? 'stubble' : 'imperial_mustache';
+    if (chosenGender === 'male') beardStyle = random() > 0.5 ? 'stubble' : 'imperial_mustache';
   }
 
-  const scarRoll = Math.random();
+  const scarRoll = random();
   const scar: ScarType =
     scarRoll > 0.75
       ? 'eye_slash'
@@ -484,28 +538,28 @@ export function generateRandomDNA(culture: FactionId, gender?: GenderType): Char
 
   return {
     gender: chosenGender,
-    height: Math.round((0.92 + Math.random() * 0.22) * 100) / 100,
-    build: Math.round((0.88 + Math.random() * 0.38) * 100) / 100,
-    weight: Math.round((0.9 + Math.random() * 0.28) * 100) / 100,
+    height: Math.round((0.92 + random() * 0.22) * 100) / 100,
+    build: Math.round((0.88 + random() * 0.38) * 100) / 100,
+    weight: Math.round((0.9 + random() * 0.28) * 100) / 100,
     armLength: 1.0,
-    legLength: Math.round((0.95 + Math.random() * 0.12) * 100) / 100,
+    legLength: Math.round((0.95 + random() * 0.12) * 100) / 100,
     skinTone,
-    skinAge: Math.round(Math.random() * 0.6 * 100) / 100,
+    skinAge: Math.round(random() * 0.6 * 100) / 100,
     faceShape: (['oval', 'square', 'round', 'angular', 'chiseled'] as const)[
-      Math.floor(Math.random() * 5)
+      Math.floor(random() * 5)
     ],
-    jawWidth: Math.round((0.9 + Math.random() * 0.3) * 100) / 100,
-    chinLength: Math.round((0.9 + Math.random() * 0.26) * 100) / 100,
-    noseLength: Math.round((0.85 + Math.random() * 0.35) * 100) / 100,
-    noseBridge: Math.round((0.9 + Math.random() * 0.25) * 100) / 100,
+    jawWidth: Math.round((0.9 + random() * 0.3) * 100) / 100,
+    chinLength: Math.round((0.9 + random() * 0.26) * 100) / 100,
+    noseLength: Math.round((0.85 + random() * 0.35) * 100) / 100,
+    noseBridge: Math.round((0.9 + random() * 0.25) * 100) / 100,
     eyeColor,
-    browProminence: Math.round((0.9 + Math.random() * 0.3) * 100) / 100,
+    browProminence: Math.round((0.9 + random() * 0.3) * 100) / 100,
     hairStyle,
     hairColor,
     beardStyle,
     beardColor: hairColor,
     scar,
-    warPaint: culture === 'battania' && Math.random() > 0.4 ? 'woad_lines' : 'none',
+    warPaint: culture === 'battania' && random() > 0.4 ? 'woad_lines' : 'none',
     warPaintColor: culture === 'battania' ? '#0284c7' : '#881337',
     culture,
   };
@@ -525,6 +579,53 @@ function mesh(geo: THREE.BufferGeometry, mat: THREE.Material, shadow = true): TH
 /**
  * Builds distinctive 3D low-poly hair styles that sit cleanly on top of the head ellipsoid.
  */
+
+/**
+ * Saç takkesi — **değişken saç çizgisi**.
+ *
+ * `SphereGeometry` ile yapılan kapak her yönde aynı açıyı kapsıyordu; bu yüzden
+ * portrede saç alnı tamamen örtüyor, kaşlar saça değiyordu (Faz 9f).
+ * Burada üst açı azimuta göre değişir: önde yüksek (alın açık), yanda/arkada
+ * düşük (kulak ve ense örtülü). 8×4 segment = 64 üçgen.
+ */
+function hairCapGeometry(
+  radius: number,
+  thetaSide: number,
+  thetaFront: number,
+  rings = 4,
+  segs = 8,
+): THREE.BufferGeometry {
+  const verts: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i <= rings; i++) {
+    for (let j = 0; j <= segs; j++) {
+      const phi = (j / segs) * Math.PI * 2; // 0 = ön (+Z)
+      // t: 0 önde, 1 arkada
+      const t = (1 - Math.cos(phi)) / 2;
+      const thetaMax = thetaFront + (thetaSide - thetaFront) * t;
+      const theta = (i / rings) * thetaMax;
+      const y = Math.cos(theta) * radius;
+      const rr = Math.sin(theta) * radius;
+      verts.push(Math.sin(phi) * rr, y, Math.cos(phi) * rr);
+    }
+  }
+  const row = segs + 1;
+  for (let i = 0; i < rings; i++) {
+    for (let j = 0; j < segs; j++) {
+      const a = i * row + j;
+      const b = a + 1;
+      const c = a + row;
+      const d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THREE.Group {
   const g = new THREE.Group();
   g.name = `Hair_${style}`;
@@ -537,7 +638,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'short_parted') {
     // Vlandian neat side-parted hair cap
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.016, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.5) / 8),
+      hairCapGeometry(HEAD.r + 0.016, (Math.PI * 3.25) / 8, 1.08, 4, 8),
       hairMat,
       false,
     );
@@ -545,18 +646,31 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
     cap.position.y = HEAD.cy;
 
     // Side part fringe (swept left-to-right)
-    const fringe = mesh(new THREE.BoxGeometry(0.12, 0.04, 0.06), hairMat, false);
-    fringe.position.set(0.04, HEAD.cy + 0.09, (HEAD.r + 0.01) * HEAD.sz);
-    fringe.rotation.z = -0.15;
+    const fringe = mesh(new THREE.BoxGeometry(0.115, 0.028, 0.042), hairMat, false);
+    fringe.position.set(0.038, HEAD.cy + 0.105, (HEAD.r + 0.008) * HEAD.sz - 0.012);
+    fringe.rotation.z = -0.14;
+    fringe.rotation.x = -0.2;
 
-    // Back taper
+    // Back taper — SADECE ense: tam 360° silindir yüzün ortasından bant gibi
+    // geçip gözleri kapatıyordu. thetaStart/thetaLength ile arka yayla sınırla.
     const back = mesh(
-      new THREE.CylinderGeometry(HEAD.r + 0.014, HEAD.r + 0.008, 0.1, 7, 1, true),
+      new THREE.CylinderGeometry(
+        HEAD.r + 0.014,
+        HEAD.r + 0.008,
+        0.1,
+        7,
+        1,
+        true,
+        Math.PI * 0.55,
+        Math.PI * 0.9,
+      ),
       hairMat,
       false,
     );
+    back.material = hairMat;
+    (back.material as THREE.Material).side = THREE.DoubleSide;
     back.scale.set(1, 1, HEAD.sz);
-    back.position.set(0, HEAD.cy - 0.04, -0.01);
+    back.position.set(0, HEAD.cy - 0.04, -0.012);
 
     g.add(cap, fringe, back);
     return g;
@@ -565,7 +679,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'nordic_braids') {
     // Sturgian hair with side braids hanging over shoulders
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.016, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.6) / 8),
+      hairCapGeometry(HEAD.r + 0.016, (Math.PI * 3.6) / 8, 1.08, 4, 8),
       hairMat,
       false,
     );
@@ -575,13 +689,15 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
     // Left braid hanging down
     const braidGeo = new THREE.CylinderGeometry(0.02, 0.012, 0.28, 5);
     const leftBraid = mesh(braidGeo, hairMat, false);
-    leftBraid.position.set(0.11, HEAD.cy - 0.08, 0.04);
-    leftBraid.rotation.z = -0.12;
+    leftBraid.position.set(0.115, HEAD.cy - 0.075, -0.03);
+    leftBraid.rotation.z = -0.1;
+    leftBraid.rotation.x = 0.06;
 
     // Right braid hanging down
     const rightBraid = mesh(braidGeo.clone(), hairMat, false);
-    rightBraid.position.set(-0.11, HEAD.cy - 0.08, 0.04);
-    rightBraid.rotation.z = 0.12;
+    rightBraid.position.set(-0.115, HEAD.cy - 0.075, -0.03);
+    rightBraid.rotation.z = 0.1;
+    rightBraid.rotation.x = 0.06;
 
     // Back hair fall
     const backFall = mesh(new THREE.BoxGeometry(0.18, 0.22, 0.06), hairMat, false);
@@ -595,7 +711,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'steppe_topknot') {
     // Khuzait shaved temples with high knotted ponytail
     const crownCap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.015, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.26),
+      hairCapGeometry(HEAD.r + 0.015, Math.PI * 0.26, 1.08, 3, 6),
       hairMat,
       false,
     );
@@ -618,7 +734,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'warrior_knot') {
     // Battanian rugged warrior topknot / man-bun
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.018, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.4) / 8),
+      hairCapGeometry(HEAD.r + 0.018, (Math.PI * 3.4) / 8, 1.08, 4, 8),
       hairMat,
       false,
     );
@@ -636,21 +752,23 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'shoulder_wavy') {
     // Flowing wavy hair covering ears and nape down to shoulders
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.02, 8, 5, 0, Math.PI * 2, 0, (Math.PI * 4.2) / 8),
+      hairCapGeometry(HEAD.r + 0.02, (Math.PI * 3.35) / 8, 1.08, 5, 8),
       hairMat,
       false,
     );
     cap.scale.set(1, HEAD.sy, HEAD.sz);
     cap.position.y = HEAD.cy;
 
-    const leftFlow = mesh(new THREE.BoxGeometry(0.07, 0.26, 0.14), hairMat, false);
-    leftFlow.position.set(0.12, HEAD.cy - 0.08, -0.02);
+    const leftFlow = mesh(new THREE.BoxGeometry(0.05, 0.26, 0.1), hairMat, false);
+    leftFlow.position.set(0.116, HEAD.cy - 0.085, -0.062);
+    leftFlow.rotation.y = 0.12;
 
-    const rightFlow = mesh(new THREE.BoxGeometry(0.07, 0.26, 0.14), hairMat, false);
-    rightFlow.position.set(-0.12, HEAD.cy - 0.08, -0.02);
+    const rightFlow = mesh(new THREE.BoxGeometry(0.05, 0.26, 0.1), hairMat, false);
+    rightFlow.position.set(-0.116, HEAD.cy - 0.085, -0.062);
+    rightFlow.rotation.y = -0.12;
 
-    const backFlow = mesh(new THREE.BoxGeometry(0.22, 0.28, 0.07), hairMat, false);
-    backFlow.position.set(0, HEAD.cy - 0.09, -HEAD.r * HEAD.sz - 0.01);
+    const backFlow = mesh(new THREE.BoxGeometry(0.24, 0.28, 0.06), hairMat, false);
+    backFlow.position.set(0, HEAD.cy - 0.09, -HEAD.r * HEAD.sz - 0.025);
 
     g.add(cap, leftFlow, rightFlow, backFlow);
     return g;
@@ -659,7 +777,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'imperial_crop') {
     // Tight, disciplined Roman/Empire short crop
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.014, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.2) / 8),
+      hairCapGeometry(HEAD.r + 0.014, (Math.PI * 3.2) / 8, 1.08, 4, 8),
       hairMat,
       false,
     );
@@ -667,8 +785,8 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
     cap.position.y = HEAD.cy;
 
     // Small brow bangs fringe
-    const fringe = mesh(new THREE.BoxGeometry(0.14, 0.028, 0.035), hairMat, false);
-    fringe.position.set(0, HEAD.cy + 0.08, (HEAD.r + 0.012) * HEAD.sz);
+    const fringe = mesh(new THREE.BoxGeometry(0.135, 0.024, 0.03), hairMat, false);
+    fringe.position.set(0, HEAD.cy + 0.098, (HEAD.r + 0.008) * HEAD.sz - 0.008);
 
     g.add(cap, fringe);
     return g;
@@ -677,7 +795,7 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
   if (style === 'royal_braid') {
     // Aristocratic crown braid wrapped around head (Rhagaea style)
     const cap = mesh(
-      new THREE.SphereGeometry(HEAD.r + 0.016, 8, 4, 0, Math.PI * 2, 0, (Math.PI * 3.5) / 8),
+      hairCapGeometry(HEAD.r + 0.016, (Math.PI * 3.25) / 8, 1.08, 4, 8),
       hairMat,
       false,
     );
@@ -686,8 +804,8 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
 
     // Crown braid torus wrapping the brow
     const crownBraid = mesh(new THREE.TorusGeometry(HEAD.r + 0.015, 0.022, 4, 10), hairMat, false);
-    crownBraid.rotation.x = Math.PI * 0.45;
-    crownBraid.position.set(0, HEAD.cy + 0.05, 0.01);
+    crownBraid.rotation.x = Math.PI * 0.38;
+    crownBraid.position.set(0, HEAD.cy + 0.085, -0.005);
 
     // Chignon / back hair knot
     const chignon = mesh(new THREE.SphereGeometry(0.065, 6, 5), hairMat, false);
@@ -706,196 +824,332 @@ export function createHairMesh(style: HairStyleId, hairMat: THREE.Material): THR
 export function createBeardMesh(style: BeardStyleId, beardMat: THREE.Material): THREE.Group {
   const g = new THREE.Group();
   g.name = `Beard_${style}`;
+  if (style === 'clean_shaven') return g;
 
-  if (style === 'clean_shaven') {
-    return g;
-  }
+  /* ── anatomi (kafa eklemi yerel uzayı) ──
+     kafatası: rx 0.125 · ry 0.147 · rz 0.131, merkez y = 0.14
+     alt dudak y ≈ 0.0595 · çene ön yüzeyi z ≈ 0.096                  */
+  const CY = HEAD.cy;
+  const JAW_TOP = CY - 0.088; // alt dudağın hemen altı
+  const CHIN_Y = CY - 0.205; // çene ucu
+
+  /** Kafatası yüzeyinin ön z'si — sakal/bıyık yüzün DIŞINA otursun. */
+  const surfZ = (y: number, x = 0) => {
+    const nx = x / HEAD.r;
+    const ny = (y - CY) / (HEAD.r * HEAD.sy);
+    return HEAD.r * HEAD.sz * Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+  };
+
+  /**
+   * Alt dudaktan çeneye inen SAĞLAM sakal kütlesi.
+   * Eski sürümde üst üste binen kutular kafatasını kesip "kıymık" gibi
+   * görünüyordu. Tek parça altıgen prizma hem ucuz (12 üçgen) hem temiz.
+   */
+  const mass = (
+    topRadius: number,
+    bottomRadius: number,
+    height: number,
+    yBottom: number,
+    zOffset: number,
+    mat: THREE.Material = beardMat,
+  ) => {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(topRadius, bottomRadius, height, 7), mat);
+    // Ön-arka yönde yassılaştır: sakal çeneyi sarar, enseden taşmaz.
+    m.scale.set(1.02, 1, 0.82);
+    m.position.set(0, yBottom + height / 2, zOffset);
+    m.rotation.x = -0.05;
+    m.castShadow = false;
+    return m;
+  };
+
+  /** Bıyık: dudakların üstünde, ince ve hafif öne kıvrık. */
+  const mustache = (width = 0.058, y = CY - 0.052) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(width, 0.013, 0.02), beardMat);
+    m.position.set(0, y, surfZ(y) - 0.002);
+    m.rotation.x = 0.2;
+    m.castShadow = false;
+    return m;
+  };
 
   if (style === 'stubble') {
-    // 5 o'clock shadow low-profile jaw wraps
-    const shadowGeo = new THREE.BoxGeometry(0.165, 0.08, 0.09);
-    const m = mesh(shadowGeo, beardMat, false);
-    m.position.set(0, HEAD.cy - 0.095, 0.08);
-    m.scale.set(1.0, 0.6, 0.75);
-    g.add(m);
+    // Gölge: yarı saydam, yassı tek parça (ağız tamamen açık kalır).
+    const shadow = beardMat.clone();
+    shadow.transparent = true;
+    shadow.opacity = 0.34;
+    shadow.depthWrite = false;
+    g.add(mass(0.084, 0.058, 0.07, JAW_TOP - 0.076, 0.052, shadow));
+    const line = new THREE.Mesh(new THREE.BoxGeometry(0.088, 0.007, 0.01), shadow);
+    line.position.set(0, JAW_TOP - 0.002, surfZ(JAW_TOP) - 0.002);
+    line.castShadow = false;
+    g.add(line);
     return g;
   }
 
   if (style === 'full_beard') {
-    // Classic full knight beard
-    const jawBox = mesh(new THREE.BoxGeometry(0.18, 0.13, 0.11), beardMat, false);
-    jawBox.position.set(0, HEAD.cy - 0.11, 0.085);
-
-    const mustache = mesh(new THREE.BoxGeometry(0.14, 0.035, 0.04), beardMat, false);
-    mustache.position.set(0, HEAD.cy - 0.04, 0.132);
-
-    g.add(jawBox, mustache);
+    g.add(mustache());
+    g.add(mass(0.078, 0.054, 0.09, JAW_TOP - 0.082, 0.05));
+    // çene ucu: sivri koni
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.052, 0.075, 6), beardMat);
+    tip.rotation.x = Math.PI;
+    tip.position.set(0, CHIN_Y + 0.012, 0.062);
+    tip.castShadow = false;
+    g.add(tip);
     return g;
   }
 
   if (style === 'braided_viking') {
-    // Sturgian two long braided strands hanging off the chin
-    const base = mesh(new THREE.BoxGeometry(0.17, 0.1, 0.1), beardMat, false);
-    base.position.set(0, HEAD.cy - 0.1, 0.085);
-
-    // Left chin braid
-    const braidGeo = new THREE.CylinderGeometry(0.022, 0.014, 0.22, 5);
-    const leftBraid = mesh(braidGeo, beardMat, false);
-    leftBraid.position.set(0.045, HEAD.cy - 0.22, 0.1);
-    leftBraid.rotation.z = -0.06;
-
-    // Right chin braid
-    const rightBraid = mesh(braidGeo.clone(), beardMat, false);
-    rightBraid.position.set(-0.045, HEAD.cy - 0.22, 0.1);
-    rightBraid.rotation.z = 0.06;
-
-    const mustache = mesh(new THREE.BoxGeometry(0.15, 0.038, 0.045), beardMat, false);
-    mustache.position.set(0, HEAD.cy - 0.04, 0.132);
-
-    g.add(base, leftBraid, rightBraid, mustache);
+    g.add(mustache(0.062));
+    g.add(mass(0.073, 0.05, 0.082, JAW_TOP - 0.08, 0.05));
+    for (const side of [-1, 1] as const) {
+      const braid = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.008, 0.15, 5), beardMat);
+      braid.position.set(side * 0.032, CHIN_Y + 0.02, 0.062);
+      braid.rotation.z = side * 0.05;
+      braid.castShadow = false;
+      g.add(braid);
+    }
     return g;
   }
 
   if (style === 'imperial_mustache') {
-    // Big prominent mustache with turned-up wingtips, clean chin
-    const center = mesh(new THREE.BoxGeometry(0.12, 0.04, 0.038), beardMat, false);
-    center.position.set(0, HEAD.cy - 0.04, 0.132);
-
-    const leftWing = mesh(new THREE.BoxGeometry(0.05, 0.03, 0.03), beardMat, false);
-    leftWing.position.set(0.08, HEAD.cy - 0.032, 0.128);
-    leftWing.rotation.z = 0.45;
-
-    const rightWing = mesh(new THREE.BoxGeometry(0.05, 0.03, 0.03), beardMat, false);
-    rightWing.position.set(-0.08, HEAD.cy - 0.032, 0.128);
-    rightWing.rotation.z = -0.45;
-
-    g.add(center, leftWing, rightWing);
+    g.add(mustache(0.054, CY - 0.056));
+    for (const side of [-1, 1] as const) {
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.011, 0.016), beardMat);
+      wing.position.set(side * 0.042, CY - 0.048, surfZ(CY - 0.048, 0.042) + 0.006);
+      wing.rotation.z = side * 0.55;
+      wing.castShadow = false;
+      g.add(wing);
+    }
+    // sinekkaydı çene gölgesi
+    const trim = beardMat.clone();
+    trim.transparent = true;
+    trim.opacity = 0.4;
+    trim.depthWrite = false;
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.01, 0.008), trim);
+    plate.position.set(0, JAW_TOP - 0.012, surfZ(JAW_TOP - 0.012) + 0.001);
+    plate.castShadow = false;
+    g.add(plate);
     return g;
   }
 
   if (style === 'nomad_goatee') {
-    // Khuzait drooping mustache and pointed chin goatee
-    const goatee = mesh(new THREE.ConeGeometry(0.04, 0.14, 5), beardMat, false);
+    g.add(mustache(0.05, CY - 0.056));
+    const goatee = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.105, 5), beardMat);
     goatee.rotation.x = Math.PI;
-    goatee.position.set(0, HEAD.cy - 0.15, 0.1);
-
-    const leftDroop = mesh(new THREE.BoxGeometry(0.025, 0.08, 0.025), beardMat, false);
-    leftDroop.position.set(0.06, HEAD.cy - 0.07, 0.128);
-    leftDroop.rotation.z = 0.25;
-
-    const rightDroop = mesh(new THREE.BoxGeometry(0.025, 0.08, 0.025), beardMat, false);
-    rightDroop.position.set(-0.06, HEAD.cy - 0.07, 0.128);
-    rightDroop.rotation.z = -0.25;
-
-    g.add(goatee, leftDroop, rightDroop);
+    goatee.position.set(0, JAW_TOP - 0.075, 0.094);
+    goatee.castShadow = false;
+    g.add(goatee);
+    for (const side of [-1, 1] as const) {
+      const droop = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.05, 0.016), beardMat);
+      droop.position.set(side * 0.032, JAW_TOP - 0.03, 0.1);
+      droop.rotation.z = side * -0.15;
+      droop.castShadow = false;
+      g.add(droop);
+    }
     return g;
   }
 
   if (style === 'long_patriarch') {
-    // Long wise elder beard flowing down the upper chest
-    const upper = mesh(new THREE.BoxGeometry(0.18, 0.12, 0.11), beardMat, false);
-    upper.position.set(0, HEAD.cy - 0.11, 0.085);
-
-    const flowingFall = mesh(new THREE.CylinderGeometry(0.09, 0.04, 0.32, 6), beardMat, false);
-    flowingFall.position.set(0, HEAD.cy - 0.26, 0.09);
-    flowingFall.rotation.x = 0.15;
-
-    const mustache = mesh(new THREE.BoxGeometry(0.15, 0.045, 0.045), beardMat, false);
-    mustache.position.set(0, HEAD.cy - 0.04, 0.134);
-
-    g.add(upper, flowingFall, mustache);
+    g.add(mustache(0.058));
+    g.add(mass(0.08, 0.055, 0.102, JAW_TOP - 0.09, 0.05));
+    const mid = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.046, 0.11, 6), beardMat);
+    mid.position.set(0, CHIN_Y - 0.03, 0.05);
+    mid.castShadow = false;
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.046, 0.1, 6), beardMat);
+    tip.rotation.x = Math.PI;
+    tip.position.set(0, CHIN_Y - 0.125, 0.048);
+    tip.castShadow = false;
+    g.add(mid, tip);
     return g;
   }
 
   return g;
 }
 
+/* -----------------------------------------------------------------------
+ * YÜZEYE OTURAN İZLER (yara izi & savaş boyası)
+ *
+ * Eski sürüm düz `BoxGeometry` kutuları sabit z'ye koyuyordu: kafa ölçeği ve
+ * elmacık DNA'sı değişince izler yüzeyden kopuyor, ön planda kalın bir "X"
+ * gibi duruyordu. Yeni sürüm izleri kafatası elipsoidinin **üzerinde** üretir:
+ * yüz yüzeyindeki 2B noktalar elipsoide projekte edilir, normal boyunca çok
+ * küçük bir pay kadar dışa taşınır ve nokta dizisi ince bir şerit (ribbon)
+ * olarak birleştirilir — uçları sivrilir, iz yüzeye yapışık görünür.
+ * ----------------------------------------------------------------------- */
+
+// NOT: `HEAD` modül yüklenirken hazır olmayabilir (characterRig ↔ characterMorph
+// döngüsel import). Bu yüzden sabitleri **çağrı anında** okuyoruz.
+const skull = () => ({
+  rx: HEAD.r,
+  ry: HEAD.r * HEAD.sy,
+  rz: HEAD.r * HEAD.sz,
+  cy: HEAD.cy,
+});
+
+/** Yüz düzlemindeki (x, y) → kafatası yüzey noktası. */
+function skullPoint(x: number, y: number): THREE.Vector3 {
+  const S = skull();
+  const nx = THREE.MathUtils.clamp(x / S.rx, -0.98, 0.98);
+  const ny = THREE.MathUtils.clamp((y - S.cy) / S.ry, -0.98, 0.98);
+  const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+  return new THREE.Vector3(nx * S.rx, S.cy + ny * S.ry, nz * S.rz);
+}
+
+/** Elipsoidin dışa bakan normali. */
+function skullNormal(p: THREE.Vector3): THREE.Vector3 {
+  const S = skull();
+  const n = new THREE.Vector3(
+    p.x / (S.rx * S.rx),
+    (p.y - S.cy) / (S.ry * S.ry),
+    p.z / (S.rz * S.rz),
+  );
+  return n.normalize();
+}
+
 /**
- * Builds battle scar and war paint decals that stick to facial planes.
+ * Bir (x, y) nokta dizisini yüzeye oturan ince şeride çevirir.
+ *  - `width` ortadaki genişlik; uçlar sivrilir (yara izi görünümü).
+ *  - `lift` yüzeyden dışa pay (z-fighting olmasın diye çok küçük).
+ */
+function surfaceRibbon(
+  path: [number, number][],
+  width: number,
+  lift: number,
+  color: string,
+  opacity = 1,
+): THREE.Mesh | null {
+  if (path.length < 2) return null;
+
+  const pts = path.map(([x, y]) => skullPoint(x, y));
+  const normals = pts.map(skullNormal);
+  const positions: number[] = [];
+  const indices: number[] = [];
+
+  for (let i = 0; i < pts.length; i++) {
+    const prev = pts[Math.max(0, i - 1)];
+    const next = pts[Math.min(pts.length - 1, i + 1)];
+    const tangent = new THREE.Vector3().subVectors(next, prev).normalize();
+    const side = new THREE.Vector3().crossVectors(normals[i], tangent).normalize();
+    // Uçlarda sivril; en fazla ortada tam genişlik.
+    const t = i / (pts.length - 1);
+    const taper = Math.sin(Math.PI * t); // 0 → 1 → 0
+    const half = (width * (0.25 + 0.75 * taper)) / 2;
+    const base = pts[i].clone().addScaledVector(normals[i], lift);
+    const a = base.clone().addScaledVector(side, half);
+    const b = base.clone().addScaledVector(side, -half);
+    positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+    if (i < pts.length - 1) {
+      const k = i * 2;
+      indices.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.88,
+    metalness: 0,
+    transparent: opacity < 1,
+    opacity,
+    // Yüzeye yapışık olduğu için z-fighting'e karşı hafif öteleme.
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+    side: THREE.DoubleSide,
+  });
+  const m = new THREE.Mesh(geo, mat);
+  m.name = 'decal_strip';
+  m.castShadow = false;
+  m.receiveShadow = false;
+  return m;
+}
+
+/** Yara izi rengi: deri tonundan açık, pembemsi beyaza doğru (iyileşmiş iz). */
+function scarColor(skinHex: string): string {
+  const skin = new THREE.Color(skinHex);
+  const healed = new THREE.Color('#f0d9cd');
+  return `#${skin.lerp(healed, 0.42).getHexString()}`;
+}
+
+/** Çizgi yardımcısı: iki uç arasında N noktalı, hafif kavisli yol. */
+function linePath(
+  from: [number, number],
+  to: [number, number],
+  steps = 7,
+  bow = 0.006,
+): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i < steps; i++) {
+    const t = i / (steps - 1);
+    const x = from[0] + (to[0] - from[0]) * t;
+    const y = from[1] + (to[1] - from[1]) * t + Math.sin(Math.PI * t) * bow * (from[0] < 0 ? -1 : 1);
+    out.push([x, y]);
+  }
+  return out;
+}
+
+/**
+ * Savaş izleri (yara) ve savaş boyası. Dönen grup `Face_Decals` adını taşır;
+ * `applyMorphDNAToRig` bunu bulup yenisiyle değiştirir.
  */
 export function createScarAndWarPaintMesh(
   scar: ScarType,
   warPaint: WarPaintType,
   warPaintColor: string,
+  skinTone = '#e8be99',
 ): THREE.Group {
   const g = new THREE.Group();
   g.name = 'Face_Decals';
 
-  // --- SCARS (Darkened skin ridge) ---
-  if (scar !== 'none') {
-    const scarMat = new THREE.MeshStandardMaterial({
-      color: '#652d27',
-      roughness: 0.9,
-      flatShading: true,
-    });
+  const CY = HEAD.cy;
+  const scarHex = scarColor(skinTone);
+  const LIFT = 0.0022;
 
-    if (scar === 'eye_slash') {
-      const slash = mesh(new THREE.BoxGeometry(0.012, 0.08, 0.02), scarMat, false);
-      slash.position.set(0.052, HEAD.cy + 0.025, HEAD.r * HEAD.sz + 0.008);
-      slash.rotation.z = -0.25;
-      slash.rotation.y = 0.2;
-      g.add(slash);
-    } else if (scar === 'cheek_cross') {
-      const bar1 = mesh(new THREE.BoxGeometry(0.012, 0.06, 0.02), scarMat, false);
-      bar1.position.set(-0.065, HEAD.cy - 0.04, HEAD.r * HEAD.sz - 0.005);
-      bar1.rotation.z = 0.78;
-      const bar2 = mesh(new THREE.BoxGeometry(0.012, 0.06, 0.02), scarMat, false);
-      bar2.position.set(-0.065, HEAD.cy - 0.04, HEAD.r * HEAD.sz - 0.005);
-      bar2.rotation.z = -0.78;
-      g.add(bar1, bar2);
-    } else if (scar === 'jaw_gash') {
-      const gash = mesh(new THREE.BoxGeometry(0.06, 0.014, 0.02), scarMat, false);
-      gash.position.set(0.04, HEAD.cy - 0.08, HEAD.r * HEAD.sz + 0.005);
-      gash.rotation.z = 0.2;
-      g.add(gash);
-    } else if (scar === 'battle_brow') {
-      const browSlash = mesh(new THREE.BoxGeometry(0.07, 0.012, 0.02), scarMat, false);
-      browSlash.position.set(-0.02, HEAD.cy + 0.06, HEAD.r * HEAD.sz + 0.005);
-      browSlash.rotation.z = -0.15;
-      g.add(browSlash);
+  // --- YARA İZLERİ (yüzeye oturan, uçları sivrilen şeritler) ---
+  const scarPaths: Record<Exclude<ScarType, 'none'>, { path: [number, number][]; width: number }[]> = {
+    // Şakak → elmacık: gözün dışından geçer, göze değmez.
+    eye_slash: [{ path: linePath([0.084, CY + 0.055], [0.096, CY - 0.062], 8, 0.004), width: 0.011 }],
+    // Yanakta çapraz iki ince çizik.
+    cheek_cross: [
+      { path: linePath([-0.09, CY - 0.032], [-0.052, CY - 0.084], 6, 0.003), width: 0.0095 },
+      { path: linePath([-0.055, CY - 0.034], [-0.094, CY - 0.082], 6, 0.003), width: 0.0095 },
+    ],
+    // Çene hattı boyunca yatay iz.
+    jaw_gash: [{ path: linePath([0.006, CY - 0.083], [0.082, CY - 0.062], 7, 0.004), width: 0.0105 }],
+    // Kaş üstünden geçen eski kesik.
+    battle_brow: [{ path: linePath([-0.062, CY + 0.075], [0.004, CY + 0.052], 7, 0.004), width: 0.010 }],
+  };
+
+  if (scar !== 'none') {
+    for (const { path, width } of scarPaths[scar]) {
+      const strip = surfaceRibbon(path, width, LIFT, scarHex, 0.96);
+      if (strip) g.add(strip);
     }
   }
 
-  // --- WAR PAINT (Vivid ceremonial pigments) ---
-  if (warPaint !== 'none') {
-    const paintMat = new THREE.MeshStandardMaterial({
-      color: warPaintColor || '#0284c7',
-      roughness: 0.6,
-      flatShading: true,
-    });
+  // --- SAVAŞ BOYASI (aynı şerit tekniği, daha geniş ve mat) ---
+  const paintHex = warPaintColor || '#0284c7';
+  const paint = (path: [number, number][], width: number) => {
+    const strip = surfaceRibbon(path, width, LIFT * 0.8, paintHex, 0.92);
+    if (strip) g.add(strip);
+  };
 
-    if (warPaint === 'woad_lines') {
-      // Celtic stripes on cheeks
-      for (let i = 0; i < 2; i++) {
-        const stripeL = mesh(new THREE.BoxGeometry(0.045, 0.01, 0.02), paintMat, false);
-        stripeL.position.set(0.06, HEAD.cy - 0.02 - i * 0.025, HEAD.r * HEAD.sz + 0.002);
-        stripeL.rotation.y = 0.35;
-        const stripeR = mesh(new THREE.BoxGeometry(0.045, 0.01, 0.02), paintMat, false);
-        stripeR.position.set(-0.06, HEAD.cy - 0.02 - i * 0.025, HEAD.r * HEAD.sz + 0.002);
-        stripeR.rotation.y = -0.35;
-        g.add(stripeL, stripeR);
-      }
-    } else if (warPaint === 'steppe_chevrons') {
-      // Khuzait arrow markings under eyes
-      const chevL = mesh(new THREE.BoxGeometry(0.04, 0.012, 0.02), paintMat, false);
-      chevL.position.set(0.05, HEAD.cy, HEAD.r * HEAD.sz);
-      chevL.rotation.z = -0.4;
-      const chevR = mesh(new THREE.BoxGeometry(0.04, 0.012, 0.02), paintMat, false);
-      chevR.position.set(-0.05, HEAD.cy, HEAD.r * HEAD.sz);
-      chevR.rotation.z = 0.4;
-      g.add(chevL, chevR);
-    } else if (warPaint === 'imperial_mark') {
-      // Vertical red mark down the forehead to the nose bridge
-      const stripe = mesh(new THREE.BoxGeometry(0.018, 0.09, 0.02), paintMat, false);
-      stripe.position.set(0, HEAD.cy + 0.045, HEAD.r * HEAD.sz + 0.005);
-      g.add(stripe);
-    } else if (warPaint === 'ash_smear') {
-      const ashMat = new THREE.MeshStandardMaterial({ color: '#262626', roughness: 0.9 });
-      const smear = mesh(new THREE.BoxGeometry(0.1, 0.04, 0.02), ashMat, false);
-      smear.position.set(-0.02, HEAD.cy - 0.03, HEAD.r * HEAD.sz);
-      smear.rotation.z = 0.15;
-      g.add(smear);
+  if (warPaint === 'woad_lines') {
+    for (let i = 0; i < 2; i++) {
+      const y = CY - 0.036 - i * 0.026;
+      paint(linePath([0.032, y], [0.094, y - 0.008], 6, 0.002), 0.012);
+      paint(linePath([-0.032, y], [-0.094, y - 0.008], 6, 0.002), 0.012);
     }
+  } else if (warPaint === 'steppe_chevrons') {
+    paint(linePath([0.048, CY - 0.032], [0.094, CY - 0.052], 6, 0.002), 0.011);
+    paint(linePath([-0.048, CY - 0.032], [-0.094, CY - 0.052], 6, 0.002), 0.011);
+  } else if (warPaint === 'imperial_mark') {
+    paint(linePath([0, CY + 0.098], [0, CY + 0.028], 7, 0.0), 0.016);
+  } else if (warPaint === 'ash_smear') {
+    paint(linePath([-0.07, CY - 0.028], [0.02, CY - 0.042], 7, 0.006), 0.038);
   }
 
   return g;
@@ -918,41 +1172,77 @@ export function applyMorphDNAToRig(rig: CharacterRig, dna: CharacterMorphDNA): v
     rig.materials.hair.color.set(dna.hairColor);
   }
 
-  // 2. Body Scaling & Stature Proportions
-  // Height scales root Y & leg lengths
-  const hScale = Math.max(0.85, Math.min(1.22, dna.height || 1.0));
-  const bScale = Math.max(0.78, Math.min(1.38, dna.build || 1.0)); // Shoulders, chest
-  const wScale = Math.max(0.82, Math.min(1.35, dna.weight || 1.0)); // Belly, girth
+  // 2. Gövde oranları — HER ÖLÇEK BİR KEZ.
+  //    Omuz/kol `torso`nun, bacak `pelvis`in çocuğu; ebeveyn ölçeği zaten
+  //    aşağı yansıyor. Eski kod bScale/hScale'i tekrar çarpıyordu:
+  //    omuz açıklığı 0.40–1.32, boy 1.88–2.70 oluyor ve zırhlar oturmuyordu.
+  const clampN = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  const hScale = clampN(dna.height || 1.0, 0.92, 1.12);
+  const bScale = clampN(dna.build || 1.0, 0.86, 1.24);
+  const wScale = clampN(dna.weight || 1.0, 0.88, 1.28);
 
-  // Scale Pelvis & Torso girth
-  rig.pelvis.scale.set(wScale, hScale, wScale);
+  // Karın/hip derinliği: pelvis yalnız derinlikte büyür (boyu kısaltmaz,
+  // kafayı uzatmaz → oblong kafa sorunu).
+  rig.pelvis.scale.set(1, 1, Math.max(1, wScale * 0.9));
+  // Göğüs: genişlik build'den, derinlik build+weight ortalamasından.
   rig.torso.scale.set(bScale, 1.0, (bScale + wScale) * 0.5);
 
-  // Female silhouette adjustment: slightly narrower shoulders, higher waist taper
-  if (dna.gender === 'female') {
-    rig.leftShoulder.position.x = 0.28 * bScale;
-    rig.rightShoulder.position.x = -0.28 * bScale;
-  } else {
-    rig.leftShoulder.position.x = 0.32 * bScale;
-    rig.rightShoulder.position.x = -0.32 * bScale;
-  }
+  // Omuz açıklığı: taban ölçü ✕ yalnız cinsiyet faktörü.
+  const shoulderX = RIG_DIMENSIONS.shoulderX * (dna.gender === 'female' ? 0.92 : 1.0);
+  rig.leftShoulder.position.x = shoulderX;
+  rig.rightShoulder.position.x = -shoulderX;
 
-  // Legs length scaling
+  // Bacak: boy farkı buradan gelir (uzun bacak = uzun insan).
   const legScale = (dna.legLength || 1.0) * hScale;
   rig.leftThigh.scale.set(1.0, legScale, 1.0);
   rig.rightThigh.scale.set(1.0, legScale, 1.0);
 
-  // Arms length scaling
-  const armScale = dna.armLength || 1.0;
-  rig.leftUpperArm.scale.set(bScale * 0.9, armScale, bScale * 0.9);
-  rig.rightUpperArm.scale.set(bScale * 0.9, armScale, bScale * 0.9);
+  // Kol: yalnız uzunluk; kalınlık `torso` ölçeğinden gelir.
+  const armScale = clampN(dna.armLength || 1.0, 0.88, 1.12);
+  rig.leftUpperArm.scale.set(1.0, armScale, 1.0);
+  rig.rightUpperArm.scale.set(1.0, armScale, 1.0);
 
-  // 3. Head & Facial Morphology Scaling
-  const jaw = Math.max(0.75, Math.min(1.35, dna.jawWidth || 1.0));
-  const chin = Math.max(0.75, Math.min(1.35, dna.chinLength || 1.0));
-  const nose = Math.max(0.7, Math.min(1.4, dna.noseLength || 1.0));
+  // 3. Kafa & yüz morfolojisi.
+  //    Çene/elmacık DNA'sı 0.75–1.35 arası çarpıldığında kafa 1.8 kat uzuyordu
+  //    (yüz "maske" gibi görünüyordu). Oranı sınırlıyoruz: şekil farkı kalır,
+  //    oblong kafa oluşmaz.
+  const jaw = clampN(dna.jawWidth || 1.0, 0.86, 1.16);
+  const chin = clampN(dna.chinLength || 1.0, 0.86, 1.16);
+  const nose = clampN(dna.noseLength || 1.0, 0.85, 1.2);
+  const shape = faceShapeScale(dna.faceShape);
 
-  rig.head.scale.set(jaw, chin, (jaw + nose) * 0.5);
+  const sx = jaw * shape.x;
+  const syNatural = chin * shape.y;
+  const sy = sx * clampN(syNatural / sx, 0.9, 1.12);
+  rig.head.scale.set(sx, sy, (jaw + nose) * 0.5 * shape.z);
+
+  // 3a. Boyun/çene hizası: kafa ölçeği değiştiğinde çene ile gövde arasındaki
+  //     boşluk -0.14…+0.14 arasında salınıyordu (kiminde gömük, kiminde
+  //     "zürafa" boyun). Çeneyi gövde tepesine sabit bir boşlukla oturtuyoruz.
+  rig.root.updateMatrixWorld(true);
+  // Çene referansı **kafatasıdır**: sakal kutuya girerse çene yanlış ölçülür.
+  const skullTmp = rig.head.children.find((c) => (c as THREE.Mesh).isMesh) as
+    | THREE.Mesh
+    | undefined;
+  const torsoMeshTmp = rig.torso.children.find((c) => (c as THREE.Mesh).isMesh) as
+    | THREE.Mesh
+    | undefined;
+  if (skullTmp && torsoMeshTmp) {
+    const chinY = new THREE.Box3().setFromObject(skullTmp).min.y;
+    const torsoTop = new THREE.Box3().setFromObject(torsoMeshTmp).max.y;
+    rig.head.position.y -= chinY - torsoTop - 0.02;
+    rig.root.updateMatrixWorld(true);
+  }
+
+  // 3b. Yere oturt: bacak uzunluğu değiştiğinde ayaklar y=0'da kalsın.
+  rig.root.updateMatrixWorld(true);
+  const feetBox = new THREE.Box3();
+  feetBox.union(new THREE.Box3().setFromObject(rig.leftFoot));
+  feetBox.union(new THREE.Box3().setFromObject(rig.rightFoot));
+  if (!feetBox.isEmpty()) rig.pelvis.position.y -= feetBox.min.y;
+
+  // Yüz katmanı: göz rengi, burun, kaş, çene, yanak, ağız DNA'ya göre güncellenir.
+  applyFaceDNA(rig.head.getObjectByName('Face') ?? null, dna, { skin: rig.materials.skin, hair: rig.materials.hair });
 
   // 4. Hair Replacement
   // Remove existing procedural hair from hairGroup
@@ -994,7 +1284,16 @@ export function applyMorphDNAToRig(rig: CharacterRig, dna: CharacterMorphDNA): v
   }
 
   if (dna.scar !== 'none' || dna.warPaint !== 'none') {
-    const decals = createScarAndWarPaintMesh(dna.scar, dna.warPaint, dna.warPaintColor);
+    const decals = createScarAndWarPaintMesh(
+      dna.scar,
+      dna.warPaint,
+      dna.warPaintColor,
+      `#${rig.materials.skin.color.getHexString()}`,
+    );
     rig.head.add(decals);
   }
+
+  // 7. Zırh yakası çeneye göre yeniden oturtulur: DNA kafayı büyütünce sabit
+  //    yaka çeneyi örtüyordu (Faz 9c).
+  refitArmorToHead(rig);
 }

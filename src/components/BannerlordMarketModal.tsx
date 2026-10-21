@@ -25,6 +25,23 @@ import {
   updateRigAnimation,
 } from '../game/characterRig';
 import { sound } from '../game/sound';
+import { ItemIcon } from './ItemIcon';
+import { CATEGORY_ICON_KEYS } from '../game/itemIcons';
+import {
+  PRICE_TONE_CLASS,
+  PRICE_TONE_LABEL,
+  addPurchase,
+  addSale,
+  buildMarketStock,
+  buyPriceAt,
+  carryCapacity,
+  emptySession,
+  marketProfile,
+  priceTone,
+  sellPriceAt,
+  tradeRumours,
+  type MarketProfile,
+} from '../game/market';
 
 interface BannerlordMarketModalProps {
   settlement?: Settlement | null;
@@ -45,7 +62,46 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'tier' | 'price_asc' | 'price_desc' | 'weight'>('tier');
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [merchantGold, setMerchantGold] = useState(14800);
+  /** Faz 7: tüccar kesesi yerleşkenin refahından türetilir. */
+  const fallbackProfile = useMemo<MarketProfile>(
+    () => marketProfile({
+      id: 'camp-roadside',
+      name: 'Yol Kenarı Pazarı',
+      type: 'VILLAGE',
+      faction: 'player',
+      x: 0,
+      z: 0,
+      prosperity: 2200,
+      garrison: 0,
+      recruitPool: {},
+      foodStock: 0,
+      description: '',
+    } as never),
+    [],
+  );
+  const profile = useMemo(
+    () => (settlement ? marketProfile(settlement) : fallbackProfile),
+    [settlement, fallbackProfile],
+  );
+  const [merchantGold, setMerchantGold] = useState(profile.merchantGold);
+  useEffect(() => {
+    setMerchantGold(profile.merchantGold);
+  }, [profile.settlementId, profile.merchantGold]);
+  /** Faz 7: seans özeti (Bannerlord'daki net sonuç). */
+  const [session, setSession] = useState(emptySession);
+  /** Faz 7: tezgah stoğu — satın alınan mal azalır. */
+  const [stock, setStock] = useState<Record<string, number>>(() =>
+    Object.fromEntries(buildMarketStock(CALRADIA_MARKETPLACE_ITEMS, profile).map((s) => [s.item.id, s.quantity])),
+  );
+  useEffect(() => {
+    setStock(
+      Object.fromEntries(
+        buildMarketStock(CALRADIA_MARKETPLACE_ITEMS, profile).map((s) => [s.item.id, s.quantity]),
+      ),
+    );
+  }, [profile.settlementId]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** Faz 7: toplu satışta korunacak eşyalar (kilit kolonu). */
+  const [lockedIds, setLockedIds] = useState<string[]>([]);
 
   // 3D Preview Canvas ref
   const canvasMountRef = useRef<HTMLDivElement>(null);
@@ -194,19 +250,35 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
 
   // Buy item handler
   const handleBuy = (item: MarketplaceItem) => {
-    const res = buyMarketplaceItem(campaign, item, settlementName);
+    const quantity = stock[item.id] ?? 0;
+    if (quantity <= 0) {
+      setFeedback(`Tezgahta "${item.name}" kalmadı.`);
+      return;
+    }
+    const price = buyPriceAt(item, profile);
+    const res = buyMarketplaceItem(campaign, { ...item, value: price }, settlementName);
     if (!res.success) {
       setFeedback(res.reason || 'Satın alma başarısız.');
       return;
     }
     sound.playCoinChime();
-    setMerchantGold((prev) => prev + item.value);
-    setFeedback(`✔️ "${item.name}" satın alındı (-${item.value} Dinar).`);
+    setMerchantGold((prev) => prev + price);
+    setStock((prev) => ({ ...prev, [item.id]: Math.max(0, (prev[item.id] ?? 0) - 1) }));
+    setSession((prev) => addPurchase(prev, price));
+    setFeedback(`"${item.name}" satın alındı (-${price} Dinar).`);
     onUpdateCampaign(res.nextState);
   };
 
   // Sell item handler
   const handleSell = (itemId: string) => {
+    const invItem = (campaign.inventoryItems || []).find((i) => i.id === itemId);
+    const expected = invItem ? sellPriceAt(invItem as never, profile) : 0;
+    if (invItem && merchantGold < expected) {
+      setFeedback(
+        `Tüccarın kesesinde yeterli altın yok (${merchantGold} Dinar). Daha az değerli mal sat veya başka şehre git.`,
+      );
+      return;
+    }
     const res = sellMarketplaceItem(campaign, itemId, settlementName);
     if (!res.success) {
       setFeedback(res.reason || 'Satış başarısız.');
@@ -214,7 +286,8 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
     }
     sound.playCoinChime();
     setMerchantGold((prev) => Math.max(0, prev - res.goldGained));
-    setFeedback(`💰 Eşya satıldı (+${res.goldGained} Dinar).`);
+    setSession((prev) => addSale(prev, res.goldGained));
+    setFeedback(`Eşya satıldı (+${res.goldGained} Dinar).`);
     onUpdateCampaign(res.nextState);
   };
 
@@ -226,7 +299,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
       return;
     }
     sound.playWarhorn();
-    setFeedback('🛡️ Eşya kuşanıldı ve zırh değerleri güncellendi.');
+    setFeedback('Eşya kuşanıldı ve zırh değerleri güncellendi.');
     onUpdateCampaign(res.nextState);
   };
 
@@ -248,6 +321,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
     const items = [...(current.inventoryItems || [])];
     for (const item of items) {
       if (item.slot === 'TRADE' || item.name.includes('Katır') || item.category === 'FOOD') continue;
+      if (lockedIds.includes(item.id)) continue; // Faz 7: kilitli eşya satılmaz
       const res = sellMarketplaceItem(current, item.id, settlementName);
       if (res.success) {
         current = res.nextState;
@@ -257,7 +331,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
     if (totalGained > 0) {
       sound.playCoinChime();
       setMerchantGold((prev) => Math.max(0, prev - totalGained));
-      setFeedback(`💰 Toplam ${totalGained} Dinar değerinde ganimet pazar loncasına satıldı!`);
+      setFeedback(`Toplam ${totalGained} Dinar değerinde ganimet pazar loncasına satıldı!`);
       onUpdateCampaign(current);
     } else {
       setFeedback('Satılacak yedek ganimet eşyası bulunmuyor.');
@@ -280,7 +354,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
         {/* HEADER BAR */}
         <div className="px-5 py-3 border-b border-[#c6a15b]/30 bg-[#1a1510] flex items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-3">
-            <span className="text-2xl">⚖️</span>
+            <ItemIcon iconKey="tools" size={24} className="text-[#c6a15b]" />
             <div>
               <h2 id="market-modal-title" className="text-lg font-display font-bold text-[#fef08a]">
                 {settlementName} · Pazaryeri ve Ticaret Loncası
@@ -300,6 +374,23 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                   Erzak:{' '}
                   <strong className="text-[#60a5fa] font-mono-tabular">{campaign.food} Gün</strong>
                 </span>
+                <span>·</span>
+                <span>
+                  Refah:{' '}
+                  <strong className="text-[#c6a15b] font-mono-tabular">{profile.prosperity}</strong>
+                  {' · '}Fiyat endeksi:{' '}
+                  <strong
+                    className={
+                      profile.modifier > 1.03
+                        ? 'text-[#fca5a5]'
+                        : profile.modifier < 0.97
+                          ? 'text-[#34d399]'
+                          : 'text-[#e2d6c1]'
+                    }
+                  >
+                    ×{profile.modifier.toFixed(2)}
+                  </strong>
+                </span>
               </div>
             </div>
           </div>
@@ -311,7 +402,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                 onClick={onOpenArenaTest}
                 className="px-3 py-1.5 rounded text-xs font-bold bg-[#991b1b] hover:bg-[#b91c1c] text-white border border-[#fca5a5]/40 transition-colors shadow flex items-center gap-1.5"
               >
-                <span>⚔️</span>
+                <ItemIcon iconKey="sword" size={14} />
                 <span>Karakter & Savaş Arenası</span>
               </button>
             )}
@@ -330,12 +421,12 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
           <div className="flex flex-wrap items-center gap-1">
             {(
               [
-                { id: 'ALL', label: 'TÜMÜ', icon: '📦' },
-                { id: 'WEAPON', label: 'SİLAHLAR', icon: '⚔️' },
-                { id: 'SHIELD', label: 'KALKANLAR', icon: '🛡️' },
-                { id: 'ARMOR', label: 'ZIRHLAR', icon: '🪖' },
-                { id: 'FOOD', label: 'ERZAK & EMTİA', icon: '🌾' },
-                { id: 'HORSE', label: 'BİNEKLER', icon: '🐎' },
+                { id: 'ALL', label: 'TÜMÜ' },
+                { id: 'WEAPON', label: 'SİLAHLAR' },
+                { id: 'SHIELD', label: 'KALKANLAR' },
+                { id: 'ARMOR', label: 'ZIRHLAR' },
+                { id: 'FOOD', label: 'ERZAK & EMTİA' },
+                { id: 'HORSE', label: 'BİNEKLER' },
               ] as const
             ).map((cat) => (
               <button
@@ -348,7 +439,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                     : 'bg-[#221c16] text-[#b5a890] hover:text-white border border-transparent'
                 }`}
               >
-                <span>{cat.icon}</span>
+                <ItemIcon iconKey={CATEGORY_ICON_KEYS[cat.id]} size={13} />
                 <span>{cat.label}</span>
               </button>
             ))}
@@ -384,7 +475,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
               onClick={() => setFeedback(null)}
               className="text-[#9ca3af] hover:text-white font-bold ml-2"
             >
-              ✕
+              ×
             </button>
           </div>
         )}
@@ -395,22 +486,26 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
           <div className="lg:col-span-5 flex flex-col h-full overflow-hidden bg-[#14100c]">
             <div className="p-3 border-b border-[#c6a15b]/20 flex items-center justify-between bg-[#19140f] shrink-0">
               <span className="text-xs font-bold text-[#c6a15b] tracking-wider uppercase">
-                🏛️ Pazaryeri Tezgahı ({filteredMarketItems.length} Eşya)
+                <ItemIcon iconKey="crate" size={13} className="inline-block align-[-2px] mr-1" />
+                Pazaryeri Tezgahı ({filteredMarketItems.length} Eşya)
               </span>
               <span className="text-[11px] text-[#9ca3af]">Sol Tık: Satın Al</span>
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
               {filteredMarketItems.map((item) => {
-                const canAfford = campaign.gold >= item.value;
+                const price = buyPriceAt(item, profile);
+                const quantity = stock[item.id] ?? 0;
+                const canAfford = campaign.gold >= price;
+                const rumours = settlement ? tradeRumours(campaign, item, settlement, [], 2) : [];
                 return (
                   <div
                     key={item.id}
                     className="p-2.5 rounded bg-[#1c1712] border border-[#c6a15b]/20 hover:border-[#f59e0b]/60 transition-all flex items-center justify-between gap-3"
                   >
                     <div className="flex items-start gap-2.5 min-w-0">
-                      <span className="text-2xl shrink-0 p-1 rounded bg-[#2a2219]">
-                        {item.icon}
+                      <span className="shrink-0 p-1.5 rounded bg-[#2a2219] text-[#e8d9b5] flex items-center justify-center">
+                        <ItemIcon iconKey={item.iconKey} size={22} />
                       </span>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
@@ -427,28 +522,47 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                         <div className="text-[10px] text-[#a89b84] flex items-center gap-2 mt-0.5">
                           <span>Ağırlık: {item.weight} kg</span>
                           <span>·</span>
+                          <span>Stok {quantity}</span>
+                          <span>·</span>
                           <span className="italic text-[#d6cbb5] truncate">
                             {item.description}
                           </span>
                         </div>
+                        {rumours.length > 0 && (
+                          <div
+                            className="text-[9px] text-[#8b8072] mt-0.5 truncate"
+                            title="Ticaret söylentisi: yakın şehirlerdeki fiyatlar"
+                          >
+                            {rumours.map((r) => (
+                              <span key={r.settlementId} className="mr-2">
+                                {r.settlementName}:{' '}
+                                <span className={PRICE_TONE_CLASS[r.tone]}>{r.price} D</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     <div className="flex flex-col items-end gap-1 shrink-0">
-                      <span className="text-xs font-bold font-mono-tabular text-[#fbbf24]">
-                        {item.value} D
+                      <span
+                        className={`text-xs font-bold font-mono-tabular ${PRICE_TONE_CLASS[priceTone(price, item.value)]}`}
+                        title={PRICE_TONE_LABEL[priceTone(price, item.value)]}
+                      >
+                        {price} D
                       </span>
+                      <span className="text-[9px] text-[#8b8072]">Taban {item.value} D</span>
                       <button
                         type="button"
-                        disabled={!canAfford}
+                        disabled={!canAfford || quantity <= 0}
                         onClick={() => handleBuy(item)}
                         className={`px-3 py-1 rounded text-[11px] font-bold transition-colors ${
-                          canAfford
+                          canAfford && quantity > 0
                             ? 'bg-[#15803d] hover:bg-[#16a34a] text-white shadow'
                             : 'bg-[#27211b] text-[#6b7280] cursor-not-allowed'
                         }`}
                       >
-                        {canAfford ? 'Satın Al' : 'Yetersiz'}
+                        {quantity <= 0 ? 'Tükendi' : canAfford ? 'Satın Al' : 'Yetersiz'}
                       </button>
                     </div>
                   </div>
@@ -503,19 +617,19 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
               {/* Character Armor Breakdown */}
               <div className="grid grid-cols-2 gap-2 text-[11px]">
                 <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
-                  <span className="text-[#a89b84] block">🪖 Baş Zırhı</span>
+                  <span className="text-[#a89b84] block"><ItemIcon iconKey="helmet" size={12} className="inline-block align-[-2px] mr-1" />Baş Zırhı</span>
                   <span className="text-[#f8f0df] font-bold">+48 Zırh</span>
                 </div>
                 <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
-                  <span className="text-[#a89b84] block">🥋 Gövde Zırhı</span>
+                  <span className="text-[#a89b84] block"><ItemIcon iconKey="armor" size={12} className="inline-block align-[-2px] mr-1" />Gövde Zırhı</span>
                   <span className="text-[#f8f0df] font-bold">+64 Zırh</span>
                 </div>
                 <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
-                  <span className="text-[#a89b84] block">🧤 Kol Zırhı</span>
+                  <span className="text-[#a89b84] block"><ItemIcon iconKey="gloves" size={12} className="inline-block align-[-2px] mr-1" />Kol Zırhı</span>
                   <span className="text-[#f8f0df] font-bold">+24 Zırh</span>
                 </div>
                 <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
-                  <span className="text-[#a89b84] block">👢 Bacak Zırhı</span>
+                  <span className="text-[#a89b84] block"><ItemIcon iconKey="boots" size={12} className="inline-block align-[-2px] mr-1" />Bacak Zırhı</span>
                   <span className="text-[#f8f0df] font-bold">+32 Zırh</span>
                 </div>
               </div>
@@ -526,7 +640,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                 onClick={handleSellAllLoot}
                 className="w-full py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white transition-colors shadow"
               >
-                💰 Tüm Fazla Ganimeti Sat
+                Tüm Fazla Ganimeti Sat
               </button>
             </div>
           </div>
@@ -535,7 +649,8 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
           <div className="lg:col-span-4 flex flex-col h-full overflow-hidden bg-[#14100c]">
             <div className="p-3 border-b border-[#c6a15b]/20 flex items-center justify-between bg-[#19140f] shrink-0">
               <span className="text-xs font-bold text-[#fef08a] tracking-wider uppercase">
-                🎒 Donanım & Sırt Çantası ({filteredPlayerItems.length} Eşya)
+                <ItemIcon iconKey="crate" size={13} className="inline-block align-[-2px] mr-1" />
+                Donanım & Sırt Çantası ({filteredPlayerItems.length} Eşya)
               </span>
               <span className="text-[11px] text-[#fbbf24] font-mono-tabular font-bold">
                 {campaign.gold} Dinar
@@ -550,14 +665,14 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
               <div className="grid grid-cols-2 gap-1.5 text-[10px]">
                 {(
                   [
-                    { slot: 'HEAD', label: '🪖 Başlık' },
-                    { slot: 'BODY', label: '🥋 Gövde' },
-                    { slot: 'WEAPON1', label: '🗡️ Silah I' },
-                    { slot: 'WEAPON2', label: '🛡️ Kalkan / II' },
-                    { slot: 'WEAPON3', label: '🔱 Silah III' },
-                    { slot: 'WEAPON4', label: '🏹 Silah IV' },
-                    { slot: 'MOUNT', label: '🐎 Binek' },
-                    { slot: 'LEG', label: '👢 Çizme' },
+                    { slot: 'HEAD', label: 'Başlık', icon: 'helmet' as const },
+                    { slot: 'BODY', label: 'Gövde', icon: 'armor' as const },
+                    { slot: 'WEAPON1', label: 'Silah I', icon: 'sword' as const },
+                    { slot: 'WEAPON2', label: 'Kalkan / II', icon: 'shield' as const },
+                    { slot: 'WEAPON3', label: 'Silah III', icon: 'spear' as const },
+                    { slot: 'WEAPON4', label: 'Silah IV', icon: 'arrows' as const },
+                    { slot: 'MOUNT', label: 'Binek', icon: 'horse' as const },
+                    { slot: 'LEG', label: 'Çizme', icon: 'boots' as const },
                   ] as const
                 ).map((slotInfo) => {
                   const eqName = campaign.equipment?.[slotInfo.slot] || 'Standart';
@@ -568,7 +683,10 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                       className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/20 flex items-center justify-between gap-1"
                     >
                       <div className="min-w-0">
-                        <span className="text-[#a89b84] block truncate">{slotInfo.label}</span>
+                        <span className="text-[#a89b84] flex items-center gap-1 truncate">
+                          <ItemIcon iconKey={slotInfo.icon} size={11} />
+                          {slotInfo.label}
+                        </span>
                         <span className="text-[#f8f0df] font-semibold truncate block">
                           {eqName.split(' (')[0]}
                         </span>
@@ -613,10 +731,31 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                         <span>Ağırlık: {item.weight} kg</span>
                         <span>·</span>
                         <span className="text-[#fbbf24] font-mono">Değer: {item.value} D</span>
+                        <span className="text-[#8b8072]">
+                          · Satış ≈ {sellPriceAt(item as never, profile)} D
+                        </span>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setLockedIds((prev) =>
+                            prev.includes(item.id)
+                              ? prev.filter((id) => id !== item.id)
+                              : [...prev, item.id],
+                          )
+                        }
+                        title={lockedIds.includes(item.id) ? 'Kilidi aç' : 'Kilitle (toplu satışta korunur)'}
+                        className={`px-1.5 py-1 rounded text-[10px] font-bold border ${
+                          lockedIds.includes(item.id)
+                            ? 'bg-[#3f2d12] text-[#fbbf24] border-[#fbbf24]/50'
+                            : 'bg-[#1f1913] text-[#8b8072] border-[#c6a15b]/20'
+                        }`}
+                      >
+                        {lockedIds.includes(item.id) ? 'KİLİTLİ' : 'AÇIK'}
+                      </button>
                       {item.slot !== 'TRADE' && (
                         <button
                           type="button"
@@ -639,6 +778,30 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
               )}
             </div>
           </div>
+        </div>
+
+        {/* ALT BAR — Bannerlord'daki "Cancel | net sonuç | Done" şeridi */}
+        <div className="shrink-0 border-t border-[#c6a15b]/30 bg-[#16120e] px-4 py-2 flex items-center justify-between gap-3 text-xs">
+          <span className="text-[#8b8072]">
+            {settlement ? `${settlement.name} pazaryeri` : 'Pazaryeri'} · tüccar kesesi{' '}
+            <strong className="text-[#fbbf24] font-mono-tabular">{merchantGold} D</strong>
+          </span>
+          <span
+            className={`font-mono-tabular font-bold ${
+              session.net > 0 ? 'text-[#34d399]' : session.net < 0 ? 'text-[#fca5a5]' : 'text-[#a2957f]'
+            }`}
+            title="Bu pazaryerinde yaptığın alışverişin net sonucu"
+          >
+            {session.net > 0 ? '+' : ''}
+            {session.net} D · {session.itemsBought} alış / {session.itemsSold} satış
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fde68a]/50 shadow"
+          >
+            Bitir
+          </button>
         </div>
       </div>
     </div>

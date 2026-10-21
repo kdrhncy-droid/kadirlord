@@ -5,12 +5,15 @@ import {
   registerSettlementTerrace,
 } from './mapGen.ts';
 import { snapToNearestLand } from './navigation.ts';
+import { ensureNotables, type SettlementNotable } from './notables';
+import { battleGoldReward, describeLoot, rollBattleLoot } from './loot';
 import {
   CharacterMorphDNA,
   cloneDNA,
   getLordDNA,
   PLAYER_DEFAULT_DNA,
 } from './characterMorph.ts';
+import { generateLordParties } from './heroGen.ts';
 
 export type FactionId =
   | 'player'
@@ -148,9 +151,13 @@ export interface Settlement {
   buildings?: Record<BuildingProjectId, number>;
   dailyDefault?: SettlementDailyDefault;
   workshopType?: WorkshopTypeId;
+  /** Atölyenin sahibi. Oyuncu atölyesi her gün gelir getirir (Faz B0). */
+  workshopOwner?: 'player';
   siegeEngines?: SiegeEngineType[];
   reserveEngines?: SiegeEngineType[];
   wallHealth?: number;
+  /** Faz B0: yerleşimin ileri gelenleri (deterministik üretilir, kayda yazılır). */
+  notables?: SettlementNotable[];
 }
 
 export function getSettlementArrivalRadius(type: 'TOWN' | 'CASTLE' | 'VILLAGE'): number {
@@ -163,6 +170,62 @@ export function getSettlementArrivalRadius(type: 'TOWN' | 'CASTLE' | 'VILLAGE'):
       return 2.6;
   }
 }
+
+/** Lord'un stratejik emri (Faz 11 — canlı dünya). */
+export type LordOrderKind =
+  | 'PATROL' // kendi bölgesinde devriye
+  | 'REINFORCE' // kendi yerleşiminde asker topla
+  | 'SIEGE' // düşman yerleşimini kuşat
+  | 'DEFEND' // kuşatılan kendi yerleşimini savun
+  | 'HUNT_PLAYER' // oyuncuyu avla
+  | 'FLEE'; // güçsüzken kaç
+
+export interface LordOrder {
+  kind: LordOrderKind;
+  /** SIEGE / DEFEND / REINFORCE / PATROL hedefi. */
+  targetSettlementId?: string;
+  /** Emrin verildiği gün (churn'ü önlemek için). */
+  sinceDay: number;
+  /** Kuşatma ilerlemesi 0..100 (yalnız SIEGE). */
+  siegeProgress?: number;
+}
+
+/** İki krallık arasındaki savaş kaydı (Faz 11). */
+export interface KingdomWarRecord {
+  a: FactionId;
+  b: FactionId;
+  sinceDay: number;
+  /** + ise `a` üstün, − ise `b` üstün (−100..+100). */
+  score: number;
+  sieges: number;
+}
+
+export interface WorldStats {
+  events: number;
+  warsDeclared: number;
+  warsEnded: number;
+  siegesWon: number;
+  fiefsChangedHands: number;
+  reinforcements: number;
+}
+
+/** Seferin canlı dünya durumu (kayda yazılır). */
+export interface WorldState {
+  seed: number;
+  wars: KingdomWarRecord[];
+  stats: WorldStats;
+  /** Yeni fethedilen yerleşim → yeniden kuşatılamayacağı gün (ping-pong önleyici). */
+  siegeCooldowns?: Record<string, number>;
+}
+
+export const EMPTY_WORLD_STATS: WorldStats = {
+  events: 0,
+  warsDeclared: 0,
+  warsEnded: 0,
+  siegesWon: 0,
+  fiefsChangedHands: 0,
+  reinforcements: 0,
+};
 
 export interface LordAgent {
   id: string;
@@ -187,6 +250,8 @@ export interface LordAgent {
   bannerColor: string;
   persuasionPips?: number;
   morphDNA?: CharacterMorphDNA;
+  /** Faz 11: stratejik emir (canlı dünya simülasyonu yazar, harita uygular). */
+  order?: LordOrder;
 }
 
 export interface ChronicleEvent {
@@ -227,6 +292,8 @@ export interface CampaignState {
   inventoryItems?: InventoryItem[];
   clanRoles?: Record<ClanRoleId, string>;
   playerMorphDNA?: CharacterMorphDNA;
+  /** Faz 11: savaşlar + sayaçlar (kayda yazılır). */
+  world?: WorldState;
 }
 
 export const FACTION_INFO: Record<
@@ -663,24 +730,47 @@ export function joinArenaTournament(
   }
 }
 
+/**
+ * Çuvaldaki **ticari emtia**yı pazara satar (savaş ganimeti ve alım-satım
+ * fazlalıkları). Kuşanılabilir eşyaya dokunmaz — onlar envanterde kalır.
+ * Faz B0: sabit 45 dinar yerine satılan malın gerçek değeri ödenir.
+ */
 export function sellSurplusLootAtMarket(
   state: CampaignState,
   settlementId: string,
-): { nextState: CampaignState; success: boolean; goldGained: number } {
-  const goldGained = 45;
+): { nextState: CampaignState; success: boolean; goldGained: number; reason?: string } {
   const s = state.settlements.find((item) => item.id === settlementId);
+  if (!s) return { nextState: state, success: false, goldGained: 0, reason: 'Yerleşim bulunamadı.' };
+
+  const goods = (state.inventoryItems ?? []).filter(
+    (item) => item.slot === 'TRADE' && item.category === 'FOOD',
+  );
+  if (goods.length === 0) {
+    return {
+      nextState: state,
+      success: false,
+      goldGained: 0,
+      reason: 'Çuvalınızda satılacak emtia yok. Ganimet eşyaları pazaryerinde tek tek satılır.',
+    };
+  }
+
+  const goldGained = goods.reduce((sum, item) => sum + Math.max(1, Math.round(item.value)), 0);
+  const soldIds = new Set(goods.map((item) => item.id));
+  const remaining = (state.inventoryItems ?? []).filter((item) => !soldIds.has(item.id));
+
   return {
     success: true,
     goldGained,
     nextState: {
       ...state,
       gold: state.gold + goldGained,
+      inventoryItems: remaining,
       chronicle: [
         {
-          id: `loot-sell-${Date.now()}`,
+          id: `loot-sell-${state.day}-${goods.length}`,
           day: state.day,
           category: 'ECONOMY' as const,
-          text: `${s?.name || 'Yerleşim'} pazarına ganimet ve fazlalıklar satıldı (+${goldGained} Dinar).`,
+          text: `${s.name} pazarına ${goods.length} kalem ganimet/emtia satıldı (+${goldGained} Dinar).`,
         },
         ...state.chronicle,
       ].slice(0, 25),
@@ -906,14 +996,37 @@ export function forcePeasantsRecruits(
   };
 }
 
+const WORKSHOP_TYPE_BONUS: Record<string, number> = {
+  BREWERY: 0,
+  SMITHY: 15,
+  OLIVE_PRESS: 8,
+  WEAVERY: 12,
+};
+
+/**
+ * Atölyenin günlük geliri (Faz B0).
+ * Refah arttıkça kâr artar; atölye türü küçük bir çarpan ekler. Arayüz ve
+ * günlük ekonomi **aynı** fonksiyonu kullanır ki ekranda yazan rakam yalan olmasın.
+ */
+export function settlementWorkshopIncome(settlement: Settlement): number {
+  if (!settlement.workshopType || settlement.workshopType === 'NONE') return 0;
+  const base = 20 + Math.round(settlement.prosperity * 0.08);
+  return base + (WORKSHOP_TYPE_BONUS[settlement.workshopType] ?? 0);
+}
+
 export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState {
   const wage = calculateDailyWage(state.roster);
   const foodUsed = calculateDailyFoodConsumption(state.roster);
 
   let playerSettlementTaxes = 0;
+  let playerWorkshopIncome = 0;
   const updatedSettlements = state.settlements.map((s) => {
     if (s.faction === 'player') {
       playerSettlementTaxes += Math.round(s.prosperity * 0.25);
+    }
+    // Faz B0: oyuncunun atölyesi refaha bağlı günlük gelir üretir.
+    if (s.workshopOwner === 'player') {
+      playerWorkshopIncome += settlementWorkshopIncome(s);
     }
     return {
       ...s,
@@ -929,21 +1042,36 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
   });
 
   const nextFood = Math.max(0, state.food - foodUsed);
-  const nextGold = Math.max(0, state.gold + playerSettlementTaxes - wage);
+  const nextGold = Math.max(0, state.gold + playerSettlementTaxes + playerWorkshopIncome - wage);
   let moraleDelta = 0;
   if (state.food < foodUsed) moraleDelta -= 10;
   else moraleDelta += 2;
-  if (state.gold + playerSettlementTaxes < wage) moraleDelta -= 8;
+  if (state.gold + playerSettlementTaxes + playerWorkshopIncome < wage) moraleDelta -= 8;
 
   const seasons: Array<'Bahar' | 'Yaz' | 'Güz' | 'Kış'> = ['Bahar', 'Yaz', 'Güz', 'Kış'];
   const nextDay = state.day + 1;
   const seasonIdx = Math.floor(((nextDay - 1) % 40) / 10);
+
+  // Atölye gelirini 10 günde bir vakayinameye yaz (her gün yazmak günlüğü boğar).
+  const economyChronicle =
+    playerWorkshopIncome > 0 && nextDay % 10 === 0
+      ? [
+          {
+            id: `workshop-income-${nextDay}`,
+            day: nextDay,
+            category: 'ECONOMY' as const,
+            text: `Atölyelerin son on günde yaklaşık ${(playerWorkshopIncome * 10).toLocaleString('tr-TR')} Dinar kazandırdı.`,
+          },
+          ...state.chronicle,
+        ].slice(0, 20)
+      : state.chronicle;
 
   return {
     ...state,
     day: nextDay,
     season: seasons[seasonIdx] || 'Güz',
     gold: nextGold,
+    chronicle: economyChronicle,
     food: nextFood,
     morale: Math.max(15, Math.min(100, state.morale + moraleDelta)),
     playerHp: Math.min(state.playerMaxHp, state.playerHp + 15),
@@ -1080,9 +1208,22 @@ export function resolveBattleOutcome(
     };
   }
 
-  const goldLoot = 120 + enemiesDefeatedCount * 22;
+  const isSiegeVictory = Boolean(conqueredSettlementId);
+  const goldLoot = battleGoldReward(enemiesDefeatedCount, isSiegeVictory);
   const renownGain = 15 + enemiesDefeatedCount * 3;
   const prisonersGain = Math.max(1, Math.floor(enemiesDefeatedCount * 0.35));
+  // Faz B0: zafer artık eşya da bırakır (envantere düşer, pazarda satılır).
+  const defeatedFaction =
+    state.lords.find((l) => l.isAtWarWithPlayer)?.faction ??
+    (conqueredSettlementId
+      ? state.settlements.find((s) => s.id === conqueredSettlementId)?.faction
+      : undefined) ??
+    'bandits';
+  const loot = rollBattleLoot(state, {
+    enemyFaction: defeatedFaction,
+    defeated: enemiesDefeatedCount,
+    siege: isSiegeVictory,
+  });
 
   const nextSettlements = state.settlements.map((s) => {
     if (conqueredSettlementId && (s.id === conqueredSettlementId || s.boundSettlementId === conqueredSettlementId)) {
@@ -1101,7 +1242,7 @@ export function resolveBattleOutcome(
     category: conqueredSettlementId ? 'CONQUEST' : 'WAR',
     text: conqueredSettlementId
       ? `${state.playerName}, kuşatma zaferiyle yeni bir mülkü ve bağlı köylerini sancağı altına aldı!`
-      : `${state.playerName}, meydan savaşında düşman ordusunu bozguna uğrattı (+${renownGain} Nam, +${goldLoot} Dinar).`,
+      : `${state.playerName}, meydan savaşında düşman ordusunu bozguna uğrattı (+${renownGain} Nam, +${goldLoot} Dinar, ${describeLoot(loot)}).`,
   };
 
   return {
@@ -1111,6 +1252,7 @@ export function resolveBattleOutcome(
     prisoners: state.prisoners + prisonersGain,
     morale: Math.min(100, state.morale + 10),
     battlesWon: state.battlesWon + 1,
+    inventoryItems: [...(state.inventoryItems ?? []), ...loot],
     roster: nextRoster,
     lords: nextLords,
     settlements: nextSettlements,
@@ -1447,7 +1589,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'lochana_castle',
-      name: 'Lochana Castle',
+      name: 'Lochana Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: 105,
@@ -1460,7 +1602,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'hertogea_castle',
-      name: 'Hertogea Castle',
+      name: 'Hertogea Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: -95,
@@ -1473,7 +1615,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'veron_castle',
-      name: 'Veron Castle',
+      name: 'Veron Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: -32,
@@ -1486,7 +1628,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'lavenia_castle',
-      name: 'Lavenia Castle',
+      name: 'Lavenia Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: 142,
@@ -1499,7 +1641,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'gersegos_castle',
-      name: 'Gersegos Castle',
+      name: 'Gersegos Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: -162,
@@ -1512,7 +1654,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'gaos_castle',
-      name: 'Gaos Castle',
+      name: 'Gaos Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: -18,
@@ -1525,7 +1667,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'melion_castle',
-      name: 'Melion Castle',
+      name: 'Melion Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: 152,
@@ -1538,7 +1680,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'morenia_castle',
-      name: 'Morenia Castle',
+      name: 'Morenia Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: 68,
@@ -1551,7 +1693,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'onica_castle',
-      name: 'Onica Castle',
+      name: 'Onica Kalesi',
       type: 'CASTLE',
       faction: 'empire',
       x: -178,
@@ -1670,7 +1812,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'caleus_castle',
-      name: 'Caleus Castle',
+      name: 'Caleus Kalesi',
       type: 'CASTLE',
       faction: 'vlandia',
       x: -412,
@@ -1683,7 +1825,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'hongard_castle',
-      name: 'Hongard Castle',
+      name: 'Hongard Kalesi',
       type: 'CASTLE',
       faction: 'vlandia',
       x: -395,
@@ -1696,7 +1838,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'tirby_castle',
-      name: 'Tirby Castle',
+      name: 'Tirby Kalesi',
       type: 'CASTLE',
       faction: 'vlandia',
       x: -352,
@@ -1709,7 +1851,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'ormanfard_castle',
-      name: 'Ormanfard Castle',
+      name: 'Ormanfard Kalesi',
       type: 'CASTLE',
       faction: 'vlandia',
       x: -445,
@@ -1819,7 +1961,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'llanoc_hen_castle',
-      name: 'Llanoc Hen Castle',
+      name: 'Llanoc Hen Kalesi',
       type: 'CASTLE',
       faction: 'battania',
       x: -268,
@@ -1832,7 +1974,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'garontor_castle',
-      name: 'Garontor Castle',
+      name: 'Garontor Kalesi',
       type: 'CASTLE',
       faction: 'battania',
       x: -195,
@@ -1845,7 +1987,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'ab_comer_castle',
-      name: 'Ab Comer Castle',
+      name: 'Ab Comer Kalesi',
       type: 'CASTLE',
       faction: 'battania',
       x: -342,
@@ -1858,7 +2000,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'pendraic_castle',
-      name: 'Pendraic Castle',
+      name: 'Pendraic Kalesi',
       type: 'CASTLE',
       faction: 'battania',
       x: -188,
@@ -1979,7 +2121,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'ov_castle',
-      name: 'Ov Castle',
+      name: 'Ov Kalesi',
       type: 'CASTLE',
       faction: 'sturgia',
       x: -85,
@@ -1992,7 +2134,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'urikskala_castle',
-      name: 'Urikskala Castle',
+      name: 'Urikskala Kalesi',
       type: 'CASTLE',
       faction: 'sturgia',
       x: 92,
@@ -2005,7 +2147,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'vladiv_castle',
-      name: 'Vladiv Castle',
+      name: 'Vladiv Kalesi',
       type: 'CASTLE',
       faction: 'sturgia',
       x: 134,
@@ -2018,7 +2160,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'mazolm_castle',
-      name: 'Mazolm Castle',
+      name: 'Mazolm Kalesi',
       type: 'CASTLE',
       faction: 'sturgia',
       x: -152,
@@ -2141,7 +2283,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'simira_castle',
-      name: 'Simira Castle',
+      name: 'Simira Kalesi',
       type: 'CASTLE',
       faction: 'khuzait',
       x: 278,
@@ -2154,7 +2296,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'kaysar_castle',
-      name: 'Kaysar Castle',
+      name: 'Kaysar Kalesi',
       type: 'CASTLE',
       faction: 'khuzait',
       x: 282,
@@ -2167,7 +2309,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'tepes_castle',
-      name: 'Tepes Castle',
+      name: 'Tepes Kalesi',
       type: 'CASTLE',
       faction: 'khuzait',
       x: 288,
@@ -2180,7 +2322,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'khimli_castle',
-      name: 'Khimli Castle',
+      name: 'Khimli Kalesi',
       type: 'CASTLE',
       faction: 'khuzait',
       x: 268,
@@ -2288,7 +2430,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'tubilis_castle',
-      name: 'Tubilis Castle',
+      name: 'Tubilis Kalesi',
       type: 'CASTLE',
       faction: 'aserai',
       x: -198,
@@ -2301,7 +2443,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'barihal_castle',
-      name: 'Barihal Castle',
+      name: 'Barihal Kalesi',
       type: 'CASTLE',
       faction: 'aserai',
       x: -48,
@@ -2314,7 +2456,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     },
     {
       id: 'medeni_castle',
-      name: 'Medeni Castle',
+      name: 'Medeni Kalesi',
       type: 'CASTLE',
       faction: 'aserai',
       x: 58,
@@ -2425,7 +2567,10 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
         }
       }
       if (!vName) {
-        const baseClean = parent.name.replace(' Castle', '').replace(' Hisarı', '');
+        const baseClean = parent.name
+          .replace(' Kalesi', '')
+          .replace(' Castle', '')
+          .replace(' Hisarı', '');
         vName = v === 0 && needed === 1 ? `${baseClean} Köyü` : `${baseClean} ${v + 1}. Köyü`;
       }
       usedNames.add(vName);
@@ -2491,7 +2636,8 @@ export function createInitialCampaignState(
   const initialGold = backgroundId === 'noble' ? 680 : backgroundId === 'tactician' ? 620 : 550;
   const initialRenown = backgroundId === 'noble' ? 65 : 45;
 
-  const settlements: Settlement[] = buildCanonicalCalradiaSettlements();
+  // Faz B0: her yerleşimin kendi ileri gelenleri (deterministik, kayda yazılır).
+  const settlements: Settlement[] = ensureNotables(buildCanonicalCalradiaSettlements());
 
   const lords: LordAgent[] = [
     {
@@ -2733,11 +2879,20 @@ export function createInitialCampaignState(
     prisoners: 2,
     battlesWon: 0,
     settlements,
-    lords: lords.map((l) => ({
+    lords: [...lords, ...generateLordParties(settlements, new Set(lords.map((l) => l.id)))].map((l) => ({
       ...l,
       morphDNA: l.morphDNA || getLordDNA(l.id, l.faction),
     })),
     chronicle,
+    world: {
+      seed: 20261021,
+      // Faz 11: kıta başlangıçta iki sınır savaşıyla açılır (Bannerlord'un açılış durumu gibi).
+      wars: [
+        { a: 'vlandia', b: 'battania', sinceDay: 1, score: 4, sieges: 0 },
+        { a: 'empire', b: 'sturgia', sinceDay: 1, score: -3, sieges: 0 },
+      ],
+      stats: { ...EMPTY_WORLD_STATS },
+    },
     playerMorphDNA: cloneDNA(PLAYER_DEFAULT_DNA),
     characterLevel: 6,
     freeAttributePoints: 2,
@@ -2846,7 +3001,7 @@ export function createInitialCampaignState(
       QUARTERMASTER: 'Komutan Demirhan (+45 Birlik Kapasitesi)',
       SCOUT: 'İzci Aybars (+%12 Harita Görüşü & Hız)',
       SURGEON: 'Hekim Helena (+%25 Yaralı Kurtarma)',
-      ENGINEER: 'Mimar Торвальд (+%30 Kuşatma İnşası)',
+      ENGINEER: 'Mimar Torvald (+%30 Kuşatma İnşası)',
     },
   };
 }
@@ -3087,6 +3242,7 @@ export function buyOrChangeWorkshop(
       ? {
           ...item,
           workshopType,
+          workshopOwner: 'player' as const,
           prosperity: item.prosperity + 25,
         }
       : item,

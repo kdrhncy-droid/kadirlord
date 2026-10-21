@@ -52,18 +52,39 @@ import type {
 import { WorldCanvas } from './components/WorldCanvas';
 import { GameHud } from './components/GameHud';
 import { SettlementModal } from './components/SettlementModal';
+import { DialogueModal } from './components/DialogueModal';
 import { DiplomacyModal } from './components/DiplomacyModal';
 import { BannerlordMarketModal } from './components/BannerlordMarketModal';
 import { KingdomManagementModal } from './components/KingdomManagementModal';
 import { CharacterArenaView } from './components/CharacterArenaView';
 import { CharacterCreatorModal } from './components/CharacterCreatorModal';
 import { BattlePrewarmModal } from './components/BattlePrewarmModal';
+import { EncyclopediaModal } from './components/encyclopedia/EncyclopediaModal';
 import { BattleMemoryPool, PrewarmStageReport } from './game/battleEnginePool';
 import {
   KingdomMacroState,
   createInitialKingdomMacroState,
 } from './game/kingdomSystem';
+import { advanceWorldDay } from './game/worldSim';
 import { sound } from './game/sound';
+import { recruitBatch, refreshRecruitPools } from './game/recruitment';
+import {
+  defaultStorage,
+  readSave,
+  readSaveSummary,
+  writeSave,
+  type BackgroundChoice,
+  type SaveSummary,
+} from './game/saveGame';
+import {
+  countLayers,
+  speedAfterUi,
+  speedBeforeUi,
+  topLayer,
+  type TimeScale,
+  type UiLayer,
+  type UiLayerFlags,
+} from './game/uiSession';
 
 export default function App() {
   const isAutostart =
@@ -74,10 +95,9 @@ export default function App() {
     isAutostart ? 'playing' : 'title',
   );
   const [subMode, setSubMode] = useState<'overworld' | 'battle'>('overworld');
-  const [campaignTimeScale, setCampaignTimeScale] = useState<0 | 1 | 2 | 4>(1);
-  const [backgroundChoice, setBackgroundChoice] = useState<'noble' | 'steppe' | 'tactician'>(
-    'noble',
-  );
+  const [campaignTimeScale, setCampaignTimeScale] = useState<TimeScale>(1);
+  const [backgroundChoice, setBackgroundChoice] = useState<BackgroundChoice>('noble');
+  const [worldToast, setWorldToast] = useState<{ id: string; text: string } | null>(null);
   const [campaign, setCampaign] = useState<CampaignState>(() =>
     createInitialCampaignState('Komutan Demirhan', 'noble'),
   );
@@ -86,16 +106,38 @@ export default function App() {
   );
 
   const cameraActionsRef = useRef<CameraControlActions | null>(null);
+  /** Faz 11: harita katmanı lordların gerçek konumlarını buraya yazar (React render'ı yok). */
+  const lordPositionsRef = useRef<Map<string, { x: number; z: number }>>(new Map());
+  /** Faz 11: savaş isteği hesabı için klan kayıtları (interval kapanışında bayatlamasın). */
+  const macroStateRef = useRef<KingdomMacroState | null>(null);
+  macroStateRef.current = macroState;
 
   // Proximity & Active Modals
   const [nearSettlement, setNearSettlement] = useState<Settlement | null>(null);
   const [nearLord, setNearLord] = useState<LordAgent | null>(null);
   const [activeSettlementModal, setActiveSettlementModal] = useState<Settlement | null>(null);
   const [activeDiplomacyLord, setActiveDiplomacyLord] = useState<LordAgent | null>(null);
+  // Faz 6: yüz yüze diyalog ekranı (lord veya yerleşim reisi)
+  const [dialogueLord, setDialogueLord] = useState<LordAgent | null>(null);
+  const [dialogueSettlement, setDialogueSettlement] = useState<Settlement | null>(null);
   const [isMarketModalOpen, setIsMarketModalOpen] = useState(false);
   const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
   const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'campaign' | 'character_arena'>('campaign');
+  // Faz 1: Bannerlord Ansiklopedisi (N)
+  const [isEncyclopediaOpen, setIsEncyclopediaOpen] = useState(false);
+  /** Tanışılan kahramanlar — orta yol fog of war (yaş/beceri açılır). */
+  const [metHeroIds, setMetHeroIds] = useState<string[]>([]);
+
+  /* ── Faz 10a: kalıcılık + zaman/katman yönetimi ── */
+  /** Diskteki kayıt özeti (başlık ekranındaki "Devam Et" için). */
+  const [saveInfo, setSaveInfo] = useState<SaveSummary | null>(() => readSaveSummary(defaultStorage()));
+  /** Kısa bilgi bildirimi (kaydedildi / yüklendi). */
+  const [toast, setToast] = useState<string | null>(null);
+  /** UI açılmadan önceki oynatma hızı — kapanışta buraya dönülür. */
+  const speedBeforeUiRef = useRef<TimeScale>(1);
+  /** Şu an dünya bir UI yüzünden mi duraklatıldı? */
+  const pausedByUiRef = useRef(false);
 
   const [mapTelemetry, setMapTelemetry] = useState<MapCameraTelemetry>({
     focusX: -24,
@@ -145,26 +187,190 @@ export default function App() {
     document.body.dataset.state = gameState;
   }, [gameState]);
 
+  /** Sefer başlatılırken kullanılan ad (karakter yaratıcıda değiştirilebilir). */
+  const [playerName, setPlayerName] = useState('Komutan Demirhan');
+
   const startGame = useCallback(() => {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-    const fresh = createInitialCampaignState('Komutan Demirhan', backgroundChoice);
+    const fresh = createInitialCampaignState(playerName, backgroundChoice);
     setCampaign(fresh);
+    setMacroState(createInitialKingdomMacroState(fresh));
     setSubMode('overworld');
     setCampaignTimeScale(1);
     setActiveSettlementModal(null);
     setActiveDiplomacyLord(null);
+    setDialogueLord(null);
+    setDialogueSettlement(null);
+    setIsMarketModalOpen(false);
+    setIsKingdomModalOpen(false);
+    setIsEncyclopediaOpen(false);
     setOutcomeSnapshot(null);
+    // Yeni seferde tanışıklıklar sıfırlanır (fog of war baştan).
+    setMetHeroIds([]);
     setGameState('playing');
     document.body.dataset.state = 'playing';
     cameraActionsRef.current?.focusOnCoords(fresh.playerX, fresh.playerZ, 52);
     cameraActionsRef.current?.focusOnPlayer();
     sound.playWarhorn();
-  }, [backgroundChoice]);
+  }, [backgroundChoice, playerName]);
+
+  /* ───────────────── Faz 10a: UI katmanları & kayıt ───────────────── */
+
+  /** O an açık olan UI katmanları (Esc sırası ve duraklatma bunlardan türetilir). */
+  const uiLayers: UiLayerFlags = {
+    creator: isCharacterCreatorOpen,
+    market: isMarketModalOpen,
+    kingdom: isKingdomModalOpen,
+    dialogue: !!(dialogueLord || dialogueSettlement),
+    settlement: !!activeSettlementModal,
+    diplomacy: !!activeDiplomacyLord,
+    pause: gameState === 'paused',
+  };
+
+  const closeLayer = useCallback((layer: UiLayer) => {
+    switch (layer) {
+      case 'creator':
+        setIsCharacterCreatorOpen(false);
+        break;
+      case 'market':
+        setIsMarketModalOpen(false);
+        break;
+      case 'kingdom':
+        setIsKingdomModalOpen(false);
+        break;
+      case 'dialogue':
+        setDialogueLord(null);
+        setDialogueSettlement(null);
+        break;
+      case 'settlement':
+        setActiveSettlementModal(null);
+        break;
+      case 'diplomacy':
+        setActiveDiplomacyLord(null);
+        break;
+      case 'pause':
+        setGameState('playing');
+        break;
+    }
+  }, []);
+
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 2400);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  // Faz 11: fetih haberini vakayinamenin en yeni kaydından türet (updater içinde yan etki yok).
+  const lastChronicleIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const latest = campaign.chronicle[0];
+    if (!latest) return;
+    if (lastChronicleIdRef.current === null) {
+      lastChronicleIdRef.current = latest.id; // ilk yüklemede geçmişi duyurma
+      return;
+    }
+    if (lastChronicleIdRef.current === latest.id) return;
+    lastChronicleIdRef.current = latest.id;
+    if (latest.category === 'CONQUEST') {
+      setWorldToast({ id: latest.id, text: latest.text });
+    }
+  }, [campaign.chronicle]);
+
+  // Faz 11: dünya olayları (fetih/harp) 7 sn görünür.
+  useEffect(() => {
+    if (!worldToast) return;
+    const timer = window.setTimeout(() => setWorldToast(null), 7000);
+    return () => window.clearTimeout(timer);
+  }, [worldToast]);
+
+  /** Diske yazar; dönen değer başarılı mı? */
+  const persist = useCallback(
+    (nextCampaign = campaign, nextMacro = macroState) => {
+      const ok = writeSave(defaultStorage(), {
+        campaign: nextCampaign,
+        macroState: nextMacro,
+        metHeroIds,
+        backgroundChoice,
+      });
+      if (ok) setSaveInfo(readSaveSummary(defaultStorage()));
+      return ok;
+    },
+    [campaign, macroState, metHeroIds, backgroundChoice],
+  );
+
+  /** Otomatik kayıt: her oyun günü geçişinde. */
+  const lastAutosaveDayRef = useRef(-1);
+  useEffect(() => {
+    if (gameState === 'title' || gameState === 'gameover') return;
+    if (lastAutosaveDayRef.current === campaign.day) return;
+    lastAutosaveDayRef.current = campaign.day;
+    persist();
+  }, [campaign.day, gameState, persist]);
+
+  /** Diskteki kaydı yükler. */
+  const continueGame = useCallback(() => {
+    const data = readSave(defaultStorage());
+    if (!data) {
+      showToast('Kayıt bulunamadı — yeni sefer başlatılıyor.');
+      setSaveInfo(null);
+      startGame();
+      return;
+    }
+    const fresh = data.campaign;
+    setCampaign(fresh);
+    setMacroState(data.macroState);
+    setMetHeroIds(data.metHeroIds);
+    setBackgroundChoice(data.backgroundChoice);
+    setPlayerName(fresh.playerName);
+    setSubMode('overworld');
+    setViewMode('campaign');
+    setCampaignTimeScale(1);
+    setActiveSettlementModal(null);
+    setActiveDiplomacyLord(null);
+    setDialogueLord(null);
+    setDialogueSettlement(null);
+    setIsMarketModalOpen(false);
+    setIsKingdomModalOpen(false);
+    setIsEncyclopediaOpen(false);
+    setOutcomeSnapshot(null);
+    setGameState('playing');
+    document.body.dataset.state = 'playing';
+    lastAutosaveDayRef.current = fresh.day;
+    cameraActionsRef.current?.focusOnCoords(fresh.playerX, fresh.playerZ, 52);
+    cameraActionsRef.current?.focusOnPlayer();
+    sound.playWarhorn();
+    showToast(`Sefer yüklendi · Gün ${fresh.day}`);
+  }, [showToast, startGame]);
+
+  /**
+   * Dünya yalnız bir UI katmanı açıkken duraklatılır; kapanınca **önceki hıza**
+   * dönülür (eski sürümde hız 0'da kalıyordu — Faz 10a).
+   */
+  const uiPausesWorld = countLayers(uiLayers) > 0;
+  useEffect(() => {
+    if (uiPausesWorld && !pausedByUiRef.current) {
+      if (campaignTimeScale !== 0) speedBeforeUiRef.current = speedBeforeUi(campaignTimeScale);
+      pausedByUiRef.current = true;
+      setCampaignTimeScale(0);
+    } else if (!uiPausesWorld && pausedByUiRef.current) {
+      pausedByUiRef.current = false;
+      setCampaignTimeScale(speedAfterUi(speedBeforeUiRef.current));
+    }
+  }, [uiPausesWorld, campaignTimeScale]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // Form alanında yazarken kısayollar devre dışı.
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      // Ansiklopedi açıkken kendi tuş yönetimi geçerli (Esc geri, N kapat).
+      if (isEncyclopediaOpen) return;
       if (
         document.activeElement &&
         ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)
@@ -175,14 +381,34 @@ export default function App() {
         return;
       }
 
+      // ── Esc: en üstteki UI katmanını kapat, katman yoksa seferi duraklat ──
+      if (e.code === 'Escape') {
+        const layer = topLayer(uiLayers);
+        if (layer) {
+          e.preventDefault();
+          closeLayer(layer);
+          return;
+        }
+      }
+
       if (gameState === 'title') {
         if (e.code === 'Enter' || e.code === 'Space') {
           e.preventDefault();
-          startGame();
+          // Kayıt varsa Enter "devam et"tir; yeni sefer düğmeyle başlatılır.
+          if (saveInfo) continueGame();
+          else startGame();
         } else if (e.code === 'KeyB') {
           e.preventDefault();
           setIsCharacterCreatorOpen((prev) => !prev);
+        } else if (e.code === 'Escape' && isCharacterCreatorOpen) {
+          setIsCharacterCreatorOpen(false);
         }
+        return;
+      }
+
+      if (e.code === 'KeyN' && gameState === 'playing') {
+        e.preventDefault();
+        setIsEncyclopediaOpen(true);
         return;
       }
 
@@ -192,20 +418,17 @@ export default function App() {
         return;
       }
 
-      if (e.code === 'KeyR' && gameState === 'playing') {
-        startGame();
+      if (e.code === 'KeyR' && gameState === 'playing' && !uiPausesWorld) {
+        // Kayıt silineceği için onay istenir (eski sürüm sessizce sıfırlıyordu).
+        const ok =
+          typeof window === 'undefined' ||
+          window.confirm('Yeni sefer başlatılsın mı? Mevcut kayıt silinecek.');
+        if (ok) startGame();
         return;
       }
 
       if (e.code === 'Escape' || e.code === 'KeyP') {
-        if (activeSettlementModal) {
-          setActiveSettlementModal(null);
-          return;
-        }
-        if (activeDiplomacyLord) {
-          setActiveDiplomacyLord(null);
-          return;
-        }
+        if (uiPausesWorld) return;
         if (gameState === 'playing') {
           setGameState('paused');
         } else if (gameState === 'paused') {
@@ -213,6 +436,9 @@ export default function App() {
         }
         return;
       }
+
+      // UI açıkken dünya kısayolları (Space/1/2/3) çalışmaz.
+      if (uiPausesWorld) return;
 
       // Bannerlord Overworld Map Time Shortcuts: Space toggles pause/play on map, 1/2/3 set speed
       if (gameState === 'playing' && subMode === 'overworld') {
@@ -243,15 +469,36 @@ export default function App() {
     subMode,
     activeSettlementModal,
     activeDiplomacyLord,
+    isEncyclopediaOpen,
+    isMarketModalOpen,
+    isKingdomModalOpen,
+    isCharacterCreatorOpen,
+    dialogueLord,
+    dialogueSettlement,
+    uiPausesWorld,
+    uiLayers,
+    closeLayer,
     startGame,
+    continueGame,
+    saveInfo,
   ]);
 
-  // Living World Periodic Tick scaled by campaignTimeScale
+  // Living World Periodic Tick scaled by campaignTimeScale (Faz 11: canlı dünya)
   useEffect(() => {
     if (gameState !== 'playing' || subMode !== 'overworld' || campaignTimeScale === 0) return;
     const intervalMs = Math.round(16000 / campaignTimeScale);
     const timer = setInterval(() => {
-      setCampaign((prev) => advanceDailyEconomyAndWorld(prev));
+      setCampaign((prev) => {
+        const tick = advanceWorldDay(prev, {
+          lordPositions: lordPositionsRef.current,
+          clans: macroStateRef.current?.clans,
+          playerPos: { x: prev.playerX, z: prev.playerZ },
+        });
+        // Fetih bildirimi, vakayinameye düşen en yeni olaydan türetilir (aşağıdaki effect).
+        const next = tick.state;
+        // Faz 8: gönüllü havuzları her 3 günde bir tazelenir.
+        return { ...next, settlements: refreshRecruitPools(next.settlements, next.day) };
+      });
     }, intervalMs);
     return () => clearInterval(timer);
   }, [gameState, subMode, campaignTimeScale]);
@@ -299,7 +546,15 @@ export default function App() {
     (settlementId: string, unitId: UnitTierId, amount: number): string | null => {
       let errorMsg: string | null = null;
       setCampaign((prev) => {
-        const res = recruitUnit(prev, settlementId, unitId, amount);
+        // Faz 8: parti kapasitesi + ilişki kapısı + ilişki indirimi tek yerde.
+        const factionLords = prev.lords.filter(
+          (l) => l.faction === prev.settlements.find((s) => s.id === settlementId)?.faction,
+        );
+        const relation =
+          factionLords.length > 0
+            ? Math.round(factionLords.reduce((a, l) => a + l.relation, 0) / factionLords.length)
+            : 0;
+        const res = recruitBatch(prev, settlementId, unitId, amount, relation);
         if (!res.success) {
           errorMsg = res.reason || 'İşlem başarısız.';
           return prev;
@@ -409,14 +664,17 @@ export default function App() {
     [],
   );
 
-  const handleSellLoot = useCallback((settlementId: string): string | null => {
-    setCampaign((prev) => {
-      const res = sellSurplusLootAtMarket(prev, settlementId);
+  const handleSellLoot = useCallback(
+    (settlementId: string): string | null => {
+      const res = sellSurplusLootAtMarket(campaign, settlementId);
+      if (!res.success) return res.reason ?? 'Satış yapılamadı.';
+      setCampaign(res.nextState);
       sound.playCoinChime();
-      return res.nextState;
-    });
-    return null;
-  }, []);
+      showToast(`Ganimet satıldı: +${res.goldGained} Dinar`);
+      return null;
+    },
+    [campaign, showToast],
+  );
 
   const handleManageGarrison = useCallback(
     (
@@ -628,16 +886,15 @@ export default function App() {
         battleTargetLordId={battleTargetLordId}
         battleTargetSettlementId={battleTargetSettlementId}
         cameraActionsRef={cameraActionsRef}
+        lordPositionsRef={lordPositionsRef}
         activeDiplomacyLordId={activeDiplomacyLord?.id ?? null}
         activeSettlementModalId={activeSettlementModal?.id ?? null}
         onSetTimeScale={setCampaignTimeScale}
         onUpdatePlayerPos={handleUpdatePlayerPos}
         onOpenSettlement={(s) => {
-          setCampaignTimeScale(0);
           setActiveSettlementModal(s);
         }}
         onOpenDiplomacy={(l) => {
-          setCampaignTimeScale(0);
           setActiveDiplomacyLord(l);
         }}
         onBattleTelemetry={setBattleTelemetry}
@@ -769,14 +1026,45 @@ export default function App() {
               </div>
             </div>
 
+            {saveInfo && (
+              <div className="mb-4 rounded border border-[#34d399]/40 bg-[#0f1a13] px-3 py-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={continueGame}
+                    className="px-6 py-3 rounded text-sm font-display font-bold tracking-wider bg-[#166534] hover:bg-[#15803d] text-[#ecfdf5] border border-[#34d399]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    SEFERE DEVAM ET · GÜN {saveInfo.day} [ENTER]
+                  </button>
+                  <div className="text-[11px] text-[#a7d8bd] leading-tight">
+                    <div>
+                      {saveInfo.playerName} · {saveInfo.gold} dinar
+                    </div>
+                    <div className="text-[#6f8f7d]">
+                      Son kayıt:{' '}
+                      {saveInfo.savedAt > 0
+                        ? new Date(saveInfo.savedAt).toLocaleTimeString('tr-TR', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : '—'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 data-start="true"
-                onClick={startGame}
+                onClick={() => {
+                  if (saveInfo && !window.confirm('Yeni sefer başlatılsın mı? Mevcut kayıt silinecek.')) return;
+                  startGame();
+                }}
                 className="px-7 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fbbf24]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
-                SEFERİ BAŞLAT [ENTER]
+                {saveInfo ? 'YENİ SEFER BAŞLAT' : 'SEFERİ BAŞLAT [ENTER]'}
               </button>
               <button
                 type="button"
@@ -834,12 +1122,13 @@ export default function App() {
             sound.playWarhorn();
           }}
           onOpenSettlement={(s) => {
-            setCampaignTimeScale(0);
             setActiveSettlementModal(s);
           }}
           onOpenDiplomacy={(l) => {
-            setCampaignTimeScale(0);
             setActiveDiplomacyLord(l);
+          }}
+          onOpenEncyclopedia={() => {
+            setIsEncyclopediaOpen(true);
           }}
           onStartQuickBattle={handleStartQuickBattle}
           onRetreatBattle={() => setSubMode('overworld')}
@@ -873,6 +1162,11 @@ export default function App() {
             return res.reason || null;
           }}
           onOpenMarketModal={() => setIsMarketModalOpen(true)}
+          onTalkToLord={(l) => {
+            setDialogueLord(l);
+          }}
+          // Bannerlord: pazaryeri yalnız **yerleşim menüsünden** açılır (haritada yakınlık yetmez).
+          canTrade={!!activeSettlementModal}
           onOpenCharacterArena={() => setViewMode('character_arena')}
           onOpenKingdomModal={() => setIsKingdomModalOpen(true)}
           onOpenCharacterCreator={() => setIsCharacterCreatorOpen(true)}
@@ -889,6 +1183,9 @@ export default function App() {
           campaign={campaign}
           onClose={() => setActiveSettlementModal(null)}
           onOpenFullMarket={() => setIsMarketModalOpen(true)}
+          onTalkToReeve={() => {
+            setDialogueSettlement(activeSettlementModal);
+          }}
           onOpenCharacterArena={() => setViewMode('character_arena')}
           onRecruit={handleRecruit}
           onBuyFood={handleBuyFood}
@@ -1026,17 +1323,37 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={startGame}
+                onClick={() => {
+                  const ok = persist();
+                  showToast(ok ? `Sefer kaydedildi · Gün ${campaign.day}` : 'Kayıt yazılamadı (depolama kapalı).');
+                }}
+                className="w-full py-2.5 px-4 rounded text-xs font-bold bg-[#166534] hover:bg-[#15803d] text-[#ecfdf5] border border-[#34d399]/50 transition-colors"
+              >
+                Seferi Kaydet
+              </button>
+              <div className="text-[10px] text-[#8b8072] leading-snug">
+                {saveInfo
+                  ? `Son kayıt: Gün ${saveInfo.day} · ${saveInfo.playerName} (otomatik: her oyun günü)`
+                  : 'Henüz kayıt yok — oyun günü geçince otomatik kaydedilir.'}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('Yeni sefer başlatılsın mı? Mevcut kayıt silinecek.')) startGame();
+                }}
                 className="w-full py-2.5 px-4 rounded text-xs font-semibold bg-[#241f18] hover:bg-[#332c22] text-[#e2d6c1] border border-[#c6a15b]/30 transition-colors"
               >
-                Seferi Baştan Başlat
+                Yeni Sefer (kayıt silinir)
               </button>
               <button
                 type="button"
-                onClick={() => setGameState('title')}
+                onClick={() => {
+                  persist();
+                  setGameState('title');
+                }}
                 className="w-full py-2.5 px-4 rounded text-xs font-semibold bg-[#181510] hover:bg-[#26211a] text-[#a89b84] transition-colors"
               >
-                Ana Ekrana Dön
+                Kaydet ve Ana Ekrana Dön
               </button>
             </div>
           </div>
@@ -1101,7 +1418,9 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={startGame}
+                onClick={() => {
+                  if (window.confirm('Yeni sefer başlatılsın mı? Mevcut kayıt silinecek.')) startGame();
+                }}
                 className="px-4 py-2.5 rounded text-xs font-semibold bg-[#241f18] hover:bg-[#332c22] text-[#e2d6c1] border border-[#c6a15b]/30 transition-colors whitespace-nowrap"
               >
                 Yeni Sefer Başlat
@@ -1112,9 +1431,43 @@ export default function App() {
       )}
 
       {/* 7. FULL-SCREEN BANNERLORD MARKETPLACE & INVENTORY MODAL */}
-      {isMarketModalOpen && (
+      {/* FAZ 1: BANNERLORD ANSİKLOPEDİSİ (N) */}
+      {isEncyclopediaOpen && (
+        <EncyclopediaModal
+          campaign={campaign}
+          revealedHeroIds={metHeroIds}
+          onMeetHero={(heroId) =>
+            setMetHeroIds((prev) => (prev.includes(heroId) ? prev : [...prev, heroId]))
+          }
+          onClose={() => setIsEncyclopediaOpen(false)}
+        />
+      )}
+
+      {(dialogueLord || dialogueSettlement) && (
+        <DialogueModal
+          campaign={campaign}
+          lord={dialogueLord}
+          settlement={dialogueSettlement}
+          canTrade={!!dialogueSettlement}
+          onClose={() => {
+            setDialogueLord(null);
+            setDialogueSettlement(null);
+          }}
+          onRelationChange={(lordId, delta) =>
+            setCampaign((prev) => ({
+              ...prev,
+              lords: prev.lords.map((l) =>
+                l.id === lordId ? { ...l, relation: Math.max(-100, Math.min(100, l.relation + delta)) } : l,
+              ),
+            }))
+          }
+          onOpenTrade={() => setIsMarketModalOpen(true)}
+        />
+      )}
+
+      {isMarketModalOpen && activeSettlementModal && (
         <BannerlordMarketModal
-          settlement={activeSettlementModal || nearSettlement}
+          settlement={activeSettlementModal}
           campaign={campaign}
           onClose={() => setIsMarketModalOpen(false)}
           onUpdateCampaign={(next) => setCampaign(next)}
@@ -1145,6 +1498,29 @@ export default function App() {
         />
       )}
 
+      {/* 9B. BİLDİRİM (kayıt / yükleme) */}
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[90] rounded border border-[#34d399]/50 bg-[#0f1a13]/95 px-4 py-2 text-xs text-[#d1fae5] shadow-lg pointer-events-none"
+        >
+          {toast}
+        </div>
+      )}
+
+      {/* 9b. FAZ 11 — CANLI DÜNYA HABERİ (fetih / savaş) */}
+      {worldToast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-24 left-1/2 -translate-x-1/2 z-[90] max-w-2xl rounded border border-[#f59e0b]/60 bg-[#1a1208]/95 px-4 py-2 text-xs text-[#fde68a] shadow-lg pointer-events-none"
+        >
+          <span className="font-bold tracking-[0.18em] mr-2 text-[#f59e0b]">SAVAŞ HABERİ</span>
+          {worldToast.text}
+        </div>
+      )}
+
       {/* 10. BANNERLORD LOW-POLY CHARACTER & LORD MORPH STUDIO */}
       {isCharacterCreatorOpen && (
         <CharacterCreatorModal
@@ -1156,6 +1532,9 @@ export default function App() {
               playerMorphDNA: newDNA,
               playerName: newName || prev.playerName,
             }));
+            // Faz 10a: seçilen ad yeni seferde de korunur (eski sürümde 'Komutan Demirhan'a dönüyordu).
+            if (newName) setPlayerName(newName);
+            showToast('Karakter kaydedildi.');
           }}
           onClose={() => setIsCharacterCreatorOpen(false)}
         />

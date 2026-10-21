@@ -1,6 +1,23 @@
 import * as THREE from 'three';
 import { CharacterAnimator } from './characterAnimator.ts';
+import { createFace, applyFaceDNA } from './characterFace.ts';
+import {
+  applyArmoryArmor,
+  armoryVisualsEnabled,
+  clearArmoryArmor,
+  createArmoryArrow,
+  createArmoryHelmet,
+  createArmoryShield,
+  createArmoryWeapon,
+  resolveWeaponId,
+  type ArmoryContext,
+} from './armoryBridge.ts';
 import type { CharacterAnimState } from './characterAnimator.ts';
+import {
+  SHIELD_REST_POSITION,
+  SHIELD_REST_ROTATION,
+  SHIELD_SCALE,
+} from './equipmentPose.ts';
 
 export type { CharacterAnimState } from './characterAnimator.ts';
 
@@ -56,6 +73,8 @@ export interface CharacterVisualOptions {
   beardColor?: string;
   factionColor?: string;
   hasBeard?: boolean;
+  /** Oyun fraksiyonu (vlandia, khuzait, player ...) — BannerForge paletini seçer. */
+  factionId?: string;
   weaponType: WeaponType;
   shieldType: ShieldType;
   helmetType: HelmetType;
@@ -131,6 +150,8 @@ export interface CharacterRig {
     gold: THREE.MeshStandardMaterial;
     wood: THREE.MeshStandardMaterial;
     faction: THREE.MeshStandardMaterial;
+    /** Kapitone keten (gambeson / dolgun zırh astarı). */
+    padded: THREE.MeshStandardMaterial;
   };
 }
 
@@ -146,6 +167,9 @@ function createRigMaterials(options: CharacterVisualOptions) {
     gold: std('#fbbf24', 0.3, 0.9),
     wood: std('#78350f', 0.8, 0.05),
     faction: std(options.factionColor || '#b45309', 0.65, 0.1),
+    padded: std('#9c7a52', 0.88, 0.03),
+    // Ten gölgesi: burun deliği, ağız çizgisi ve parmak olukları için.
+    skinShadow: std('#b8825f', 0.9, 0),
   };
 }
 
@@ -202,7 +226,7 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   torso.position.y = 0.16;
   pelvis.add(torso);
 
-  const torsoMesh = mesh(new THREE.CylinderGeometry(0.24, 0.18, 0.46, 6), mats.cloth);
+  const torsoMesh = mesh(new THREE.CylinderGeometry(0.2, 0.18, 0.46, 6), mats.cloth);
   torsoMesh.position.y = 0.23;
   torsoMesh.scale.z = TORSO_DEPTH_SCALE; // flatter chest -> arms don't sink into the body
   torso.add(torsoMesh);
@@ -245,32 +269,29 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   headMesh.position.y = HEAD.cy;
   head.add(headMesh);
 
-  const noseMesh = mesh(new THREE.BoxGeometry(0.035, 0.06, 0.05), mats.skin, false);
-  noseMesh.position.set(0, HEAD.cy - 0.01, HEAD.r * HEAD.sz + 0.005);
-  head.add(noseMesh);
-
-  const eyeMat = new THREE.MeshBasicMaterial({ color: '#1c1917' });
-  const eyeGeo = new THREE.BoxGeometry(0.03, 0.018, 0.03);
-  const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-  leftEye.position.set(0.05, HEAD.cy + 0.02, HEAD.r * HEAD.sz - 0.012);
-  const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-  rightEye.position.set(-0.05, HEAD.cy + 0.02, HEAD.r * HEAD.sz - 0.012);
-  head.add(leftEye, rightEye);
+  // Yüz katmanı (gözler, kaşlar, burun, ağız, kulak, çene) ayrı bir grup olarak
+  // kurulur; DNA kaydırıcıları bu gruba uygulanır (characterFace.ts).
+  const face = createFace({ skin: mats.skin, hair: mats.hair }, undefined, HEAD.cy);
+  head.add(face);
 
   // Hair: a cap over the skull (stops above the brow) + a back piece over the nape.
   const hairGroup = new THREE.Group();
   hairGroup.name = 'hair';
+  /*
+   * Saç takkesi 8 halkanın 3'ünü kaplıyordu → portrede alın görünmüyor,
+   * kaşlar saça değiyordu (Faz 9f). 2.5 halka: saç çizgisi kaşın ~1.8 cm
+   * üstünde kalır, alın okunur.
+   */
   const hairCap = mesh(
-    // rings aligned with the head: 3 of 8 rings (stops above the brow)
-    new THREE.SphereGeometry(HEAD.r + 0.014, HEAD.seg, 3, 0, Math.PI * 2, 0, (Math.PI * 3) / HEAD.rings),
+    new THREE.SphereGeometry(HEAD.r + 0.014, HEAD.seg, 3, 0, Math.PI * 2, 0, (Math.PI * 2.05) / HEAD.rings),
     mats.hair,
     false,
   );
   hairCap.scale.set(1, HEAD.sy, HEAD.sz);
   hairCap.position.y = HEAD.cy;
   const hairBack = mesh(
-    // back half (left side -> back -> right side), from the cap edge down to the nape
-    new THREE.SphereGeometry(HEAD.r + 0.011, HEAD.seg / 2, 3, Math.PI, Math.PI, (Math.PI * 3) / HEAD.rings, (Math.PI * 3) / HEAD.rings),
+    // arka yarı: takkenin kenarından enseye kadar
+    new THREE.SphereGeometry(HEAD.r + 0.011, HEAD.seg / 2, 3, Math.PI, Math.PI, (Math.PI * 2.05) / HEAD.rings, (Math.PI * 3) / HEAD.rings),
     mats.hair,
     false,
   );
@@ -279,9 +300,12 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   hairGroup.add(hairCap, hairBack);
   head.add(hairGroup);
 
-  const beardMesh = mesh(new THREE.BoxGeometry(0.16, 0.1, 0.1), mats.hair, false);
-  beardMesh.position.set(0, HEAD.cy - 0.1, 0.085);
-  beardMesh.visible = options.hasBeard !== false;
+  // Eski kutu sakal kaldırıldı: sakal artık `createBeardMesh` ile prosedürel
+  // olarak çeneye oturuyor. `beardMesh` alanı geriye dönük uyumluluk için boş
+  // bir taşıyıcı olarak duruyor.
+  const beardMesh = new THREE.Mesh(new THREE.BufferGeometry(), mats.hair);
+  beardMesh.name = 'LegacyBeardPlaceholder';
+  beardMesh.visible = false;
   head.add(beardMesh);
 
   // Helmet socket sits at the CENTER of the head ellipsoid.
@@ -292,7 +316,16 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   // --- Arms ---
   const upperArmGeo = new THREE.CylinderGeometry(0.07, 0.06, RIG_DIMENSIONS.upperArm, 6);
   const forearmGeo = new THREE.CylinderGeometry(0.06, 0.05, RIG_DIMENSIONS.forearm, 6);
-  const handGeo = new THREE.BoxGeometry(0.07, 0.09, 0.08);
+  /* ── El ──
+     Eski el tek bir 0.07 × 0.09 × 0.08 kutu idi: ön planda "tuğla" gibi
+     görünüyordu. Yeni el dört parçadan oluşur (toplam ~44 üçgen):
+       avuç (hafif daralan prizma) + parmak bloğu (hafif kıvrık) + başparmak + bilek.
+     Parmaklar ayrı ayrı modellenmez (low-poly hedef); blok içinde iki sığ oluk
+     parmak izlenimini verir. */
+  const palmGeo = new THREE.BoxGeometry(0.062, 0.062, 0.034);
+  const fingerGeo = new THREE.BoxGeometry(0.058, 0.05, 0.03);
+  const thumbGeo = new THREE.BoxGeometry(0.019, 0.036, 0.022);
+  const wristGeo = new THREE.CylinderGeometry(0.045, 0.041, 0.022, 6);
 
   const buildArm = (side: 1 | -1) => {
     const shoulder = new THREE.Group();
@@ -318,9 +351,39 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
     const hand = new THREE.Group();
     hand.position.y = -RIG_DIMENSIONS.forearm;
     forearm.add(hand);
-    const hm = mesh(handGeo, mats.skin, false);
-    hm.position.y = -0.04;
-    hand.add(hm);
+
+    // Bilek: kolun bittiği yeri örter (ten ile deri arası geçiş).
+    const wrist = mesh(wristGeo, mats.leather, false);
+    wrist.position.y = -0.004;
+    hand.add(wrist);
+
+    // Avuç: bileğin hemen altında, hafif daralan.
+    const palm = mesh(palmGeo, mats.skin, false);
+    palm.position.y = -0.038;
+    palm.scale.set(1, 1, 1);
+    hand.add(palm);
+
+    // Parmak bloğu: avucun altında, hafif öne kıvrık (gevşek yumruk).
+    const fingers = mesh(fingerGeo, mats.skin, false);
+    fingers.position.set(0, -0.079, 0.004);
+    fingers.rotation.x = -0.28;
+    fingers.scale.set(0.98, 1, 1);
+    hand.add(fingers);
+
+    // Parmak izlenimi: iki ince oluk (koyu ten gölgesi değil, geometri aralığı).
+    for (const dx of [-0.014, 0.014]) {
+      const groove = mesh(new THREE.BoxGeometry(0.004, 0.044, 0.031), mats.skinShadow, false);
+      groove.position.set(dx, -0.077, 0.005);
+      groove.rotation.x = -0.28;
+      hand.add(groove);
+    }
+
+    // Başparmak: avucun iç yanında, hafif dışa dönük.
+    const thumb = mesh(thumbGeo, mats.skin, false);
+    thumb.position.set(side * -0.033, -0.034, 0.016);
+    thumb.rotation.z = side * 0.42;
+    thumb.rotation.x = -0.18;
+    hand.add(thumb);
 
     const socket = new THREE.Group();
     hand.add(socket);
@@ -403,6 +466,8 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   };
 
   applyEquipmentToRig(rig, options);
+  // Yaka/gorget temel iskelette de çeneye göre oturtulur (DNA'sız rig'ler için).
+  refitArmorToHead(rig);
   return rig;
 }
 
@@ -471,14 +536,15 @@ function buildHelmet(type: HelmetType, m: CharacterRig['materials']): THREE.Grou
     dome.scale.set(1, HEAD.sy, HEAD.sz);
     dome.position.y = 0.01;
 
-    // Sloping brim
-    const brim = mesh(new THREE.CylinderGeometry(0.23, 0.29, 0.018, 10), metal);
-    brim.position.y = 0.015;
+    // Sloping brim — 0.58 m çap göz hizasını kesiyordu; 0.49 m'ye indirildi
+    // ve kaşların biraz üstüne alındı.
+    const brim = mesh(new THREE.CylinderGeometry(0.196, 0.245, 0.016, 12), metal);
+    brim.position.y = 0.052;
 
     // Rim reinforcement
-    const rim = mesh(new THREE.TorusGeometry(0.29, 0.007, 4, 10), gold, false);
+    const rim = mesh(new THREE.TorusGeometry(0.245, 0.006, 4, 12), gold, false);
     rim.rotation.x = Math.PI / 2;
-    rim.position.y = 0.012;
+    rim.position.y = 0.05;
 
     g.add(dome, brim, rim);
     return g;
@@ -503,111 +569,465 @@ function buildHelmet(type: HelmetType, m: CharacterRig['materials']): THREE.Grou
     nasal.position.set(0, -0.015, (HEAD.r + 0.022) * HEAD.sz + 0.005);
 
     // Mail aventail / coif covering nape and neck
-    const mailCoif = mesh(new THREE.CylinderGeometry(HEAD.r + 0.018, HEAD.r + 0.045, 0.18, 8, 1, true), metal);
+    const mailCoif = mesh(new THREE.CylinderGeometry(0.146, 0.17, 0.17, 8, 1, true), metal);
     mailCoif.scale.set(1, 1, HEAD.sz);
-    mailCoif.position.set(0, -0.08, -0.015);
+    mailCoif.position.set(0, -0.075, -0.012);
 
     g.add(cone, band, nasal, mailCoif);
     return g;
   }
 
   if (type === 'IMPERIAL_VISOR') {
-    // Heavy Cataphract enclosed visor with horsehair crest
+    /*
+     * Katafrakt miğferi — üçüncü (son) sürüm.
+     *
+     * İlk iki denemede sorun şuydu: yüz plakaları **kutu** olarak tek tek
+     * yerleştiriliyordu; arada ten kalıyor, plakalar birbirine değmiyor ve
+     * "yüz açıkta" görünüyordu. Artık maske, kafatasını saran **halka**
+     * (silindir) parçalarından kurulur:
+     *   kubbe → alın halkası → göz yarığı (içe gömük koyu halka) → çene
+     *   halkası → boyun zırhı.
+     * Halkalar tam tur olduğu için yüz hiçbir açıdan açıkta kalmaz; göz
+     * yarığı yalnızca **içe gömük** koyu halka olarak okunur.
+     */
     const g = new THREE.Group();
 
-    // Rounded iron skull bowl
-    const bowl = mesh(new THREE.SphereGeometry(HEAD.r + 0.02, 8, 6), metal);
-    bowl.scale.set(1, HEAD.sy, HEAD.sz);
-    bowl.position.y = 0.01;
+    // 1) Kubbe: alın hizasında biten yarım küre (yüzü kapatmaz).
+    const dome = mesh(
+      new THREE.SphereGeometry(0.132, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.46),
+      metal,
+    );
+    dome.scale.set(1, 1.12, 1.06);
+    dome.position.y = 0.012;
 
-    // Brass face mask with eye slits
-    const mask = mesh(new THREE.BoxGeometry(0.165, 0.17, 0.04), gold, false);
-    mask.position.set(0, -0.04, (HEAD.r + 0.015) * HEAD.sz + 0.005);
+    // 2) Alın halkası — göz yarığının üstü.
+    // 12 kenar: 10 kenarda çokgenin iç yarıçapı kafatasına eşitleniyor ve
+    // ten, plakaların arasından "sızıyordu" (kulak/göz hizasında bej lekeler).
+    const browBand = mesh(new THREE.CylinderGeometry(0.139, 0.141, 0.05, 12), metal, false);
+    browBand.scale.z = 1.05;
+    browBand.position.y = 0.043;
 
-    // Eye slits
-    const slitMat = new THREE.MeshBasicMaterial({ color: '#000000' });
-    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.012, 0.05), slitMat);
-    slit.position.set(0, -0.015, (HEAD.r + 0.015) * HEAD.sz + 0.008);
+    // 3) Göz yarığı: 6 mm daha içeride koyu halka → gerçek "yuva" hissi.
+    const slitMat = new THREE.MeshBasicMaterial({ color: '#0a0908' });
+    const eyeSlit = new THREE.Mesh(new THREE.CylinderGeometry(0.1355, 0.1355, 0.03, 12), slitMat);
+    eyeSlit.scale.z = 1.05;
+    eyeSlit.position.y = 0.0;
+    eyeSlit.name = 'visorEyeSlit';
 
-    // Mail aventail covering neck
-    const aventail = mesh(new THREE.CylinderGeometry(HEAD.r + 0.02, HEAD.r + 0.05, 0.2, 8, 1, true), metal);
-    aventail.scale.set(1, 1, HEAD.sz);
-    aventail.position.set(0, -0.09, -0.01);
+    // 4) Çene halkası — ağız ve çeneyi tamamen örter, çeneye doğru daralır.
+    const jawBand = mesh(new THREE.CylinderGeometry(0.138, 0.104, 0.15, 12), metal, false);
+    jawBand.scale.z = 1.05;
+    jawBand.position.y = -0.091;
 
-    // Red horsehair crest
-    const plumeMat = new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.8, flatShading: true });
-    const plume = mesh(new THREE.BoxGeometry(0.035, 0.14, 0.26), plumeMat);
-    plume.position.set(0, 0.18, 0);
+    // 5) Burun sırtı — göz yarığını ortadan ikiye bölen ince altın çubuk.
+    const nasal = mesh(new THREE.BoxGeometry(0.022, 0.088, 0.014), gold, false);
+    nasal.position.set(0, 0.002, 0.139);
 
-    g.add(bowl, mask, slit, aventail, plume);
+    // 6) Boyun zırhı (aventail) — çene altından omuzlara, hafif daralan.
+    const aventail = mesh(new THREE.CylinderGeometry(0.11, 0.148, 0.13, 12, 1, true), metal);
+    aventail.scale.z = 1.04;
+    aventail.position.set(0, -0.172, -0.008);
+
+    // 7) Tepelik: ince metal sırt + kısa kızıl at kılı yelesi (arkada).
+    const ridge = mesh(new THREE.BoxGeometry(0.018, 0.03, 0.16), metal, false);
+    ridge.position.set(0, 0.152, -0.01);
+    const knob = mesh(new THREE.SphereGeometry(0.018, 6, 4), gold, false);
+    knob.position.set(0, 0.168, 0.052);
+    const plumeMat = new THREE.MeshStandardMaterial({
+      color: '#dc2626',
+      roughness: 0.9,
+      flatShading: true,
+    });
+    const plume = mesh(new THREE.BoxGeometry(0.024, 0.045, 0.1), plumeMat, false);
+    plume.position.set(0, 0.128, -0.112);
+    plume.rotation.x = -0.35;
+
+    g.add(dome, browBand, eyeSlit, jawBand, nasal, aventail, ridge, knob, plume);
     return g;
   }
 
   return null;
 }
 
+/**
+ * Göğüs zırhı — Faz 9b.
+ *
+ * Neden yeniden yazıldı: BannerForge'un gövde parçaları **başka bir iskelet**
+ * için yazılmış. Bizim gövdemize takıldığında:
+ *   · postacı zırhı belin altına kayıyor (y 0.77–1.34, göğüs 1.38–1.60),
+ *   · göğüs levhası 0.57 m genişliğinde **düz bir levha** olarak göğsün
+ *     10 cm önünde duruyor (gövde genişliği 0.42),
+ *   · surcoat panelleri ön/arka 0.19 m uzakta **karton tabela** gibi kalıyor,
+ *   · levhalar kolların içine 33 cm giriyor.
+ * Bu yüzden gövde zırhı artık gövdemizin kendi silindirine oturan **lathe
+ * kabuğu** olarak üretiliyor (gövde: y 0..0.46, r 0.18→0.24, z ölçeği 0.8).
+ */
 function buildArmor(rig: CharacterRig, tier: ArmorTier) {
-  const { metal, gold, leather } = rig.materials;
-  const dScale = TORSO_DEPTH_SCALE + 0.02; // matches torso depth so armors don't bulge into arms
+  const { metal, gold, leather, cloth, padded } = rig.materials;
+  if (tier === 'CIVILIAN') return;
+
+  /**
+   * Gövde profili: (y, gövde yarıçapı). Gövde silindiri y 0..0.46 arasında
+   * 0.18 → 0.24 arası açılıyor; zırh kabuğu bu profilin üstüne oturuyor.
+   */
+  /*
+   * Profil **yerel** koordinatta (chestArmorSocket = dünya y 1.38).
+   * Gövde dünyada 1.14–1.60, boyun 1.61–1.75, çene 1.74 → zırh en fazla
+   * 1.64'e kadar çıkabilir, yoksa çeneyi/ağzı yutuyor (Faz 9c bulgusu:
+   * eski profil 1.87'ye çıkıyordu ve levhada göz altına dayanıyordu).
+   */
+  const PROFILE: Array<[number, number]> = [
+    [-0.24, 0.176],
+    [-0.16, 0.183],
+    [-0.06, 0.192],
+    [0.04, 0.2],
+    [0.12, 0.207],
+    [0.18, 0.212],
+    [0.21, 0.214],
+    [0.225, 0.185],
+  ];
+  const radiusAt = (y: number) => {
+    if (y <= PROFILE[0][0]) return PROFILE[0][1];
+    for (let i = 1; i < PROFILE.length; i++) {
+      const [y1, r1] = PROFILE[i];
+      if (y <= y1) {
+        const [y0, r0] = PROFILE[i - 1];
+        const t = (y - y0) / (y1 - y0 || 1);
+        return r0 + (r1 - r0) * t;
+      }
+    }
+    return PROFILE[PROFILE.length - 1][1];
+  };
+  const DEPTH = TORSO_DEPTH_SCALE + 0.02;
+  /** Kabuğun ön yüzü (z) — ek parçalar bu mesafeye göre yerleştirilir. */
+  const frontZ = (y: number, pad: number, out = 0) => (radiusAt(y) + pad + out) * DEPTH;
+
+  /**
+   * Yaka/gorget: tabanı köprücük kemiğinde, boynu saran ince halka.
+   * Grubun içinde durur ki `refitArmorToHead` yüksekliğini çeneye göre kısatlsın.
+   */
+  /**
+   * Üst kapak (shoulder yoke): lathe açık bir yüzey olduğu için gövdenin üst
+   * kapağı içinden görünüyordu (portrede mor halka). Bu halka çukuru kapatır ve
+   * omuz hizasında zırh plakası gibi durur.
+   */
+  const topPlate = (pad: number, mat: THREE.Material) => {
+    const geo = new THREE.RingGeometry(0.1, radiusAt(0.21) + pad, 10, 1);
+    geo.rotateX(-Math.PI / 2);
+    const m = mesh(geo, mat, false);
+    m.position.y = 0.21;
+    m.scale.z = DEPTH;
+    return m;
+  };
+
+  const COLLAR = { bottom: 0.19, height: 0.17 };
+  const makeCollar = (mat: THREE.Material) => {
+    const g = new THREE.Group();
+    g.name = 'armorCollar';
+    g.position.y = COLLAR.bottom; // dünya ≈1.52 — köprücük kemiği
+    const ring = mesh(
+      new THREE.CylinderGeometry(0.105, 0.216, COLLAR.height, 10, 1, true),
+      mat,
+      false,
+    );
+    // Halka grubun TABANINDAN yukarı büyür → ölçek tabanı sabit bırakır.
+    ring.position.y = COLLAR.height / 2;
+    ring.scale.z = DEPTH;
+    ring.userData.chestArmor = true;
+    g.add(ring);
+    g.userData.collarHeight = COLLAR.height;
+    g.userData.chestArmor = true;
+    return g;
+  };
+
+  const pieces: THREE.Object3D[] = [];
+
+  /** Gövdeye oturan kabuk. */
+  const shell = (pad: number, mat: THREE.Material) => {
+    const pts = PROFILE.map(([y, r]) => new THREE.Vector2(r + pad, y));
+    const geo = new THREE.LatheGeometry(pts, 10);
+    geo.computeVertexNormals();
+    const m = mesh(geo, mat);
+    m.scale.z = DEPTH;
+    return m;
+  };
+
+  /** Kabuğun üstüne binen kuşak (tek yüzlü şerit). */
+  const band = (y: number, pad: number, h: number, mat: THREE.Material) => {
+    const r = radiusAt(y) + pad;
+    const m = mesh(new THREE.CylinderGeometry(r, r, h, 10, 1, true), mat, false);
+    m.position.y = y;
+    m.scale.z = DEPTH;
+    return m;
+  };
 
   if (tier === 'LEATHER') {
-    const c = mesh(new THREE.CylinderGeometry(0.245, 0.19, 0.44, 6), leather);
-    c.position.y = -0.02;
-    c.scale.z = dScale;
-    rig.chestArmorSocket.add(c);
-
-    // Pauldrons positioned cleanly over the shoulder top without penetrating upper arm
-    const pGeo = new THREE.BoxGeometry(0.13, 0.055, 0.15);
-    const lp = mesh(pGeo, leather);
-    lp.position.set(0.03, 0.02, 0);
-    rig.leftPauldronSocket.add(lp);
-
-    const rp = mesh(pGeo.clone(), leather);
-    rp.position.set(-0.03, 0.02, 0);
-    rig.rightPauldronSocket.add(rp);
+    // Dolgun gambeson: kapitone keten gövde + deri kuşak + kapitone dikişler.
+    pieces.push(shell(0.016, padded), topPlate(0.016, padded));
+    for (const y of [-0.16, -0.06, 0.04, 0.14]) {
+      pieces.push(band(y, 0.022, 0.008, leather));
+    }
+    // Omuz askıları: ön göğüsten geçen iki deri şerit.
+    for (const side of [-1, 1]) {
+      // Kısa tutuluyor: uzun askı enseden çeneye kadar çıkıp yüzü örtüyordu.
+      const strap = mesh(new THREE.BoxGeometry(0.03, 0.26, 0.012), leather, false);
+      strap.position.set(side * 0.062, 0.02, frontZ(0.02, 0.02, 0.004));
+      strap.rotation.z = side * 0.1;
+      pieces.push(strap);
+    }
+    pieces.push(band(-0.02, 0.03, 0.042, leather));
+    // Sancak işareti: göğsün ortasında küçük bir arma pulu.
+    const badge = mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.012, 8), cloth, false);
+    badge.rotation.x = Math.PI / 2;
+    badge.position.set(0, 0.16, frontZ(0.16, 0.02, 0.008));
+    pieces.push(badge);
   } else if (tier === 'CHAINMAIL') {
-    const mail = mesh(new THREE.CylinderGeometry(0.25, 0.2, 0.47, 6), metal);
-    mail.position.y = -0.04;
-    mail.scale.z = dScale;
-
-    const coif = mesh(new THREE.CylinderGeometry(0.14, 0.21, 0.12, 6), metal);
-    coif.position.y = 0.2;
-    coif.scale.z = dScale;
-    rig.chestArmorSocket.add(mail, coif);
-
-    const pGeo = new THREE.CylinderGeometry(0.08, 0.065, 0.09, 6);
-    const lp = mesh(pGeo, metal);
-    lp.position.set(0.03, 0.015, 0);
-    rig.leftPauldronSocket.add(lp);
-
-    const rp = mesh(pGeo.clone(), metal);
-    rp.position.set(-0.03, 0.015, 0);
-    rig.rightPauldronSocket.add(rp);
+    // Postacı: gövde + etek + boyun zırhı + omuz askısı.
+    pieces.push(shell(0.02, metal), topPlate(0.02, metal));
+    const skirt = mesh(new THREE.CylinderGeometry(0.214, 0.242, 0.2, 10, 1, true), metal);
+    skirt.position.y = -0.16;
+    skirt.scale.z = DEPTH;
+    pieces.push(skirt);
+    pieces.push(makeCollar(metal));
+    // Göğüs kayışı: kabuğun önünde, çapraz.
+    const strap = mesh(new THREE.BoxGeometry(0.036, 0.28, 0.016), leather, false);
+    strap.position.set(0.055, 0.0, frontZ(0.0, 0.02, 0.006));
+    strap.rotation.z = 0.3;
+    pieces.push(strap);
+    pieces.push(band(0.02, 0.026, 0.03, leather));
   } else if (tier === 'PLATE') {
-    const plate = mesh(new THREE.CylinderGeometry(0.255, 0.21, 0.46, 6), metal);
-    plate.position.y = -0.02;
-    plate.scale.z = dScale;
-    rig.chestArmorSocket.add(plate);
+    // Tam levha: kabuk + omurga + iki kuşak + gorget + arma.
+    pieces.push(shell(0.028, metal), topPlate(0.028, metal));
+    const keel = mesh(new THREE.BoxGeometry(0.032, 0.36, 0.03), metal, false);
+    keel.position.set(0, 0.08, frontZ(0.08, 0.028, 0.008));
+    pieces.push(keel);
+    pieces.push(band(-0.06, 0.034, 0.032, gold));
+    pieces.push(band(0.14, 0.034, 0.032, gold));
+    // Gorget: boynu saran dar halka. Yüksekliği `refitArmorToHead` ile
+    // karakterin çenesine göre ayarlanır (DNA sonrası kafa büyüyebiliyor).
+    pieces.push(makeCollar(metal));
+    // Sancak arması: öne bakan dört yüzlü piramit.
+    const crest = mesh(new THREE.ConeGeometry(0.055, 0.034, 4), gold, false);
+    crest.rotation.x = Math.PI / 2;
+    crest.position.set(0, 0.09, frontZ(0.09, 0.028, 0.014));
+    pieces.push(crest);
+  }
 
-    const crest = mesh(new THREE.BoxGeometry(0.11, 0.11, 0.03), gold, false);
-    crest.position.set(0, 0.04, 0.21 * dScale);
-    rig.chestArmorSocket.add(crest);
+  /*
+   * Göğüs zırhının tamamı tek grup altında: `refitArmorToHead` bu grubu
+   * yalnızca **y** ekseninde kısaltarak çeneyle çakışmayı çözer (taban sabit).
+   */
+  const chestGroup = new THREE.Group();
+  chestGroup.name = 'armorChest';
+  chestGroup.userData.chestBottom = -0.24;
+  chestGroup.add(...pieces);
+  rig.chestArmorSocket.add(chestGroup);
+  for (const p of pieces) p.userData.chestArmor = true;
 
-    // Layered plate spaulders
-    for (const [sock, side] of [[rig.leftPauldronSocket, 1], [rig.rightPauldronSocket, -1]] as const) {
-      const p = mesh(new THREE.BoxGeometry(0.15, 0.09, 0.16), metal);
-      p.position.set(side * 0.035, 0.025, 0);
-      const t = mesh(new THREE.BoxGeometry(0.16, 0.02, 0.17), gold, false);
-      t.position.set(side * 0.035, 0.07, 0);
-      sock.add(p, t);
+  /*
+   * Zırh gövdeyi tamamen örtüyorsa altındaki tunik mesh'i gizlenir.
+   * Aksi hâlde tunikin üst kapağı/kenarı zırhın üstünden taşıp portrede
+   * "mor halka" olarak görünüyordu (Faz 9e).
+   */
+  for (const c of rig.torso.children) {
+    const m = c as THREE.Mesh;
+    if (m.isMesh && m.material === cloth) {
+      m.userData.hiddenByArmor = true;
+      m.visible = false;
+    }
+  }
+
+  /* ── Kol zırhları (üst kol + ön kol) ──
+     Bunlar da BannerForge'dan alınmıyor: onun kol parçaları bizim kollarımıza
+     göre 1 cm kadar küçük kalıyor ve 6 kenarlı kol silindirinin köşeleri zırhın
+     içinden geçiyor (görselde kırmızı çizikler). Kendi üreticimizde zırh yarıçapı
+     kolun köşe yarıçapından en az 6 mm büyük. */
+  const armMat = tier === 'LEATHER' ? padded : metal;
+  const upperR = [0.078, 0.07] as const;
+  const foreR = [0.072, 0.058] as const;
+  for (const [upper, fore, side] of [
+    [rig.leftUpperArm, rig.leftForearm, 1],
+    [rig.rightUpperArm, rig.rightForearm, -1],
+  ] as const) {
+    const sleeve = mesh(
+      new THREE.CylinderGeometry(upperR[0], upperR[1], RIG_DIMENSIONS.upperArm - 0.012, 8, 1, true),
+      armMat,
+      false,
+    );
+    sleeve.position.y = -RIG_DIMENSIONS.upperArm / 2;
+    sleeve.userData.armArmor = true;
+    sleeve.userData.limbArmor = true;
+    upper.add(sleeve);
+
+    const bracer = mesh(
+      new THREE.CylinderGeometry(foreR[0], foreR[1], RIG_DIMENSIONS.forearm - 0.01, 8, 1, true),
+      tier === 'LEATHER' ? leather : metal,
+      false,
+    );
+    bracer.position.y = -RIG_DIMENSIONS.forearm / 2;
+    bracer.userData.armArmor = true;
+    bracer.userData.limbArmor = true;
+    fore.add(bracer);
+
+    // Dirsek kapağı (postacı/levha).
+    if (tier !== 'LEATHER') {
+      const cop = mesh(new THREE.SphereGeometry(0.078, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.62), metal, false);
+      cop.scale.set(1, 0.8, 1);
+      cop.position.y = 0.005;
+      upper.add(cop);
+    } else {
+      // Deri bileklik.
+      const cuff = mesh(new THREE.CylinderGeometry(foreR[1] + 0.008, foreR[1] + 0.006, 0.05, 8, 1, true), leather, false);
+      cuff.position.y = -RIG_DIMENSIONS.forearm + 0.03;
+      fore.add(cuff);
+    }
+    if (tier === 'PLATE') {
+      const trim = mesh(new THREE.CylinderGeometry(upperR[1] + 0.01, upperR[1] + 0.01, 0.026, 8, 1, true), gold, false);
+      trim.position.y = -RIG_DIMENSIONS.upperArm + 0.028;
+      upper.add(trim);
+      void side;
+    }
+  }
+
+  /* ── Bacak zırhı (uyluk + baldır + ayaklık) ──
+     BannerForge bacak parçaları gövdeye göre daha iyi oturuyordu ama iki
+     sorun vardı: (a) legacy katmanında hiç bacak zırhı yoktu (çıplak bacak),
+     (b) ayaklık yere 1.6 cm gömülüyordu. Artık iki katmanda da buradan gelir. */
+  const legBody = { thighR: 0.09, thighRb: 0.072, shinR: 0.071, shinRb: 0.062 };
+  for (const side of ['left', 'right'] as const) {
+    const thigh = rig[`${side}Thigh`];
+    const shin = rig[`${side}Shin`];
+    const foot = rig[`${side}Foot`];
+
+    const thighMat = tier === 'LEATHER' ? padded : tier === 'CHAINMAIL' ? metal : metal;
+    const thighPad = tier === 'PLATE' ? 0.013 : 0.008;
+
+    // Uyluk: 8 kenarlı, gövde silindirinin üstünde.
+    const thighArmor = mesh(
+      new THREE.CylinderGeometry(legBody.thighR + thighPad, legBody.thighRb + thighPad, 0.4, 8, 1, true),
+      thighMat,
+      false,
+    );
+    thighArmor.position.y = -0.21;
+    thighArmor.scale.z = 1.06;
+    thighArmor.userData.limbArmor = true;
+    thigh.add(thighArmor);
+
+    // Baldır: tozluk / greave.
+    const shinPad = tier === 'PLATE' ? 0.011 : 0.007;
+    const shinArmor = mesh(
+      new THREE.CylinderGeometry(legBody.shinR + shinPad, legBody.shinRb + shinPad, 0.4, 8, 1, true),
+      tier === 'LEATHER' ? leather : metal,
+      false,
+    );
+    shinArmor.position.y = -0.21;
+    shinArmor.scale.z = 1.06;
+    shinArmor.userData.limbArmor = true;
+    shin.add(shinArmor);
+
+    // Diz kapağı (levha/postacı).
+    if (tier !== 'LEATHER') {
+      const knee = mesh(new THREE.SphereGeometry(0.082, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.55), metal, false);
+      knee.scale.set(1, 0.85, 1.05);
+      knee.position.y = -0.01;
+      knee.userData.limbArmor = true;
+      thigh.add(knee);
+    }
+
+    // Ayaklık: ayakkabının üstüne oturur, yere gömülmez.
+    if (tier === 'PLATE') {
+      const sabaton = mesh(new THREE.BoxGeometry(0.108, 0.082, 0.228), metal, false);
+      sabaton.position.set(0, -0.042, 0.05);
+      sabaton.userData.limbArmor = true;
+      foot.add(sabaton);
+      const toe = mesh(new THREE.BoxGeometry(0.092, 0.03, 0.05), gold, false);
+      toe.position.set(0, -0.062, 0.145);
+      toe.userData.limbArmor = true;
+      foot.add(toe);
+    } else if (tier === 'CHAINMAIL') {
+      // Postacı çizmesi: ayağın üstüne oturan kalın deri kap.
+      const boot = mesh(new THREE.BoxGeometry(0.104, 0.08, 0.222), leather, false);
+      boot.position.set(0, -0.042, 0.05);
+      boot.userData.limbArmor = true;
+      foot.add(boot);
+    }
+  }
+
+  /* ── Omuz zırhları (pauldron) ── */
+  const pauldronMat = tier === 'LEATHER' ? padded : metal;
+  for (const [sock, side] of [
+    [rig.leftPauldronSocket, 1],
+    [rig.rightPauldronSocket, -1],
+  ] as const) {
+    if (tier === 'PLATE') {
+      for (const [r, dy] of [
+        [0.108, 0.012],
+        [0.094, 0.052],
+      ] as const) {
+        const cap = mesh(
+          new THREE.SphereGeometry(r, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.52),
+          metal,
+          false,
+        );
+        cap.scale.set(1, 0.82, 1.02);
+        cap.position.set(side * 0.018, dy, 0);
+        sock.add(cap);
+      }
+      const trim = mesh(new THREE.TorusGeometry(0.1, 0.008, 4, 10), gold, false);
+      trim.rotation.x = Math.PI / 2;
+      trim.position.set(side * 0.018, 0.028, 0);
+      sock.add(trim);
+    } else if (tier === 'CHAINMAIL') {
+      const cap = mesh(new THREE.SphereGeometry(0.1, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.6), metal, false);
+      cap.scale.set(1, 0.9, 1.05);
+      cap.position.set(side * 0.015, 0.01, 0);
+      sock.add(cap);
+    } else {
+      const pad = mesh(new THREE.SphereGeometry(0.095, 8, 3, 0, Math.PI * 2, 0, Math.PI * 0.45), pauldronMat, false);
+      pad.scale.set(1, 0.7, 1.05);
+      pad.position.set(side * 0.012, 0.008, 0);
+      sock.add(pad);
     }
   }
 }
 
 /**
- * Shields are authored face-normal +Z, top +Y, then rotated so the top points along hand -X.
- * (With the left forearm held horizontally across the chest, hand -X is world-up.)
+ * Zırh yakasını karakterin **çenesine** göre ayarlar (Faz 9c).
+ *
+ * DNA kafayı 1.16×'e kadar büyütünce çene alçalıyor (en kısa kahramanda 1.611 m);
+ * sabit yükseklikteki yaka o zaman çeneyi/ağzı örtüyordu. `applyMorphDNAToRig`
+ * sonunda çağrılır; yakayı çenenin 3 cm altında kalacak şekilde kısaltır.
  */
+export function refitArmorToHead(rig: CharacterRig): void {
+  const group = rig.chestArmorSocket.getObjectByName('armorChest');
+  if (!group) return;
+  const skull = rig.head.children.find((c) => (c as THREE.Mesh).isMesh) as THREE.Mesh | undefined;
+  if (!skull) return;
+  rig.root.updateMatrixWorld(true);
+  const chin = new THREE.Box3().setFromObject(skull).min.y;
+
+  // 1) Yaka: çenenin 3 cm altına kadar uzar/kısalır. DNA kafayı büyütünce
+  //    çene alçalıyor (1.61'e kadar) → sabit yaka ağzı örtüyordu.
+  const collar = group.getObjectByName('armorCollar');
+  if (collar) {
+    const box = new THREE.Box3().setFromObject(collar);
+    const height = Math.max(box.max.y - box.min.y, 1e-4);
+    const s = Math.min(1.7, Math.max(0.3, (chin - 0.03 - box.min.y) / height));
+    collar.scale.y *= s;
+  }
+
+  // 2) Emniyet kemeri: gövde kabuğu (yaka dışında) hâlâ çeneye dayanıyorsa
+  //    grubu yalnız y ekseninde, tabanı sabit tutarak kısalt.
+  const armor = new THREE.Box3().setFromObject(group);
+  const height = armor.max.y - armor.min.y;
+  if (height > 0.01 && armor.max.y > chin - 0.02) {
+    const s = Math.max(0.72, (chin - 0.02 - armor.min.y) / height);
+    group.scale.y *= s;
+    const bottomLocal = (group.userData.chestBottom as number) ?? -0.24;
+    group.position.y = bottomLocal * (1 - group.scale.y);
+  }
+}
+
 function buildShield(type: ShieldType, m: CharacterRig['materials']): THREE.Group | null {
   if (type === 'NONE') return null;
   const { faction, metal, wood } = m;
@@ -639,21 +1059,37 @@ function buildShield(type: ShieldType, m: CharacterRig['materials']): THREE.Grou
     body.position.y = 0.08;
   } else if (type === 'PAVISE') {
     const board = mesh(new THREE.BoxGeometry(0.46, 0.92, 0.04), wood);
-    const stripe = mesh(new THREE.BoxGeometry(0.16, 0.9, 0.01), faction, false);
-    stripe.position.z = 0.025;
-    const r1 = mesh(new THREE.BoxGeometry(0.48, 0.04, 0.05), metal, false);
-    r1.position.y = 0.34;
-    const r2 = r1.clone();
-    r2.position.y = -0.34;
-    body.add(board, stripe, r1, r2);
+    // Sancak rengi dikey şerit — eskiden gövdenin içinde kalıyordu (z 0.025,
+    // levha 0.04 kalın → yarısı gömülü). Şimdi levhanın önünde duruyor.
+    const stripe = mesh(new THREE.BoxGeometry(0.14, 0.88, 0.012), faction, false);
+    stripe.position.z = 0.026;
+    // Üç çelik kuşak — pavise kalkanının karakteristik çaprazsız takviyesi.
+    const bands = [-0.32, 0, 0.32].map((y) => {
+      const band = mesh(new THREE.BoxGeometry(0.47, 0.045, 0.052), metal, false);
+      band.position.y = y;
+      return band;
+    });
+    // Köşe demirleri (üst ve alt).
+    const corner = mesh(new THREE.BoxGeometry(0.1, 0.1, 0.05), metal, false);
+    corner.position.set(0, 0.41, 0);
+    body.add(board, stripe, ...bands, corner);
     body.position.y = 0.06;
   }
 
+  /*
+   * ESKİ HATA: `holder.rotation.z = π/2` kalkanı kendi yüzey normali etrafında
+   * 90° yatırıyordu. Sonuç: uçurtma ve pavise kalkanları **yan yatmış** (uzun
+   * ekseni yere paralel) görünüyordu; yuvarlak kalkanda ise sadece gereksiz
+   * dönüş vardı. Kalkanın yüzü elin +Z ekseni (ileri) olmalı, üstü de dünya
+   * yukarısı. Bu yüzden dönüş kaldırıldı; bunun yerine kalkan gövdeye göre
+   * dışa ve öne kaydırılıp ölçeklendi (aksi halde 1.24 m'lik uçurtma kalkan
+   * neredeyse yere değiyordu).
+   */
+  body.scale.setScalar(SHIELD_SCALE[type]);
   const holder = new THREE.Group();
   holder.name = 'Shield';
   holder.add(body);
-  holder.rotation.z = Math.PI / 2; // shield top (+Y) -> hand -X
-  holder.position.set(0, 0.08, 0.07); // forearm sits behind the shield, slightly toward the elbow
+  holder.position.set(...SHIELD_REST_POSITION);
   return holder;
 }
 
@@ -816,7 +1252,17 @@ export function applyEquipmentToRig(rig: CharacterRig, options: CharacterVisualO
   // - Kettle hat: hair visible under brim, beard visible
   // - Spangenhelm: mail coif encloses head -> hair hidden, beard visible
   // - Imperial Visor: full enclosed faceplate -> hair and beard hidden inside
-  if (options.helmetType === 'NONE' || options.helmetType === 'KETTLE_HAT') {
+  // BannerForge miğferleri kafatası kubbesini tamamen kaplar; saç kubbeden
+  // taşıp miğferin içinden "fışkırıyor" görünmesin diye saç gizlenir.
+  const armoryHelmets = armoryVisualsEnabled();
+  if (options.helmetType === 'NONE') {
+    rig.hairGroup.visible = true;
+    rig.beardMesh.visible = options.hasBeard !== false;
+  } else if (armoryHelmets) {
+    rig.hairGroup.visible = false;
+    rig.beardMesh.visible =
+      options.hasBeard !== false && options.helmetType !== 'IMPERIAL_VISOR';
+  } else if (options.helmetType === 'KETTLE_HAT') {
     rig.hairGroup.visible = true;
     rig.beardMesh.visible = options.hasBeard !== false;
   } else if (options.helmetType === 'SPANGENHELM') {
@@ -827,9 +1273,39 @@ export function applyEquipmentToRig(rig: CharacterRig, options: CharacterVisualO
     rig.beardMesh.visible = false;
   }
 
-  const helmet = buildHelmet(options.helmetType, m);
-  if (helmet) rig.helmetSocket.add(helmet);
+  // ── BannerForge (armory-studio) görsel katmanı ──
+  // Oynanış kodu (IK, dövüş, animasyon) hiç değişmez; yalnızca takılan
+  // geometriler BannerForge üreticilerinden gelir. Kapatılırsa eski modeller.
+  const armoryCtx = { factionId: options.factionId, factionColor: options.factionColor };
+  const useArmory = armoryVisualsEnabled();
 
+  const helmet = useArmory
+    ? createArmoryHelmet(options.helmetType, armoryCtx) ?? buildHelmet(options.helmetType, m)
+    : buildHelmet(options.helmetType, m);
+
+  // Kapalı (tam yüz) miğferde yüz parçaları miğferin içinden taşar → gizle.
+  const faceGroup = rig.head.getObjectByName('Face');
+  if (faceGroup) faceGroup.visible = !(options.helmetType === 'IMPERIAL_VISOR' && useArmory);
+  if (helmet) {
+    helmet.userData.helmetType = options.helmetType;
+    rig.helmetSocket.add(helmet);
+  }
+
+  if (useArmory) {
+    try {
+      applyArmoryArmor(rig, options.armorTier, armoryCtx);
+    } catch (error) {
+      console.warn('[characterRig] BannerForge zırhı uygulanamadı, eski zırha dönülüyor:', error);
+      clearArmoryArmor(rig);
+      buildArmor(rig, options.armorTier);
+    }
+  }
+  /*
+   * Gövde zırhı + omuzluklar HER İKİ katmanda da bizim üreticimizden gelir.
+   * BannerForge'un gövde/omuz parçaları başka bir iskelet için yazılmış
+   * (göğsü kapatmıyor, kolların içine giriyor) → `applyArmoryArmor` bu
+   * bölgeleri atlıyor, yerlerini `buildArmor` dolduruyor.
+   */
   buildArmor(rig, options.armorTier);
 
   if (options.weaponType === 'BOW') {
@@ -840,16 +1316,21 @@ export function applyEquipmentToRig(rig: CharacterRig, options: CharacterVisualO
     rig.leftShieldSocket.add(bow.group);
     rig.backSocket.add(buildQuiver(m));
   } else {
-    const weapon = buildMainWeapon(options.weaponType, m);
+    const weapon = (useArmory ? createArmoryWeapon(options.weaponType, armoryCtx) : null)
+      ?? buildMainWeapon(options.weaponType, m);
     if (weapon) {
+      weapon.name = 'MainWeapon';
+      weapon.userData.weaponType = options.weaponType;
       rig.mainHandItem = weapon;
       rig.rightWeaponSocket.add(weapon);
     }
     // Two-handed weapons and spears need the left hand -> no shield.
     const twoHanded = options.weaponType === 'TWO_HANDED_SWORD' || options.weaponType === 'SPEAR';
     if (!twoHanded) {
-      const shield = buildShield(options.shieldType, m);
+      const shield = (useArmory ? createArmoryShield(options.shieldType, armoryCtx) : null)
+        ?? buildShield(options.shieldType, m);
       if (shield) {
+        shield.name = 'Shield';
         rig.offHandItem = shield;
         rig.leftShieldSocket.add(shield);
       }
@@ -914,8 +1395,10 @@ export function setRigSheathed(rig: CharacterRig, sheathed: boolean): void {
     } else {
       rig.leftShieldSocket.add(off);
       if (off.name === 'Shield') {
-        off.position.set(0, 0.08, 0.07);
-        off.rotation.set(0, 0, Math.PI / 2);
+        // ESKİ HATA: burada rotation.z = π/2 yazıyordu; kalkanı yan yatırıyor
+        // ve modelin kendi duruşunu eziyordu (uçurtma/pavise yere paralel).
+        off.position.set(...SHIELD_REST_POSITION);
+        off.rotation.set(...SHIELD_REST_ROTATION);
       } else {
         off.position.set(0, -0.05, 0);
         off.rotation.set(0, 0, 0);
@@ -928,6 +1411,26 @@ export function setRigSheathed(rig: CharacterRig, sheathed: boolean): void {
  * Creates a standalone arrow. The arrow points along its local +Z axis and is centered on its shaft.
  */
 export function createArrowMesh(materials?: CharacterRig['materials']): THREE.Group {
+  // BannerForge oku: uç +Z'ye bakar, merkezi gövde ortasındadır.
+  // (Silah yuvasından bağımsız olduğu için animasyonu etkilemez.)
+  if (armoryVisualsEnabled()) {
+    try {
+      const model = createArmoryArrow();
+      if (model) {
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        // Bizim ok uzayı: +Z uca bakar, gövde merkezde (±0.42).
+        model.position.z = -(box.min.z + size.z / 2);
+        const holder = new THREE.Group();
+        holder.name = 'ArrowProjectile';
+        holder.add(model);
+        return holder;
+      }
+    } catch (error) {
+      console.warn('[characterRig] BannerForge oku üretilemedi, eski oka dönülüyor:', error);
+    }
+  }
+
   const arrowGroup = new THREE.Group();
   arrowGroup.name = 'ArrowProjectile';
 

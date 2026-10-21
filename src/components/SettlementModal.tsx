@@ -1,4 +1,23 @@
 import React, { useState } from 'react';
+import { FactionCrest } from './FactionCrest';
+import {
+  AlertTriangle,
+  Beer,
+  Castle,
+  Coins,
+  Construction,
+  Crown,
+  Hammer,
+  Landmark,
+  Lock,
+  Scale,
+  Shield,
+  Swords,
+  Target,
+  Tent,
+  Truck,
+  Wheat,
+} from 'lucide-react';
 import {
   BuildingProjectId,
   CampaignState,
@@ -9,8 +28,12 @@ import {
   UNIT_DEFINITIONS,
   UnitTierId,
   WorkshopTypeId,
+  settlementWorkshopIncome,
 } from '../game/rules';
+import { recruitQuote, partyLimit, partySize, partyRoom } from '../game/recruitment';
 import { sound } from '../game/sound';
+import { generateNotables, type NotableIconKey, type SettlementNotable } from '../game/notables';
+import { troopName, troopRole } from '../game/troops';
 
 export type TownTab =
   | 'overview'
@@ -27,55 +50,110 @@ export type TownTab =
   | 'dungeon'
   | 'hostile';
 
-export interface SettlementNotable {
-  id: string;
-  name: string;
-  title: string;
-  role: 'ruler' | 'commander' | 'merchant' | 'tavernkeeper' | 'gladiator' | 'elder' | 'warden';
-  avatarEmoji: string;
-  relation: number;
-  speech: string;
+export type { NotableIconKey, SettlementNotable };
+
+/**
+ * İleri gelen konuşma kartı. Ayrı bileşen çünkü hem yerleşim modalında hem
+ * probe'da (seçim olmadan) doğrudan render edilebilsin.
+ */
+export function NotableSpeechCard({
+  notable,
+  onClose,
+}: {
+  notable: SettlementNotable;
+  onClose?: () => void;
+}) {
+  const relationLabel =
+    notable.relation > 0 ? `+${notable.relation}` : String(notable.relation);
+  return (
+    <div
+      data-testid="notable-speech"
+      className="px-4 py-3 bg-[#1d1811] border-b border-[#d97706]/40 flex items-start justify-between gap-3 text-xs"
+    >
+      <div className="flex items-start gap-2.5">
+        <span className="text-[#c6a15b] mt-0.5">{NOTABLE_ICONS[notable.avatarIcon]}</span>
+        <div>
+          <span className="font-bold text-[#fde68a] block">
+            {notable.name} ({notable.title})
+          </span>
+          <p className="text-[#e2d7c3] italic mt-0.5">"{notable.speech}"</p>
+          <div className="mt-1 flex items-center gap-3 text-[10px] text-[#c6a15b] font-mono-tabular">
+            <span>NÜFUZ {notable.power}</span>
+            <span>İLİŞKİ {relationLabel}</span>
+          </div>
+        </div>
+      </div>
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="İleri geleni kapat"
+          className="text-[#9ca3af] hover:text-white font-bold px-1 text-base leading-none"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
 }
+
+const NOTABLE_ICONS: Record<NotableIconKey, React.ReactNode>= {
+  crown: <Crown size={16} strokeWidth={1.6} />,
+  landmark: <Landmark size={16} strokeWidth={1.6} />,
+  shield: <Shield size={16} strokeWidth={1.6} />,
+  coins: <Coins size={16} strokeWidth={1.6} />,
+  beer: <Beer size={16} strokeWidth={1.6} />,
+  swords: <Swords size={16} strokeWidth={1.6} />,
+  castle: <Castle size={16} strokeWidth={1.6} />,
+  lock: <Lock size={16} strokeWidth={1.6} />,
+  wheat: <Wheat size={16} strokeWidth={1.6} />,
+  hammer: <Hammer size={16} strokeWidth={1.6} />,
+  cart: <Truck size={16} strokeWidth={1.6} />,
+};
 
 interface SettlementModalProps {
   settlement: Settlement;
   campaign: CampaignState;
-  onClose: () => void;
-  onRecruit: (settlementId: string, unitId: UnitTierId, amount: number) => string | null;
-  onBuyFood: (settlementId: string, packs: number) => string | null;
-  onStartSiegeBattle: (settlement: Settlement) => void;
-  onHireMercenaries?: (settlementId: string) => string | null;
-  onRansomPrisoners?: (settlementId: string) => string | null;
-  onBuyTavernRound?: (settlementId: string) => string | null;
-  onArenaPractice?: (settlementId: string) => string | null;
-  onArenaTournament?: (settlementId: string) => { victory: boolean; message: string };
-  onSellLoot?: (settlementId: string) => string | null;
+  onClose: () =>void;
+  onRecruit: (settlementId: string, unitId: UnitTierId, amount: number) =>string | null;
+  onBuyFood: (settlementId: string, packs: number) =>string | null;
+  onStartSiegeBattle: (settlement: Settlement) =>void;
+  onHireMercenaries?: (settlementId: string) =>string | null;
+  onRansomPrisoners?: (settlementId: string) =>string | null;
+  onBuyTavernRound?: (settlementId: string) =>string | null;
+  onArenaPractice?: (settlementId: string) =>string | null;
+  onArenaTournament?: (settlementId: string) =>{ victory: boolean; message: string };
+  onSellLoot?: (settlementId: string) =>string | null;
   onManageGarrison?: (
     settlementId: string,
     unitId: UnitTierId,
-    direction: 'deposit' | 'withdraw',
+    direction: 'deposit'| 'withdraw',
     amount: number,
-  ) => string | null;
-  onRestAndRecover?: (settlementId: string) => string | null;
-  onRaidVillage?: (villageId: string) => string | null;
-  onForceSupplies?: (villageId: string) => string | null;
-  onForceRecruits?: (villageId: string) => string | null;
-  onUpgradeBuilding?: (settlementId: string, buildingId: BuildingProjectId) => string | null;
-  onSetDailyDefault?: (settlementId: string, defaultType: SettlementDailyDefault) => string | null;
-  onBuyWorkshop?: (settlementId: string, workshopType: WorkshopTypeId) => string | null;
-  onForgeWeapon?: (settlementId: string, blueprintId: 'SPATHA' | 'FALX' | 'LANCE') => string | null;
+  ) =>string | null;
+  onRestAndRecover?: (settlementId: string) =>string | null;
+  onRaidVillage?: (villageId: string) =>string | null;
+  onForceSupplies?: (villageId: string) =>string | null;
+  onForceRecruits?: (villageId: string) =>string | null;
+  onUpgradeBuilding?: (settlementId: string, buildingId: BuildingProjectId) =>string | null;
+  onSetDailyDefault?: (settlementId: string, defaultType: SettlementDailyDefault) =>string | null;
+  onBuyWorkshop?: (settlementId: string, workshopType: WorkshopTypeId) =>string | null;
+  onForgeWeapon?: (settlementId: string, blueprintId: 'SPATHA'| 'FALX'| 'LANCE') =>string | null;
   onBuildSiegeEngine?: (
     settlementId: string,
     engineType: SiegeEngineType,
     moveToReserve?: boolean,
-  ) => string | null;
-  onDeployReserveEngines?: (settlementId: string) => string | null;
-  onBombardWalls?: (settlementId: string) => string | null;
-  onOpenFullMarket?: () => void;
-  onOpenCharacterArena?: () => void;
+  ) =>string | null;
+  onDeployReserveEngines?: (settlementId: string) =>string | null;
+  onBombardWalls?: (settlementId: string) =>string | null;
+  onOpenFullMarket?: () =>void;
+  /** Faz 6: yerleşim reisi/muhtarı ile diyalog. */
+  onTalkToReeve?: () =>void;
+  onOpenCharacterArena?: () =>void;
+  /** Başlangıç sekmesi (probe'lar ve hızlı erişim için). */
+  initialTab?: TownTab;
 }
 
-export const SettlementModal: React.FC<SettlementModalProps> = ({
+export const SettlementModal: React.FC<SettlementModalProps>= ({
   settlement,
   campaign,
   onClose,
@@ -101,9 +179,17 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   onDeployReserveEngines,
   onBombardWalls,
   onOpenFullMarket,
+  onTalkToReeve,
   onOpenCharacterArena,
-}) => {
-  const [activeTab, setActiveTab] = useState<TownTab>('overview');
+  initialTab = 'overview',
+}) =>{
+  const [activeTab, setActiveTab] = useState<TownTab>(initialTab);
+  /** Faz 8: muhtarla ilişki — asker toplama kapısı ve ücret indirimi. */
+  const factionRelation = (() =>{
+    const lords = campaign.lords.filter((l) =>l.faction === settlement.faction);
+    if (lords.length === 0) return 0;
+    return Math.round(lords.reduce((a, l) =>a + l.relation, 0) / lords.length);
+  })();
   const [feedback, setFeedback] = useState<string | null>(null);
   const [selectedNotable, setSelectedNotable] = useState<SettlementNotable | null>(null);
   const [tournamentResult, setTournamentResult] = useState<{
@@ -118,257 +204,189 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   const isCastle = settlement.type === 'CASTLE';
   const isTown = settlement.type === 'TOWN';
 
-  // Generate Authentic Notables Present in Settlement
-  const notables: SettlementNotable[] = React.useMemo(() => {
-    if (isTown) {
-      return [
-        {
-          id: 'gov',
-          name: settlement.faction === 'empire' ? 'Rhagaea' : `${factionInfo.name} Beyi`,
-          title: 'Şehir Hakimi & Valisi',
-          role: 'ruler',
-          avatarEmoji: settlement.faction === 'empire' ? '👑' : '🏛️',
-          relation: 15,
-          speech: `Hoş geldiniz Komutan. ${settlement.name} surları arkasında asayiş ve ticaret lehimize işliyor. Şehrimize dostane niyetle mi geldiniz?`,
-        },
-        {
-          id: 'watch',
-          name: 'Yüzbaşı Valerius',
-          title: 'Garnizon ve Sur Muhafız Başı',
-          role: 'commander',
-          avatarEmoji: '🛡️',
-          relation: 10,
-          speech: `Surlarımız sağlam, garnizonumuz teyakkuzda. Dış vadilerdeki haydut hareketliliklerini yakından izliyoruz.`,
-        },
-        {
-          id: 'merchant',
-          name: 'Tüccar Belisarios',
-          title: 'Lonca Temsilcisi & İleri Gelen',
-          role: 'merchant',
-          avatarEmoji: '💰',
-          relation: 5,
-          speech: `Kervanlarımız doğudan batıya tuz, tahıl ve kaliteli demir taşıyor. Pazaryerimize her zaman taze erzak ve ganimet alımı yaparız.`,
-        },
-        {
-          id: 'innkeeper',
-          name: 'Hancı Goran',
-          title: 'Meyhaneci & Bilgi Kaynağı',
-          role: 'tavernkeeper',
-          avatarEmoji: '🍺',
-          relation: 20,
-          speech: `Ocağımızın başı her zaman sıcak! Kiralık paralı kılıçlar, dağlardan gelen esir fidyecileri hepsi masalarımızda.`,
-        },
-        {
-          id: 'champion',
-          name: 'Dragan Çekiçkıran',
-          title: 'Arena Dövüş Ustası',
-          role: 'gladiator',
-          avatarEmoji: '⚔️',
-          relation: 0,
-          speech: `Kum havuzuna çıkacak cesaretin var mı genç komutan? Arenada sadece çelik ve bilek gücü konuşur!`,
-        },
-      ];
-    } else if (isCastle) {
-      return [
-        {
-          id: 'castell',
-          name: 'Kumandan Orestes',
-          title: 'Kale Dizdarı & Komutanı',
-          role: 'commander',
-          avatarEmoji: '🏰',
-          relation: 12,
-          speech: `Bu taş burçlar yüzyıllık kuşatmalara direndi. Garnizonumuz her daim nöbettedir.`,
-        },
-        {
-          id: 'warden',
-          name: 'Zindancı Vask',
-          title: 'Hisar Zindan Başı',
-          role: 'warden',
-          avatarEmoji: '⛓️',
-          relation: 0,
-          speech: `Demir parmaklıklarımız arkasında hiçbir esir gün ışığı göremez. Saygılar komutanım.`,
-        },
-      ];
-    } else {
-      return [
-        {
-          id: 'elder',
-          name: 'Köy Muhtarı Kalan',
-          title: 'Köy İhtiyarı ve Temsilcisi',
-          role: 'elder',
-          avatarEmoji: '🌾',
-          relation: 8,
-          speech: `Hoş sefa geldiniz beyim. Köyümüzün buğday hasadı bereketli şükür; gençlerimiz de yiğittir, sancağınızda yer varsa yazılmak isterler.`,
-        },
-      ];
-    }
-  }, [settlement, isTown, isCastle, factionInfo]);
+  // Faz B0: ileri gelenler artık sefer verisinde (her yerleşime özgü, deterministik).
+  const notables: SettlementNotable[] = React.useMemo(
+    () =>
+      settlement.notables && settlement.notables.length > 0
+        ? settlement.notables
+        : generateNotables(settlement, campaign.world?.seed ?? 20261021),
+    [settlement, campaign.world?.seed],
+  );
+
+  // Faz B0: çuvaldaki ticari emtia (satılabilir ganimet) ve toplam değeri.
+  const lootGoods = React.useMemo(
+    () => (campaign.inventoryItems ?? []).filter((i) => i.slot === 'TRADE' && i.category === 'FOOD'),
+    [campaign.inventoryItems],
+  );
+  const lootValue = lootGoods.reduce((sum, item) => sum + Math.max(1, Math.round(item.value)), 0);
 
   // Tab Action Handlers
-  const handleRecruitClick = (unitId: UnitTierId) => {
-    const err = onRecruit(settlement.id, unitId, 1);
+  const handleRecruitClick = (unitId: UnitTierId, amount = 1) =>{
+    const err = onRecruit(settlement.id, unitId, amount);
     if (err) {
-      setFeedback(`⚠️ ${err}`);
-    } else {
-      sound.playCoinChime();
-      setFeedback(`⚔️ ${UNIT_DEFINITIONS[unitId].name} sancağınıza başarıyla katıldı!`);
-    }
-  };
-
-  const handleFoodClick = () => {
-    const isRural = settlement.type === 'VILLAGE';
-    const err = onBuyFood(settlement.id, 5);
-    if (err) {
-      setFeedback(`⚠️ ${err}`);
+      setFeedback(err);
     } else {
       sound.playCoinChime();
       setFeedback(
-        isRural
-          ? '🌾 Köy ambarından toptan ucuz fiyata +5 Erzak sandığı ordunuza eklendi (18 Dinar).'
-          : '🍞 Şehir pazarından +5 Erzak sandığı tedarik edildi (30 Dinar).',
+        `${amount} × ${UNIT_DEFINITIONS[unitId].name} sancağınıza katıldı!`,
       );
     }
   };
 
-  const handleSellLootClick = () => {
+  const handleFoodClick = () =>{
+    const isRural = settlement.type === 'VILLAGE';
+    const err = onBuyFood(settlement.id, 5);
+    if (err) {
+      setFeedback(err);
+    } else {
+      sound.playCoinChime();
+      setFeedback(
+        isRural
+          ? 'Köy ambarından toptan ucuz fiyata +5 Erzak sandığı ordunuza eklendi (18 Dinar).'
+          : 'Şehir pazarından +5 Erzak sandığı tedarik edildi (30 Dinar).',
+      );
+    }
+  };
+
+  const handleSellLootClick = () =>{
     if (onSellLoot) {
       const err = onSellLoot(settlement.id);
       if (err) {
-        setFeedback(`⚠️ ${err}`);
+        setFeedback(err);
       } else {
         sound.playCoinChime();
-        setFeedback('💰 Sefer ganimetleri ve fazlalıklar tüccara satıldı (+45 Dinar).');
+        setFeedback('Çuvaldaki emtia pazara satıldı.');
       }
     }
   };
 
-  const handleHireMercenaries = () => {
+  const handleHireMercenaries = () =>{
     if (onHireMercenaries) {
       const err = onHireMercenaries(settlement.id);
       if (err) {
-        setFeedback(`⚠️ ${err}`);
+        setFeedback(err);
       } else {
         sound.playCoinChime();
-        setFeedback('⚔️ 4 kıdemli paralı süvari ve usta okçu sancağınıza katıldı (120 Dinar).');
+        setFeedback('4 kıdemli paralı süvari ve usta okçu sancağınıza katıldı (120 Dinar).');
       }
     }
   };
 
-  const handleRansom = () => {
+  const handleRansom = () =>{
     if (onRansomPrisoners) {
       const err = onRansomPrisoners(settlement.id);
       if (err) {
-        setFeedback(`⚠️ ${err}`);
+        setFeedback(err);
       } else {
         sound.playCoinChime();
-        setFeedback('⛓️ Ordunuzdaki tüm esirler fidyeciye teslim edildi ve dinarınız ödendi.');
+        setFeedback('Ordunuzdaki tüm esirler fidyeciye teslim edildi ve dinarınız ödendi.');
       }
     }
   };
 
-  const handleTavernRound = () => {
+  const handleTavernRound = () =>{
     if (onBuyTavernRound) {
       const err = onBuyTavernRound(settlement.id);
       if (err) {
-        setFeedback(`⚠️ ${err}`);
+        setFeedback(err);
       } else {
         sound.playCoinChime();
-        setFeedback('🍺 Meyhanedeki herkese şarap ısmarladınız! Askerlerinizin morali coştu (+8 Moral).');
+        setFeedback('Meyhanedeki herkese şarap ısmarladınız! Askerlerinizin morali coştu (+8 Moral).');
       }
     }
   };
 
-  const handleArenaPractice = () => {
+  const handleArenaPractice = () =>{
     if (onArenaPractice) {
       const err = onArenaPractice(settlement.id);
       if (err) {
-        setFeedback(`⚠️ ${err}`);
+        setFeedback(err);
       } else {
         sound.playSwordSwing();
-        setFeedback('⚔️ Talim dövüşünde gladyatörleri mağlup ettiniz (+25 Dinar, +2 Nam).');
+        setFeedback('Talim dövüşünde gladyatörleri mağlup ettiniz (+25 Dinar, +2 Nam).');
       }
     }
   };
 
-  const handleArenaTournament = () => {
+  const handleArenaTournament = () =>{
     if (onArenaTournament) {
       sound.playWarhorn();
       const res = onArenaTournament(settlement.id);
       if (res.victory) {
         setTournamentResult({
           victory: true,
-          title: '🏆 TURNUVA ŞAMPİYONU OLDUNUZ!',
+          title: 'TURNUVA ŞAMPİYONU OLDUNUZ!',
           details: res.message,
         });
       } else {
         setTournamentResult({
           victory: false,
-          title: '⚔️ Yarı Finalde Elendiniz',
+          title: 'Yarı Finalde Elendiniz',
           details: res.message,
         });
       }
     }
   };
 
-  const handleRestRecover = () => {
+  const handleRestRecover = () =>{
     if (onRestAndRecover) {
       const err = onRestAndRecover(settlement.id);
       if (err) {
-        setFeedback(`⚠️ ${err}`);
+        setFeedback(err);
       } else {
-        setFeedback('⛺ Ordugah kuruldu, yaralılar tedavi edildi ve dinlenildi (+6 Moral, Sağlık Tazelendi).');
+        setFeedback('Ordugah kuruldu, yaralılar tedavi edildi ve dinlenildi (+6 Moral, Sağlık Tazelendi).');
       }
     }
   };
 
-  const handleGarrisonTransfer = (unitId: UnitTierId, dir: 'deposit' | 'withdraw') => {
+  const handleGarrisonTransfer = (unitId: UnitTierId, dir: 'deposit'| 'withdraw') =>{
     if (onManageGarrison) {
       const err = onManageGarrison(settlement.id, unitId, dir, 1);
       if (err) {
-        setFeedback(`⚠️ ${err}`);
+        setFeedback(err);
       } else {
         sound.playCoinChime();
         setFeedback(
           dir === 'deposit'
-            ? `🛡️ 1 ${UNIT_DEFINITIONS[unitId].name} kale garnizonuna nöbetçi bırakıldı.`
-            : `🛡️ 1 ${UNIT_DEFINITIONS[unitId].name} garnizondan sancağınıza devşirildi.`,
+            ? `1 ${UNIT_DEFINITIONS[unitId].name} kale garnizonuna nöbetçi bırakıldı.`
+            : `1 ${UNIT_DEFINITIONS[unitId].name} garnizondan sancağınıza devşirildi.`,
         );
       }
     }
   };
 
-  const handleRaid = () => {
+  const handleRaid = () =>{
     if (onRaidVillage) {
       sound.playWarhorn();
       const err = onRaidVillage(settlement.id);
       if (err) {
-        setFeedback(`⚠️ ${err}`);
+        setFeedback(err);
       } else {
-        setFeedback('🔥 KÖY YAĞMALANDI VE ATEŞE VERİLDİ! (+280 Dinar, +16 Erzak). Krallıkla savaş ilan edildi!');
+        setFeedback('KÖY YAĞMALANDI VE ATEŞE VERİLDİ! (+280 Dinar, +16 Erzak). Krallıkla savaş ilan edildi!');
       }
     }
   };
 
-  const handleForceSupplies = () => {
+  const handleForceSupplies = () =>{
     if (onForceSupplies) {
       sound.playSwordSwing();
       const err = onForceSupplies(settlement.id);
       if (err) {
-        setFeedback(`⚠️ ${err}`);
+        setFeedback(err);
       } else {
-        setFeedback('⚠️ Köylüler kılıç zoruyla erzak teslim etti (+8 Erzak).');
+        setFeedback('Köylüler kılıç zoruyla erzak teslim etti (+8 Erzak).');
       }
     }
   };
 
-  const handleForceRecruits = () => {
+  const handleForceRecruits = () =>{
     if (onForceRecruits) {
       sound.playSwordSwing();
       const err = onForceRecruits(settlement.id);
       if (err) {
-        setFeedback(`⚠️ ${err}`);
+        setFeedback(err);
       } else {
-        setFeedback('⚠️ Köyün gençleri zorla orduya katıldı (+3 Köylü Asker).');
+        setFeedback('Köyün gençleri zorla orduya katıldı (+3 Köylü Asker).');
       }
     }
   };
@@ -376,7 +394,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-30 flex items-center justify-center p-3 sm:p-6 pointer-events-auto select-none"
-      style={{ backgroundColor: 'rgba(6, 5, 4, 0.84)' }}
+      style={{ backgroundColor: 'rgba(6, 5, 4, 0.84)'}}
       role="dialog"
       aria-modal="true"
       aria-labelledby="settlement-modal-title"
@@ -387,23 +405,21 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
           <div className="flex items-center gap-3">
             {/* Heraldry Crest */}
             <div
-              style={{
-                backgroundColor: factionInfo.color,
-                clipPath: 'polygon(0% 0%, 100% 0%, 100% 70%, 50% 100%, 0% 70%)',
-              }}
-              className="w-10 h-12 flex items-center justify-center border-2 border-[#fcd34d] shadow-lg shrink-0"
+              style={{ backgroundColor: factionInfo.color }}
+              className="w-10 h-12 flex items-center justify-center border-2 border-[#fcd34d] shadow-lg shrink-0 text-[#fde68a]"
+              title={factionInfo.emblemName}
             >
-              <span className="text-xl">{factionInfo.glyph}</span>
+              <FactionCrest faction={settlement.faction} size={26} className="border-0 shadow-none"/>
             </div>
 
             <div>
               <div className="flex items-center gap-2 text-xs text-[#c6a15b] tracking-wider font-semibold">
                 <span>
                   {isTown
-                    ? '🏛️ Ticaret Şehri'
+                    ? 'Ticaret Şehri'
                     : isCastle
-                      ? '🏰 Müstahkem Kale'
-                      : '🌾 Kırsal Tarım Köyü'}
+                      ? 'Müstahkem Kale'
+                      : 'Kırsal Tarım Köyü'}
                 </span>
                 <span>·</span>
                 <span>{factionInfo.name}</span>
@@ -436,11 +452,12 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
           <span className="text-[#a89b84] font-semibold text-[11px] whitespace-nowrap mr-2">
             İleri Gelenler:
           </span>
-          {notables.map((n) => (
+          {notables.map((n) =>(
             <button
               key={n.id}
               type="button"
-              onClick={() => {
+              title={`${n.name} — ${n.title}`}
+              onClick={() =>{
                 setSelectedNotable(n);
                 setFeedback(null);
               }}
@@ -450,7 +467,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   : 'bg-[#1e1a14] border-[#c6a15b]/30 text-[#d1c5b0] hover:bg-[#28221a]'
               }`}
             >
-              <span>{n.avatarEmoji}</span>
+              <span className="text-[#c6a15b]">{NOTABLE_ICONS[n.avatarIcon]}</span>
               <span className="font-semibold whitespace-nowrap">{n.name}</span>
             </button>
           ))}
@@ -458,24 +475,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
 
         {/* NOTABLE SPEECH POPUP (IF CLICKED) */}
         {selectedNotable && (
-          <div className="px-4 py-3 bg-[#1d1811] border-b border-[#d97706]/40 flex items-start justify-between gap-3 text-xs">
-            <div className="flex items-start gap-2.5">
-              <span className="text-2xl">{selectedNotable.avatarEmoji}</span>
-              <div>
-                <span className="font-bold text-[#fde68a] block">
-                  {selectedNotable.name} ({selectedNotable.title})
-                </span>
-                <p className="text-[#e2d7c3] italic mt-0.5">"{selectedNotable.speech}"</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSelectedNotable(null)}
-              className="text-[#9ca3af] hover:text-white font-bold px-1"
-            >
-              ✕
-            </button>
-          </div>
+          <NotableSpeechCard notable={selectedNotable} onClose={() => setSelectedNotable(null)} />
         )}
 
         {/* 3. MAIN WORKSPACE: LEFT ACTION MENU + RIGHT ACTIVE PANEL */}
@@ -485,7 +485,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             {/* COMMON: OVERVIEW */}
             <button
               type="button"
-              onClick={() => {
+              onClick={() =>{
                 setActiveTab('overview');
                 setFeedback(null);
               }}
@@ -495,8 +495,8 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
               }`}
             >
-              <span>{isTown ? '🏛️' : isCastle ? '🏰' : '🌾'}</span>
-              <span>{isTown ? 'Meydan & Genel Durum' : isCastle ? 'İç Kale & Divanhane' : 'Köy Meydanı & Bilgi'}</span>
+              <span>{isTown ? <Landmark size={14} strokeWidth={1.7} />: isCastle ? <Castle size={14} strokeWidth={1.7} />: <Wheat size={14} strokeWidth={1.7} />}</span>
+              <span>{isTown ? 'Meydan & Genel Durum': isCastle ? 'İç Kale & Divanhane': 'Köy Meydanı & Bilgi'}</span>
             </button>
 
             {/* TOWN SPECIFIC BUTTONS */}
@@ -504,7 +504,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
               <>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={() =>{
                     setActiveTab('keep');
                     setFeedback(null);
                   }}
@@ -514,13 +514,13 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
                   }`}
                 >
-                  <span>🏰</span>
-                  <span>Kalenin İç Avlusu / Divan</span>
+                  <span className="text-[#c6a15b]"><Castle size={14} strokeWidth={1.7} /></span>
+                  <span>Kale</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={() =>{
                     setActiveTab('market');
                     setFeedback(null);
                   }}
@@ -530,13 +530,13 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
                   }`}
                 >
-                  <span>⚖️</span>
-                  <span>Pazaryeri ve Ticaret</span>
+                  <span className="text-[#c6a15b]"><Scale size={14} strokeWidth={1.7} /></span>
+                  <span>Pazaryeri</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={() =>{
                     setActiveTab('tavern');
                     setFeedback(null);
                   }}
@@ -546,13 +546,13 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
                   }`}
                 >
-                  <span>🍺</span>
-                  <span>Meyhane Bölgesi</span>
+                  <span className="text-[#c6a15b]"><Beer size={14} strokeWidth={1.7} /></span>
+                  <span>Meyhane</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={() =>{
                     setActiveTab('arena');
                     setFeedback(null);
                   }}
@@ -562,13 +562,13 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
                   }`}
                 >
-                  <span>⚔️</span>
-                  <span>Arena ve Turnuva</span>
+                  <span className="text-[#c6a15b]"><Swords size={14} strokeWidth={1.7} /></span>
+                  <span>Arena</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={() =>{
                     setActiveTab('smithy');
                     setFeedback(null);
                   }}
@@ -578,8 +578,8 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
                   }`}
                 >
-                  <span>⚒️</span>
-                  <span>Demirci Ocağı & Atölyeler</span>
+                  <span className="text-[#c6a15b]"><Hammer size={14} strokeWidth={1.7} /></span>
+                  <span>Demirci</span>
                 </button>
               </>
             )}
@@ -589,7 +589,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
               <>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={() =>{
                     setActiveTab('dungeon');
                     setFeedback(null);
                   }}
@@ -599,13 +599,13 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
                   }`}
                 >
-                  <span>⛓️</span>
-                  <span>Zindanı Ziyaret Et</span>
+                  <span className="text-[#c6a15b]"><Lock size={14} strokeWidth={1.7} /></span>
+                  <span>Zindan</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={() =>{
                     setActiveTab('garrison');
                     setFeedback(null);
                   }}
@@ -615,8 +615,8 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
                   }`}
                 >
-                  <span>🛡️</span>
-                  <span>Garnizonu Yönet</span>
+                  <span className="text-[#c6a15b]"><Shield size={14} strokeWidth={1.7} /></span>
+                  <span>Garnizon</span>
                 </button>
               </>
             )}
@@ -625,7 +625,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             {(isTown || isCastle) && (
               <button
                 type="button"
-                onClick={() => {
+                onClick={() =>{
                   setActiveTab('buildings');
                   setFeedback(null);
                 }}
@@ -635,8 +635,8 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
                 }`}
               >
-                <span>🏗️</span>
-                <span>Mülkü Yönet (Bina Projeleri)</span>
+                <span className="text-[#c6a15b]"><Construction size={14} strokeWidth={1.7} /></span>
+                <span>Mülk Yönetimi</span>
               </button>
             )}
 
@@ -645,7 +645,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
               <>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={() =>{
                     setActiveTab('market');
                     setFeedback(null);
                   }}
@@ -655,13 +655,13 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
                   }`}
                 >
-                  <span>🍞</span>
-                  <span>Köylülerden Erzak Satın Al</span>
+                  <span className="text-[#c6a15b]"><Wheat size={14} strokeWidth={1.7} /></span>
+                  <span>Erzak Al</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={() =>{
                     setActiveTab('hostile');
                     setFeedback(null);
                   }}
@@ -671,7 +671,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'text-[#fca5a5] hover:bg-[#281515] border border-transparent'
                   }`}
                 >
-                  <span>⚠️</span>
+                  <span className="text-[#c6a15b]"><AlertTriangle size={14} strokeWidth={1.7} /></span>
                   <span>Düşmanca Eylemler</span>
                 </button>
               </>
@@ -680,7 +680,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             {/* RECRUIT TROOPS BUTTON (ALL SETTLEMENTS) */}
             <button
               type="button"
-              onClick={() => {
+              onClick={() =>{
                 setActiveTab('recruit');
                 setFeedback(null);
               }}
@@ -690,7 +690,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
               }`}
             >
-              <span>🛡️</span>
+              <span className="text-[#c6a15b]"><Shield size={14} strokeWidth={1.7} /></span>
               <span>
                 {isTown
                   ? 'Gönüllü Asker Topla'
@@ -703,7 +703,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             {/* WAIT / REST BUTTON (ALL SETTLEMENTS) */}
             <button
               type="button"
-              onClick={() => {
+              onClick={() =>{
                 setActiveTab('wait');
                 setFeedback(null);
               }}
@@ -713,8 +713,8 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
               }`}
             >
-              <span>⛺</span>
-              <span>Yerleşimde Dinlen ve Bekle</span>
+              <span className="text-[#c6a15b]"><Tent size={14} strokeWidth={1.7} /></span>
+              <span>Burada Bekle</span>
             </button>
 
             {/* SIEGE CAMP & ASSAULT BUTTONS (IF NOT PLAYER OWNED) */}
@@ -722,7 +722,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
               <>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={() =>{
                     setActiveTab('siege');
                     setFeedback(null);
                   }}
@@ -732,16 +732,16 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'text-[#fca5a5] hover:bg-[#281515] border border-[#ef4444]/30'
                   }`}
                 >
-                  <span>🎯</span>
-                  <span>Kuşatma Kampı & Silah İnşası</span>
+                  <span className="text-[#c6a15b]"><Target size={14} strokeWidth={1.7} /></span>
+                  <span>Kuşatma Kampı</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => onStartSiegeBattle(settlement)}
+                  onClick={() =>onStartSiegeBattle(settlement)}
                   className="text-left px-3 py-2 rounded text-xs font-semibold flex items-center gap-2 bg-[#7f1d1d] hover:bg-[#991b1b] text-white border border-[#ef4444]/60 transition-all mt-auto"
                 >
-                  <span>⚔️</span>
-                  <span>Yerleşimi Kuşat ve Taarruz Et</span>
+                  <span className="text-[#c6a15b]"><Swords size={14} strokeWidth={1.7} /></span>
+                  <span>Kuşat ve Taarruz</span>
                 </button>
               </>
             )}
@@ -757,7 +757,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.A: OVERVIEW TAB */}
-            {activeTab === 'overview' && (
+            {activeTab === 'overview'&& (
               <div className="space-y-4">
                 <div>
                   <h3 className="text-lg font-bold text-[#fef08a]">{settlement.name} Genel Durumu</h3>
@@ -789,7 +789,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   <div>
                     <span className="text-[11px] text-[#a89b84] block">Sur Seviyesi</span>
                     <span className="text-base font-bold text-[#60a5fa] font-mono-tabular">
-                      {isTown ? 'Kademe II (Büyük Taş)' : isCastle ? 'Kademe III (Müstahkem)' : 'Açık Köy Çiti'}
+                      {isTown ? 'Kademe II (Büyük Taş)': isCastle ? 'Kademe III (Müstahkem)': 'Açık Köy Çiti'}
                     </span>
                   </div>
                 </div>
@@ -810,13 +810,13 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     <span className="text-[#a89b84] block mb-1 font-semibold">Bağlı Kırsal Köyler:</span>
                     <div className="flex flex-wrap gap-2">
                       {campaign.settlements
-                        .filter((v) => v.type === 'VILLAGE' && v.boundSettlementId === settlement.id)
-                        .map((v) => (
+                        .filter((v) =>v.type === 'VILLAGE'&& v.boundSettlementId === settlement.id)
+                        .map((v) =>(
                           <span
                             key={v.id}
                             className="px-2.5 py-1 rounded bg-[#241f17] border border-[#c6a15b]/30 text-[#f3ead8] text-[11px]"
                           >
-                            🌾 {v.name} (Refah: {v.prosperity})
+                             {v.name} (Refah: {v.prosperity})
                           </span>
                         ))}
                     </div>
@@ -826,7 +826,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.B: KEEP TAB (TOWN / CASTLE) */}
-            {activeTab === 'keep' && (
+            {activeTab === 'keep'&& (
               <div className="space-y-4">
                 <h3 className="text-base font-bold text-[#fef08a]">Kalenin İç Avlusu ve Divanhane</h3>
                 <p className="text-xs text-[#d1c5b0] leading-relaxed">
@@ -838,14 +838,14 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   <div>
                     <div className="font-semibold text-sm text-[#f8f0df]">Divana Kabul Edilme Talebi</div>
                     <div className="text-xs text-[#a89b84] mt-0.5">
-                      {settlement.faction === 'empire' ? 'İmparatoriçe Rhagaea Divanı' : `${factionInfo.name} Divanı`}
+                      {settlement.faction === 'empire'? 'İmparatoriçe Rhagaea Divanı': `${factionInfo.name} Divanı`}
                     </div>
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={() =>{
                       sound.playWarhorn();
-                      setFeedback('🛡️ Nöbetçiler divan kapısını açtı. Şehir hakimi huzuruna kabul edildiniz.');
+                      setFeedback('Nöbetçiler divan kapısını açtı. Şehir hakimi huzuruna kabul edildiniz.');
                     }}
                     className="px-3.5 py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white transition-colors"
                   >
@@ -856,12 +856,12 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.C: MARKET TAB */}
-            {activeTab === 'market' && (
+            {activeTab === 'market'&& (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="text-base font-bold text-[#fef08a]">
-                      {isVillage ? 'Köy Ambarı ve Erzak Alımı' : 'Şehir Pazaryeri ve Ticaret Loncası'}
+                      {isVillage ? 'Köy Ambarı ve Erzak Alımı': 'Şehir Pazaryeri ve Ticaret Loncası'}
                     </h3>
                     <p className="text-xs text-[#d1c5b0]">
                       {isVillage
@@ -870,13 +870,22 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     </p>
                   </div>
 
+                  {onTalkToReeve && (
+                    <button
+                      type="button"
+                      onClick={onTalkToReeve}
+                      className="px-3 py-1.5 rounded text-xs font-bold bg-[#241c12] hover:bg-[#362a1c] text-[#fde68a] border border-[#c6a15b]/40"
+                    >
+                      Muhtar / Reis ile Konuş
+                    </button>
+                  )}
                   {onOpenFullMarket && (
                     <button
                       type="button"
                       onClick={onOpenFullMarket}
                       className="px-4 py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fde68a]/50 shadow-lg transition-colors flex items-center gap-2 shrink-0"
                     >
-                      <span>⚖️</span>
+                      <span className="text-[#c6a15b]"><Scale size={14} strokeWidth={1.7} /></span>
                       <span>Tam Ekran Pazaryeri & Envanter Arayüzü</span>
                     </button>
                   )}
@@ -888,10 +897,10 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     <div>
                       <div className="font-bold text-sm text-[#34d399]">Ordu Erzağı Satın Al (+5 Erzak)</div>
                       <div className="text-xs text-[#a89b84] mt-1">
-                        Pazarda mevcut: <span className="font-mono font-bold text-white">{settlement.foodStock}</span> sandık
+                        Pazarda mevcut: <span className="font-mono font-bold text-white">{settlement.foodStock}</span>sandık
                       </div>
                       <div className="text-xs text-[#fbbf24] mt-0.5">
-                        Fiyat: {isVillage ? '18 Dinar (Köy İndirimi)' : '30 Dinar (Şehir Tarifesi)'}
+                        Fiyat: {isVillage ? '18 Dinar (Köy İndirimi)': '30 Dinar (Şehir Tarifesi)'}
                       </div>
                     </div>
                     <button
@@ -912,14 +921,19 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                         <div className="text-xs text-[#a89b84] mt-1">
                           Savaş meydanlarında ele geçirilen zırh, kalkan ve hurda eşyalar tüccarlara toptan satılır.
                         </div>
-                        <div className="text-xs text-[#34d399] mt-0.5">Gelir: +45 Dinar</div>
+                        <div className="text-xs text-[#34d399] mt-0.5">
+                          {lootGoods.length > 0
+                            ? `Çuvalda ${lootGoods.length} kalem emtia · Gelir: +${lootValue} Dinar`
+                            : 'Çuvalda satılacak emtia yok'}
+                        </div>
                       </div>
                       <button
                         type="button"
                         onClick={handleSellLootClick}
-                        className="mt-3 w-full py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white transition-colors"
+                        disabled={lootGoods.length === 0}
+                        className="mt-3 w-full py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white disabled:opacity-40 transition-colors"
                       >
-                        Ganimeti Sat (+45 Dinar)
+                        {lootGoods.length > 0 ? `Ganimeti Sat (+${lootValue} Dinar)` : 'Ganimeti Sat'}
                       </button>
                     </div>
                   )}
@@ -928,7 +942,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.D: TAVERN TAB (TOWN ONLY) */}
-            {activeTab === 'tavern' && (
+            {activeTab === 'tavern'&& (
               <div className="space-y-4">
                 <h3 className="text-base font-bold text-[#fef08a]">Meyhane Bölgesi</h3>
                 <p className="text-xs text-[#d1c5b0]">
@@ -999,7 +1013,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.E: ARENA & TOURNAMENT TAB (TOWN ONLY) */}
-            {activeTab === 'arena' && (
+            {activeTab === 'arena'&& (
               <div className="space-y-4">
                 <h3 className="text-base font-bold text-[#fef08a]">Arena ve Turnuva Meydanı</h3>
                 <p className="text-xs text-[#d1c5b0]">
@@ -1064,8 +1078,8 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.F: RECRUITMENT TAB (ALL SETTLEMENTS) */}
-            {activeTab === 'recruit' && (
-              <div className="space-y-4">
+            {activeTab === 'recruit'&& (
+              <div className="space-y-4"data-testid="recruit-panel">
                 <h3 className="text-base font-bold text-[#fef08a]">
                   {isTown
                     ? 'Gönüllü Asker Topla (Kışla & Muhafız Yazımı)'
@@ -1081,44 +1095,114 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       : 'Köyler düşük maliyetli, sadık köylü acemileri sağlar.'}
                 </p>
 
+                {/* Faz 8: parti kapasitesi ve ilişki */}
+                <div className="p-3 rounded bg-[#1f1a14] border border-[#c6a15b]/30">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-[#c6a15b] font-semibold">Parti Kapasitesi</span>
+                    <span className="font-mono-tabular text-[#f8f0df]">
+                      {partySize(campaign)} / {partyLimit(campaign)} asker
+                    </span>
+                  </div>
+                  <div className="w-full h-2 rounded bg-[#26211a] overflow-hidden">
+                    <div
+                      className={`h-full ${partyRoom(campaign) === 0 ? 'bg-[#dc2626]': 'bg-[#34d399]'}`}
+                      style={{
+                        width: `${Math.min(100, Math.round((partySize(campaign) / partyLimit(campaign)) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] mt-1">
+                    <span className={factionRelation < 0 ? 'text-[#fca5a5]': 'text-[#34d399]'}>
+                      Muhtarla ilişki: {factionRelation >0 ? `+${factionRelation}`: factionRelation}
+                    </span>
+                    <span className="text-[#a89b84]">
+                      {partyRoom(campaign) >0
+                        ? `${partyRoom(campaign)} boş yer`
+                        : 'Parti dolu — terhis et veya kademe yükselt'}
+                    </span>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {(Object.keys(UNIT_DEFINITIONS) as UnitTierId[]).map((unitId) => {
-                    const def = UNIT_DEFINITIONS[unitId];
-                    const available = settlement.recruitPool[unitId];
-                    const owned = campaign.roster[unitId];
-                    const canAfford = campaign.gold >= def.recruitCost && available > 0;
+                  {(Object.keys(UNIT_DEFINITIONS) as UnitTierId[]).map((unitId) =>{
+                    const quote = recruitQuote(campaign, settlement, unitId, factionRelation);
+                    const discount = quote.unitCost !== quote.baseCost;
+                    const max = quote.maxRecruitable;
 
                     return (
                       <div
                         key={unitId}
-                        className="p-3 rounded bg-[#1f1a14] border border-[#c6a15b]/25 flex items-center justify-between"
+                        data-unit={unitId}
+                        className={`p-3 rounded bg-[#1f1a14] border flex flex-col gap-2 ${
+                          max >0 ? 'border-[#c6a15b]/25': 'border-[#c6a15b]/10 opacity-80'
+                        }`}
                       >
                         <div>
                           <div className="font-semibold text-sm text-[#f8f0df] flex items-center gap-1.5">
-                            <span>{def.role === 'Süvari' ? '🏇' : def.role === 'Menzilli' ? '🏹' : '🛡️'}</span>
-                            <span>{def.name}</span>
+                            <span>{troopName(unitId, settlement.faction)}</span>
                           </div>
-                          <div className="text-xs text-[#a89b84] mt-0.5">{def.role}</div>
+                          <div className="text-xs text-[#a89b84] mt-0.5">
+                            {UNIT_DEFINITIONS[unitId].name} · {troopRole(unitId, settlement.faction)}
+                          </div>
                           <div className="text-xs text-[#c6a15b] mt-1 font-mono-tabular">
-                            Mevcut: <span className="font-bold text-white">{available}</span> · Orduda: {owned}
+                            Havuz: <span className="font-bold text-white">{quote.available}</span>· Orduda:{''}
+                            {campaign.roster[unitId] ?? 0}
                           </div>
-                          <div className="text-xs text-[#fbbf24] mt-0.5 font-mono-tabular">
-                            Ücret: {def.recruitCost} Dinar · Maaş: {def.dailyWage}/gün
+                          <div className="text-xs mt-0.5 font-mono-tabular">
+                            <span className={discount ? 'text-[#34d399]': 'text-[#fbbf24]'}>
+                              Ücret: {quote.unitCost} Dinar
+                              {discount && (
+                                <span className="text-[10px] ml-1">
+                                  (taban {quote.baseCost} — ilişki {quote.unitCost < quote.baseCost ? 'indirimi': 'zammı'})
+                                </span>
+                              )}
+                            </span>
+                            <span className="text-[#a89b84]">· Maaş: {quote.dailyWage}/gün</span>
                           </div>
+                          {quote.blockedReason && (
+                            <div className="text-[10px] text-[#fca5a5] mt-1">{quote.blockedReason}</div>
+                          )}
                         </div>
 
-                        <button
-                          type="button"
-                          disabled={!canAfford}
-                          onClick={() => handleRecruitClick(unitId)}
-                          className={`px-3 py-2 rounded text-xs font-bold transition-colors whitespace-nowrap shrink-0 shadow ${
-                            canAfford
-                              ? 'bg-[#b45309] hover:bg-[#d97706] text-white'
-                              : 'bg-[#2a251e] text-[#6e6455] cursor-not-allowed'
-                          }`}
-                        >
-                          Topla ({def.recruitCost} Dinar)
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={max < 1}
+                            onClick={() =>handleRecruitClick(unitId, 1)}
+                            className={`flex-1 px-2 py-1.5 rounded text-xs font-bold transition-colors ${
+                              max >= 1
+                                ? 'bg-[#b45309] hover:bg-[#d97706] text-white'
+                                : 'bg-[#2a251e] text-[#6e6455] cursor-not-allowed'
+                            }`}
+                          >
+                            Topla (+1)
+                          </button>
+                          <button
+                            type="button"
+                            disabled={max < 1}
+                            onClick={() =>handleRecruitClick(unitId, Math.min(5, max))}
+                            className={`flex-1 px-2 py-1.5 rounded text-xs font-bold transition-colors ${
+                              max >= 1
+                                ? 'bg-[#1e3a5f] hover:bg-[#2563eb] text-white'
+                                : 'bg-[#2a251e] text-[#6e6455] cursor-not-allowed'
+                            }`}
+                          >
+                            +{Math.min(5, Math.max(1, max))} topla
+                          </button>
+                          <button
+                            type="button"
+                            disabled={max < 1}
+                            onClick={() =>handleRecruitClick(unitId, max)}
+                            title={`Mümkün olan en fazla: ${max}`}
+                            className={`flex-1 px-2 py-1.5 rounded text-xs font-bold transition-colors ${
+                              max >= 1
+                                ? 'bg-[#15803d] hover:bg-[#16a34a] text-white'
+                                : 'bg-[#2a251e] text-[#6e6455] cursor-not-allowed'
+                            }`}
+                          >
+                            Tümü ({max})
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -1127,7 +1211,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.G: WAIT & REST TAB */}
-            {activeTab === 'wait' && (
+            {activeTab === 'wait'&& (
               <div className="space-y-4">
                 <h3 className="text-base font-bold text-[#fef08a]">Yerleşimde Dinlen ve Zaman Geçir</h3>
                 <p className="text-xs text-[#d1c5b0] leading-relaxed">
@@ -1154,17 +1238,17 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.H: GARRISON TAB (CASTLE ONLY) */}
-            {activeTab === 'garrison' && isCastle && (
+            {activeTab === 'garrison'&& isCastle && (
               <div className="space-y-4">
                 <h3 className="text-base font-bold text-[#fef08a]">Garnizon Savunma Yönetimi</h3>
                 <p className="text-xs text-[#d1c5b0]">
-                  Kalede mevcut nöbetçi muhafız sayısı:{' '}
+                  Kalede mevcut nöbetçi muhafız sayısı:{''}
                   <span className="font-bold text-white font-mono">{settlement.garrison} Asker</span>.
                   Buraya ordunuzdan asker bırakabilir veya garnizondan takviye alabilirsiniz.
                 </p>
 
                 <div className="space-y-2.5">
-                  {(Object.keys(UNIT_DEFINITIONS) as UnitTierId[]).map((unitId) => {
+                  {(Object.keys(UNIT_DEFINITIONS) as UnitTierId[]).map((unitId) =>{
                     const def = UNIT_DEFINITIONS[unitId];
                     const ownedInParty = campaign.roster[unitId];
 
@@ -1182,7 +1266,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                           <button
                             type="button"
                             disabled={ownedInParty <= 0}
-                            onClick={() => handleGarrisonTransfer(unitId, 'deposit')}
+                            onClick={() =>handleGarrisonTransfer(unitId, 'deposit')}
                             className="px-2.5 py-1.5 rounded text-[11px] font-bold bg-[#374151] hover:bg-[#4b5563] text-white disabled:opacity-40 transition-colors"
                           >
                             Kaleye Bırak
@@ -1190,7 +1274,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                           <button
                             type="button"
                             disabled={settlement.garrison <= 5}
-                            onClick={() => handleGarrisonTransfer(unitId, 'withdraw')}
+                            onClick={() =>handleGarrisonTransfer(unitId, 'withdraw')}
                             className="px-2.5 py-1.5 rounded text-[11px] font-bold bg-[#065f46] hover:bg-[#047857] text-white disabled:opacity-40 transition-colors"
                           >
                             Orduya Al
@@ -1204,7 +1288,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.I: DUNGEON TAB (CASTLE ONLY) */}
-            {activeTab === 'dungeon' && isCastle && (
+            {activeTab === 'dungeon'&& isCastle && (
               <div className="space-y-4">
                 <h3 className="text-base font-bold text-[#fef08a]">Kale Zindanı</h3>
                 <p className="text-xs text-[#d1c5b0]">
@@ -1222,7 +1306,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.J: HOSTILE ACTIONS TAB (VILLAGE ONLY) */}
-            {activeTab === 'hostile' && isVillage && (
+            {activeTab === 'hostile'&& isVillage && (
               <div className="space-y-4">
                 <h3 className="text-base font-bold text-[#ef4444]">Düşmanca Eylemler (Yağma ve Baskı)</h3>
                 <p className="text-xs text-[#fca5a5]">
@@ -1270,7 +1354,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   {/* Raid Village */}
                   <div className="p-3.5 rounded bg-[#331111] border-2 border-[#ef4444] shadow-lg flex items-center justify-between">
                     <div>
-                      <div className="font-extrabold text-sm text-[#fca5a5]">🔥 Köyü Yağmala ve Ateşe Ver!</div>
+                      <div className="font-extrabold text-sm text-[#fca5a5]">Köyü Yağmala ve Ateşe Ver!</div>
                       <div className="text-xs text-[#fecaca] mt-0.5">
                         Köy ambarlarını boşaltın, evleri yakın. Köy haritada dumanlar altında kalır.
                       </div>
@@ -1284,7 +1368,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       disabled={settlement.isRaided}
                       className="px-4 py-2 rounded text-xs font-extrabold bg-[#dc2626] hover:bg-[#ef4444] text-white disabled:opacity-40 transition-colors shadow-xl"
                     >
-                      {settlement.isRaided ? 'Zaten Yağmalandı' : 'Köyü Yağmala!'}
+                      {settlement.isRaided ? 'Zaten Yağmalandı': 'Köyü Yağmala!'}
                     </button>
                   </div>
                 </div>
@@ -1292,11 +1376,11 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.K: SMITHY & WORKSHOPS TAB (TOWN ONLY) */}
-            {activeTab === 'smithy' && isTown && (
+            {activeTab === 'smithy'&& isTown && (
               <div className="space-y-5">
                 <div>
                   <h3 className="text-base font-bold text-[#fef08a]">
-                    ⚒️ Şehir Demirci Ocağı (Silah Dövme & Lonca Siparişleri)
+                     Şehir Demirci Ocağı (Silah Dövme & Lonca Siparişleri)
                   </h3>
                   <p className="text-xs text-[#d1c5b0] mt-0.5">
                     Sert odun kömürü ve Thamaskene çeliği kullanarak özel silahlar dövün; lonca siparişlerinden yüksek Dinar kazanın, Demircilik (Smithing: {campaign.skills?.smithing?.level ?? 60}) becerinizi artırın ve dövdüğünüz silahı kuşanın!
@@ -1328,7 +1412,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                         stat: '+148 Hücum Delici Hasar',
                       },
                     ] as const
-                  ).map((bp) => (
+                  ).map((bp) =>(
                     <div
                       key={bp.id}
                       className="p-3.5 rounded bg-[#1f1a14] border border-[#c6a15b]/30 flex flex-col justify-between gap-2"
@@ -1343,7 +1427,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       <button
                         type="button"
                         disabled={campaign.gold < bp.cost}
-                        onClick={() => {
+                        onClick={() =>{
                           if (!onForgeWeapon) return;
                           const err = onForgeWeapon(settlement.id, bp.id);
                           if (err) {
@@ -1351,7 +1435,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                           } else {
                             sound.playClang();
                             setFeedback(
-                              `⚒️ "${bp.name}" başarıyla dövüldü! Net +${bp.profit - bp.cost} Dinar kazandınız, Demircilik +8 XP arttı ve silah kuşanıldı.`,
+                              `"${bp.name}"başarıyla dövüldü! Net +${bp.profit - bp.cost} Dinar kazandınız, Demircilik +8 XP arttı ve silah kuşanıldı.`,
                             );
                           }
                         }}
@@ -1367,10 +1451,10 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   <div className="flex items-center justify-between mb-2">
                     <div>
                       <h4 className="text-sm font-bold text-[#fef08a]">
-                        🏭 Şehir Zanaat Atölyeleri (Pasif Gelir & Üretim)
+                         Şehir Zanaat Atölyeleri (Pasif Gelir & Üretim)
                       </h4>
                       <p className="text-xs text-[#a89b84]">
-                        Aktif Atölyeniz:{' '}
+                        Aktif Atölyeniz:{''}
                         <span className="text-[#fbbf24] font-semibold">
                           {settlement.workshopType && settlement.workshopType !== 'NONE'
                             ? settlement.workshopType
@@ -1382,12 +1466,12 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                     {(
                       [
-                        { id: 'BREWERY', name: '🍺 Bira Fabrikası', desc: 'Tahıl işler · +45 Dinar/gün' },
-                        { id: 'SMITHY', name: '⚒️ Demirci Atölyesi', desc: 'Demir işler · +60 Dinar/gün' },
-                        { id: 'OLIVE_PRESS', name: '🫒 Zeytinyağı Presi', desc: 'Zeytin işler · +50 Dinar/gün' },
-                        { id: 'WEAVERY', name: '🧵 Kadife Dokuma', desc: 'İpek/Yün işler · +55 Dinar/gün' },
+                        { id: 'BREWERY', name: 'Bira Fabrikası', input: 'Tahıl işler' },
+                        { id: 'SMITHY', name: 'Demirci Atölyesi', input: 'Demir işler' },
+                        { id: 'OLIVE_PRESS', name: 'Zeytinyağı Presi', input: 'Zeytin işler' },
+                        { id: 'WEAVERY', name: 'Kadife Dokuma', input: 'İpek/Yün işler' },
                       ] as const
-                    ).map((ws) => {
+                    ).map((ws) =>{
                       const isActive = settlement.workshopType === ws.id;
                       return (
                         <div
@@ -1400,23 +1484,26 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                         >
                           <div>
                             <div className="font-bold text-xs text-[#f8f0df]">{ws.name}</div>
-                            <div className="text-[11px] text-[#a89b84] mt-0.5">{ws.desc}</div>
+                            <div className="text-[11px] text-[#a89b84] mt-0.5">
+                              {ws.input} · +
+                              {settlementWorkshopIncome({ ...settlement, workshopType: ws.id })} Dinar/gün
+                            </div>
                           </div>
                           <button
                             type="button"
                             disabled={isActive || campaign.gold < 220}
-                            onClick={() => {
+                            onClick={() =>{
                               if (!onBuyWorkshop) return;
                               const err = onBuyWorkshop(settlement.id, ws.id);
                               if (err) setFeedback(err);
                               else {
                                 sound.playCoin();
-                                setFeedback(`🏭 ${settlement.name} şehrinde ${ws.name} faaliyete geçti!`);
+                                setFeedback(`${settlement.name} şehrinde ${ws.name} faaliyete geçti!`);
                               }
                             }}
                             className="w-full py-1.5 rounded text-[11px] font-bold bg-[#15803d] hover:bg-[#16a34a] text-white disabled:opacity-40 transition-colors"
                           >
-                            {isActive ? 'Aktif Atölye' : 'Satın Al (220 D)'}
+                            {isActive ? 'Aktif Atölye': 'Satın Al (220 D)'}
                           </button>
                         </div>
                       );
@@ -1427,11 +1514,11 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.L: BUILDING PROJECTS & DAILY DEFAULTS (TOWN & CASTLE) */}
-            {activeTab === 'buildings' && (isTown || isCastle) && (
+            {activeTab === 'buildings'&& (isTown || isCastle) && (
               <div className="space-y-5">
                 <div>
                   <h3 className="text-base font-bold text-[#fef08a]">
-                    🏗️ Mülk Yönetimi, Bina Projeleri (Seviye I → III) ve Günlük Varsayılanlar
+                     Mülk Yönetimi, Bina Projeleri (Seviye I → III) ve Günlük Varsayılanlar
                   </h3>
                   <p className="text-xs text-[#d1c5b0] mt-0.5">
                     Surları, tahıl ambarlarını, kışlaları ve su kemerlerini yükselterek yerleşimin savunma, erzak, sadakat ve vergi kapasitesini kalıcı olarak artırın.
@@ -1443,39 +1530,39 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     [
                       {
                         id: 'FORTIFICATIONS',
-                        name: '🏰 Surlar ve İstihkam (Fortifications)',
+                        name: 'Surlar ve İstihkam (Fortifications)',
                         effect: 'Sur seviyesini ve savunma mancınık kapasitesini artırır.',
                       },
                       {
                         id: 'GRANARY',
-                        name: '🌾 Tahıl Ambarı (Granary)',
+                        name: 'Tahıl Ambarı (Granary)',
                         effect: '+25 Erzak Stoku ve kuşatmalarda açlığa dayanma süresi.',
                       },
                       {
                         id: 'BARRACKS',
-                        name: '🛡️ Garnizon Kışlası (Barracks)',
+                        name: 'Garnizon Kışlası (Barracks)',
                         effect: '+6 Garnizon Muhafızı ve -%10 garnizon maaş gideri.',
                       },
                       {
                         id: 'FAIRGROUNDS',
-                        name: '🎪 Panayır Alanı (Fairgrounds)',
+                        name: 'Panayır Alanı (Fairgrounds)',
                         effect: '+8 Halk Bağlılığı (Loyalty) — isyan riskini önler.',
                       },
                       {
                         id: 'FORUM',
-                        name: '🏛️ Şehir Forumu & Divan',
+                        name: 'Şehir Forumu & Divan',
                         effect: '+8 Klan Namı ve günlük Nüfuz (Influence) artışı.',
                       },
                       {
                         id: 'AQUEDUCTS',
-                        name: '💧 Su Kemerleri (Aqueducts)',
+                        name: 'Su Kemerleri (Aqueducts)',
                         effect: '+45 Şehir Refahı (Prosperity) ve vergi artışı.',
                       },
                     ] as const
-                  ).map((b) => {
+                  ).map((b) =>{
                     const currentLvl =
                       settlement.buildings?.[b.id] ??
-                      (b.id === 'FORTIFICATIONS' ? settlement.wallLevel ?? 2 : 1);
+                      (b.id === 'FORTIFICATIONS'? settlement.wallLevel ?? 2 : 1);
                     const cost = currentLvl === 1 ? 180 : 320;
                     const maxed = currentLvl >= 3;
                     return (
@@ -1492,20 +1579,20 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                         <button
                           type="button"
                           disabled={maxed || campaign.gold < cost}
-                          onClick={() => {
+                          onClick={() =>{
                             if (!onUpgradeBuilding) return;
                             const err = onUpgradeBuilding(settlement.id, b.id);
                             if (err) setFeedback(err);
                             else {
                               sound.playCoin();
                               setFeedback(
-                                `🏗️ ${b.name} Seviye ${currentLvl + 1} kademesine yükseltildi!`,
+                                `${b.name} Seviye ${currentLvl + 1} kademesine yükseltildi!`,
                               );
                             }
                           }}
                           className="px-3 py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white disabled:opacity-40 whitespace-nowrap shrink-0"
                         >
-                          {maxed ? 'Maksimum (III)' : `Yükselt (${cost} D)`}
+                          {maxed ? 'Maksimum (III)': `Yükselt (${cost} D)`}
                         </button>
                       </div>
                     );
@@ -1514,26 +1601,26 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
 
                 <div className="pt-3 border-t border-[#c6a15b]/25">
                   <h4 className="text-sm font-bold text-[#fef08a] mb-2">
-                    📜 Günlük Varsayılanlar (Daily Defaults — Sürekli Aktif Şehir Politikası)
+                     Günlük Varsayılanlar (Daily Defaults — Sürekli Aktif Şehir Politikası)
                   </h4>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {(
                       [
-                        { id: 'FESTIVAL', label: '🎭 Festival ve Oyunlar', bonus: '+3 Bağlılık' },
-                        { id: 'IRRIGATION', label: '🌱 Köy Sulaması', bonus: '+10 Refah / Ocak' },
-                        { id: 'MILITIA', label: '🏹 Milis Eğitimi', bonus: '+4 Milis Gücü' },
-                        { id: 'HOUSING', label: '🏘️ Konut İnşası', bonus: '+10 Şehir Refahı' },
+                        { id: 'FESTIVAL', label: 'Festival ve Oyunlar', bonus: '+3 Bağlılık'},
+                        { id: 'IRRIGATION', label: 'Köy Sulaması', bonus: '+10 Refah / Ocak'},
+                        { id: 'MILITIA', label: 'Milis Eğitimi', bonus: '+4 Milis Gücü'},
+                        { id: 'HOUSING', label: 'Konut İnşası', bonus: '+10 Şehir Refahı'},
                       ] as const
-                    ).map((def) => {
+                    ).map((def) =>{
                       const active = (settlement.dailyDefault ?? 'FESTIVAL') === def.id;
                       return (
                         <button
                           key={def.id}
                           type="button"
-                          onClick={() => {
+                          onClick={() =>{
                             if (!onSetDailyDefault) return;
                             onSetDailyDefault(settlement.id, def.id);
-                            setFeedback(`📜 Günlük şehir politikası "${def.label}" olarak ayarlandı (${def.bonus}).`);
+                            setFeedback(`Günlük şehir politikası "${def.label}"olarak ayarlandı (${def.bonus}).`);
                           }}
                           className={`p-2.5 rounded border text-left transition-all ${
                             active
@@ -1552,12 +1639,12 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             )}
 
             {/* 3.M: SIEGE CAMP & SIEGE ENGINES TAB */}
-            {activeTab === 'siege' && !isVillage && (
+            {activeTab === 'siege'&& !isVillage && (
               <div className="space-y-4">
                 <div className="p-3.5 rounded bg-[#241515] border border-[#ef4444]/50 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="text-base font-bold text-[#fca5a5]">
-                      🎯 Kuşatma Kampı Mühendisliği: {settlement.name}
+                       Kuşatma Kampı Mühendisliği: {settlement.name}
                     </h3>
                     <div className="text-xs text-[#fecaca] mt-0.5 font-mono-tabular">
                       Sur Seviyesi: {settlement.wallLevel ?? 2} · Duvar Sağlığı: %{settlement.wallHealth ?? 100} · Savunmacı Garnizon: {settlement.garrison} Asker · Savunmacı Erzağı: {settlement.foodStock}
@@ -1566,27 +1653,27 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={() =>{
                         if (!onBombardWalls) return;
                         const err = onBombardWalls(settlement.id);
                         if (err) setFeedback(err);
                         else {
                           sound.playHit();
                           setFeedback(
-                            `💥 Kuşatma bataryaları ${settlement.name} surlarını dövdü! Surlarda gedik açıldı ve garnizon zayıflatıldı.`,
+                            `Kuşatma bataryaları ${settlement.name} surlarını dövdü! Surlarda gedik açıldı ve garnizon zayıflatıldı.`,
                           );
                         }
                       }}
                       className="px-3.5 py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white shadow"
                     >
-                      💥 Sur Bombardımanı Başlat
+                       Sur Bombardımanı Başlat
                     </button>
                     <button
                       type="button"
-                      onClick={() => onStartSiegeBattle(settlement)}
+                      onClick={() =>onStartSiegeBattle(settlement)}
                       className="px-4 py-2 rounded text-xs font-extrabold bg-[#dc2626] hover:bg-[#ef4444] text-white shadow-lg"
                     >
-                      ⚔️ Taarruza Önderlik Et!
+                       Taarruza Önderlik Et!
                     </button>
                   </div>
                 </div>
@@ -1598,8 +1685,8 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                       Sahadaki Kuşatma Silahları ({(settlement.siegeEngines ?? []).length}/6)
                     </div>
                     <div className="text-[#d1c5b0]">
-                      {(settlement.siegeEngines ?? []).length > 0
-                        ? (settlement.siegeEngines ?? []).join(' · ')
+                      {(settlement.siegeEngines ?? []).length >0
+                        ? (settlement.siegeEngines ?? []).join('· ')
                         : 'Henüz sahada aktif kuşatma silahı yok.'}
                     </div>
                   </div>
@@ -1609,18 +1696,18 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                         Rezervdeki Silahlar ({(settlement.reserveEngines ?? []).length})
                       </div>
                       <div className="text-[#d1c5b0]">
-                        {(settlement.reserveEngines ?? []).length > 0
-                          ? (settlement.reserveEngines ?? []).join(' · ')
+                        {(settlement.reserveEngines ?? []).length >0
+                          ? (settlement.reserveEngines ?? []).join('· ')
                           : 'Rezerv boş (Trebuchetleri biriktirip aynı anda sürün).'}
                       </div>
                     </div>
-                    {(settlement.reserveEngines ?? []).length > 0 && (
+                    {(settlement.reserveEngines ?? []).length >0 && (
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={() =>{
                           if (!onDeployReserveEngines) return;
                           onDeployReserveEngines(settlement.id);
-                          setFeedback('🎯 Rezervdeki tüm kuşatma silahları aynı anda sahaya sürüldü!');
+                          setFeedback('Rezervdeki tüm kuşatma silahları aynı anda sahaya sürüldü!');
                         }}
                         className="px-3 py-1.5 rounded text-xs font-bold bg-[#15803d] hover:bg-[#16a34a] text-white whitespace-nowrap"
                       >
@@ -1636,36 +1723,36 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     [
                       {
                         id: 'TREBUCHET',
-                        name: '🎯 Trebuchet (Ağır Mancınık)',
+                        name: 'Trebuchet (Ağır Mancınık)',
                         cost: 90,
                         desc: 'Surlarda büyük gedik açar (-%35 Duvar Sağlığı). Rezerve çekilip 4’lü sürülebilir.',
                       },
                       {
                         id: 'MANGONEL',
-                        name: '🔥 Ateşli Mangonel (Onager)',
+                        name: 'Ateşli Mangonel (Onager)',
                         cost: 65,
                         desc: 'Hem savunmacı burç silahlarını hem de garnizonu ateş çemberine alır.',
                       },
                       {
                         id: 'BALLISTA',
-                        name: '🏹 Ağır Kuşatma Balistası',
+                        name: 'Ağır Kuşatma Balistası',
                         cost: 50,
                         desc: 'Surlardaki okçuları avlar, hızlı inşa edilir.',
                       },
                       {
                         id: 'BATTERING_RAM',
-                        name: '🪵 Koçbaşı (Battering Ram)',
+                        name: 'Koçbaşı (Battering Ram)',
                         cost: 50,
                         desc: 'Taarruz sırasında dış kale kapısını kırmak için piyadelerce sürülür.',
                       },
                       {
                         id: 'SIEGE_TOWER',
-                        name: '🗼 Kuşatma Kulesi (Siege Tower)',
+                        name: 'Kuşatma Kulesi (Siege Tower)',
                         cost: 80,
                         desc: 'Surlara güvenli zırhlı rampa indirir, kayıpları azaltır.',
                       },
                     ] as const
-                  ).map((eng) => (
+                  ).map((eng) =>(
                     <div
                       key={eng.id}
                       className="p-3 rounded bg-[#1f1a14] border border-[#c6a15b]/30 flex flex-col justify-between gap-2"
@@ -1678,11 +1765,11 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                         <button
                           type="button"
                           disabled={campaign.gold < eng.cost}
-                          onClick={() => {
+                          onClick={() =>{
                             if (!onBuildSiegeEngine) return;
                             const err = onBuildSiegeEngine(settlement.id, eng.id, false);
                             if (err) setFeedback(err);
-                            else setFeedback(`🎯 ${eng.name} inşa edildi ve kuşatma hattına yerleştirildi!`);
+                            else setFeedback(`${eng.name} inşa edildi ve kuşatma hattına yerleştirildi!`);
                           }}
                           className="flex-1 py-1.5 rounded text-[11px] font-bold bg-[#b45309] hover:bg-[#d97706] text-white disabled:opacity-40"
                         >
@@ -1691,11 +1778,11 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                         <button
                           type="button"
                           disabled={campaign.gold < eng.cost}
-                          onClick={() => {
+                          onClick={() =>{
                             if (!onBuildSiegeEngine) return;
                             const err = onBuildSiegeEngine(settlement.id, eng.id, true);
                             if (err) setFeedback(err);
-                            else setFeedback(`📦 ${eng.name} inşa edildi ve tek seferde sürmek üzere Rezerve çekildi!`);
+                            else setFeedback(`${eng.name} inşa edildi ve tek seferde sürmek üzere Rezerve çekildi!`);
                           }}
                           className="px-2 py-1.5 rounded text-[11px] font-bold bg-[#1e293b] hover:bg-[#334155] text-[#93c5fd] disabled:opacity-40"
                         >
@@ -1715,25 +1802,25 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
           <div>
             <span className="text-[#a89b84] block text-[11px]">Hazineniz</span>
             <span className="text-sm font-bold font-mono-tabular text-[#fbbf24]">
-              💰 {campaign.gold} Dinar
+               {campaign.gold} Dinar
             </span>
           </div>
           <div>
             <span className="text-[#a89b84] block text-[11px]">Ordu Erzağınız</span>
             <span className="text-sm font-bold font-mono-tabular text-[#34d399]">
-              🍞 {campaign.food} Günlük Erzak
+               {campaign.food} Günlük Erzak
             </span>
           </div>
           <div>
             <span className="text-[#a89b84] block text-[11px]">Ordu Mevcudunuz</span>
             <span className="text-sm font-bold font-mono-tabular text-[#f3ead8]">
-              🛡️ {campaign.roster.militia + campaign.roster.archer + campaign.roster.cavalry + campaign.roster.guard} Asker
+               {campaign.roster.militia + campaign.roster.archer + campaign.roster.cavalry + campaign.roster.guard} Asker
             </span>
           </div>
           <div>
             <span className="text-[#a89b84] block text-[11px]">Ordu Morali</span>
             <span className="text-sm font-bold font-mono-tabular text-[#a78bfa]">
-              ⚡ {campaign.morale}/100 Moral
+               {campaign.morale}/100 Moral
             </span>
           </div>
         </div>

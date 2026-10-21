@@ -642,8 +642,8 @@ export class BattleMemoryPool {
           const cols = 20;
           const col = (mySlotIdx % cols) - cols * 0.5;
           const row = Math.floor(mySlotIdx / cols);
-          goalX = anchor.x + col * arrMeta.lateralSpacing;
-          goalZ = anchor.z + row * arrMeta.depthSpacing;
+          goalX = anchor.x + col * arrMeta.spacingX;
+          goalZ = anchor.z + row * arrMeta.spacingZ;
           desiredYaw = anchor.facing;
         }
 
