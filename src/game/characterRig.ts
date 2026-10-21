@@ -160,6 +160,8 @@ function createRigMaterials(options: CharacterVisualOptions) {
     gold: std('#fbbf24', 0.3, 0.9),
     wood: std('#78350f', 0.8, 0.05),
     faction: std(options.factionColor || '#b45309', 0.65, 0.1),
+    // Ten gölgesi: burun deliği, ağız çizgisi ve parmak olukları için.
+    skinShadow: std('#b8825f', 0.9, 0),
   };
 }
 
@@ -302,7 +304,16 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   // --- Arms ---
   const upperArmGeo = new THREE.CylinderGeometry(0.07, 0.06, RIG_DIMENSIONS.upperArm, 6);
   const forearmGeo = new THREE.CylinderGeometry(0.06, 0.05, RIG_DIMENSIONS.forearm, 6);
-  const handGeo = new THREE.BoxGeometry(0.07, 0.09, 0.08);
+  /* ── El ──
+     Eski el tek bir 0.07 × 0.09 × 0.08 kutu idi: ön planda "tuğla" gibi
+     görünüyordu. Yeni el dört parçadan oluşur (toplam ~44 üçgen):
+       avuç (hafif daralan prizma) + parmak bloğu (hafif kıvrık) + başparmak + bilek.
+     Parmaklar ayrı ayrı modellenmez (low-poly hedef); blok içinde iki sığ oluk
+     parmak izlenimini verir. */
+  const palmGeo = new THREE.BoxGeometry(0.062, 0.062, 0.034);
+  const fingerGeo = new THREE.BoxGeometry(0.058, 0.05, 0.03);
+  const thumbGeo = new THREE.BoxGeometry(0.019, 0.036, 0.022);
+  const wristGeo = new THREE.CylinderGeometry(0.045, 0.041, 0.022, 6);
 
   const buildArm = (side: 1 | -1) => {
     const shoulder = new THREE.Group();
@@ -328,9 +339,39 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
     const hand = new THREE.Group();
     hand.position.y = -RIG_DIMENSIONS.forearm;
     forearm.add(hand);
-    const hm = mesh(handGeo, mats.skin, false);
-    hm.position.y = -0.04;
-    hand.add(hm);
+
+    // Bilek: kolun bittiği yeri örter (ten ile deri arası geçiş).
+    const wrist = mesh(wristGeo, mats.leather, false);
+    wrist.position.y = -0.004;
+    hand.add(wrist);
+
+    // Avuç: bileğin hemen altında, hafif daralan.
+    const palm = mesh(palmGeo, mats.skin, false);
+    palm.position.y = -0.038;
+    palm.scale.set(1, 1, 1);
+    hand.add(palm);
+
+    // Parmak bloğu: avucun altında, hafif öne kıvrık (gevşek yumruk).
+    const fingers = mesh(fingerGeo, mats.skin, false);
+    fingers.position.set(0, -0.079, 0.004);
+    fingers.rotation.x = -0.28;
+    fingers.scale.set(0.98, 1, 1);
+    hand.add(fingers);
+
+    // Parmak izlenimi: iki ince oluk (koyu ten gölgesi değil, geometri aralığı).
+    for (const dx of [-0.014, 0.014]) {
+      const groove = mesh(new THREE.BoxGeometry(0.004, 0.044, 0.031), mats.skinShadow, false);
+      groove.position.set(dx, -0.077, 0.005);
+      groove.rotation.x = -0.28;
+      hand.add(groove);
+    }
+
+    // Başparmak: avucun iç yanında, hafif dışa dönük.
+    const thumb = mesh(thumbGeo, mats.skin, false);
+    thumb.position.set(side * -0.033, -0.034, 0.016);
+    thumb.rotation.z = side * 0.42;
+    thumb.rotation.x = -0.18;
+    hand.add(thumb);
 
     const socket = new THREE.Group();
     hand.add(socket);

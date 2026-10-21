@@ -1089,3 +1089,25 @@ Sebep isim üreticisinin küçük bir havuzdan seçmesi (Faz 0b tohumları). Ans
 
 `probe-encyclopedia-ui` 58 kontrol (2'si yeni: SVG ikon zorunluluğu + `#6b6154` kalmadığı,
 4'ü portreler). Görseller: `docs/renders/encyclopedia-home.png`, `enc-kingdoms.png`, `enc-clans.png`.
+
+## 22. FAZ 1j — ELLER (TAMAMLANDI ✅)
+
+Kullanıcı geri bildirimi: "leydilerin elleri tuhaf görünüyor, erkeklerin de öyle".
+
+Sebep: el tek bir `BoxGeometry(0.07, 0.09, 0.08)` kutu idi (6 parça yerine 1).
+Yakın planda "tuğla" gibi görünüyor, başparmak/parmak ayrımı yok.
+
+### 22.1 Yeni el (6 parça, ~44 üçgen)
+
+| Parça | Ölçü | Not |
+| --- | --- | --- |
+| Bilek | Ø0.045 × 0.022 silindir (6 kenar) | deri bileklik, kol-bilek geçişini örter |
+| Avuç | 0.062 × 0.062 × 0.034 | ten, hafif daralan |
+| Parmak bloğu | 0.058 × 0.05 × 0.03, −0.28 rad kıvrık | gevşek yumruk |
+| Parmak olukları ×2 | 0.004 × 0.044 × 0.031 | `skinShadow` ile parmak izlenimi |
+| Başparmak | 0.019 × 0.036 × 0.022, yana 0.42 rad | eldiven hissi vermez |
+
+Ölçüm (`scripts/probe-hands.ts`, 10 kontrol): el 0.095 × 0.132 × 0.093 m,
+ön kol çapını (0.139) aşmıyor, kavrama yuvası elin içinde → kılıç/kalkan kopmuyor.
+
+`npm run verify:hands` · görsel: `docs/renders/hands-creator.png` (atölye, tam boy)
