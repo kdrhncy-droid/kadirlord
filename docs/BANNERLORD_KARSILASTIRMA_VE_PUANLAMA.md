@@ -43,7 +43,7 @@
 | :--- | :--- | :--- |
 | Kaynak dosya | **62** (42 `.ts`, 20 `.tsx`) | `find src -name "*.ts*"` |
 | Toplam satır | **47.912** | `wc -l` |
-| En büyük 5 dosya | `rules.ts` 3.619 · `CharacterArenaView.tsx` 2.936 · `Armory.ts` 2.930 · `WorldCanvas.tsx` 2.657 · `characterRig.ts` 1.995 | `wc -l` |
+| En büyük 5 dosya | `rules.ts` 3.698 · `CharacterArenaView.tsx` 2.936 · `Armory.ts` 2.930 · `WorldCanvas.tsx` 2.657 · `characterRig.ts` 1.995 | `wc -l` |
 | Üretim paketi | **1.566 kB** (gzip 437 kB), tek chunk | `vite build` |
 | Tip denetimi | `tsc --noEmit` **0 hata** · `tsc --strict` **0 hata** · `--noUnusedLocals` **78 hata** | `npx tsc` |
 | Birim testi | **28 test / 267 doğrulama** | `rules.test.ts` |
@@ -726,6 +726,15 @@ yaşatmak"** olmalı. Dikey dilim tam olarak bunu hedefliyor.
 > Arayüz artık veriyi okuyor (`NotableSpeechCard`), kayıt **v3** + v1/v2 göçü.
 > Kalan B0 kalemleri: `garrisonRoster`, `ownerClanId`, `workshops`, kalıcı `quests`.
 >
+> **Ganimet + atölye geliri (aynı gün):** `src/game/loot.ts` — zafer artık **eşya** bırakıyor
+> (küçük çatışma 1, orta 2, büyük 3, kuşatma 4; düşman kültürüne ve güne göre deterministik).
+> Eşyalar envantere düşer, pazarda satılır ya da kuşanılır; altın ödülü savaş büyüklüğü +
+> kuşatma bonusuyla hesaplanıyor (`120 + düşman×22 + 260`). "Ganimeti Sat" artık **sabit 45
+> dinar değil**, çuvaldaki emtianın gerçek değerini ödüyor ve yalnız ticari malı satıyor.
+> Atölyeler ilk kez gelir getiriyor: `settlementWorkshopIncome()` (refah × 0.08 + 20 + tür
+> bonusu; demirci +15, dokuma +12, yağ presi +8) her gün oyuncunun altınına ekleniyor ve
+> **arayüzdeki rakam aynı fonksiyondan** geldiği için ekranla kasa tutarlı.
+>
 > **B3 ilk dilim (aynı gün):** pazar kataloğu **29 → 60 eşya** (14 silah, 6 kalkan, 16 zırh,
 > 16 erzak/emtia, 8 binek) ve **emoji ikonlar → SVG**: `src/game/itemIcons.ts` (30 anahtar) +
 > `src/components/ItemIcon.tsx` (tek renkli siluetler). Pazar ekranının kategori şeridi, eşya
@@ -871,20 +880,21 @@ arayüz, test) zaten bitmiş durumda; kalan kısım **içerik ve simülasyon**, 
 npx tsc --noEmit                                   # 0 hata
 npx tsc --noEmit --strict                          # 0 hata (config'de kapalı)
 npx tsc --noEmit --noUnusedLocals --noUnusedParameters   # 78 uyarı
-npm run verify:all                                 # 33 paket ✅
+npm run verify:all                                 # 34 paket ✅
 npx vite build                                     # 1.566 kB (437 kB gzip)
 npx tsx scripts/probe-content.ts                   # 10 kontrol
 npx tsx scripts/probe-world-sim.ts                 # 20 kontrol (365 gün canlı dünya)
 npx tsx scripts/probe-notables.ts                  # 30 kontrol (ileri gelenler + kayıt göçü)
 npx tsx scripts/probe-troops.ts                    # 23 kontrol (kültür asker adları)
 npx tsx scripts/probe-items.ts                     # 34 kontrol (eşya kataloğu + SVG ikonlar)
+npx tsx scripts/probe-loot.ts                      # 30 kontrol (ganimet, emtia satışı, atölye geliri)
 ```
 
 ## EK B — Dosya envanteri (satır sayıları)
 
 `rules.ts` 3.546 · `CharacterArenaView.tsx` 2.936 · `Armory.ts` 2.930 · `WorldCanvas.tsx` 2.624 ·
-`characterRig.ts` 1.995 · `SettlementModal.tsx` 1.814 · `characterAnimator.ts` 1.872 · `GameHud.tsx` 1.571 ·
-`App.tsx` 1.542 · `KingdomManagementModal.tsx` 1.411 · `characterMorph.ts` 1.299 · `kingdomSystem.ts` 1.275 ·
+`characterRig.ts` 1.995 · `SettlementModal.tsx` 1.830 · `characterAnimator.ts` 1.872 · `GameHud.tsx` 1.571 ·
+`App.tsx` 1.545 · `KingdomManagementModal.tsx` 1.411 · `characterMorph.ts` 1.299 · `kingdomSystem.ts` 1.275 ·
 `Core.ts` 1.242 · `proceduralModels.ts` 1.225 · `mapGen.ts` 1.161 · `CharacterCreatorModal.tsx` 1.131 ·
 `rules.test.ts` 1.112 · `BattleSoundFX.ts` 985 · `Armor.ts` 906 · `battleEnginePool.ts` 858 · `Horse.ts` 825 ·
 `Character.ts` 817 · `Faction.ts` 803 · `BannerlordMarketModal.tsx` 809 · `Rig.ts` 778 · `EncyclopediaModal.tsx` 757 ·
@@ -898,5 +908,5 @@ npx tsx scripts/probe-items.ts                     # 34 kontrol (eşya kataloğu
 `characterRig.types.ts` 1 — **toplam 47.912**
 
 **Faz A eklemeleri:** `worldSim.ts` 757 · `WorldWarPanel.tsx` 56 · `probe-world-sim.ts` (betik, sayılmadı)
-`notables.ts` 284 · `rng.ts` 38 · `troops.ts` 95 · `itemIcons.ts` 85 · `ItemIcon.tsx` 259
-→ **toplam 49.777** (+1.865 satır).
+`notables.ts` 284 · `rng.ts` 38 · `troops.ts` 95 · `itemIcons.ts` 85 · `ItemIcon.tsx` 259 · `loot.ts` 102
+→ **toplam 49.977** (+2.065 satır).

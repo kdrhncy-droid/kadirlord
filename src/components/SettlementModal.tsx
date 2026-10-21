@@ -28,6 +28,7 @@ import {
   UNIT_DEFINITIONS,
   UnitTierId,
   WorkshopTypeId,
+  settlementWorkshopIncome,
 } from '../game/rules';
 import { recruitQuote, partyLimit, partySize, partyRoom } from '../game/recruitment';
 import { sound } from '../game/sound';
@@ -212,6 +213,13 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
     [settlement, campaign.world?.seed],
   );
 
+  // Faz B0: çuvaldaki ticari emtia (satılabilir ganimet) ve toplam değeri.
+  const lootGoods = React.useMemo(
+    () => (campaign.inventoryItems ?? []).filter((i) => i.slot === 'TRADE' && i.category === 'FOOD'),
+    [campaign.inventoryItems],
+  );
+  const lootValue = lootGoods.reduce((sum, item) => sum + Math.max(1, Math.round(item.value)), 0);
+
   // Tab Action Handlers
   const handleRecruitClick = (unitId: UnitTierId, amount = 1) =>{
     const err = onRecruit(settlement.id, unitId, amount);
@@ -247,7 +255,7 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
         setFeedback(err);
       } else {
         sound.playCoinChime();
-        setFeedback('Sefer ganimetleri ve fazlalıklar tüccara satıldı (+45 Dinar).');
+        setFeedback('Çuvaldaki emtia pazara satıldı.');
       }
     }
   };
@@ -913,14 +921,19 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
                         <div className="text-xs text-[#a89b84] mt-1">
                           Savaş meydanlarında ele geçirilen zırh, kalkan ve hurda eşyalar tüccarlara toptan satılır.
                         </div>
-                        <div className="text-xs text-[#34d399] mt-0.5">Gelir: +45 Dinar</div>
+                        <div className="text-xs text-[#34d399] mt-0.5">
+                          {lootGoods.length > 0
+                            ? `Çuvalda ${lootGoods.length} kalem emtia · Gelir: +${lootValue} Dinar`
+                            : 'Çuvalda satılacak emtia yok'}
+                        </div>
                       </div>
                       <button
                         type="button"
                         onClick={handleSellLootClick}
-                        className="mt-3 w-full py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white transition-colors"
+                        disabled={lootGoods.length === 0}
+                        className="mt-3 w-full py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white disabled:opacity-40 transition-colors"
                       >
-                        Ganimeti Sat (+45 Dinar)
+                        {lootGoods.length > 0 ? `Ganimeti Sat (+${lootValue} Dinar)` : 'Ganimeti Sat'}
                       </button>
                     </div>
                   )}
@@ -1453,10 +1466,10 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                     {(
                       [
-                        { id: 'BREWERY', name: 'Bira Fabrikası', desc: 'Tahıl işler · +45 Dinar/gün'},
-                        { id: 'SMITHY', name: 'Demirci Atölyesi', desc: 'Demir işler · +60 Dinar/gün'},
-                        { id: 'OLIVE_PRESS', name: 'Zeytinyağı Presi', desc: 'Zeytin işler · +50 Dinar/gün'},
-                        { id: 'WEAVERY', name: 'Kadife Dokuma', desc: 'İpek/Yün işler · +55 Dinar/gün'},
+                        { id: 'BREWERY', name: 'Bira Fabrikası', input: 'Tahıl işler' },
+                        { id: 'SMITHY', name: 'Demirci Atölyesi', input: 'Demir işler' },
+                        { id: 'OLIVE_PRESS', name: 'Zeytinyağı Presi', input: 'Zeytin işler' },
+                        { id: 'WEAVERY', name: 'Kadife Dokuma', input: 'İpek/Yün işler' },
                       ] as const
                     ).map((ws) =>{
                       const isActive = settlement.workshopType === ws.id;
@@ -1471,7 +1484,10 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
                         >
                           <div>
                             <div className="font-bold text-xs text-[#f8f0df]">{ws.name}</div>
-                            <div className="text-[11px] text-[#a89b84] mt-0.5">{ws.desc}</div>
+                            <div className="text-[11px] text-[#a89b84] mt-0.5">
+                              {ws.input} · +
+                              {settlementWorkshopIncome({ ...settlement, workshopType: ws.id })} Dinar/gün
+                            </div>
                           </div>
                           <button
                             type="button"

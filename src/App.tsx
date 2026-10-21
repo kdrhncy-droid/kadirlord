@@ -664,14 +664,17 @@ export default function App() {
     [],
   );
 
-  const handleSellLoot = useCallback((settlementId: string): string | null => {
-    setCampaign((prev) => {
-      const res = sellSurplusLootAtMarket(prev, settlementId);
+  const handleSellLoot = useCallback(
+    (settlementId: string): string | null => {
+      const res = sellSurplusLootAtMarket(campaign, settlementId);
+      if (!res.success) return res.reason ?? 'Satış yapılamadı.';
+      setCampaign(res.nextState);
       sound.playCoinChime();
-      return res.nextState;
-    });
-    return null;
-  }, []);
+      showToast(`Ganimet satıldı: +${res.goldGained} Dinar`);
+      return null;
+    },
+    [campaign, showToast],
+  );
 
   const handleManageGarrison = useCallback(
     (

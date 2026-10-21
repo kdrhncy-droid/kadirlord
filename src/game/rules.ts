@@ -6,6 +6,7 @@ import {
 } from './mapGen.ts';
 import { snapToNearestLand } from './navigation.ts';
 import { ensureNotables, type SettlementNotable } from './notables';
+import { battleGoldReward, describeLoot, rollBattleLoot } from './loot';
 import {
   CharacterMorphDNA,
   cloneDNA,
@@ -150,6 +151,8 @@ export interface Settlement {
   buildings?: Record<BuildingProjectId, number>;
   dailyDefault?: SettlementDailyDefault;
   workshopType?: WorkshopTypeId;
+  /** Atölyenin sahibi. Oyuncu atölyesi her gün gelir getirir (Faz B0). */
+  workshopOwner?: 'player';
   siegeEngines?: SiegeEngineType[];
   reserveEngines?: SiegeEngineType[];
   wallHealth?: number;
@@ -727,24 +730,47 @@ export function joinArenaTournament(
   }
 }
 
+/**
+ * Çuvaldaki **ticari emtia**yı pazara satar (savaş ganimeti ve alım-satım
+ * fazlalıkları). Kuşanılabilir eşyaya dokunmaz — onlar envanterde kalır.
+ * Faz B0: sabit 45 dinar yerine satılan malın gerçek değeri ödenir.
+ */
 export function sellSurplusLootAtMarket(
   state: CampaignState,
   settlementId: string,
-): { nextState: CampaignState; success: boolean; goldGained: number } {
-  const goldGained = 45;
+): { nextState: CampaignState; success: boolean; goldGained: number; reason?: string } {
   const s = state.settlements.find((item) => item.id === settlementId);
+  if (!s) return { nextState: state, success: false, goldGained: 0, reason: 'Yerleşim bulunamadı.' };
+
+  const goods = (state.inventoryItems ?? []).filter(
+    (item) => item.slot === 'TRADE' && item.category === 'FOOD',
+  );
+  if (goods.length === 0) {
+    return {
+      nextState: state,
+      success: false,
+      goldGained: 0,
+      reason: 'Çuvalınızda satılacak emtia yok. Ganimet eşyaları pazaryerinde tek tek satılır.',
+    };
+  }
+
+  const goldGained = goods.reduce((sum, item) => sum + Math.max(1, Math.round(item.value)), 0);
+  const soldIds = new Set(goods.map((item) => item.id));
+  const remaining = (state.inventoryItems ?? []).filter((item) => !soldIds.has(item.id));
+
   return {
     success: true,
     goldGained,
     nextState: {
       ...state,
       gold: state.gold + goldGained,
+      inventoryItems: remaining,
       chronicle: [
         {
-          id: `loot-sell-${Date.now()}`,
+          id: `loot-sell-${state.day}-${goods.length}`,
           day: state.day,
           category: 'ECONOMY' as const,
-          text: `${s?.name || 'Yerleşim'} pazarına ganimet ve fazlalıklar satıldı (+${goldGained} Dinar).`,
+          text: `${s.name} pazarına ${goods.length} kalem ganimet/emtia satıldı (+${goldGained} Dinar).`,
         },
         ...state.chronicle,
       ].slice(0, 25),
@@ -970,14 +996,37 @@ export function forcePeasantsRecruits(
   };
 }
 
+const WORKSHOP_TYPE_BONUS: Record<string, number> = {
+  BREWERY: 0,
+  SMITHY: 15,
+  OLIVE_PRESS: 8,
+  WEAVERY: 12,
+};
+
+/**
+ * Atölyenin günlük geliri (Faz B0).
+ * Refah arttıkça kâr artar; atölye türü küçük bir çarpan ekler. Arayüz ve
+ * günlük ekonomi **aynı** fonksiyonu kullanır ki ekranda yazan rakam yalan olmasın.
+ */
+export function settlementWorkshopIncome(settlement: Settlement): number {
+  if (!settlement.workshopType || settlement.workshopType === 'NONE') return 0;
+  const base = 20 + Math.round(settlement.prosperity * 0.08);
+  return base + (WORKSHOP_TYPE_BONUS[settlement.workshopType] ?? 0);
+}
+
 export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState {
   const wage = calculateDailyWage(state.roster);
   const foodUsed = calculateDailyFoodConsumption(state.roster);
 
   let playerSettlementTaxes = 0;
+  let playerWorkshopIncome = 0;
   const updatedSettlements = state.settlements.map((s) => {
     if (s.faction === 'player') {
       playerSettlementTaxes += Math.round(s.prosperity * 0.25);
+    }
+    // Faz B0: oyuncunun atölyesi refaha bağlı günlük gelir üretir.
+    if (s.workshopOwner === 'player') {
+      playerWorkshopIncome += settlementWorkshopIncome(s);
     }
     return {
       ...s,
@@ -993,21 +1042,36 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
   });
 
   const nextFood = Math.max(0, state.food - foodUsed);
-  const nextGold = Math.max(0, state.gold + playerSettlementTaxes - wage);
+  const nextGold = Math.max(0, state.gold + playerSettlementTaxes + playerWorkshopIncome - wage);
   let moraleDelta = 0;
   if (state.food < foodUsed) moraleDelta -= 10;
   else moraleDelta += 2;
-  if (state.gold + playerSettlementTaxes < wage) moraleDelta -= 8;
+  if (state.gold + playerSettlementTaxes + playerWorkshopIncome < wage) moraleDelta -= 8;
 
   const seasons: Array<'Bahar' | 'Yaz' | 'Güz' | 'Kış'> = ['Bahar', 'Yaz', 'Güz', 'Kış'];
   const nextDay = state.day + 1;
   const seasonIdx = Math.floor(((nextDay - 1) % 40) / 10);
+
+  // Atölye gelirini 10 günde bir vakayinameye yaz (her gün yazmak günlüğü boğar).
+  const economyChronicle =
+    playerWorkshopIncome > 0 && nextDay % 10 === 0
+      ? [
+          {
+            id: `workshop-income-${nextDay}`,
+            day: nextDay,
+            category: 'ECONOMY' as const,
+            text: `Atölyelerin son on günde yaklaşık ${(playerWorkshopIncome * 10).toLocaleString('tr-TR')} Dinar kazandırdı.`,
+          },
+          ...state.chronicle,
+        ].slice(0, 20)
+      : state.chronicle;
 
   return {
     ...state,
     day: nextDay,
     season: seasons[seasonIdx] || 'Güz',
     gold: nextGold,
+    chronicle: economyChronicle,
     food: nextFood,
     morale: Math.max(15, Math.min(100, state.morale + moraleDelta)),
     playerHp: Math.min(state.playerMaxHp, state.playerHp + 15),
@@ -1144,9 +1208,22 @@ export function resolveBattleOutcome(
     };
   }
 
-  const goldLoot = 120 + enemiesDefeatedCount * 22;
+  const isSiegeVictory = Boolean(conqueredSettlementId);
+  const goldLoot = battleGoldReward(enemiesDefeatedCount, isSiegeVictory);
   const renownGain = 15 + enemiesDefeatedCount * 3;
   const prisonersGain = Math.max(1, Math.floor(enemiesDefeatedCount * 0.35));
+  // Faz B0: zafer artık eşya da bırakır (envantere düşer, pazarda satılır).
+  const defeatedFaction =
+    state.lords.find((l) => l.isAtWarWithPlayer)?.faction ??
+    (conqueredSettlementId
+      ? state.settlements.find((s) => s.id === conqueredSettlementId)?.faction
+      : undefined) ??
+    'bandits';
+  const loot = rollBattleLoot(state, {
+    enemyFaction: defeatedFaction,
+    defeated: enemiesDefeatedCount,
+    siege: isSiegeVictory,
+  });
 
   const nextSettlements = state.settlements.map((s) => {
     if (conqueredSettlementId && (s.id === conqueredSettlementId || s.boundSettlementId === conqueredSettlementId)) {
@@ -1165,7 +1242,7 @@ export function resolveBattleOutcome(
     category: conqueredSettlementId ? 'CONQUEST' : 'WAR',
     text: conqueredSettlementId
       ? `${state.playerName}, kuşatma zaferiyle yeni bir mülkü ve bağlı köylerini sancağı altına aldı!`
-      : `${state.playerName}, meydan savaşında düşman ordusunu bozguna uğrattı (+${renownGain} Nam, +${goldLoot} Dinar).`,
+      : `${state.playerName}, meydan savaşında düşman ordusunu bozguna uğrattı (+${renownGain} Nam, +${goldLoot} Dinar, ${describeLoot(loot)}).`,
   };
 
   return {
@@ -1175,6 +1252,7 @@ export function resolveBattleOutcome(
     prisoners: state.prisoners + prisonersGain,
     morale: Math.min(100, state.morale + 10),
     battlesWon: state.battlesWon + 1,
+    inventoryItems: [...(state.inventoryItems ?? []), ...loot],
     roster: nextRoster,
     lords: nextLords,
     settlements: nextSettlements,
@@ -3164,6 +3242,7 @@ export function buyOrChangeWorkshop(
       ? {
           ...item,
           workshopType,
+          workshopOwner: 'player' as const,
           prosperity: item.prosperity + 25,
         }
       : item,

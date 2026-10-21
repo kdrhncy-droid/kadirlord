@@ -476,12 +476,37 @@ test('Bannerlord settlement arrival radii and Town, Castle, Village menu systems
   assert.equal(arenaRes.nextState.gold, goldBeforeArena + 25);
   state = arenaRes.nextState;
 
-  // 5. Market: Sell Surplus Loot
+  // 5. Market: Sell Surplus Loot — çuvaldaki ticari emtia gerçek değerinden satılır
+  const noGoodsRes = sellSurplusLootAtMarket(state, lycaron.id);
+  assert.equal(noGoodsRes.success, false);
+  assert.equal(noGoodsRes.goldGained, 0);
+
+  state = {
+    ...state,
+    inventoryItems: [
+      ...(state.inventoryItems ?? []),
+      {
+        id: 'test-trade-good',
+        name: 'Tuz Sandığı',
+        slot: 'TRADE',
+        category: 'FOOD',
+        value: 40,
+        weight: 5,
+        statBonus: 'Ticaret',
+        civilianLegal: true,
+        tier: 1,
+      },
+    ],
+  };
   const goldBeforeLoot = state.gold;
   const lootRes = sellSurplusLootAtMarket(state, lycaron.id);
   assert.equal(lootRes.success, true);
-  assert.equal(lootRes.goldGained, 45);
-  assert.equal(lootRes.nextState.gold, goldBeforeLoot + 45);
+  assert.equal(lootRes.goldGained, 40);
+  assert.equal(lootRes.nextState.gold, goldBeforeLoot + 40);
+  assert.equal(
+    (lootRes.nextState.inventoryItems ?? []).some((item) => item.id === 'test-trade-good'),
+    false,
+  );
   state = lootRes.nextState;
 
   // 6. Castle: Manage Garrison Transfer
