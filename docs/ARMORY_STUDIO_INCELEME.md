@@ -197,3 +197,46 @@ Görsel kanıt: `docs/renders/hair-styles.png`, `beard-styles.png`, `helmets.png
 (`npx tsx scripts/render-styles.ts` ile yeniden üretilir — tarayıcı/WebGL gerekmez.)
 
 Mevcut testler: **28/28 geçiyor**, `tsc` temiz, `vite build` başarılı.
+
+## 10. YAY / NİŞAN ALMA MEKANİĞİ (2026-10-21)
+
+### Sorun
+Kullanıcı bildirimi: *"nişan alma tuşuna bastığın anda zaten oku fırlatıyor"* — yani nişan ile bırakma ayrışmıyordu ve basılı tutma çalışmıyordu.
+
+### Tespit edilen 5 kök neden (hepsi `scripts/probe-bow.ts` ile ölçüldü)
+
+| # | Hata | Kanıt (ölçüm) |
+| :--- | :--- | :--- |
+| 1 | **`advance()` hold sonrası klibi bitiriyordu.** `a.t = holdAt` yapılınca `a.t >= d.duration` de doğru oluyor (`holdAt == duration`) → `bow_draw` 0.7 sn'de kendiliğinden iptal | 1200 ms basışta `bowDraw` 0.73 → **0.35 → 0** |
+| 2 | **`envelope()` hold sırasında fade-out uyguluyordu** — `duration - t` üzerinden hesaplandığı için ağırlık sıfıra düşüyor, poz çöküyordu | Çekiş dolarken omuz/kol geri bırakıyor (render ile doğrulandı) |
+| 3 | **`release()` gecikmeli `current.bowDraw`'a bakıyordu** — kare bazlı yumuşatılmış değer; önceki atıştan kalan 1.0 yüzünden tuşa basıldığı anda atış sayılıyordu | Basış anında `current.bowDraw` hâlâ 1.0 |
+| 4 | **`onMouseUp` yay kontrolü yapmıyordu** — her sol tık bırakışı `anim.release()` çağırıyordu (HUD'a tıklamak bile ok atıyordu) | `CharacterArenaView.tsx` eski `onMouseUp` |
+| 5 | **`isAimingBow` state'i ref'e geri yazılıyordu** (`useEffect`) — hızlı bas-bırak sonrası ref "true"da kalıp sonraki tıkta anında atışa yol açıyordu | Aynı dosya |
+
+### Yapılanlar
+- **`characterAnimator.ts`**
+  - `heldAtHold` bayrağı + `if (heldAtHold) return;` → holdAt'ta bekleyen klip bitmez.
+  - `envelope()`: basılı tutulabilen eylemde (`held && holdAt !== undefined`) fade-out **hiç** uygulanmaz → çekiş boyunca tam ağırlık.
+  - `release()`: karar, eylemin **kendi zamanından** `samplePiecewise` ile hesaplanır (`bowDrawProgressOf`); `current.bowDraw` artık kullanılmaz.
+  - `BOW_MIN_RELEASE_DRAW = 0.25` — altında bırakılırsa `cancelAction()`: **ok takılı kalır, atış olmaz** (Bannerlord davranışı).
+  - Yeni API: `getBowDrawProgress()`, `getLastBowPower()`, `cancelBowDraw()`.
+- **`CharacterArenaView.tsx`**
+  - Sol tık = nişan başlat (`bow_draw`, hold). Sağ tık = `cancelBowDraw()` (atış yok).
+  - Bırakma yalnızca gerçekten nişan alınıyorsa işlenir; `isAimingBow` sadece arayüz içindir, ref'e geri yazılmaz.
+  - HUD: nişan sırasında **canlı çekiş gücü çubuğu** (her karede DOM'a yazılır, React render'ı yok) + `%25` eşik çizgisi ve "altında bırakırsan ok takılı kalır" ipucu. Kamera FOV'u da çekişle 40°→34° arasında daralır.
+  - `FlyingArrow.power`: ok **hızı** `ARROW_SPEED × (0.45 + 0.55 × güç)`, **hasar** kuklada `50 + 40 × güç`, bot üzerinde `20 + 32 × güç`; tam çekişte ayrı renk/metin.
+- **`scripts/probe-bow.ts` (yeni regresyon testi)** — 60/200/500/1200 ms basış senaryoları + iptal senaryosu.
+- **`scripts/render-bow.ts`, `scripts/render-bow2.ts`** — tarayıcısız çekiş render'ı (`docs/renders/bow-draw.png`, `bow-draw-closeup.png`).
+
+### Doğrulama (tarayıcısız)
+```
+✓ basılı tut (1.4 sn)    bırakma doluluğu 1.00 → atış
+✓ orta basış (0.5 sn)    bırakma doluluğu 0.70 → atış
+✓ çok kısa tık (0.1 sn)  bırakma doluluğu 0.00 → atış YOK
+✓ anlık tık (0.03 sn)    bırakma doluluğu 0.00 → atış YOK
+✓ basılı tutunca çekiş dolu kalıyor (1.00 sabit)
+✓ iptal edilen nişan ok fırlatmıyor
+```
+Kiriş geometrisi: uç noktaları uzuv uçlarıyla birebir aynı `(0, brace, ±0.56)`; nok noktası dinlenmede `y=0.13`, tam çekişte `y=0.785` — çekiş **okçuya doğru** (bow-local `+Y`), yani string gerçekten geriliyor.
+
+`npx tsc --noEmit` temiz · `npm run verify:armory` 7/7 · `npx tsx --test src/game/rules.test.ts` 28/28 · `npx vite build` başarılı.

@@ -108,6 +108,13 @@ export interface ClipKey {
 
 export type ClipKind = 'attack' | 'block' | 'bow_draw' | 'bow_release' | 'react' | 'fall' | 'misc';
 
+/**
+ * Oku fırlatmak için gereken en düşük yay doluluğu (0..1).
+ * Altında bırakılırsa ok takılı kalır ve yay iner; böylece "tık" ile
+ * kazara atış yapılmaz.
+ */
+export const BOW_MIN_RELEASE_DRAW = 0.25;
+
 export interface ClipDef {
   name: string;
   label: string;
@@ -1119,6 +1126,8 @@ export class CharacterAnimator {
   readonly rig: CharacterRig;
   /** Called for clip events: 'hit', 'release', 'hold', 'end'. */
   onEvent: ((event: string, clipName: string) => void) | null = null;
+  /** Son bırakılan okun gücü (0..1). */
+  private lastBowPower = 0;
 
   private target = new Frame();
   private current = new Frame();
@@ -1280,16 +1289,51 @@ export class CharacterAnimator {
     return this.play(clipName, { hold: true });
   }
 
-  /** Releases the currently held action (charged attack, block, bow draw). */
+  /**
+   * Releases the currently held action (charged attack, block, bow draw).
+   *
+   * Yay için karar, eylemin KENDİ zamanından hesaplanan doluluk oranına göre
+   * verilir. Eskiden `current.bowDraw` (kareye göre yumuşatılmış, gecikmeli
+   * değer) kullanılıyordu: bu yüzden bir önceki atıştan kalan 1.0 değeri
+   * yüzünden tuşa BASILDIĞI ANDA ok fırlıyordu.
+   */
   release() {
     const a = this.action;
     if (!a) return;
     a.held = false;
     if (a.clip.def.kind === 'bow_draw') {
-      // Only shoot if the bow is meaningfully drawn; otherwise lower it.
-      if (this.current.bowDraw > 0.55) this.play('bow_release', { force: true });
+      const draw = this.bowDrawProgressOf(a);
+      this.lastBowPower = draw;
+      // Çok erken bırakıldı → ok takılı kalır, yay iner (Bannerlord davranışı).
+      if (draw >= BOW_MIN_RELEASE_DRAW) this.play('bow_release', { force: true });
       else this.cancelAction();
     }
+  }
+
+  /** Mevcut yay çekişinin doluluğu (0..1). HUD'daki güç göstergesi bunu kullanır. */
+  getBowDrawProgress(): number {
+    const a = this.action;
+    return a ? this.bowDrawProgressOf(a) : 0;
+  }
+
+  /** Son bırakılan atışın gücü (0..1) — hasar/hız ölçeklemesi için. */
+  getLastBowPower(): number {
+    return this.lastBowPower;
+  }
+
+  /** Yay çekişini iptal et (nişanı bırak, ok takılı kalır). */
+  cancelBowDraw(): void {
+    const a = this.action;
+    if (!a || a.clip.def.kind !== 'bow_draw') return;
+    a.held = false;
+    this.cancelAction();
+  }
+
+  private bowDrawProgressOf(a: ActionInstance): number {
+    const curve = a.clip.def.bowDraw;
+    const sampled = samplePiecewise(curve, a.t);
+    if (sampled !== null) return clamp01(sampled);
+    return clamp01(this.current.bowDraw);
   }
 
   /** Interrupts the current action (e.g. when staggered). */
@@ -1425,7 +1469,12 @@ export class CharacterAnimator {
     const fi = d.fadeIn ?? Math.max(0.06, firstKey);
     const fo = d.fadeOut ?? 0.2;
     let w = smooth(clamp01(a.t / fi));
-    if (!d.endHold && !ignoreFadeOut) w *= smooth(clamp01((d.duration - a.t) / fo));
+    // Basılı tutulabilen eylemde fade-out UYGULANMAZ: `holdAt == duration`
+    // olduğu için klip sonuna yaklaşırken ağırlık 0'a düşüyor, poz çöküyor
+    // (yay çekişi 0.5 sn'de inip 0.7 sn'de geri zıplıyordu). Basılı tutulan
+    // eylem, bırakılana kadar tam ağırlıkta kalmalı.
+    const willHold = a.held && d.holdAt !== undefined;
+    if (!d.endHold && !ignoreFadeOut && !willHold) w *= smooth(clamp01((d.duration - a.t) / fo));
     return w;
   }
 
@@ -1433,10 +1482,15 @@ export class CharacterAnimator {
     const d = a.clip.def;
     const prevT = a.t;
     let nt = a.t + dt * a.speed;
+    // Basılı tutulan klipte holdAt'ta DON. (Eskiden t = holdAt olduğunda
+    // `a.t >= d.duration` kontrolü de doğru oluyor ve klip hemen bitiyordu:
+    // yay 0.7 sn sonra kendiliğinden bırakılmış gibi sıfırlanıyordu.)
+    let heldAtHold = false;
     if (a.held && d.holdAt !== undefined && nt >= d.holdAt) {
       if (prevT < d.holdAt) this.emit('hold', d.name);
       nt = d.holdAt;
       a.holdTime += dt;
+      heldAtHold = true;
     }
     a.t = nt;
 
@@ -1451,6 +1505,8 @@ export class CharacterAnimator {
         a.nextEvent++;
       }
     }
+
+    if (heldAtHold) return; // holdAt'ta bekleyen klip bitmez
 
     if (a.t >= d.duration && !d.endHold) {
       if (a === this.action) {

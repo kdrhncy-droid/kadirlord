@@ -23,6 +23,7 @@ import {
   updateWarHorseAnimation,
 } from '../game/characterRig';
 import {
+  BOW_MIN_RELEASE_DRAW,
   CharacterAnimator,
   CharacterAnimState,
   AttackDirection,
@@ -61,6 +62,8 @@ interface FlyingArrow {
   inFlight: boolean;
   spawnTime: number;
   team: 'ALLY' | 'ENEMY';
+  /** Çekiş gücü 0..1 — hız ve hasarı bu belirler. */
+  power: number;
 }
 
 interface FloatingText {
@@ -235,6 +238,11 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
   const shieldTypeRef = useRef<ShieldType>(initialEquipmentVisuals.shieldType);
   const combatDirRef = useRef<AttackDirection>('up');
   const isAimingBowRef = useRef<boolean>(false);
+  /** Nişanın başladığı an (ms) — çok erken bırakmayı ayırt etmek için. */
+  const bowAimStartRef = useRef<number>(0);
+  /** HUD güç çubuğu (DOM'a doğrudan yazılır, React render'ı tetiklemez). */
+  const bowPowerBarRef = useRef<HTMLDivElement | null>(null);
+  const bowPowerLabelRef = useRef<HTMLSpanElement | null>(null);
 
   // Inspector orbit refs
   const orbitRef = useRef({ azimuth: 0, polar: 0.35, distance: 5.2, dragging: false, lastX: 0, lastY: 0 });
@@ -270,7 +278,9 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
   useEffect(() => { weaponTypeRef.current = weaponType; }, [weaponType]);
   useEffect(() => { shieldTypeRef.current = shieldType; }, [shieldType]);
   useEffect(() => { combatDirRef.current = combatDirection; }, [combatDirection]);
-  useEffect(() => { isAimingBowRef.current = isAimingBow; }, [isAimingBow]);
+  // NOT: `isAimingBow` yalnızca ARAYÜZ içindir. Ref'e geri yazılmaz; eskiden
+  // buradaki senkron, hızlı bas-bırak sonrası ref'i "true"da bırakıp bir
+  // sonraki tıklamada anında ok atılmasına yol açıyordu.
 
   // ── Mount / Dismount synchronization on 3D Player & WarHorseRig ──
   useEffect(() => {
@@ -1027,6 +1037,10 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       const anim = playerAnimatorRef.current;
       if (!rig || !anim) return;
 
+      // Çekiş gücü: bırakma anında animatörün hesapladığı değer (0..1).
+      // Özel çağrılarda (bot/asker okları) tam güç kullanılır.
+      const shotPower = customOrigin ? 1 : Math.min(1, Math.max(BOW_MIN_RELEASE_DRAW, anim.getLastBowPower()));
+
       sound.playArrowFly();
       const arrowMesh = createArrowMesh(rig.materials);
       arrowMesh.castShadow = true;
@@ -1054,12 +1068,15 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       arrowMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), spawnDir);
       scene.add(arrowMesh);
 
+      // Güçsüz çekiş daha yavaş ve daha çok düşer (Bannerlord hissi).
+      const speed = ARROW_SPEED * (0.45 + 0.55 * shotPower);
       flyingArrowsRef.current.push({
         mesh: arrowMesh,
-        velocity: spawnDir.clone().multiplyScalar(ARROW_SPEED),
+        velocity: spawnDir.clone().multiplyScalar(speed),
         inFlight: true,
         spawnTime: Date.now(),
         team,
+        power: shotPower,
       });
 
       if (team === 'ALLY' && !customOrigin) {
@@ -1092,7 +1109,10 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         if (e.button === 0) {
           const wt = weaponTypeRef.current;
           if (wt === 'BOW') {
+            // Zaten nişan alıyorsak yeniden başlatma (çift tık çekişi kesmesin).
+            if (isAimingBowRef.current) return;
             isAimingBowRef.current = true;
+            bowAimStartRef.current = performance.now();
             setIsAimingBow(true);
             anim.play('bow_draw', { hold: true });
           } else {
@@ -1101,10 +1121,12 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         } else if (e.button === 2) {
           e.preventDefault();
           const wt = weaponTypeRef.current;
-          if (wt === 'BOW' && isAimingBowRef.current) {
+          if (wt === 'BOW') {
+            // Sağ tık: nişanı iptal et (ok takılı kalır, atış olmaz).
+            if (!isAimingBowRef.current) return;
             isAimingBowRef.current = false;
             setIsAimingBow(false);
-            anim.cancelAction();
+            anim.cancelBowDraw();
           } else {
             anim.block(combatDirRef.current);
           }
@@ -1115,19 +1137,45 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     const onMouseUp = (e: MouseEvent) => {
       orbitRef.current.dragging = false;
       const mode = controlModeRef.current;
-      if (mode === 'PLAYABLE') {
-        const anim = playerAnimatorRef.current;
-        if (!anim) return;
-        if (e.button === 0) {
-          if (isAimingBowRef.current) {
-            isAimingBowRef.current = false;
-            setIsAimingBow(false);
+      if (mode !== 'PLAYABLE') return;
+      const anim = playerAnimatorRef.current;
+      if (!anim) return;
+
+      if (e.button === 0) {
+        if (isAimingBowRef.current) {
+          // Yay: yalnızca nişan alıyorsak bırakma işlemi yapılır. (Eskiden bu
+          // kontrol yoktu; HUD üzerinde bırakılan her tıklama ok atıyordu.)
+          const heldMs = performance.now() - bowAimStartRef.current;
+          isAimingBowRef.current = false;
+          setIsAimingBow(false);
+          anim.release();
+
+          const power = anim.getLastBowPower();
+          if (power >= BOW_MIN_RELEASE_DRAW) {
+            // Gerçekten atıldı: gücü oyuncuya bildir (hasar/hız da bununla ölçekli).
+            const pct = Math.round(power * 100);
+            const label = power > 0.92 ? 'TAM ÇEKİŞ' : power > 0.6 ? 'GÜÇLÜ' : power > 0.35 ? 'ORTA' : 'ZAYIF';
+            spawnDamageText(
+              `🏹 ${label} ATIŞ (${pct}%)`,
+              power > 0.92 ? '#fbbf24' : power > 0.6 ? '#fcd34d' : '#d6d3d1',
+              playerPosRef.current.clone().setY(2.2),
+            );
+          } else {
+            // Eşiğin altında bırakıldı: ok fırlamaz, takılı kalır.
+            spawnDamageText(
+              heldMs < 400 ? '🏹 Çok erken — düğmeyi basılı tut' : '🏹 Çekiş yetersiz — ok takılı kaldı',
+              '#a8a29e',
+              playerPosRef.current.clone().setY(2.2),
+            );
           }
+        } else {
+          // Yakın dövüş: basılı tutulan saldırıyı bırak.
           anim.release();
         }
-        if (e.button === 2) {
-          anim.release();
-        }
+      }
+      if (e.button === 2) {
+        // Kalkan bloğunu bırak (yay nişanı sağ tıkla iptal edilir, release gerekmez).
+        if (!isAimingBowRef.current) anim.release();
       }
     };
 
@@ -1760,7 +1808,18 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       // ─ 4. Camera (Bannerlord Over-the-shoulder view with dynamic aim & mount elevation) ─
       if (mode === 'PLAYABLE') {
         const isAiming = isAimingBowRef.current;
-        const targetFov = isAiming ? 34 : mounted ? 50 : 46;
+        // Çekiş gücü: 0 → yay gerilmemiş, 1 → tam çekiş. HUD çubuğu ve kamera
+        // yakınlaşması bu değerle sürekli güncellenir.
+        const bowPower = isAiming ? playerAnimatorRef.current?.getBowDrawProgress() ?? 0 : 0;
+        const bar = bowPowerBarRef.current;
+        if (bar) {
+          bar.style.width = `${Math.min(100, bowPower * 100).toFixed(1)}%`;
+          // %25 altı = kırmızımsı uyarı rengi
+          bar.style.filter = bowPower > 0 && bowPower < BOW_MIN_RELEASE_DRAW ? 'saturate(0.4)' : 'none';
+          const label = bowPowerLabelRef.current;
+          if (label) label.textContent = `${Math.round(bowPower * 100)}%`;
+        }
+        const targetFov = isAiming ? 40 - bowPower * 6 : mounted ? 50 : 46;
         if (Math.abs(camera.fov - targetFov) > 0.05) {
           camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.12);
           camera.updateProjectionMatrix();
@@ -1822,7 +1881,11 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         if (distToTarget < 0.6) {
           arrow.inFlight = false;
           sound.playShieldHit();
-          const score = distToTarget < 0.2 ? "🎯 100 TAM 12'DEN!" : '🎯 75 İSABET!';
+          const bullseye = distToTarget < 0.2;
+          const full = arrow.power > 0.9;
+          const score = bullseye
+            ? full ? "🎯 100 TAM 12'DEN! (TAM ÇEKİŞ)" : "🎯 100 TAM 12'DEN!"
+            : full ? '🎯 75 İSABET! (TAM ÇEKİŞ)' : '🎯 75 İSABET!';
           spawnDamageText(score, '#facc15', arrow.mesh.position);
           continue;
         }
@@ -1835,7 +1898,12 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             arrow.inFlight = false;
             dummyObj.hit();
             sound.playShieldHit();
-            spawnDamageText('💥 82 DELİCİ OK HASARI!', '#ef4444', arrow.mesh.position);
+            const dummyDmg = Math.round(50 + 40 * arrow.power);
+            spawnDamageText(
+              `💥 ${dummyDmg} DELİCİ OK HASARI!${arrow.power > 0.9 ? ' (TAM ÇEKİŞ)' : ''}`,
+              arrow.power > 0.9 ? '#f97316' : '#ef4444',
+              arrow.mesh.position,
+            );
             setDummyHitCount((c) => c + 1);
             continue;
           }
@@ -1854,16 +1922,17 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
               if (botAnimatorRef.current?.isBlocking()) {
                 spawnDamageText('🛡️ KALKAN OKU YUTTU!', '#38bdf8', botRoot.position);
               } else {
-                botHpRef.current = Math.max(0, botHpRef.current - 44);
+                const bowDmg = Math.round(20 + 32 * arrow.power);
+                botHpRef.current = Math.max(0, botHpRef.current - bowDmg);
                 setBotHp(botHpRef.current);
                 if (botHpRef.current <= 0) {
                   botAnimatorRef.current?.fall();
                   botRespawnTimerRef.current = 2.6;
                   setKillsCount((k) => k + 1);
-                  spawnDamageText('🏹 OK İLE DEVİRDİN! (+44)', '#facc15', botRoot.position);
+                  spawnDamageText(`🏹 OK İLE DEVİRDİN! (+${bowDmg})`, '#facc15', botRoot.position);
                 } else {
                   botAnimatorRef.current?.hitReact(true);
-                  spawnDamageText('🏹 -44 DELİCİ OK!', '#ef4444', botRoot.position);
+                  spawnDamageText(`🏹 -${bowDmg} DELİCİ OK!`, arrow.power > 0.9 ? '#fb923c' : '#ef4444', botRoot.position);
                 }
               }
               continue;
@@ -2397,9 +2466,31 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                 />
                 <div className="absolute w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_6px_#ef4444]" />
               </div>
-              <div className="mt-5 text-[11px] font-bold tracking-wider px-2.5 py-0.5 rounded bg-black/60 border border-[#c6a15b]/40 backdrop-blur-none text-[#fbbf24]">
+              {/* Canlı çekiş gücü çubuğu — her karede anim.getBowDrawProgress() ile güncellenir */}
+              <div
+                className={`mt-5 w-44 transition-opacity duration-150 ${isAimingBow ? 'opacity-100' : 'opacity-0'}`}
+              >
+                <div className="flex items-center justify-between text-[9px] font-bold tracking-widest text-[#c6a15b] mb-1">
+                  <span>ÇEKİŞ</span>
+                  <span ref={bowPowerLabelRef}>0%</span>
+                </div>
+                <div className="relative h-2 w-full rounded-sm bg-black/70 border border-[#c6a15b]/50 overflow-hidden">
+                  {/* %25 eşik çizgisi: altında bırakılırsa ok takılı kalır */}
+                  <div className="absolute top-0 bottom-0 left-1/4 w-px bg-red-400/80" />
+                  <div
+                    ref={bowPowerBarRef}
+                    className="h-full w-0 bg-gradient-to-r from-[#a16207] via-[#f59e0b] to-[#fde68a]"
+                  />
+                </div>
+              </div>
+              <div className="mt-2 text-[11px] font-bold tracking-wider px-2.5 py-0.5 rounded bg-black/60 border border-[#c6a15b]/40 backdrop-blur-none text-[#fbbf24]">
                 {isAimingBow ? '🏹 NİŞAN ALINIYOR (Bırak: Fırlat | Sağ Tık: İptal)' : '🏹 Sol Tık: Ger & Nişan Al'}
               </div>
+              {isAimingBow && (
+                <div className="mt-1.5 text-[9px] tracking-wide px-2 py-0.5 rounded bg-black/50 text-[#a8a29e]">
+                  %25 altında bırakırsan ok takılı kalır
+                </div>
+              )}
             </div>
           ) : (
             /* Melee 4-Directional Reticle */

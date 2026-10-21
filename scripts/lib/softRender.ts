@@ -68,7 +68,7 @@ export function writePng(file: string, img: Bitmap): void {
 
 /* ───────────────────── 3B → bitmap ───────────────────── */
 
-interface Tri {
+export interface Tri {
   v: [THREE.Vector3, THREE.Vector3, THREE.Vector3];
   color: THREE.Color;
   doubleSided: boolean;
