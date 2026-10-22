@@ -63,17 +63,23 @@
       `Tümünü Al` / `Tümünü Bırak`, sol teçhizatı Discard XP'sine bağışlama ve atomik `Bitti` ile
       kampanyaya işleme bağlandı. Vazgeç durumunda taslak temizlenir. Gerçek Chromium E2E
       `battle-loot-screen` ve kural testleri (33/33) yeşil.
-- [ ] **Tek lojistik modeli kur:** Toplam ağırlık birim ağırlık × adet hesabı ekranlarda doğru
-      gösteriliyor, ancak kapasite formülleri ve üretim hızı hâlâ tekilleşmedi. Kapasite askerler,
-      yedek binekler ve yük hayvanlarından; bindirilmiş yaya hız bonusu, sürü cezası, aşırı yük,
-      yaralı ve tutsak bileşenleri tek hesapta toplanacak.
-- [ ] **Erzak yığınlarını canlı tüketime bağla:** Dört özel yiyecek pazar geçiş katmanında hâlâ
-      soyut `food`/moral üretiyor. Bütün yiyecekler envanter yığınlarından tüketilecek,
-      çeşitlilik morali ve açlık etkileri işleyecek.
-- [ ] **P2 kabul kapısı:** Tamamlanan dilimlerde kural testleri **33/33**, `npm run verify:fast`
-      ve gerçek Chromium E2E **6/6** geçti (`market-pending-transfer`,
-      `field-inventory-discard`, `battle-loot-screen` dahil). Kapasite/hız ve erzak testleri
-      bitmeden P2 kapısı kapanmayacak.
+- [x] **Tek lojistik modeli kur:** Toplam ağırlık birim ağırlık × adet hesabı ekranlarda doğru
+      gösteriliyor; kapasite formülleri (`calculatePartyCarryCapacity`) ve harita hızı (`calculatePartyLogistics`)
+      `src/game/logistics.ts` altında tekilleştirildi. Kapasite taban (40) + sağlıklı askerler (20 kg) +
+      yedek binekler (20 kg) + yük hayvanları (100 kg) ve `pack_mules` perk'iyle (+%20) hesaplanır.
+      Hız modeli ordu boyutu, süvari oranı, bindirilmiş yaya bonusu, aşırı yük (overburden drag),
+      sürü cezası (herd penalty), yaralı/tutsak sürtünmesi ve arazi çarpanlarını tek çatıya topladı.
+      Kural testi (34/34) yeşil.
+- [x] **Erzak yığınlarını canlı tüketime bağla:** `src/game/foodSystem.ts` kuruldu. Pazar geçiş
+      katmanındaki soyut `SPECIAL_FOOD_GAIN` baypası kaldırıldı; alınan yiyecekler doğrudan
+      `inventoryItems` yığınlarına işlenir. Günlük tüketim (`advanceDailyPartyFood` / `advanceDailyEconomyAndWorld`)
+      envanterdeki gerçek yiyecek yığınlarından dengeli/round-robin tüketir; 1..5+ çeşit gıda için
+      0..+12 çeşitlilik morali verir. Yiyecek kalmadığında açlık felaketi (-15 moral, askerlerin dermansız
+      düşmesi ve vakayiname uyarısı) işler. Kural testi (35/35) yeşil.
+- [x] **P2 kabul kapısı:** P2 kapsamındaki tüm alt dilimler tamamlandı. Kural testleri **35/35**,
+      `npm run verify:fast` ve gerçek donanım hızlandırmalı Chromium E2E **6/6** başarıyla geçti
+      (`boot-webgl`, `encyclopedia-heroes`, `forced-encounter`, `market-pending-transfer`,
+      `field-inventory-discard`, `battle-loot-screen`). P2 başarıyla kapandı, P3'e geçiliyor.
 
 #### P2 ilerleme kaydı — 2026-10-22
 
@@ -84,10 +90,12 @@
   `equipInventoryItemForHero` / `unequipHeroEquipmentSlot` / `setHeroActiveEquipmentSet`, Discard UI
   ve saha-envanteri E2E. Eski HUD kompakt envanter çekmecesi kaldırıldı; `I` ve HUD düğmesi artık
   tam ekranı açar.
-- Ganimet Ekranı Dilimi: `src/game/lootTransaction.ts`, `src/components/BattleLootModal.tsx`, test kancasında
+- `ea3bd6a`: Ganimet Ekranı Dilimi: `src/game/lootTransaction.ts`, `src/components/BattleLootModal.tsx`, test kancasında
   `openLoot/closeLoot`, saf kural testi (33/33) ve Chromium E2E `battle-loot-screen` (6/6).
-- **Devam noktası:** Sırada tek lojistik modeli (kapasite ve harita hız formüllerinin tekilleşmesi),
-  ardından erzak yığınlarının canlı tüketimi.
+- Lojistik ve Erzak Dilimi: `src/game/logistics.ts` (tekil taşıma kapasitesi ve parti hız modeli, sürü cezası, bindirilmiş yaya),
+  `src/game/foodSystem.ts` (canlı envanter erzak yığınları, çeşitlilik morali, açlık etkileri), pazar soyut gıda baypasının kaldırılması,
+  kural testleri (35/35) ve E2E (6/6). P2 kapısı kapandı.
+- **Devam noktası:** P3 — Party (`P`), birlikler ve tutsaklar (Party ekranı, `troopStacks` tek kaynak yapılması, dallanan terfi, yaralılar ve tutsaklar).
   Performans (P7) ve kayıt sistemi (P8) kullanıcı kararıyla hâlâ en sonda.
 
 ### P3 — Party (`P`), birlikler ve tutsaklar

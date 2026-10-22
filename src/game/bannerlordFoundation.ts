@@ -13,6 +13,7 @@
 import { CALRADIA_MARKETPLACE_ITEMS, type MarketplaceItem } from './marketRules';
 import { hashString } from './rng';
 import { CULTURE_TROOPS } from './troops';
+import { getPartyFoodUnits } from './foodSystem.ts';
 import type {
   AttributeId,
   BannerlordSkillId,
@@ -2307,11 +2308,18 @@ export function ensureBannerlordFoundation(state: CampaignState): CampaignState 
   const roster = sanitizeRoster(state.roster);
   const prisoners = positiveInt(state.prisoners);
 
+  const foodInInventory = getPartyFoodUnits(inventoryItems);
+  const finalFood =
+    foodInInventory > 0
+      ? foodInInventory
+      : Math.max(0, Math.floor(finiteNumber(state.food, 0)));
+
   return {
     ...state,
     settlements,
     roster,
     prisoners,
+    food: finalFood,
     foundationVersion: FOUNDATION_VERSION,
     influence: Math.max(0, Math.floor(finiteNumber(state.influence, 0))),
     inventoryItems,

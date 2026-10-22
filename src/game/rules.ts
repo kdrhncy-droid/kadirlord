@@ -15,10 +15,15 @@ import {
 } from './characterMorph.ts';
 import { generateLordParties } from './heroGen.ts';
 import {
+  addItemDefinitionToInventory,
   ensureBannerlordFoundation,
   equipInventoryItemForHero,
   PLAYER_HERO_ID,
 } from './bannerlordFoundation';
+import {
+  advanceDailyPartyFood,
+  calculateDailyFoodDemand,
+} from './foodSystem.ts';
 
 export type FactionId =
   | 'player'
@@ -595,8 +600,7 @@ export function calculateDailyWage(roster: TroopRoster): number {
 }
 
 export function calculateDailyFoodConsumption(roster: TroopRoster): number {
-  const total = getTotalTroops(roster);
-  return Math.max(1, Math.ceil((total + 1) / 4));
+  return calculateDailyFoodDemand(roster);
 }
 
 export function recruitUnit(
@@ -670,12 +674,20 @@ export function buyFoodAtSettlement(
     foodStock: nextSettlements[idx].foodStock - packs,
   };
 
+  const nextInventory = addItemDefinitionToInventory(
+    state,
+    'mkt_grain_sack',
+    packs,
+    costPerPack,
+  );
+
   return {
     success: true,
     nextState: {
       ...state,
       gold: state.gold - totalCost,
       food: state.food + packs,
+      inventoryItems: nextInventory,
       morale: Math.min(100, state.morale + 2),
       settlements: nextSettlements,
     },
@@ -1027,6 +1039,10 @@ export function raidAndPillageVillage(
     return l;
   });
 
+  let nextInventory = addItemDefinitionToInventory(state, 'mkt_grain_sack', 10, 0);
+  nextInventory = addItemDefinitionToInventory({ ...state, inventoryItems: nextInventory }, 'mkt_cured_meat', 3, 0);
+  nextInventory = addItemDefinitionToInventory({ ...state, inventoryItems: nextInventory }, 'mkt_cheese_wheel', 3, 0);
+
   return {
     success: true,
     goldLoot,
@@ -1035,6 +1051,7 @@ export function raidAndPillageVillage(
       ...state,
       gold: state.gold + goldLoot,
       food: state.food + foodLoot,
+      inventoryItems: nextInventory,
       morale: Math.max(10, state.morale - 4),
       renown: state.renown + 5,
       settlements: updatedSettlements,
@@ -1071,12 +1088,20 @@ export function forcePeasantsSupplies(
     prosperity: Math.max(10, v.prosperity - 15),
   };
 
+  const nextInventory = addItemDefinitionToInventory(
+    state,
+    'mkt_grain_sack',
+    foodGained,
+    0,
+  );
+
   return {
     success: true,
     foodGained,
     nextState: {
       ...state,
       food: state.food + foodGained,
+      inventoryItems: nextInventory,
       morale: Math.min(100, state.morale + 1),
       settlements: updatedSettlements,
       chronicle: [
@@ -1157,7 +1182,8 @@ export function settlementWorkshopIncome(settlement: Settlement): number {
 
 export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState {
   const wage = calculateDailyWage(state.roster);
-  const foodUsed = calculateDailyFoodConsumption(state.roster);
+  const foodResult = advanceDailyPartyFood(state);
+  const stateAfterFood = foodResult.nextState;
 
   let playerSettlementTaxes = 0;
   let playerWorkshopIncome = 0;
@@ -1182,12 +1208,9 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
     };
   });
 
-  const nextFood = Math.max(0, state.food - foodUsed);
   const nextGold = Math.max(0, state.gold + playerSettlementTaxes + playerWorkshopIncome - wage);
-  let moraleDelta = 0;
-  if (state.food < foodUsed) moraleDelta -= 10;
-  else moraleDelta += 2;
-  if (state.gold + playerSettlementTaxes + playerWorkshopIncome < wage) moraleDelta -= 8;
+  let wageMoraleDelta = 0;
+  if (state.gold + playerSettlementTaxes + playerWorkshopIncome < wage) wageMoraleDelta -= 8;
 
   const seasons: Array<'Bahar' | 'Yaz' | 'Güz' | 'Kış'> = ['Bahar', 'Yaz', 'Güz', 'Kış'];
   const nextDay = state.day + 1;
@@ -1203,18 +1226,17 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
             category: 'ECONOMY' as const,
             text: `Atölyelerin son on günde yaklaşık ${(playerWorkshopIncome * 10).toLocaleString('tr-TR')} Dinar kazandırdı.`,
           },
-          ...state.chronicle,
+          ...stateAfterFood.chronicle,
         ].slice(0, 20)
-      : state.chronicle;
+      : stateAfterFood.chronicle;
 
   return {
-    ...state,
+    ...stateAfterFood,
     day: nextDay,
     season: seasons[seasonIdx] || 'Güz',
     gold: nextGold,
     chronicle: economyChronicle,
-    food: nextFood,
-    morale: Math.max(15, Math.min(100, state.morale + moraleDelta)),
+    morale: Math.max(15, Math.min(100, stateAfterFood.morale + wageMoraleDelta)),
     playerHp: Math.min(state.playerMaxHp, state.playerHp + 15),
     settlements: updatedSettlements,
   };

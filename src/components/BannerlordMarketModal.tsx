@@ -48,6 +48,7 @@ import {
   tradeRumours,
   type MarketProfile,
 } from '../game/market';
+import { calculatePartyCarryCapacity } from '../game/logistics';
 
 interface BannerlordMarketModalProps {
   settlement?: Settlement | null;
@@ -258,6 +259,19 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
     [campaign.equipment],
   );
 
+  const healthyTroops =
+    (draftCampaign.troopStacks ?? []).reduce((sum, s) => sum + s.count, 0) || 20;
+  const capacityBreakdown = useMemo(
+    () =>
+      calculatePartyCarryCapacity({
+        healthyTroops,
+        inventoryItems: draftCampaign.inventoryItems,
+        perks: draftCampaign.unlockedPerks,
+        state: draftCampaign,
+      }),
+    [draftCampaign, healthyTroops],
+  );
+
   const playerHero = useMemo(() => getPlayerHero(campaign), [campaign]);
   const armorTotals = useMemo(() => {
     const totals = { head: 0, body: 0, arm: 0, leg: 0, mount: 0 };
@@ -453,6 +467,17 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                 <span>
                   Erzak:{' '}
                   <strong className="text-[#60a5fa] font-mono-tabular">{campaign.food} Gün</strong>
+                </span>
+                <span>·</span>
+                <span title="Ordu Taşıma Kapasitesi (askerler + binekler + yük hayvanları)">
+                  Kapasite:{' '}
+                  <strong
+                    className={`font-mono-tabular ${
+                      capacityBreakdown.isOverweight ? 'text-red-400 font-bold' : 'text-[#fbbf24]'
+                    }`}
+                  >
+                    {Math.round(capacityBreakdown.currentWeight)} / {capacityBreakdown.totalCapacity} kg
+                  </strong>
                 </span>
                 <span>·</span>
                 <span>

@@ -25,12 +25,6 @@ import {
   type MarketProfile,
 } from './market.ts';
 
-const SPECIAL_FOOD_GAIN: Record<string, { food: number; morale: number }> = {
-  mkt_grain_sack: { food: 10, morale: 1 },
-  mkt_cured_meat: { food: 12, morale: 4 },
-  mkt_smoked_fish: { food: 8, morale: 2 },
-  mkt_cheese_wheel: { food: 8, morale: 2 },
-};
 
 function safeQuantity(quantity: number): number {
   return Number.isFinite(quantity) ? Math.floor(quantity) : 0;
@@ -189,15 +183,12 @@ export function buyFromMarket(
     );
   }
 
-  const specialFood = SPECIAL_FOOD_GAIN[definition.id];
-  const inventoryItems = specialFood
-    ? initialized.inventoryItems
-    : addItemDefinitionToInventory(
-        initialized,
-        definition.id,
-        safeQty,
-        Math.round(unitPrice * 0.75),
-      );
+  const inventoryItems = addItemDefinitionToInventory(
+    initialized,
+    definition.id,
+    safeQty,
+    Math.round(unitPrice * 0.75),
+  );
 
   const settlements = updateMarketSettlement(initialized, settlementId, (current) => ({
     ...current,
@@ -212,10 +203,6 @@ export function buyFromMarket(
   const nextState = ensureBannerlordFoundation({
     ...initialized,
     gold: initialized.gold - totalPrice,
-    food: specialFood ? initialized.food + specialFood.food * safeQty : initialized.food,
-    morale: specialFood
-      ? Math.min(100, initialized.morale + specialFood.morale * safeQty)
-      : initialized.morale,
     inventoryItems,
     settlements,
     chronicle: withMarketChronicle(

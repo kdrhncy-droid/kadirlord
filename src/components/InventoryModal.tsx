@@ -29,6 +29,7 @@ import {
 } from '../game/bannerlordFoundation';
 import { deriveRigVisualOptionsFromEquipment } from '../game/characterRig';
 import { ITEM_ICON_KEYS, type ItemIconKey } from '../game/itemIcons';
+import { calculatePartyLogistics } from '../game/logistics';
 import { HeroMannequin } from './HeroMannequin';
 import { ItemIcon } from './ItemIcon';
 
@@ -261,6 +262,28 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
   const inventoryWeight = inventoryTotalWeight(draftCampaign.inventoryItems);
   const discardQuantity = inventoryTotalQuantity(discardItems);
   const discardWeight = inventoryTotalWeight(discardItems);
+
+  const healthyTroops =
+    (draftCampaign.troopStacks ?? []).reduce((sum, s) => sum + s.count, 0) || 20;
+  const partyLogistics = useMemo(
+    () =>
+      calculatePartyLogistics({
+        x: draftCampaign.playerX,
+        z: draftCampaign.playerZ,
+        healthyTroops,
+        cavalryCount: draftCampaign.roster.cavalry,
+        woundedCount: (draftCampaign.troopStacks ?? []).reduce(
+          (sum, s) => sum + (s.wounded ?? 0),
+          0,
+        ),
+        prisonerCount: draftCampaign.prisoners,
+        inventoryItems: draftCampaign.inventoryItems,
+        morale: draftCampaign.morale,
+        perks: draftCampaign.unlockedPerks,
+        state: draftCampaign,
+      }),
+    [draftCampaign, healthyTroops],
+  );
 
   const moveHero = (direction: -1 | 1) => {
     if (heroes.length <= 1 || selectedHeroIndex < 0) return;
@@ -842,11 +865,32 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
         </div>
 
         <div className="px-4 py-3 bg-[#1c1812] border-t border-[#c6a15b]/25 flex flex-wrap items-center gap-3 shrink-0">
-          <p className="text-[11px] text-[#b5a890] mr-auto">
-            {discardItems.length > 0
-              ? `${discardQuantity} eşya Discard için bekliyor · ${discardPreview.acceptedXp} XP dağıtılacak`
-              : 'Ekipman ve kilit değişiklikleri taslakta bekliyor'}
-          </p>
+          <div className="flex flex-wrap items-center gap-3 text-xs font-mono-tabular mr-auto">
+            <span className="text-[#d1c5b0]">
+              Taşıma Kapasitesi:{' '}
+              <strong className={partyLogistics.capacity.isOverweight ? 'text-red-400 font-bold' : 'text-[#fbbf24]'}>
+                {formatWeight(partyLogistics.capacity.currentWeight)} / {formatWeight(partyLogistics.capacity.totalCapacity)}
+              </strong>
+            </span>
+            <span className="text-[#8b8072]">·</span>
+            <span className="text-[#34d399]" title="Envanterdeki boş binek ve yük hayvanları">
+              Binek: <strong>{partyLogistics.animals.spareMounts}</strong> · Katır: <strong>{partyLogistics.animals.packAnimals}</strong>
+            </span>
+            <span className="text-[#8b8072]">·</span>
+            <span className="text-[#60a5fa]" title="Mevcut ağırlık ve ordu kompozisyonuna göre dünya haritası yürüyüş hızı">
+              Ordu Hızı: <strong>{partyLogistics.finalSpeed}</strong>
+            </span>
+            {partyLogistics.capacity.isOverweight && (
+              <span className="text-red-400 font-bold bg-red-950/60 px-2 py-0.5 rounded border border-red-800">
+                ⚠️ Aşırı Yük ({partyLogistics.overburdenPenalty} Hız)
+              </span>
+            )}
+            {discardItems.length > 0 && (
+              <span className="text-amber-200">
+                · {discardQuantity} eşya Discard için bekliyor (+{discardPreview.acceptedXp} XP)
+              </span>
+            )}
+          </div>
           <button
             type="button"
             onClick={onClose}

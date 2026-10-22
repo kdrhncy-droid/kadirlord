@@ -1677,9 +1677,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           z: playerOverworldZ,
           totalHealthy: totalTroops,
           cavalryCount: camp.roster.cavalry,
+          woundedCount: (camp.troopStacks ?? []).reduce((sum, s) => sum + (s.wounded ?? 0), 0),
           prisonerCount: camp.prisoners,
-          foodUnits: camp.food,
+          inventoryItems: camp.inventoryItems,
           morale: camp.morale,
+          perks: camp.unlockedPerks,
+          state: camp,
         });
         const cavRatio = camp.roster.cavalry / totalTroops;
         const speedInfo = getPartySpeedInfo(playerOverworldX, playerOverworldZ, cavRatio);

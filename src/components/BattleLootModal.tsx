@@ -33,6 +33,7 @@ import {
 } from '../game/lootTransaction.ts';
 import { deriveRigVisualOptionsFromEquipment } from '../game/characterRig.ts';
 import { ITEM_ICON_KEYS, type ItemIconKey } from '../game/itemIcons.ts';
+import { calculatePartyCarryCapacity } from '../game/logistics.ts';
 import { HeroMannequin } from './HeroMannequin.tsx';
 import { ItemIcon } from './ItemIcon.tsx';
 
@@ -245,10 +246,20 @@ export const BattleLootModal: React.FC<BattleLootModalProps> = ({
   const lootQuantity = inventoryTotalQuantity(lootItems);
   const lootWeight = inventoryTotalWeight(lootItems);
 
-  // Taşıma kapasitesi: Asker sayısı x 12 + 300
+  // Tek lojistik modeline bağlı taşıma kapasitesi (askerler + binekler + yük hayvanları)
   const totalTroops = (draftCampaign.troopStacks ?? []).reduce((sum, s) => sum + s.count, 0) || 20;
-  const carryCapacity = totalTroops * 12 + 300;
-  const isOverweight = inventoryWeight > carryCapacity;
+  const capacityBreakdown = useMemo(
+    () =>
+      calculatePartyCarryCapacity({
+        healthyTroops: totalTroops,
+        inventoryItems: draftCampaign.inventoryItems,
+        perks: committedCampaign.unlockedPerks,
+        state: draftCampaign,
+      }),
+    [draftCampaign, totalTroops, committedCampaign.unlockedPerks],
+  );
+  const carryCapacity = capacityBreakdown.totalCapacity;
+  const isOverweight = capacityBreakdown.isOverweight;
 
   const moveHero = (direction: -1 | 1) => {
     if (heroes.length <= 1 || selectedHeroIndex < 0) return;

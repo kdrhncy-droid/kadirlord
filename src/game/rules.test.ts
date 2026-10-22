@@ -42,6 +42,7 @@ import {
   sellMarketplaceItem,
   unequipEquipmentSlot,
   type CampaignState,
+  type InventoryItem,
 } from './rules.ts';
 import {
   CONTINENTAL_BRIDGES,
@@ -122,6 +123,21 @@ import {
   transferInventoryToLoot,
   transferLootToInventory,
 } from './lootTransaction.ts';
+import {
+  calculatePartyCarryCapacity,
+  calculatePartyLogistics,
+  countPartyAnimals,
+  getPlayerPartyLogistics,
+} from './logistics.ts';
+import {
+  advanceDailyPartyFood,
+  calculateDailyFoodDemand,
+  calculateVarietyMoraleBonus,
+  consumePartyFood,
+  getPartyFoodSummary,
+  getPartyFoodUnits,
+  isEdibleFoodItem,
+} from './foodSystem.ts';
 
 test('initial campaign state creates balanced troops, 211 authentic continental settlements (51 Towns with 2 villages each, 29 Castles with 1 village each) on flat dry plateaus, and 9 lords', () => {
   const state = createInitialCampaignState('Komutan Alparslan', 'noble');
@@ -1843,6 +1859,247 @@ test('P2 battle loot: pending loot preparation, selection, take all, discard XP 
   assert.equal(commitRes.nextState.roster.militia, Math.max(0, initial.roster.militia - 2));
   assert.ok(commitRes.nextState.inventoryItems?.length);
 });
+
+test('P2 logistics: single carry capacity and party speed model calculates spare mounts, herd penalty and overburden drag', () => {
+  const state = createInitialCampaignState('Komutan Alparslan', 'noble');
+
+  // 1. Kapasite hesabı: Askerler + Yük hayvanları + Yedek binekler
+  const baseCapacity = calculatePartyCarryCapacity({
+    healthyTroops: 20,
+    inventoryItems: [],
+  });
+  // 40 taban + 20*20 = 440 kg
+  assert.equal(baseCapacity.totalCapacity, 440);
+  assert.equal(baseCapacity.isOverweight, false);
+
+  // 2 katır eklendiğinde (+100 kg/adet): 440 + 200 = 640 kg
+  const packMuleItem: InventoryItem = {
+    id: 'mkt_pack_mule',
+    definitionId: 'mkt_pack_mule',
+    name: 'Kervan Yük Katırı',
+    slot: 'TRADE',
+    category: 'HORSE',
+    quantity: 2,
+    locked: false,
+    value: 160,
+    weight: 0,
+    statBonus: '+100 kg Ordu Taşıma Kapasitesi',
+    civilianLegal: true,
+  };
+  const withMules = calculatePartyCarryCapacity({
+    healthyTroops: 20,
+    inventoryItems: [packMuleItem],
+  });
+  assert.equal(withMules.totalCapacity, 640);
+  assert.equal(withMules.packAnimalsCapacity, 200);
+
+  // 3 yedek binek atı eklendiğinde (+20 kg/adet): 640 + 60 = 700 kg
+  const spareHorseItem: InventoryItem = {
+    id: 'mkt_steppe_steed',
+    definitionId: 'mkt_steppe_steed',
+    name: 'Dayanıklı Bozkır Akıncı Atı',
+    slot: 'MOUNT',
+    category: 'HORSE',
+    quantity: 3,
+    locked: false,
+    value: 440,
+    weight: 0,
+    statBonus: 'Hız: 65 · Manevra: 70 · Can: 210',
+    civilianLegal: true,
+  };
+  const withHorsesAndMules = calculatePartyCarryCapacity({
+    healthyTroops: 20,
+    inventoryItems: [packMuleItem, spareHorseItem],
+  });
+  assert.equal(withHorsesAndMules.totalCapacity, 700);
+  assert.equal(withHorsesAndMules.spareMountsCapacity, 60);
+
+  // pack_mules perki yük hayvanı kapasitesini %20 artırır (200 -> 240)
+  const withPerk = calculatePartyCarryCapacity({
+    healthyTroops: 20,
+    inventoryItems: [packMuleItem, spareHorseItem],
+    perks: ['pack_mules'],
+  });
+  assert.equal(withPerk.packAnimalsCapacity, 240);
+  assert.equal(withPerk.totalCapacity, 740);
+
+  // 2. Aşırı yük (Overburdened) durumu ve hız cezası
+  const heavyArmorItem: InventoryItem = {
+    id: 'heavy_armor_batch',
+    name: 'Ağır Zırh Sandığı',
+    slot: 'BODY',
+    category: 'ARMOR',
+    quantity: 50,
+    locked: false,
+    value: 200,
+    weight: 20, // 50 * 20 = 1000 kg
+    statBonus: '+60 Gövde Zırhı',
+    civilianLegal: false,
+  };
+  const overweightLogistics = calculatePartyLogistics({
+    x: 10,
+    z: 80,
+    healthyTroops: 10, // Kapasite: 40 + 200 = 240 kg, ağırlık = 1000 kg
+    inventoryItems: [heavyArmorItem],
+  });
+  assert.equal(overweightLogistics.capacity.isOverweight, true);
+  assert.ok(overweightLogistics.overburdenPenalty < -1.0, 'Aşırı yük orduyu sert şekilde yavaşlatmalı');
+
+  // 3. Bindirilmiş Yaya Bonusu (Mounted Footmen Bonus)
+  // 15 yaya asker + 0 süvari + 10 yedek binek atı
+  const footmenLogisticsWithoutMounts = calculatePartyLogistics({
+    x: 10,
+    z: 80,
+    healthyTroops: 15,
+    cavalryCount: 0,
+    inventoryItems: [],
+  });
+  const footmenLogisticsWithMounts = calculatePartyLogistics({
+    x: 10,
+    z: 80,
+    healthyTroops: 15,
+    cavalryCount: 0,
+    inventoryItems: [{ ...spareHorseItem, quantity: 10 }],
+  });
+  assert.ok(
+    footmenLogisticsWithMounts.mountedFootmenBonus > 0,
+    'Yedek binek atları yaya askerlere bindirilmiş yaya hız bonusu vermeli',
+  );
+  assert.ok(
+    footmenLogisticsWithMounts.finalSpeed > footmenLogisticsWithoutMounts.finalSpeed,
+    'Atlı yayalara sahip ordu salt yaya ordudan hızlı olmalı',
+  );
+
+  // 4. Sürü Cezası (Herd Penalty)
+  // 5 asker ancak 30 hayvan güdülüyor (kişi başı 1.1'den çok fazla)
+  const herdLogistics = calculatePartyLogistics({
+    x: 10,
+    z: 80,
+    healthyTroops: 5,
+    cavalryCount: 0,
+    inventoryItems: [{ ...spareHorseItem, quantity: 30 }],
+  });
+  assert.ok(herdLogistics.herdPenalty < -0.5, 'Aşırı hayvan sayısı sürü cezası (herd penalty) üretmeli');
+
+  // 5. getPlayerPartyLogistics sefer durumundan eksiksiz hesap üretir
+  const playerLogistics = getPlayerPartyLogistics(state);
+  assert.ok(playerLogistics.capacity.totalCapacity > 300);
+  assert.ok(playerLogistics.finalSpeed >= 2.0 && playerLogistics.finalSpeed <= 6.5);
+  assert.equal(typeof playerLogistics.worldUnitsPerSecAt1x, 'number');
+});
+
+test('P2 erzak: envanter gıda yığınları, çeşitlilik morali, canlı tüketim ve açlık etkileri', () => {
+  const state = createInitialCampaignState('Komutan Demirhan', 'noble');
+
+  // 1. Envanter erzak yığınları ve çeşitlilik morali
+  const initialFoodItems = [
+    {
+      id: 'f1',
+      definitionId: 'mkt_grain_sack',
+      name: 'Tahıl Çuvalı',
+      slot: 'TRADE' as const,
+      category: 'FOOD' as const,
+      quantity: 20,
+      value: 20,
+      weight: 10,
+      statBonus: '',
+      civilianLegal: true,
+    },
+    {
+      id: 'f2',
+      definitionId: 'mkt_cured_meat',
+      name: 'Kurutulmuş Et',
+      slot: 'TRADE' as const,
+      category: 'FOOD' as const,
+      quantity: 8,
+      value: 45,
+      weight: 8,
+      statBonus: '',
+      civilianLegal: true,
+    },
+    {
+      id: 'f3',
+      definitionId: 'mkt_cheese_wheel',
+      name: 'Otlak Peyniri',
+      slot: 'TRADE' as const,
+      category: 'FOOD' as const,
+      quantity: 8,
+      value: 32,
+      weight: 5,
+      statBonus: '',
+      civilianLegal: true,
+    },
+  ];
+  const stateWithFood: CampaignState = {
+    ...state,
+    inventoryItems: [...(state.inventoryItems ?? []), ...initialFoodItems],
+    food: 36,
+  };
+
+  const summary = getPartyFoodSummary(stateWithFood.inventoryItems);
+  assert.equal(summary.totalFood, 36);
+  assert.equal(summary.distinctVarieties, 3);
+  assert.equal(summary.varietyMoraleBonus, 5); // 3 çeşit = +5 moral
+
+  // 2. Çeşitlilik moral bonusu eğrisi
+  assert.equal(calculateVarietyMoraleBonus(0), 0);
+  assert.equal(calculateVarietyMoraleBonus(1), 0);
+  assert.equal(calculateVarietyMoraleBonus(2), 2);
+  assert.equal(calculateVarietyMoraleBonus(3), 5);
+  assert.equal(calculateVarietyMoraleBonus(4), 8);
+  assert.equal(calculateVarietyMoraleBonus(5), 12);
+
+  // 3. Günlük tüketim envanterdeki gıda yığınlarından gerçek adetleri eksiltir
+  const nextDayState = advanceDailyEconomyAndWorld(stateWithFood);
+  assert.equal(nextDayState.day, 2);
+  assert.ok(nextDayState.food < stateWithFood.food);
+  const nextSummary = getPartyFoodSummary(nextDayState.inventoryItems);
+  assert.equal(nextSummary.totalFood, nextDayState.food);
+  assert.ok(nextSummary.totalFood < summary.totalFood);
+
+  // 4. Pazar alışverişinde alınan gıda doğrudan envanter yığınına işlenir ve toplam erzak artar
+  const town = state.settlements.find((s) => s.type === 'TOWN')!;
+  const initializedMarket = initializeMarketSettlement(state, town.id);
+  const liveSettlement = getMarketSettlement(initializedMarket, town.id)!;
+  const foodInStock = Object.entries(liveSettlement.marketStock ?? {}).find(
+    ([defId, qty]) => (defId === 'mkt_grain_sack' || defId === 'mkt_smoked_fish') && qty >= 1,
+  );
+  if (foodInStock) {
+    const [defId, stockQty] = foodInStock;
+    const buyQty = Math.min(1, stockQty);
+    const initialFoodCount = getPartyFoodUnits(initializedMarket.inventoryItems);
+    const buyRes = buyFromMarket(initializedMarket, town.id, defId, buyQty);
+    assert.equal(buyRes.success, true);
+    assert.equal(buyRes.quantity, buyQty);
+    const boughtSummary = getPartyFoodSummary(buyRes.nextState.inventoryItems);
+    assert.equal(boughtSummary.totalFood, initialFoodCount + buyQty);
+    assert.equal(buyRes.nextState.food, initialFoodCount + buyQty);
+  }
+
+  // 5. Yerleşimden hızlı erzak alımı (buyFoodAtSettlement) envantere tahıl çuvalı yığını ekler
+  const buySancaktepe = buyFoodAtSettlement(state, 'sancaktepe', 5);
+  assert.equal(buySancaktepe.success, true);
+  assert.equal(buySancaktepe.nextState.food, state.food + 5);
+  const sancaktepeFood = getPartyFoodSummary(buySancaktepe.nextState.inventoryItems);
+  assert.equal(sancaktepeFood.totalFood, 5);
+
+  // 6. Açlık (Starvation): Envanterde hiç gıda kalmadığında moral çöker ve askerler dermansız düşer
+  const starvingState: CampaignState = {
+    ...state,
+    food: 0,
+    inventoryItems: (state.inventoryItems ?? []).filter((i) => !isEdibleFoodItem(i)),
+    morale: 60,
+  };
+  const advanceStarving = advanceDailyPartyFood(starvingState);
+  assert.equal(advanceStarving.starving, true);
+  assert.ok(advanceStarving.moraleDelta <= -10, 'Açlık ciddi moral cezası vermeli');
+  assert.ok(advanceStarving.nextState.morale < starvingState.morale);
+  assert.ok(
+    advanceStarving.nextState.chronicle.some((c) => c.text.includes('açlık')),
+    'Vakayinameye açlık kaydı düşmeli',
+  );
+});
+
 
 
 
