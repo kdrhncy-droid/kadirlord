@@ -173,12 +173,13 @@
       ve ordu erzağı canlı kampanyada çalışsın.
 - [ ] **Canlı isyanları birleştir:** Sadakat/erzak baskısı isyan partisi/klanı doğursun; fetih,
       taraf değiştirme ve restorasyon akışları tek klan/yerleşim modelini kullansın.
-- [ ] **Kuşatma kampanyasını tamamla:** Kamp kurma süresi, iki tarafın makine düellosu,
-      rezerve çekme/konuşlandırma, sur hasarı, yerleşim erzağı ve garnizon açlığı, teslim
-      müzakeresi; oyuncu ve AI aynı zamanlı kuralları kullansın.
-- [ ] **Parça bazlı demirciliği kur:** Malzeme kademeleri, eritme/arıtma, dayanıklılık/enerji,
-      parça şemaları ve parça seçiminden türeyen istatistikler, siparişler ve silaha isim verme.
-      Üretilen eşya P1 tanım/yığın modeline girsin.
+- [ ] **Canlı kuşatma kampanyasını ve harita etkileşimlerini tamamla:** Haritada kuşatma çemberi,
+      duman/ateş efektleri ve "KUŞATMA ALTINDA" etiketi; kaleye yaklaşıldığında veya tıklandığında
+      3 bağlamlı Bannerlord menüsü (1. Oyuncu kuşatıyorsa: kamp kurma süresi, 4 aktif + rezerve makine
+      yuvası, iki tarafın karşılıklı Trebuchet/Mangonel/Balista düellosu, sur gedikleri/breach, garnizon açlığı
+      ve taarruz; 2. Düşman kuşatıyorsa: kuşatmayı yarma veya orduya arkadan taarruz; 3. Oyuncu içerideyken:
+      sur savunması, huruc/sally-out ve teslim).
+- [ ] ~~**Parça bazlı demirciliği kur:**~~ *(2026-10-22 Kullanıcı Talimatı: Oyuncu demirciliği geçici olarak İPTAL / ERTELENDİ; öncelik canlı kuşatma, ordu toplama ve makro-ekonomiye verildi).*
 - [ ] **Suç ve arka sokakları ekle:** Krallık bazlı suç seviyesi ve azalması, giriş/ilişki
       sonuçları; şehir çetelerini temizleyip Serserilik sahibi yoldaşla arka sokak işletme,
       haydutları zorla/ikna ile katma yolları.
