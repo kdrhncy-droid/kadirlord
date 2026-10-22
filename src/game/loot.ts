@@ -69,9 +69,12 @@ export function rollBattleLoot(
     items.push({
       // Aynı gün iki savaş olabilir: tohum da kimliğe girsin ki kayıt çakışmasın.
       id: `${template.id}_loot_${state.day}_${i}_${(seed >>> 0).toString(36)}`,
+      definitionId: template.id,
       name: template.name,
       slot: template.slot,
       category: template.category,
+      quantity: 1,
+      locked: false,
       value: Math.round(template.value * 0.75),
       weight: template.weight,
       statBonus: template.statBonus,
@@ -86,9 +89,13 @@ export function rollBattleLoot(
 
 /** Ganimeti tek satırda özetler (vakayiname / bildirim metni). */
 export function describeLoot(items: InventoryItem[]): string {
-  if (items.length === 0) return 'ganimet alınamadı';
-  if (items.length === 1) return `1 ganimet eşyası (${items[0].name})`;
-  return `${items.length} ganimet eşyası (${items[0].name} ve diğerleri)`;
+  const totalQuantity = items.reduce(
+    (sum, item) => sum + Math.max(1, Math.floor(item.quantity ?? 1)),
+    0,
+  );
+  if (totalQuantity === 0) return 'ganimet alınamadı';
+  if (totalQuantity === 1) return `1 ganimet eşyası (${items[0].name})`;
+  return `${totalQuantity} ganimet eşyası (${items[0].name} ve diğerleri)`;
 }
 
 /** Zafer altınını savaşın büyüklüğüne ve kuşatmaya göre hesaplar. */
@@ -98,5 +105,10 @@ export function battleGoldReward(defeated: number, siege: boolean): number {
 
 /** Ganimetin pazarda edeceği toplam (satış fiyatı zaten %75'e indirilmiş). */
 export function lootSaleValue(items: InventoryItem[]): number {
-  return items.reduce((sum, item) => sum + (Number.isFinite(item.value) ? item.value : 0), 0);
+  return items.reduce(
+    (sum, item) =>
+      sum +
+      (Number.isFinite(item.value) ? item.value : 0) * Math.max(1, Math.floor(item.quantity ?? 1)),
+    0,
+  );
 }

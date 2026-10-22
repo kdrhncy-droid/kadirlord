@@ -1,0 +1,18 @@
+{
+  "name": "kadirlord-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Kadirlord için tekrarlanabilir Chromium/Puppeteer uçtan uca testleri",
+  "scripts": {
+    "setup": "node setup.mjs",
+    "test": "node run-e2e.mjs"
+  },
+  "dependencies": {
+    "@sparticuz/chromium": "^153.0.0",
+    "puppeteer-core": "^25.15.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

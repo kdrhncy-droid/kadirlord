@@ -75,6 +75,30 @@ import {
   applyMorphDNAToRig,
 } from './characterMorph.ts';
 import { createCharacterRig } from './characterRig.ts';
+import {
+  COMPANION_HERO_IDS,
+  FOUNDATION_VERSION,
+  ITEM_DEFINITIONS,
+  PLAYER_HERO_ID,
+  TROOP_DEFINITIONS,
+  calculateLearningHardCap,
+  calculateLearningSoftCap,
+  discardEligibility,
+  discardXpCapForTier,
+  ensureBannerlordFoundation,
+  getPlayerHero,
+  getRoleHero,
+  inventoryTotalQuantity,
+  inventoryTotalValue,
+  itemDiscardXpPerUnit,
+  parseItemStats,
+  previewDiscardDonation,
+  prisonerStackTotal,
+  resolveItemDefinition,
+  troopStackTotals,
+  validateTroopDefinitions,
+} from './bannerlordFoundation.ts';
+import { SAVE_VERSION, createSaveData, parseSave, serializeSave } from './saveGame.ts';
 
 test('initial campaign state creates balanced troops, 211 authentic continental settlements (51 Towns with 2 villages each, 29 Castles with 1 village each) on flat dry plateaus, and 9 lords', () => {
   const state = createInitialCampaignState('Komutan Alparslan', 'noble');
@@ -1128,6 +1152,306 @@ test('Faz 6: Bannerlord Low-Poly Character & Lord Customization Engine', () => {
   const derthertInCamp = camp.lords.find((l: any) => l.id === 'lord-derthert');
   assert.ok(derthertInCamp?.morphDNA, 'Derthert must have morphDNA initialized in campaign');
   assert.equal(derthertInCamp.morphDNA?.hairStyle, 'short_parted');
+});
+
+test('P0/P1 Bannerlord foundation: canonical heroes, stacks, troop trees, migration, and Discard contract', () => {
+  const state = createInitialCampaignState('Komutan Demirhan', 'noble');
+
+  // Yeni sefer doğrudan kanonik temelle açılır ve göç ikinci kez sonucu değiştirmez.
+  assert.equal(state.foundationVersion, FOUNDATION_VERSION);
+  assert.equal(state.influence, 0);
+  assert.deepEqual(ensureBannerlordFoundation(state), state);
+
+  const player = getPlayerHero(state)!;
+  assert.equal(player.id, PLAYER_HERO_ID);
+  assert.equal(player.name, 'Komutan Demirhan');
+  assert.equal(Object.keys(player.skills).length, 18);
+  assert.deepEqual(player.skills.steward, { level: 115, focus: 4, xp: 0 });
+  assert.equal(Object.values(player.equipment.BATTLE).filter(Boolean).length, 12);
+  for (const definitionId of Object.values(player.equipment.BATTLE)) {
+    assert.ok(resolveItemDefinition(state, definitionId), `Ekipman tanımı çözülebilmelidir: ${definitionId}`);
+  }
+
+  assert.deepEqual(
+    state.heroes?.map((hero) => hero.name),
+    ['Komutan Demirhan', 'Aybars', 'Helena', 'Torvald'],
+  );
+  assert.equal(getRoleHero(state, 'SCOUT')?.id, COMPANION_HERO_IDS.Aybars);
+  assert.equal(getRoleHero(state, 'SURGEON')?.name, 'Helena');
+  assert.equal(getRoleHero(state, 'ENGINEER')?.name, 'Torvald');
+  assert.equal(getRoleHero(state, 'QUARTERMASTER')?.id, PLAYER_HERO_ID);
+
+  // Başlangıç satırları adetli yığınlardır; eski "(x3)" katır satırı üç birim olur.
+  assert.equal(state.inventoryItems?.length, 6);
+  assert.equal(inventoryTotalQuantity(state.inventoryItems), 8);
+  assert.equal(inventoryTotalValue(state.inventoryItems), 4330);
+  const mules = state.inventoryItems?.find((item) => item.definitionId === 'item_sumpter_mule')!;
+  assert.equal(mules.quantity, 3);
+  assert.equal(mules.value, 80);
+  assert.equal(mules.stats?.cargoCapacity, 100);
+  assert.equal(
+    state.inventoryItems?.find((item) => item.definitionId === 'item_imperial_helm')?.stats?.armorHead,
+    48,
+  );
+  assert.equal(
+    state.inventoryItems?.find((item) => item.definitionId === 'item_cataphract_armor')?.stats?.armorBody,
+    64,
+  );
+  for (const item of state.inventoryItems ?? []) {
+    assert.ok(item.definitionId, 'Her yığın kalıcı tanım kimliği taşımalı');
+    assert.ok(resolveItemDefinition(state, item.definitionId));
+    assert.ok((item.quantity ?? 0) >= 1);
+    assert.equal(item.locked, false);
+  }
+
+  // Pazar kataloğunun tamamı sayısal stat'lı tanımlara çevrilir.
+  assert.equal(ITEM_DEFINITIONS.length, CALRADIA_MARKETPLACE_ITEMS.length);
+  assert.equal(new Set(ITEM_DEFINITIONS.map((definition) => definition.id)).size, ITEM_DEFINITIONS.length);
+  for (const definition of ITEM_DEFINITIONS) {
+    if (definition.category === 'WEAPON') assert.ok((definition.stats.damage ?? 0) > 0, definition.id);
+    if (definition.category === 'SHIELD') {
+      assert.ok((definition.stats.shieldDurability ?? 0) > 0 || (definition.stats.block ?? 0) > 0, definition.id);
+    }
+    if (definition.category === 'ARMOR') {
+      assert.ok(Object.keys(definition.stats).some((key) => key.startsWith('armor')), definition.id);
+    }
+    if (definition.category === 'HORSE' && definition.slot === 'MOUNT') {
+      assert.ok((definition.stats.mountSpeed ?? 0) > 0, definition.id);
+    }
+  }
+  assert.deepEqual(parseItemStats('+48 Baş Zırhı · +4 İtibar', 'HEAD', 'ARMOR'), { armorHead: 48 });
+
+  // Sekiz kültürün her biri dallanan ve bütünlüğü doğrulanabilir bir ağaca sahiptir.
+  assert.equal(TROOP_DEFINITIONS.length, 112);
+  assert.deepEqual(validateTroopDefinitions(), []);
+  for (const definition of TROOP_DEFINITIONS.filter((troop) => troop.id.endsWith('_recruit'))) {
+    assert.equal(definition.upgrades.length, 3, definition.id);
+  }
+  assert.equal(
+    TROOP_DEFINITIONS.find((troop) => troop.id === 'player_infantry_3')?.upgrades.length,
+    2,
+  );
+  assert.deepEqual(troopStackTotals(state.troopStacks), state.roster);
+  assert.equal(prisonerStackTotal(state.prisonerStacks), state.prisoners);
+  assert.ok(state.troopStacks?.every((stack) => stack.wounded === 0 && stack.xp === 0));
+
+  // v3 biçimindeki alanlar kayıpsız göç eder; üretilmiş katalog kimlikleri yığınlaşır.
+  const {
+    foundationVersion: _foundationVersion,
+    influence: _influence,
+    heroes: _heroes,
+    roleAssignments: _roleAssignments,
+    troopStacks: _troopStacks,
+    prisonerStacks: _prisonerStacks,
+    customItemDefinitions: _customItemDefinitions,
+    ...legacyCore
+  } = state;
+  const spatha = CALRADIA_MARKETPLACE_ITEMS.find((item) => item.id === 'mkt_thamaskene_spatha')!;
+  const legacyState = {
+    ...legacyCore,
+    inventoryItems: [
+      ...(legacyCore.inventoryItems ?? []).map((item) => {
+        const { definitionId: _definitionId, quantity: _quantity, locked: _locked, stats: _stats, ...legacyItem } = item;
+        return item.definitionId === 'item_sumpter_mule'
+          ? { ...legacyItem, name: 'Kervan Yük Katırı (x3)', value: 240 }
+          : legacyItem;
+      }),
+      {
+        id: 'mkt_thamaskene_spatha_1700000000_ab12',
+        name: spatha.name,
+        slot: spatha.slot,
+        category: spatha.category,
+        value: 435,
+        weight: spatha.weight,
+        statBonus: spatha.statBonus,
+        civilianLegal: spatha.civilianLegal,
+        icon: spatha.iconKey,
+        tier: spatha.tier,
+      },
+      {
+        id: 'mkt_thamaskene_spatha_loot_1_0_seed',
+        name: spatha.name,
+        slot: spatha.slot,
+        category: spatha.category,
+        value: 435,
+        weight: spatha.weight,
+        statBonus: spatha.statBonus,
+        civilianLegal: spatha.civilianLegal,
+        icon: spatha.iconKey,
+        tier: spatha.tier,
+      },
+    ],
+  };
+  const migrated = ensureBannerlordFoundation(legacyState);
+  assert.equal(migrated.heroes?.length, 4);
+  assert.deepEqual(troopStackTotals(migrated.troopStacks), migrated.roster);
+  assert.equal(
+    migrated.inventoryItems?.find((item) => item.definitionId === spatha.id)?.quantity,
+    2,
+  );
+  assert.equal(
+    migrated.inventoryItems?.find((item) => item.definitionId === 'item_sumpter_mule')?.quantity,
+    3,
+  );
+  assert.deepEqual(ensureBannerlordFoundation(migrated), migrated);
+
+  // Bozuk kanonik alanlar kaydı çökertmez; bilinmeyen kimlikler ve taşan sayılar onarılır.
+  const repaired = ensureBannerlordFoundation({
+    ...state,
+    troopStacks: [
+      { troopId: 'unknown_troop', count: 50, wounded: 50, xp: 50 },
+      { troopId: 'player_infantry_3', count: 999, wounded: 999, xp: 999_999 },
+    ],
+    prisonerStacks: [
+      { troopId: 'unknown_troop', count: 20, ready: 20, readinessProgress: 2 },
+      { troopId: 'bandits_recruit', count: 99, ready: 99, readinessProgress: 0.5 },
+    ],
+  });
+  assert.deepEqual(troopStackTotals(repaired.troopStacks), repaired.roster);
+  assert.equal(prisonerStackTotal(repaired.prisonerStacks), repaired.prisoners);
+  const repairedInfantry = repaired.troopStacks?.find((stack) => stack.troopId === 'player_infantry_3')!;
+  assert.equal(repairedInfantry.count, state.roster.militia);
+  assert.ok(repairedInfantry.wounded <= repairedInfantry.count);
+  assert.ok(repairedInfantry.xp <= repairedInfantry.count * 200);
+
+  // Save v4 round-trip ve v3 ham kaydının parseSave içinde göçü.
+  const macro = createInitialKingdomMacroState(state);
+  const currentSave = createSaveData(
+    { campaign: legacyState, macroState: macro, metHeroIds: [], backgroundChoice: 'noble' },
+    123456,
+  );
+  assert.equal(currentSave.version, SAVE_VERSION);
+  assert.equal(currentSave.campaign.foundationVersion, FOUNDATION_VERSION);
+  const roundTripped = parseSave(serializeSave(currentSave));
+  assert.equal(roundTripped?.campaign.heroes?.length, 4);
+
+  const rawV3 = JSON.parse(serializeSave(currentSave)) as any;
+  rawV3.version = 3;
+  rawV3.campaign = legacyState;
+  const parsedV3 = parseSave(JSON.stringify(rawV3));
+  assert.equal(parsedV3?.version, SAVE_VERSION);
+  assert.equal(parsedV3?.campaign.foundationVersion, FOUNDATION_VERSION);
+  assert.equal(parsedV3?.campaign.heroes?.length, 4);
+
+  // Pazar alım/satımı yığın adedini korur; kilitli yığın satılamaz.
+  let tradeState = { ...state, gold: 10_000 };
+  const rowCountBefore = tradeState.inventoryItems?.length ?? 0;
+  tradeState = buyMarketplaceItem(tradeState, spatha, 'Test Pazarı').nextState;
+  tradeState = buyMarketplaceItem(tradeState, spatha, 'Test Pazarı').nextState;
+  assert.equal(tradeState.inventoryItems?.length, rowCountBefore + 1);
+  let boughtStack = tradeState.inventoryItems?.find((item) => item.definitionId === spatha.id)!;
+  assert.equal(boughtStack.quantity, 2);
+  const lockedSell = sellMarketplaceItem(
+    {
+      ...tradeState,
+      inventoryItems: tradeState.inventoryItems?.map((item) =>
+        item.id === boughtStack.id ? { ...item, locked: true } : item,
+      ),
+    },
+    boughtStack.id,
+    'Test Pazarı',
+  );
+  assert.equal(lockedSell.success, false);
+  tradeState = sellMarketplaceItem(tradeState, boughtStack.id, 'Test Pazarı').nextState;
+  boughtStack = tradeState.inventoryItems?.find((item) => item.definitionId === spatha.id)!;
+  assert.equal(boughtStack.quantity, 1);
+  tradeState = sellMarketplaceItem(tradeState, boughtStack.id, 'Test Pazarı').nextState;
+  assert.equal(tradeState.inventoryItems?.length, rowCountBefore);
+
+  // Kuşanma yığından bir adet düşürür, eski ekipmanı geri koyar ve kahraman kaydını bağlar.
+  const equipState = {
+    ...state,
+    inventoryItems: state.inventoryItems?.map((item) =>
+      item.definitionId === 'item_thamaskene_sword' ? { ...item, quantity: 2 } : item,
+    ),
+  };
+  const previousWeaponId = getPlayerHero(equipState)?.equipment.BATTLE.WEAPON1;
+  const equipped = equipInventoryItem(equipState, 'item_thamaskene_sword');
+  assert.equal(equipped.success, true);
+  assert.equal(
+    getPlayerHero(equipped.nextState)?.equipment.BATTLE.WEAPON1,
+    'item_thamaskene_sword',
+  );
+  assert.equal(
+    equipped.nextState.inventoryItems?.find((item) => item.definitionId === 'item_thamaskene_sword')?.quantity,
+    1,
+  );
+  assert.equal(
+    equipped.nextState.inventoryItems?.find((item) => item.definitionId === previousWeaponId)?.quantity,
+    1,
+  );
+
+  // Slot boşaltma uydurma 120 dinarlık eşya üretmez; gerçek tanımı envantere döndürür.
+  const equippedHeadId = getPlayerHero(state)?.equipment.BATTLE.HEAD;
+  const unequipped = unequipEquipmentSlot(state, 'HEAD');
+  assert.equal(unequipped.success, true);
+  assert.equal(getPlayerHero(unequipped.nextState)?.equipment.BATTLE.HEAD, null);
+  assert.equal(
+    unequipped.nextState.inventoryItems?.find((item) => item.definitionId === equippedHeadId)?.quantity,
+    1,
+  );
+
+  // Bannerlord öğrenme sınırları: yumuşak sınır ve sert tavan birbirine karışmaz.
+  assert.equal(calculateLearningSoftCap(5, 4), 160);
+  assert.equal(calculateLearningHardCap(5, 4), 220);
+  assert.equal(calculateLearningSoftCap(2, 0), 10);
+  assert.equal(calculateLearningHardCap(2, 0), 18);
+
+  // Discard: değerin %50’si, resmi kademe tavanları, perk şartı ve taşma hesabı.
+  assert.deepEqual([0, 1, 2, 3, 4, 6].map(discardXpCapForTier), [35, 75, 150, 250, 300, 300]);
+  const armor = resolveItemDefinition(state, 'item_cataphract_armor')!;
+  const sword = resolveItemDefinition(state, 'item_thamaskene_sword')!;
+  assert.equal(itemDiscardXpPerUnit(armor), 300);
+  assert.equal(itemDiscardXpPerUnit(sword), 270);
+  assert.equal(discardEligibility(state, armor).eligible, false);
+  assert.equal(
+    previewDiscardDonation(state, [{ definitionId: armor.id, quantity: 1 }]).grossXp,
+    0,
+  );
+
+  const armorPerkState = ensureBannerlordFoundation({
+    ...state,
+    heroes: state.heroes?.map((hero) =>
+      hero.id === PLAYER_HERO_ID
+        ? { ...hero, perks: [...hero.perks, 'paid_in_promise'] }
+        : hero,
+    ),
+  });
+  assert.equal(discardEligibility(armorPerkState, armor).eligible, true);
+  assert.equal(discardEligibility(armorPerkState, sword).eligible, false);
+  const normalPreview = previewDiscardDonation(armorPerkState, [
+    { definitionId: armor.id, quantity: 1 },
+  ]);
+  assert.equal(normalPreview.grossXp, 300);
+  assert.equal(normalPreview.acceptedXp, 300);
+  assert.equal(normalPreview.overflowXp, 0);
+
+  const tinyCapacityState = {
+    ...armorPerkState,
+    roster: { militia: 1, archer: 0, cavalry: 0, guard: 0 },
+    troopStacks: [{ troopId: 'player_recruit', count: 1, wounded: 0, xp: 49 }],
+  };
+  const overflowPreview = previewDiscardDonation(tinyCapacityState, [
+    { definitionId: armor.id, quantity: 1 },
+  ]);
+  assert.equal(overflowPreview.capacityXp, 1);
+  assert.equal(overflowPreview.acceptedXp, 1);
+  assert.equal(overflowPreview.overflowXp, 299);
+  assert.equal(overflowPreview.exceedsCapacity, true);
+
+  const weaponPerkState = ensureBannerlordFoundation({
+    ...state,
+    skills: {
+      ...state.skills!,
+      steward: { ...state.skills!.steward, level: 125 },
+    },
+    heroes: state.heroes?.map((hero) =>
+      hero.id === PLAYER_HERO_ID
+        ? { ...hero, perks: [...hero.perks, 'giving_hands'] }
+        : hero,
+    ),
+  });
+  assert.equal(discardEligibility(weaponPerkState, sword).eligible, true);
 });
 
 

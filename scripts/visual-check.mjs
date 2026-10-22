@@ -1,12 +1,14 @@
 /**
- * visual-check.mjs — Tarayıcıda **gerçek** WebGL doğrulaması (opsiyonel ajan aracı)
+ * visual-check.mjs — Tarayıcıda **gerçek** WebGL portre doğrulaması
  *
- *   VIS_DIR=/tmp/vis node scripts/visual-check.mjs [url]
+ *   npm run setup:e2e
+ *   npm run dev
+ *   node scripts/visual-check.mjs [url]
  *
- * Neden ayrı: bu repoda tarayıcı bağımlılığı yok. Ajan sandbox'ında başsız
- * Chromium ancak npm'den gelen `@sparticuz/chromium` + `puppeteer-core` ve
- * derlenmiş NSS kütüphaneleriyle çalışıyor (bkz. aşağıdaki not). Bu script
- * `verify:*` zincirine **dahil değildir**; sadece görsel kontrol için.
+ * Bu script genel E2E paketinin (`tools/e2e`) Chromium başlatıcısını kullanır;
+ * NSS/NSPR kütüphaneleri ayrıca derlenmez. Yalnız portre çıktısı üretir ve
+ * `verify:*` zincirine dahil değildir. Genel akış testleri için
+ * `npm run test:e2e` kullanın.
  *
  * Ne yapar: ana menüden seferi başlatır, `N` ile ansiklopediyi açar, Kahramanlar
  * sekmesine geçer, 40 portrenin üretilmesini bekler, ölçümleri yazar ve
@@ -14,38 +16,15 @@
  *   - `encyclopedia-heroes.png`  (liste, 36px portreler)
  *   - `encyclopedia-hero-detail.png` (208×260 detay portresi)
  *   - `portraits-webgl.png` (40 portrenin iletişim sayfası)
- *
- * NSS notu (sandbox): Chromium `libnspr4/libnss3/libnssutil3` ister ve imajda
- * yoksa `error while loading shared libraries` verir. Kaynaktan derleme:
- *   curl -L https://codeload.github.com/mozilla/nspr/tar.gz/refs/heads/main | tar xz
- *   cd nspr-main && ./configure --prefix=/tmp/nssbuild/root --enable-64bit &&
- *     make -j2 && make install
- *   curl -L https://codeload.github.com/nss-dev/nss/tar.gz/refs/heads/main | tar xz
- *   cd nss-main && pip install --break-system-packages ninja gyp-next &&
- *     ./build.sh --opt --disable-tests --with-nspr=/tmp/nssbuild/root/include/nspr:/tmp/nssbuild/root/lib
- *   mkdir -p /tmp/nsslibs && cp /tmp/nssbuild/root/lib/*.so /tmp/nssbuild/dist/Release/lib/*.so /tmp/nsslibs/
- *   LD_LIBRARY_PATH=/tmp/nsslibs node scripts/visual-check.mjs
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { launchChromium } from '../tools/e2e/lib/chromium.mjs';
 
-const VIS_DIR = process.env.VIS_DIR ?? '/tmp/vis';
 const URL = process.argv[2] ?? 'http://localhost:3000';
 const OUT = 'docs/renders';
 
-// Bağımlılıklar repoda değil: VIS_DIR'deki kurulumdan çözülür.
-const requireFromVis = createRequire(`${VIS_DIR}/package.json`);
-const load = async (name) => (await import(pathToFileURL(requireFromVis.resolve(name)).href)).default;
-const chromium = await load('@sparticuz/chromium');
-const puppeteer = await load('puppeteer-core');
-
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const browser = await puppeteer.launch({
-  args: [...chromium.args, '--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'],
-  executablePath: await chromium.executablePath(),
-  headless: true,
-});
+const browser = await launchChromium();
 
 try {
   const page = await browser.newPage();
@@ -118,7 +97,11 @@ try {
 
 
   // Detay sayfası
-  await page.evaluate(() => [...document.querySelectorAll('button')].filter((b) => b.querySelector('img'))[0]?.click());
+  await page.click('[data-testid="encyclopedia-hero-row"]');
+  await page.waitForSelector(
+    '[data-testid="encyclopedia-modal"][data-encyclopedia-section="HERO"]',
+    { timeout: 30000 },
+  );
   await wait(2500);
   await page.screenshot({ path: `${OUT}/encyclopedia-hero-detail.png` });
 

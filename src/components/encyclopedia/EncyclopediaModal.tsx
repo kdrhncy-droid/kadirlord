@@ -240,6 +240,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
           <button
             key={card.section}
             type="button"
+            data-testid={`encyclopedia-section-${card.section.toLowerCase()}`}
             onClick={() => go({ section: card.section })}
             className={`group relative shrink-0 w-[168px] h-[260px] rounded-sm border border-[#c6a15b]/45 bg-gradient-to-b ${card.art} hover:border-[#fbbf24]/70 transition-colors overflow-hidden`}
           >
@@ -266,7 +267,7 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
   const heroList = (() => {
     const list = filterHeroes(index, { occupation, kingdomId, sort, query: '' });
     return (
-      <div className="flex h-full min-h-0">
+      <div className="flex h-full min-h-0" data-testid="encyclopedia-hero-list">
         <aside className="w-56 shrink-0 border-r border-[#c6a15b]/25 px-3 py-3 overflow-y-auto">
           <div className="text-[10px] uppercase tracking-[0.15em] text-[#c6a15b] mb-1">Meslek</div>
           <div className="flex flex-col gap-0.5 mb-4">
@@ -337,6 +338,8 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
               <button
                 key={h.id}
                 type="button"
+                data-testid="encyclopedia-hero-row"
+                data-hero-id={h.id}
                 onClick={() => go({ section: 'HERO', id: h.id })}
                 className="w-full flex items-center gap-3 px-3 py-2 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10 text-left"
               >
@@ -742,7 +745,11 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
   })();
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[#060504]/85 backdrop-blur-sm p-4">
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-[#060504]/85 backdrop-blur-sm p-4"
+      data-testid="encyclopedia-modal"
+      data-encyclopedia-section={route.section}
+    >
       <div className="relative w-full max-w-5xl h-[86vh] rounded-sm border border-[#c6a15b]/50 bg-[#0f0c08] shadow-[0_0_60px_rgba(0,0,0,0.8)] overflow-hidden">
         {/* iç çerçeve */}
         <div className="pointer-events-none absolute inset-1.5 rounded-sm border border-[#c6a15b]/15" />
