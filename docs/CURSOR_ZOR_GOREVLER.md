@@ -1,5 +1,7 @@
 # Kadirlord — Cursor İçin Bannerlord Sistemleri Ansiklopedik Geliştirici Kılavuzu
 
+> **📌 Tek Güncel Görev Kaynağı (2026-10-22):** Projedeki **tamamlanmış (`[x]`)** ve **yapılacak (`[ ]`)** tüm görevlerin birleştirilmiş ana listesi kök dizindeki [`YAPILACAKLAR_LISTESI.md`](../YAPILACAKLAR_LISTESI.md) dosyasıdır. Bu belgedeki **GÖREV 1 (Canlı Kuşatma & Çoklu Lord Yarım Ay Dizilimi)** ve **GÖREV 2 (Nüfuzla Ordu Toplama & Uyum/Cohesion)** tamamlanmıştır (`[x]`); **GÖREV 3** ve **GÖREV 4** ile diğer ekran denetimi maddeleri `YAPILACAKLAR_LISTESI.md` içinde **ADIM 1 .. ADIM 7** sırasıyla takip edilmektedir.
+
 Bu belge; **Mount & Blade II: Bannerlord** oyun kaynak kodları, Fandom wiki'si ve resmi mekanik dokümantasyonundan derlenmiş **kesin matematiksel formülleri, arayüz (UI) yuva düzenlerini ve etkileşim akışlarını** içerir. Cursor AI asistanı, projeyi geliştirirken bu belgedeki detayları kılavuz kabul etmelidir.
 
 ---

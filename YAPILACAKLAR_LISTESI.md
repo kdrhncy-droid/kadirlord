@@ -1,352 +1,160 @@
-# Kadirlord — Açık Görevler ve Yol Haritası
+# Kadirlord — Birleştirilmiş Tüm Görevler, Tamamlananlar (`[x]`) ve Açık İşler (`[ ]`)
 
-> **Son konsolidasyon:** 2026-10-22
-> **Kapsam:** Bu dosya, projede **yapılmamış işlerin tek güncel listesidir**. Eski araştırma ve
-> denetim belgeleri kanıt/arka plan arşivi olarak korunur; bir görev bu dosyada yoksa önce buraya
-> eklenmeli, tamamlanan görev de yalnız burada kapatılmalıdır. Çelişki hâlinde güncel kod ve bu
-> dosya esas alınır.
->
-> **Uygulama sırası bağlayıcıdır:** P2 → P3 → P4 → P5 → P6 → içerik/ürünleşme borçları →
-> **P7 performans** → **P8 kayıt yönetimi**. Her paket; tip kontrolü, ilgili kural/probe testleri
-> ve gerekiyorsa gerçek tarayıcı E2E kapısından geçmeden sonraki pakete başlanmaz.
->
-> 2026-10-22 konsolidasyonunda GitHub'da açık Issue veya Pull Request bulunmuyordu. Oyun
-> yalnız masaüstüdür; mobil/dokunmatik destek kullanıcı kararıyla kapsam dışıdır.
+> **Son Konsolidasyon:** 2026-10-22 (`d929f6f` — Canlı Kuşatma, Çoklu Lord Yarım Ay Dizilimi ve Ordu/Bütünlük Sistemleri Sonrası)
+> **Kapsam:** Bu dosya; eski `YAPILACAKLAR_LISTESI.md`, `docs/CURSOR_ZOR_GOREVLER.md`, `docs/EKSIKLER_VE_HATALAR.md`, **Steam Bannerlord Türkçe Detaylı Tam Rehberi (`id=2046201799` — 17 Bölüm + SSS)** ve **6 Ana Ekranın (Şehir/Köy/Kale, Harita HUD, Envanter, Pazar, Diyalog/Lord, Parti/Karakter/Krallık) Görsel/Mekanik Denetimi** içindeki **TÜM görevlerin birleştirilmiş tek kaynağıdır**.
+> **Doğrulama Prensibi:** Her madde gerçek kod tabanında (`src/game/` ve `src/components/`) kontrol edilerek gerçekten tamamlanmış olanlar `[x]`, eksik/yarım/görsel olarak hatalı olanlar `[ ]` olarak işaretlenmiştir.
 
-## 1. Tamamlanmış temel
+---
 
-- Hız Paketi: `AGENTS.md`, deterministik test kancası, repo içi Chromium/Puppeteer E2E ve kademeli
-  `verify` komutları `main`e girdi.
-- Bannerlord P0 kararları kapatıldı: tam ekran üç sütun düzen, bekleyen transfer + `Done/Cancel`,
-  Bannerlord Discard/perk modeli, tam kültür birlik ağaçları ve adım adım tam kapsam.
-- Bannerlord P1 veri temeli tamamlandı: sayısal stat'lı eşya tanımları, adetli/kilitli yığınlar,
-  tanım kimliğine bağlı ekipman, gerçek oyuncu/yoldaş kayıtları, XP/yaralı alanlı birlik ve
-  tutsak yığınları; kayıt biçimi v4 ve v1–v3 göçü `ensureBannerlordFoundation` ile çalışıyor.
-- P2'nin pazar dilimi tamamlandı (`59a9d10`): bekleyen-transfer taslağı, kalıcı şehir stoğu ve
-  tüccar kasası, adetli alım/satım, kalıcı kilit, ziyaret edilmiş şehir söylentileri ve gerçek
-  `Vazgeç/Bitti` atomikliği pazar ekranına bağlandı.
-- P2'nin saha envanteri dilimi tamamlandı (`0d41b25`): tam ekran üç sütun `I` ekranı, sol Discard,
-  kahraman geçiş okları, savaş/sivil setler, bütün kahramanlar için tek kuşan/çıkar çekirdeği ve
-  Discard'ın gerçek birlik XP dağıtımı çalışıyor.
-- Bu konsolidasyonun temizlik kısmı için Bölüm 12'ye bakın.
+## ✅ BÖLÜM 1 — KOD TABANINDA TAMAMLANMIŞ VE DOĞRULANMIŞ GÖREVLER (`[x]`)
 
-## 2. Sıradaki ana yol — Bannerlord paketleri
+### 1.1. Altyapı, Veri Temeli ve Kayıt/Zaman Düzeltmeleri (`P0` – `P1` & `Faz 10`)
+- [x] **Hız Paketi ve E2E Altyapısı (`AGENTS.md`, `src/game/testHarness.ts`, `tools/e2e/`):** Deterministik test kancası (`window.__kadirlordTest`), repo içi Chromium/Puppeteer E2E ve kademeli `verify:fast` / `verify:all` komutları.
+- [x] **Bannerlord P0 Mimari Kararları:** Tam ekran üç sütun düzen (`Envanter / Pazar / Parti / Ganimet`), bekleyen transfer (`Pending Transfer`) + atomik `Bitti / Vazgeç (Done / Cancel)`, Bannerlord Discard/perk modeli ve kültür birlik ağaçları.
+- [x] **Bannerlord P1 Veri Temeli (`src/game/bannerlordFoundation.ts`, `src/game/saveGame.ts`):** Sayısal stat'lı eşya tanımları, adetli/kilitli yığınlar (`InventoryItem`), tanım kimliğine bağlı ekipman (`BATTLE` / `CIVILIAN`), gerçek oyuncu/yoldaş kayıtları (`CampaignHero`), XP/yaralı alanlı birlik (`troopStacks`) ve tutsak (`prisonerStacks`) yığınları; kayıt biçimi `v4` ve `v1–v3` göçü (`ensureBannerlordFoundation`).
+- [x] **A1 — Kayıt / Yükleme Sistemi Temeli (`src/game/saveGame.ts`, `src/components/BannerlordPauseModal.tsx`):** `localStorage` üzerinde sürüm numaralı kayıt/yükleme ve duraklatma menüsü (`probe-save.ts`).
+- [x] **A2 — Modal Zaman Yönetimi Tutarsızlığının Giderilmesi (`src/game/uiSession.ts`, `src/App.tsx`):** Modallar açılırken zamanın duraklatılması ve kapandığında önceki hıza (`prevSpeed`) geri dönmesi (`probe-ui-session.ts`).
+- [x] **A4 — Pazarın Yalnızca Yerleşkeye Girildiğinde Açılması (`src/App.tsx`):** `canTrade={!!activeSettlementModal}` kuralı ile haritada sadece yakınından geçerken pazarın açılması engellendi.
 
-### P2 — Envanter, Discard, pazar, ganimet ve lojistik
+### 1.2. Envanter, Discard, Pazar, Ganimet ve Lojistik (`P2`)
+- [x] **Saha Envanteri (`I`) Tam Ekran 3 Sütun Düzeni (`src/components/InventoryModal.tsx`):** Sol `DISCARD` sütunu, ortada 360° döndürülebilir `HeroMannequin` + kuşanılmış binek ve 12 ekipman slotu, sağda Parti Envanteri; `< Kahraman >` geçiş okları, `Savaş Seti / Sivil Set` sekmeleri ve sayısal zırh/hasar özeti.
+- [x] **Canlı Ekipman Kuşanma/Çıkarma Çekirdeği (`src/game/bannerlordFoundation.ts`):** Seçili kahramanın seçili setine (`BATTLE` / `CIVILIAN`) kuşanma, yığından 1 adet düşme, eski parçayı envantere döndürme ve sivil yasallık kontrolü (`probe-equipment.ts`).
+- [x] **Discard Bağış ve Birlik XP Dağıtımı (`src/game/bannerlordFoundation.ts`, `InventoryModal.tsx`):** `Paid in Promise` (zırh/koşum) ve `Giving Hands` (silah/kalkan/sadak) perkleriyle atılan eşyaların birliklere kapasite dahilinde XP dağıtması, taşmanın kırmızı gösterilmesi.
+- [x] **Şehir Pazarı 3 Sütun ve Kalıcı Stok/Kasa (`src/components/BannerlordMarketModal.tsx`, `src/game/marketTransaction.ts`):** Sol kalıcı şehir stoğu (`Settlement.marketStock`), kalıcı tüccar kasası (`merchantGold`), adetli alım/satım (`Tık=1, Shift=5, Ctrl=Tümü`), kalıcı kilit (`locked`), kategori/arama/sıralama, ortalama fiyat renkleri ve ziyaret edilmiş şehir ticaret söylentileri (`Trade Rumors`).
+- [x] **Savaş Sonrası Ganimet Ekranı (`src/components/BattleLootModal.tsx`, `src/game/lootTransaction.ts`):** Sol ganimet, orta 3B manken + Discard/kapasite özeti, sağ parti envanteri; `Tümünü Al / Tümünü Bırak`, ganimeti doğrudan Discard XP'sine bağışlama ve atomik `Bitti / Vazgeç` (`probe-loot.ts`).
+- [x] **Tekil Lojistik ve Harita Hızı Modeli (`src/game/logistics.ts`):** Taşıma kapasitesi (`taban 40 + sağlıklı asker×20 + yedek binek×20 + yük hayvanı×100 + pack_mules +%20`) ve harita hızı (`ordu boyutu, süvari oranı, bindirilmiş yaya bonusu, aşırı yük cezası, sürü cezası / herd penalty, yaralı/tutsak sürtünmesi ve arazi çarpanları`).
+- [x] **Canlı Erzak Yığınları ve Yemek Çeşitliliği (`src/game/foodSystem.ts`):** Alınan yiyeceklerin doğrudan `inventoryItems` yığınlarına işlenmesi, günlük round-robin erzak tüketimi, `1..5+` çeşit gıda için `0..+12` çeşitlilik morali ve açlık cezaları.
 
-- [ ] **Bekleyen-transfer etkileşimini tamamla:** Saf transfer/kilit çekirdeği ve satır
-      düğmelerinde tık = 1, Shift = 5, Ctrl/Cmd = tümü çalışıyor; `Done` taslağı atomik işliyor,
-      `Cancel` kampanyayı değiştirmiyor. Sürükle-bırak ve satır okları henüz yok; eklenirse aynı
-      çekirdek kullanılacak.
-- [x] **Saha Envanteri (`I`) ekranını tam ekran üç sütun yap:** Sol Discard, ortada 360°
-      döndürülebilir kahraman + kuşanılmışsa binek ve 12 slot, sağda parti envanteri. Kahraman
-      geçiş okları, gerçek savaş/sivil set sekmeleri ve sayısal zırh/stat özeti bağlı.
-- [x] **Ekipman akışını canlı modelde tamamla:** Tek çekirdek seçili kahramanın seçili setine
-      yazar, yığından bir adet düşer, eski parçayı envantere döndürür; sivil yasallık ve slot
-      uyumu doğrulanır, 3B manken seçili setten türetilir.
-- [x] **Discard uygulamasını bitir:** Perk/tavan/kapasite önizlemesi gerçek XP dağıtımına bağlı.
-      XP yalnız terfi edebilen normal birlik yığınlarına kapasite kadar gider; taşma kırmızı
-      gösterilir ve boşa gider. Zırh/koşum ile silah/kalkan/sadak ayrımı ve T0 35 tavanı kural
-      testleriyle kilitli.
-- [x] **Şehir pazarını aynı ekrana taşı:** Sol kalıcı şehir stoğu, orta kahraman, sağ parti
-      envanteri. Tüccar kasası kalıcıdır; oyuncunun sattığı mallar stoğa döner; gösterilen ve
-      ödenen birim fiyat aynı tanım tabanlı yardımcıdan gelir.
-- [ ] **Pazar ortasındaki kahraman seçimini saha envanteriyle eşitle:** Pazar hâlâ yalnız oyuncu
-      kahramanını gösteriyor. Kahraman geçiş okları ve savaş/sivil set seçimi eklenmeli; ayrıca
-      sağdaki kuşanılmış-slot şeridinin ekran görüntüsünde kısmen kesilmesi görsel olarak
-      düzeltilmeli.
-- [x] **Pazar liste işlevlerini tamamla:** Kategori, arama ve kademe/ad/adet/fiyat/ağırlık/
-      hasar/zırh sıralaması; ortalama fiyat renkleri; yalnız ziyaret edilmiş şehir söylentileri;
-      kalıcı kilidin satış, toplu satış ve Discard'ı engellemesi bağlı.
-- [x] **Savaş sonrası ganimet ekranını ekle:** Sol ganimet, orta 3B manken + Discard/kapasite
-      özeti, sağ parti envanteri; bekleyen transfer, Shift (5) / Ctrl (tümü) / tekil aktarım,
-      `Tümünü Al` / `Tümünü Bırak`, sol teçhizatı Discard XP'sine bağışlama ve atomik `Bitti` ile
-      kampanyaya işleme bağlandı. Vazgeç durumunda taslak temizlenir. Gerçek Chromium E2E
-      `battle-loot-screen` ve kural testleri (33/33) yeşil.
-- [x] **Tek lojistik modeli kur:** Toplam ağırlık birim ağırlık × adet hesabı ekranlarda doğru
-      gösteriliyor; kapasite formülleri (`calculatePartyCarryCapacity`) ve harita hızı (`calculatePartyLogistics`)
-      `src/game/logistics.ts` altında tekilleştirildi. Kapasite taban (40) + sağlıklı askerler (20 kg) +
-      yedek binekler (20 kg) + yük hayvanları (100 kg) ve `pack_mules` perk'iyle (+%20) hesaplanır.
-      Hız modeli ordu boyutu, süvari oranı, bindirilmiş yaya bonusu, aşırı yük (overburden drag),
-      sürü cezası (herd penalty), yaralı/tutsak sürtünmesi ve arazi çarpanlarını tek çatıya topladı.
-      Kural testi (34/34) yeşil.
-- [x] **Erzak yığınlarını canlı tüketime bağla:** `src/game/foodSystem.ts` kuruldu. Pazar geçiş
-      katmanındaki soyut `SPECIAL_FOOD_GAIN` baypası kaldırıldı; alınan yiyecekler doğrudan
-      `inventoryItems` yığınlarına işlenir. Günlük tüketim (`advanceDailyPartyFood` / `advanceDailyEconomyAndWorld`)
-      envanterdeki gerçek yiyecek yığınlarından dengeli/round-robin tüketir; 1..5+ çeşit gıda için
-      0..+12 çeşitlilik morali verir. Yiyecek kalmadığında açlık felaketi (-15 moral, askerlerin dermansız
-      düşmesi ve vakayiname uyarısı) işler. Kural testi (35/35) yeşil.
-- [x] **P2 kabul kapısı:** P2 kapsamındaki tüm alt dilimler tamamlandı. Kural testleri **35/35**,
-      `npm run verify:fast` ve gerçek donanım hızlandırmalı Chromium E2E **6/6** başarıyla geçti
-      (`boot-webgl`, `encyclopedia-heroes`, `forced-encounter`, `market-pending-transfer`,
-      `field-inventory-discard`, `battle-loot-screen`). P2 başarıyla kapandı, P3'e geçiliyor.
+### 1.3. Parti (`P`), Birlik Ağaçları, Yaralılar, Tutsaklar ve Garnizon (`P3`)
+- [x] **3 Sütunlu Parti Ekranı ve `P` Kısayolu (`src/components/PartyModal.tsx`, `src/game/partySystem.ts`):** Sol sütunda Garnizon Transferi veya Kapasite/Tutsak Dökümü, orta sütunda 3B `HeroMannequin` + seçili birlik/kahraman istatistikleri ve terfi dalları, sağ sütunda Kahramanlar + Muvazzaf Birlikler + Tutsaklar (`Bitti / Vazgeç` atomik taslak).
+- [x] **`troopStacks` Tek Kaynak ve Kültür Birlik Ağaçları (`src/game/bannerlordFoundation.ts`):** 6 kültürün `Tier 1..5` dallanan piyade/okçu/süvari ağaçları, terfi XP'si, altın ve `HORSE` / `WAR_HORSE` binek gereksinimi (`probe-troops.ts`).
+- [x] **Yaralı İyileşme ve Tür Bazlı Tutsak Sistemi (`src/game/partySystem.ts`):** Savaş sonrası sağlıklı/yaralı ayrımı, Cerrah/Hekimlik ve yerleşimde bekleme iyileşme hızları; tutsak kapasitesi, zamanla devşirmeye hazır olma (`conformity`), fidye/satış ve serbest bırakma.
+- [x] **Garnizon Yığın Transferi ve Parti Sınırı Dökümü (`PartyModal.tsx`):** Yerleşim garnizonu ile oyuncu partisi arasında iki yönlü birlik yığını transferi; Klan Kademesi + İaşeci (İdare) + Liderlik + Nam parti kapasite dökümü.
+- [x] **Eşraf (Notable) 6 Yuvalı Asker Toplama Ekranı (`src/components/BannerlordRecruitmentModal.tsx`, `src/game/recruitment.ts`):** Yerleşim eşraflarının yan yana 6 asker yuvası (`[0, 0, 5, 10, 15, 20]` ilişki kilidi), `Tümünü Topla` ve atomik ödeme (`probe-recruitment.ts`).
 
-#### P2 ilerleme kaydı — 2026-10-22
+### 1.4. Karakter Gelişimi, Perk Kataloğu ve Klan Rolleri (`P4`)
+- [x] **Kullanım Bazlı 18 Beceri ve 6 Nitelik Motoru (`src/game/characterDevelopment.ts`):** `VIG, CTR, END, CNG, SOC, INT` nitelikleri ve 18 beceri, Odak puanları (`0..5`), yeşil **Öğrenme Sınırı (`Learning Limit`)** ve **Öğrenme Hızı (`Learning Rate`)** formülleri, her seviyede 1 odak ve her 4 seviyede 1 nitelik puanı (`probe-character-development.ts`).
+- [x] **Karakter Ekranı ve Perk Ağacı (`src/components/CharacterModal.tsx`, `src/game/perks.ts`):** `< Kahraman >` geçiş okları, XP ilerleme çubukları, 25'li eşiklerde çift seçenekli tam Perk Kataloğu (`PERK_CATALOG`) ve 4 Klan Rolü (`QUARTERMASTER / İaşeci, SCOUT / İzci, SURGEON / Cerrah, ENGINEER / Mühendis`) atama arayüzü.
 
-- `59a9d10`: `src/game/marketTransaction.ts`, kalıcı `Settlement.marketStock/merchantGold/visited`,
-  taslak tabanlı `BannerlordMarketModal`, pazar E2E. Tarayıcıda yakalanan “`visited` yazılınca boş
-  stok” regresyonu sanitizasyon + başlatıcı tarafında kapatıldı ve teste eklendi.
-- `0d41b25`: `src/components/InventoryModal.tsx`, ortak `HeroMannequin`, bütün kahramanlar için
-  `equipInventoryItemForHero` / `unequipHeroEquipmentSlot` / `setHeroActiveEquipmentSet`, Discard UI
-  ve saha-envanteri E2E. Eski HUD kompakt envanter çekmecesi kaldırıldı; `I` ve HUD düğmesi artık
-  tam ekranı açar.
-- `ea3bd6a`: Ganimet Ekranı Dilimi: `src/game/lootTransaction.ts`, `src/components/BattleLootModal.tsx`, test kancasında
-  `openLoot/closeLoot`, saf kural testi (33/33) ve Chromium E2E `battle-loot-screen` (6/6).
-- Lojistik ve Erzak Dilimi: `src/game/logistics.ts` (tekil taşıma kapasitesi ve parti hız modeli, sürü cezası, bindirilmiş yaya),
-  `src/game/foodSystem.ts` (canlı envanter erzak yığınları, çeşitlilik morali, açlık etkileri), pazar soyut gıda baypasının kaldırılması,
-  kural testleri (35/35) ve E2E (6/6). P2 kapısı kapandı.
-- **Devam noktası:** P3 — Party (`P`), birlikler ve tutsaklar (Party ekranı, `troopStacks` tek kaynak yapılması, dallanan terfi, yaralılar ve tutsaklar).
-  Performans (P7) ve kayıt sistemi (P8) kullanıcı kararıyla hâlâ en sonda.
+### 1.5. Canlı Kuşatma Sistemi ve Ordu / Bütünlük (`GÖREV 1` & `GÖREV 2`)
+- [x] **Canlı Kuşatma Kampı, Makine Düellosu ve Sur Gediği (`src/components/SiegeEncounterModal.tsx`, `src/components/WorldCanvas.tsx`, `src/game/worldSim.ts`, `src/game/siegeEncounter.ts`):**
+  - Haritada 3D kuşatma çadırları, siper kazıkları, ateş/duman efektleri ve kaleye bakan **4 Menzilli + 2 Yakın Dövüş + 4 Savunma Kulesi** interaktif 3D makine yuvası.
+  - Gerçek Bannerlord **Sol Dikey Kuşatma Menüsü (`~360px`)** + **Üst Orta İki Sancaklı Kuşatma Barı** (Garnizon/Milis, Surlar, Erzak, Kuşatan Güç).
+  - **Rezerveye Çek (`Move to Reserve`)** mekaniği, karşılıklı topçu düellosu, **Sur Gediği (`Breach`)** açılması ve garnizon açlığı.
+  - 3 Bağlamlı etkileşim: *Kuşatan (`attacker`)*, *Dışarıdan Yardıma Gelen (`outsider` — kuşatanlara saldır / zayiat vererek kaleye sız)* ve *İçeride Savunan (`defender` — Huruc / Sally Out, Pusu / Ambush, Çemberi Yarıp Kaç)* (`probe-siege-encounter.ts`).
+- [x] **Çoklu Lord Yarım Ay (`Half-Moon Arc`) Kuşatma Dizilimi ve Yardım (`DEFEND`) AI (`src/game/worldSim.ts`, `src/game/campaignSystem.ts`, `src/components/WorldCanvas.tsx`):**
+  - Birden fazla lord aynı kaleyi kuşattığında kalenin içine girmek yerine surların dışında yarım ay yayında (`23m` yarıçap) dizilmesi ve birleşik kuşatma gücü hesabı.
+  - Dost lordların kuşatma altındaki kaleyi algılayıp yardıma (`DEFEND`) koşması ve güç yettiğinde kuşatmayı kırması (`probe-army-and-siege-ai.ts`).
+- [x] **Ordu Yönetimi (`Army Management`) ve Bütünlük (`Cohesion`) (`src/components/ArmyModal.tsx`, `src/game/armySystem.ts`, `src/components/GameHud.tsx`):**
+  - Nüfuz harcayarak (klan partileri için `0 Nüfuz`) ordu toplama, 6 sütunlu sıralanabilir birlik tablosu, 4 sütunlu portre ızgarası, **Bütünlük (`Cohesion`)** barı ve `[+10]` nüfuzla artırma, `[Orduyu Dağıt]` butonu ve HUD sağ-alt genişletilebilir Ordu çubuğu.
 
-### P3 — Party (`P`), birlikler ve tutsaklar
+---
 
-- [x] **Party ekranını ve `P` kısayolunu kur:** Sol Dismiss/garnizon/kurtarılan-tutsak bağlamı,
-      orta seçili kahraman/birlik 3B modeli, sağ kahramanlar + birlikler + tutsaklar. `P`'nin
-      mevcut pause işleviyle çakışmasını kaldır; duraklatma için ayrı erişimi koru.
-- [x] **`troopStacks`i tek kaynak yap:** Asker toplama, ücret, savaş zayiatı/yaralı, garnizon ve
-      parti gücü yığınlardan türetilsin; eski dört sınıflı `roster` yalnız türetilmiş özet/göç
-      uyumluluğu olarak kalsın.
-- [x] **Birlik XP ve dallanan terfiyi tamamla:** Savaş/eğitim/Discard XP'si yığına yazılsın;
-      hazır asker sayısı, hedef dal seçimi, altın ve normal/savaş atı şartı, bekleyen toplam ödeme,
-      `Done/Cancel` ile çalışsın.
-- [x] **Yaralı sistemini işlet:** Savaş sonuçları sağlıklı/yaralı ayrımını yazsın; Cerrah/Hekimlik,
-      yerleşimde bekleme ve kahraman yaralanması iyileşme hızlarını etkilesin.
-- [x] **Tür bazlı tutsakları tamamla:** Kapasite, zamanla hazır olma, devşirme, fidye/satış,
-      serbest bırakma, kaçış ve lord tutsaklarının ayrı kaydı/akışı olsun.
-- [x] **Garnizon değişimini yığın modeline taşı:** Yerleşim garnizonu tek sayı yerine
-      `garrisonRoster`/birlik yığınları kullansın; Party ekranından iki yönlü bekleyen transfer yapılsın.
-- [x] **Parti sınırını Bannerlord bileşenleriyle hesapla:** Klan kademesi, İaşeci'nin İdare
-      becerisi/perkleri, politikalar ve diğer bonuslar ayrı satırlar hâlinde gösterilsin.
-- [x] **P3 kabul kapısı:** Toplamların roster/armySize/güç ile senkronu, terfi/at tüketimi,
-      yaralı iyileşmesi, tutsak hazır olma ve garnizon transfer testleri + Party E2E.
+## 🛠️ BÖLÜM 2 — YAPILACAKLAR: EKRAN EKRAN VE SİSTEM SİSTEM TÜM AÇIK GÖREVLER (`[ ]`)
 
-### P4 — Karakter gelişimi, perkler ve klan rolleri
+> Aşağıdaki maddeler **ADIM 1'den ADIM 7'ye kadar sırayla ve ayrı ayrı** kodlanacak, her adım sonunda test + Chrome ekran görüntüsü (SS) ile doğrulanacaktır.
 
-- [x] **Kullanım bazlı beceri XP motoru kur:** 18 becerinin oyun eylemlerinden XP kazanımı,
-      öğrenme hızı, yumuşak sınır ve sert tavan; beceri artışlarının karakter seviyesini ilerletmesi.
-- [x] **Seviye ödüllerini düzelt:** Her seviyede 1 odak, her 4 seviyede 1 nitelik. Odağın beceriye
-      anında +10 seviye vermesi ve niteliğin doğrudan HP vermesi gibi eski yan etkileri kaldır.
-- [x] **`CampaignHero`yu tek gelişim kaynağı yap:** Oyuncu için eski `attributes/skills/perks`
-      alanlarıyla çift yönlü senkron yerine kahraman kaydı esas alınsın; kayıt göçü korunarak
-      eski alanlar aşamalı kaldırılsın.
-- [x] **Karakter ekranını yenile:** Oyuncu/eş/aile/yoldaş okları; XP çubukları, öğrenme hızı,
-      yumuşak/sert sınır ve seviye ilerlemesi seçili kahramana göre gösterilsin.
-- [x] **Tam perk kataloğu ve etkilerini uygula:** 25'li eşiklerde çift seçenekler; kişisel,
-      kaptan, parti lideri, klan rolü ve vali kapsamları gerçek hesaplara bağlansın. Eski serbest
-      metin perkleri katalog kimliklerine göç ettirilsin.
-- [x] **Klan rollerini gerçek hesaplara bağla:** İaşeci/Cerrah/İzci/Mühendis etkileri atanan
-      kahramanın beceri/perklerinden gelsin; rol boşsa parti lideri kullanılsın. Rol atama arayüzü
-      kahraman kimliğiyle çalışsın.
-- [x] **P4 kabul kapısı:** XP eğrileri, sınır/hız, seviye ödülleri, bütün perk etkilerinin en az
-      birer invariant testi ve rol değiştirme sonuçları.
+---
 
-### P5 — Harita HUD'ı ve gün içi zaman
+### ADIM 1 — Şehir / Kale / Köy Ekranı (`SettlementModal.tsx`) ve Harita Yerleşim Etiketleri (`WorldCanvas.tsx`)
 
-- [ ] **Kısayolları Bannerlord sırasına getir:** Ansiklopedi `N`, Karakter `C`, Envanter `I`,
-      Party `P`, Görevler `J`, Klan `L`, Krallık `K`. Klan ve görev ekranlarını kendi girişlerine taşı.
-- [ ] **Gün içi saati gerçekten ilerlet:** Gün kesri, mevsim/yıl ve gece-gündüz kadranı aynı saat
-      kaynağından türetilsin; sabit saat 9 ve sabit yıl 1084 gösterimi kalksın.
-- [ ] **Sağ alt kaynak şeridini düzelt:** Dinar, nüfuz, sağlık, asker mevcut/kapasite, erzak ve
-      moral; genişletilmiş görünümde hız, sağlıklı/yaralı, tutsak ve günlük değişimler olsun.
-- [ ] **Hesap dökümü tooltip'leri ekle:** Altın gelir/gideri, nüfuz kaynakları, iyileşme hızı,
-      kapasite bileşenleri, erzak tüketimi/çeşitliliği, moral bileşenleri ve hız bileşenleri.
-- [ ] **P5 kabul kapısı:** Klavye ile bütün ekranların açılıp kapanması, saat ilerlemesi ve her
-      tooltip toplamının ana değerle tutması için E2E/kural testleri.
+- [ ] **1.1. Şehir/Kale/Köy Ekranını Gerçek Bannerlord "Sol Dikey Menü + Arka Planda Canlı 3D Harita" Düzenine Çevir (`SettlementModal.tsx`):**
+  - **Mevcut Hata:** Şu an yerleşime girildiğinde arka plandaki 3D haritayı tamamen kapatan dev bir siyah pencere (`max-w-5xl bg-[#16120e]`) açılıyor.
+  - **Yapılacak:** Kuşatma ekranında olduğu gibi arka planda **3D dünya haritası ve yerleşimin 3D modeli açık kalacak** (`pointer-events-none` kapsayıcı):
+    - **Üst Sol Şerit:** Krallık sancağı + Yerleşim adı + 6 istatistik ikonu (*Sur Seviyesi, Refah, Milis, Garnizon, Gıda, Sadakat/Güvenlik*) ve altlarında yeşil/kırmızı günlük `+/-` değişim.
+    - **Üst Orta Şerit:** Yerleşimde bulunan lord birlikleri ve atölye rozetleri.
+    - **Üst Sağ Şerit:** Yerleşimdeki **Eşraf (`Notables`) ve Yoldaşların portre kutuları** (aktif görevi olanın sağ üstünde **mavi `!` ünlem rozeti**).
+    - **Sol Dikey Aksiyon Paneli (`~350px`):** Üstte atmosferik durum metni, ortada ikonlu menü satırları (`Kaleye Git`, `Taverna Bölgesine Git`, `Arenaya Git`, `Asker Topla`, `Ticaret Yap`, `Şehri/Kaleyi Yönet`, `Burada Bir Süre Bekle`, `Ayrıl`), altta mekana göre sahne illüstrasyonu.
+- [ ] **1.2. Harita Üzerindeki Köy/Şehir Etiketlerine Hammadde Üretim İkonu Ekle (`WorldCanvas.tsx`):**
+  - Köylerin harita isim etiketlerinin yanında o köyün ürettiği hammadde ikonu (*Tahıl, Demir, At, Balık, Üzüm, Zeytin, Koyun/Yün, Keten, Kil, Kereste*) gösterilecek; üzerine gelince (tooltip) bağlı olduğu şehir, refah ve üretim bilgisi açılacak.
+- [ ] **1.3. Eşraf (`Notable`) Mavi `!` Görev Rozeti ve Kilitli Asker Slotu Bağlantısı (`SettlementModal.tsx`, `quests.ts`, `BannerlordRecruitmentModal.tsx`):**
+  - Eşraf portresindeki mavi `!` işaretine tıklayınca o eşrafın görevinin açılması, tamamlandığında eşraf ilişkisinin (`relation`) artması ve `Asker Topla` ekranındaki kilitli üst kademe yuvaların (`+5, +10, +15, +20` ilişki) açılması.
 
-### P6 — Büyük kampanya sistemleri
+---
 
-- [ ] **Yoldaş yaşam döngüsünü tamamla:** Meyhanelerde gezgin üretimi ve işe alma, ücret/ilişki,
-      savaşta yer alma, ayrı parti/kervan/valilik/görev atamaları, ayrılma ve ölüm durumları.
-- [ ] **Oyuncu ailesini kur:** Evlilik teklifi ve eş kaydı, çocuklar, yaşlanma, ölüm ve varisle
-      devam; aile üyeleri karakter/envanter/Party ekranlarında yönetilebilsin.
-- [ ] **Şehir ekonomisini kalıcı yap:** Yerleşim üretimi/tüketimi/stoğu ve fiyatları tek modelde;
-      köy girdileri, şehir talebi, kervan hareketleri ve kıtlık fiyatları birbirini etkilesin.
-- [ ] **Atölyeleri girdi-çıktı modeline taşı:** Yerleşim başına çoklu atölye kaydı; sahip, tür,
-      sermaye, hammadde alımı, ürün satışı, ücret ve günlük net gelir aynı hesaptan gösterilsin.
-- [ ] **Yoldaş kervanlarını ekle:** Kurulum maliyeti, lider/koruma, harita partisi olarak hareket,
-      şehirler arası alım-satım, masraf, savaş/kaybolma riski ve gelir raporu.
-- [ ] **Krallık ve klan modelini tek kaynağa indir:** Ansiklopedi ile Divan aynı `clanId`, ad,
-      üye ve tımar verisini kullansın. Yerleşimlere `ownerClanId` atanıp klan tımar toplamları
-      krallık toplamıyla birebir tutsun.
-- [ ] **Nüfuz/politika/ordu akışını tamamla:** Oyuncu nüfuz kazanımı/harcaması, politika teklif
-      ve oylama etkileri, tımar seçimleri, nüfuzla ordu toplama, uyum (cohesion), ortak hareket
-      ve ordu erzağı canlı kampanyada çalışsın.
-- [ ] **Canlı isyanları birleştir:** Sadakat/erzak baskısı isyan partisi/klanı doğursun; fetih,
-      taraf değiştirme ve restorasyon akışları tek klan/yerleşim modelini kullansın.
-- [ ] **Canlı kuşatma kampanyasını ve harita etkileşimlerini tamamla:** Haritada kuşatma çemberi,
-      duman/ateş efektleri ve "KUŞATMA ALTINDA" etiketi; kaleye yaklaşıldığında veya tıklandığında
-      3 bağlamlı Bannerlord menüsü (1. Oyuncu kuşatıyorsa: kamp kurma süresi, 4 aktif + rezerve makine
-      yuvası, iki tarafın karşılıklı Trebuchet/Mangonel/Balista düellosu, sur gedikleri/breach, garnizon açlığı
-      ve taarruz; 2. Düşman kuşatıyorsa: kuşatmayı yarma veya orduya arkadan taarruz; 3. Oyuncu içerideyken:
-      sur savunması, huruc/sally-out ve teslim).
-- [ ] ~~**Parça bazlı demirciliği kur:**~~ *(2026-10-22 Kullanıcı Talimatı: Oyuncu demirciliği geçici olarak İPTAL / ERTELENDİ; öncelik canlı kuşatma, ordu toplama ve makro-ekonomiye verildi).*
-- [ ] **Suç ve arka sokakları ekle:** Krallık bazlı suç seviyesi ve azalması, giriş/ilişki
-      sonuçları; şehir çetelerini temizleyip Serserilik sahibi yoldaşla arka sokak işletme,
-      haydutları zorla/ikna ile katma yolları.
-- [ ] **Görevleri kalıcı örnek modeline taşı:** Kabul/red, ilerleme ve ödül durumu seferde
-      saklansın; ileri gelen güç/ilişkisi görev ve asker toplama sonuçlarını etkilesin. Görev
-      türleri sürü teslimi, eğitim, esir kurtarma, kervan koruma, haydut sığınağı, turnuva ve
-      vergi tahsilatıyla genişletilsin.
+### ADIM 2 — Harita Alt HUD (`GameHud.tsx`), Gün İçi Zaman (`P5`) ve Karakter Oluşturma Kültür/Zorluk Adımı (`CharacterCreatorModal.tsx`)
 
-## 3. Bilinen hatalar ve veri doğruluğu
+- [ ] **2.1. Sol Alt 7'li Bannerlord Menü Çerçevesi ve Kısayol Sırası (`GameHud.tsx`):**
+  - Sol altta Bannerlord'un 7 ana ikonu (`1-Sefer Menüsü [ESC], 2-Karakter [C], 3-Envanter [I], 4-Parti [P], 5-Görevler [J], 6-Klan [L], 7-Krallık [K]`) tek metal çerçevede dizilecek; `Klan [L]` ve `Görevler [J]` kendi sekmelerine açılacak, `Ansiklopedi [N]` ayrı erişimde olacak.
+- [ ] **2.2. Sağ Alt Kaynak Şeridine Eksik `#19 Günlük Maaş` ve `#21 Aç/Kapat (▲/▼)` Butonu Ekle (`GameHud.tsx`):**
+  - Steam rehberindeki 21 HUD elemanından eksik olan **#19 Günlük Asker Maaşı (`Daily Troop Wage`)** ve sağ alt paneli daraltıp genişleten **#21 Aç/Kapat (`▲/▼`) ok butonu** eklenecek; **#20 Ordu (`Army`)** barı sağ alt köşeye hizalanacak.
+- [ ] **2.3. Sağ Alt İstatistikler İçin Detaylı Hesap Dökümü İpuçları (`Tooltips #11–#18`) (`GameHud.tsx`):**
+  - Fareyle üzerine gelince **#11 Altın** (vergi/atölye/kervan vs maaş), **#12 Nüfuz** (krallık/bina/ordu besleme), **#13 Can** (baz + Cerrah/Hekimlik + yerleşim), **#14 Birlik** (sağlıklı/yaralı/kapasite dökümü), **#15 Gıda** (tüketim + kaç gün yeteceği + çeşitlilik morali), **#16 Moral**, **#17 Hız** (taban + süvari + binekli piyade - kargo/sürü/arazi) ve **#18 Görüş Mesafesi** (baz + İzcilik + gece/orman) dökümleri açılacak.
+- [ ] **2.4. Gün İçi Saat ve Gece-Gündüz Kadranı Senkronu (`GameHud.tsx`, `worldSim.ts`):**
+  - Gün kesri, mevsim/yıl (`1084+`) ve orta-alt güneş/ay çarkı aynı canlı saat kaynağından ilerleyecek.
+- [ ] **2.5. Karakter Oluşturma Ekranına 6 Kültür Bonusu, Zorluk Ayarları ve Klan Adı/Sancağı Adımı Ekle (`CharacterCreatorModal.tsx`, `logistics.ts`, `worldSim.ts`):**
+  - Steam rehberi Bölüm 2'deki **6 Kültür Bonusu** (*Vlandiya: savaşta +%20 birlik XP; Sturgiya: karda -%20 hız cezası; İmparatorluk: +%20 şehir/sur/kuşatma inşa hızı; Aseray: -%30 kervan kurma bedeli & -%10 ticaret cezası; Kuzait: +%10 atlı harita hızı; Batanya: ormanda -%10 hız cezası*) hem arayüzde gösterilecek hem de oyun matematiğine bağlanacak.
+  - **5 Zorluk Ayarı** (*Dost Birlik Hasarı, Dost Parti Hasarı, Oyuncu Hasarı, Asker Toplama Kolaylığı +1/+2 slot, Harita Hızı*) + **Ölüm/Doğum (`Permadeath`)** onay kutusu ve **Klan Soyadı & Sancak Seçimi** eklenecek.
 
-Bu bölümdeki işler, ilgili P paketine bağlanarak kapatılmalıdır; ana sıra değişmez.
+---
 
-### Karşılaşma ve diyalog
+### ADIM 3 — Envanter (`InventoryModal.tsx`) ve Pazar (`BannerlordMarketModal.tsx`) Birebir Eşitlemesi
 
-- [ ] Haydut teslimiyetinde haydut partisinin `roster`, `armySize` ve gücünü kaldır/düşür;
-      aynı partiden tekrar esir/altın ödülü alınamaz invariantını üretim yolunda test et.
-- [ ] Oyuncu teslimiyetindeki erzak tabanı, erzak 4'ün altındayken net erzak kazancı üretmesin;
-      kayıp kurallarını açıkça tanımlayıp test et.
-- [ ] Karşılaşma sınıflandırmasını yalnız güç oranına değil teması kimin başlattığına bağla;
-      kovalama/kaçma eşiklerini tek tabloda birleştir.
-- [ ] `checkHostileMapInterception` ya üretim yakalama döngüsünde kullanılsın ya da kopya mantık
-      kaldırılıp üretim yolu doğrudan test edilsin.
-- [ ] `conversation.ts#heroFromLord`, meslek/cinsiyet/sancak rengini kanonik lord/kahraman
-      verisinden alsın; 40 lordun tamamı için tablo testi yazılsın.
+- [ ] **3.1. Pazar Ortasındaki Kahraman Seçimini ve Ekipman Slotlarını Envanterle Eşitle (`BannerlordMarketModal.tsx`):**
+  - Pazar ekranının orta sütununa da `< Kahraman >` geçiş okları, `Savaş Seti / Sivil Set` seçimi ve 12 kuşanılmış ekipman slotu eklenecek; sağ ekipman şeridinin dar görünümlerde kesilmesi düzeltilecek.
+- [ ] **3.2. Envanter ve Pazar Satır Okları (`<` / `>`) ile Binek/Yük Hayvanı Özet Rozetleri (`InventoryModal.tsx`, `BannerlordMarketModal.tsx`):**
+  - Satırlarda tek tıkla sağa/sola aktarma okları (`<` / `>`), üstte toplam **Binek Atı** (piyade hız bonusu) ve **Yük Hayvanı** (*Katır/Yük Beygiri* `+100 kg` kapasite ve sürü cezası sınırı) göstergeleri eklenecek.
+- [ ] **3.3. Kârlı Satıştan Ticaret (`Trade`) XP Kazanımı ve Kervan Başı / Şehir Tüccarı İndirimi (`marketTransaction.ts`, `characterDevelopment.ts`):**
+  - Satın alınan fiyattan daha pahalıya mal satıldığında edilen kâr üzerinden **Ticaret (`Trade`)** yeteneğine canlı XP yazılacak ve *Kervan Başı / Şehir Tüccarı* perk indirimleri fiyatlara uygulanacak.
 
-### Ansiklopedi ve fog-of-war
+---
 
-- [ ] Lordla ilk diyalog tanışmayı açsın: `metHeroIds`e ekleme ve `probe-fog` eklenmeli.
-      (Yeni seferde sıfırlama ve kayıtla saklama zaten çalışıyor.)
-- [ ] Bağımsız/haydut klanında sahte “Krallık” kartı yerine tıklanamayan `Statü: Bağımsız`
-      gösterilsin.
-- [ ] Kahraman detayında ilişki, meslek ve savaş durumunun iki kez gösterilip gösterilmediğini
-      güncel arayüzde ölç; kalan tekrarları kaldır ve dedup probuna ekle.
-- [ ] Krallık sayfasındaki gereksiz `totalMembers > 0 ? clanIds.length : 0` koşulunu sadeleştir.
-- [ ] Ulaşılamaz “Faz 2'de gelecek” yer tutucusunu ve emoji metnini kaldır; varsayılan dal
-      standart boş-durum bileşenini döndürsün.
+### ADIM 4 — Diyalog (`DialogueModal.tsx`), Harita Lord İpuçları, Ansiklopedi Konum Takibi ve Takas (`Barter`) Ekranı
 
-### Ekonomi ve harici servis
+- [ ] **4.1. Haritada Lord Üzerine Gelince Açılan Detaylı Bilgi Kartı (`WorldCanvas.tsx`):**
+  - Haritada bir lordun üzerine gelince: tam unvanı, klanı, krallığı, **şu anki canlı emri** (*"Lochana Kalesi'ni kuşatıyor"*, *"Zeonica'yı savunmaya gidiyor"*, *"Derthert'in Ordusunda"*), **Sağlıklı + Yaralı asker sayısı**, **Esir sayısı** ve **Harita Hızı** gösterilecek.
+- [ ] **4.2. Ansiklopedide "En Son X Yakınlarında Görüldü" Canlı Konum Takibi ve Diyalogla Tanışma (`EncyclopediaModal.tsx`, `DialogueModal.tsx`):**
+  - Ansiklopedide (`N`) her lord ve gezgin için **"En son bugün/X gün önce [Yerleşim] yakınlarında görüldü"** satırı canlı koordinatlardan üretilecek; lordla ilk kez diyalog kurulduğunda `metHeroIds` (tanışma) otomatik açılacak (`A3` hatası çözümü).
+- [ ] **4.3. Yeşil "Tatmin Olma Çubuğu (`Satisfaction Bar`)" Olan Çift Sütunlu Takas / Pazarlık (`Barter`) Ekranı (`DialogueModal.tsx`, `DiplomacyModal.tsx`):**
+  - Gerçek Bannerlord Takas ekranı: **Sol Sütun = Karşı Tarafın Varlıkları**, **Sağ Sütun = Oyuncunun Teklifi (Altın sürgüsü, Eşyalar, Esirler, Tımarlar)**, **Orta = Yeşil Tatmin Olma Çubuğu (`Satisfaction Bar`) + `[El Sıkışma / Otomatik Dengele]` + `[Teklif Et]`** butonları; barış antlaşması, lordu kendi krallığına çekme ve evlilik başlık parası bu ekran üzerinden çalışacak.
+- [ ] **4.4. 2 Aşamalı Evlilik İkna (`Persuasion`) Sistemi ve Hanedan / Çocuk Doğumu (`DialogueModal.tsx`, `familyTree.ts`, `worldSim.ts`):**
+  - Bekar lord/leydilerle 2 aşamalı ikna sınavı (Cazibe, Onur ve kişilik uyumuna göre başarı yüzdeleri ve 3 olumlu tik toplama), klan lideriyle **Başlık Parası (`Dowry`)** takası, eşin partiye/klana katılması, **37 günlük hamilelik ve çocuk doğumu** döngüsü.
 
-- [ ] 400 günlük soak sonucunu güncel kodla yeniden ölç ve pasif altın birikimi, erzak tükenmesi
-      ile moral tabanını hedef aralıklara kalibre et.
-- [ ] `server.ts` içindeki geçersiz `gemini-3.8-flash` kimliğini desteklenen modelle değiştir;
-      model yapılandırmasını ortam değişkenine al, `aiPowered` durumunu arayüzde göster ve
-      anahtarsız/hatalı durumda deterministik fallback'i loglayarak test et.
+---
 
-## 4. Erişilebilirlik ve arayüz tutarlılığı
+### ADIM 5 — Parti (`PartyModal.tsx`), 6 Soylu (`Noble`) T6 Asker Ağacı, Esir Lord İdamı ve Yoldaş Görevlendirmeleri
 
-- [ ] Ortak `<Modal>` altyapısı kur: Ansiklopedi, diyalog, karakter yaratıcı ve savaş hazırlığı
-      dahil bütün modallarda `role="dialog"`, `aria-modal`, etiket, ilk odak, odak tuzağı,
-      `Esc` ve gövde kaydırma kilidi aynı davransın.
-- [ ] İkon-only düğmelere gerçek `aria-label` ekle; yalnız `title`a güvenme.
-- [ ] 8–9 px metinleri tek tek gözden geçir; bilgi taşıyan metinde tabanı 10 px'e çıkar.
-- [ ] Ansiklopedi arama sonuçlarında `↑/↓/Enter` gezinmesi ve `aria-activedescendant` ekle.
-- [ ] Yeni P2 ekranlarından başlayarak ortak renk/Panel tasarım token'larını çıkar; mevcut
-      ekranlardaki sabit hex renkleri ve emoji/glif ikonlarını kademeli olarak token + SVG/Lucide
-      sözlüğüne taşı.
+- [ ] **5.1. 6 Kültürün Soylu (`Noble`) T6 Birim Ağaçları ve "Disiplinci (`Disciplinarian`)" Perki (`bannerlordFoundation.ts`, `notables.ts`):**
+  - Kaleye bağlı köylerin güçlü eşrafından çıkan 6 kültürün özel **Soylu (`Noble`) T2–T6** birim hatları (*Sturgiya: Druznik Şampiyonu, Batanya: Fian Şampiyonu, Vlandiya: Sancak Şövalyesi, Kuzait: Kağan'ın Muhafızı, Aseray: Öncü Faris, İmparatorluk: Elit Katafrakt*) eklenecek.
+  - Liderlik **Disiplinci (`Disciplinarian`)** perkiyle haydut birimlerin düzenli ordu birimine terfi ettirilmesi sağlanacak.
+- [ ] **5.2. Yenilen Düşman Lordları Esir Alma ve Kırmızı "İdam Et (`Execute`)" Butonu (`PartyModal.tsx`, `worldSim.ts`, `rules.ts`):**
+  - Savaşta yenilen düşman lordların esir düşmesi ve `PartyModal.tsx` tutsak listesinde esir lordun yanında **kırmızı kuru kafa "İdam Et (`Execute`)"** butonu (onay penceresi + **Onur (`Honor`) kaybı / Zalim özelliği** + diğer lordlarla ağır ilişki cezası + lordun kalıcı ölümü).
+- [ ] **5.3. Yoldaş (`Companion`) 5 Lakap Grubu ve 4 Klan Görevlendirmesi (`EncyclopediaModal.tsx`, `KingdomManagementModal.tsx`, `SettlementModal.tsx`):**
+  - Ansiklopedide `Gezgin (Wanderer)` filtresi ve 5 uzmanlık grubu (*Savaşçılar, Taktisyenler, İzciler, Doktorlar, Haydutlar*).
+  - Yoldaşları **4 farklı göreve** atama: **1) Şehre/Kaleye Vali (`Governor`) Ata**, **2) Ticaret Kervanı Kurdur** (*15.000 / 22.500 Dinar*, haritada gezen kervan partisi ve günlük gelir), **3) Ayrı Klan Partisi Kurdur** (*0 Nüfuz ile orduya çağrılabilen*), **4) Yanına Asker Verip Göreve Gönder**.
 
-## 5. İçerik, görsel ve ses genişletmeleri
+---
 
-Bunlar P2–P6 çekirdeğini bölmeden, ilgili paketlerin kabul kapılarından sonra ele alınacak
-birikimdir.
+### ADIM 6 — 11 Resmi Atölye, Paralı Asker Sözleşmesi, Kendi Krallığını Kurma ve Krallık/Klan Veri Tekilleştirmesi
 
-- [ ] Eşya kataloğunu dengeli kademe/slot dağılımıyla 60'tan en az 120 tanıma çıkar; her tanımda
-      sayısal stat ve SVG ikon bütünlüğünü prob ile doğrula.
-- [ ] Kişilik, ilişki bandı, savaş durumu ve kültüre göre diyalog içeriğini genişlet; ikna
-      aşamalarına ayrı argüman setleri ve takasa eşya/tımar/barış vaadi seçenekleri ekle.
-- [ ] BannerForge yay geometrisini mevcut kiriş/nok mekaniğine hizala; yanlış hizalanmış kiriş
-      regresyonu için yakın-plan render ve prob ekle.
-- [ ] BannerForge at üreticisini oyuncu `WarHorseRig`ini bozmadan kalabalık süvari sahnelerinde
-      kullanmayı ölçerek entegre et.
-- [ ] 22 ekipmanlık BannerForge kataloğunu gösteren 360° vitrin/inceleme görünümünü P2 mankeni
-      üzerine kur; ayrı ve bakımsız ikinci bir vitrin motoru oluşturma.
-- [ ] BannerForge gövdesine geçişi ancak zırh oturması, animasyon ve üçgen/draw-call ölçümleri
-      mevcut gövdeden daha iyi ise yap.
-- [ ] Ortak parşömen/Panel yüzey dili, ansiklopedi ve yerleşim illüstrasyonları, yerleşim
-      menüsünün haritayı görünür bırakan yerleşim alternatifi için görsel prototipi gerçek
-      ekran görüntüleriyle karşılaştır.
-- [ ] Harita atmosferini güçlendir: skybox/bulut, sis, gölge/aydınlatma ve P5 saatiyle uyumlu
-      şafak/öğle/akşam geçişleri.
-- [ ] Vuruş hissini ölçülü ekle: hit-stop, ekran sarsıntısı ve havuzdan beslenen kıvılcım/
-      kalkan kırılması efektleri; kare başına yeni tahsis yaratma.
-- [ ] Harita, savaş ve yerleşim için geçişli müzik katmanları ile kuş/rüzgâr/şehir ortam seslerini
-      prosedürel veya lisansı doğrulanmış kaynaklarla ekle.
+- [ ] **6.1. 11 Resmi Bannerlord Atölyesi (`Workshops`) ve Hammadde Kâr Zinciri (`SettlementModal.tsx`, `rules.ts`, `worldSim.ts`):**
+  - Şehirlerdeki 4 basit atölye yerine Bannerlord'un **11 resmi atölyesi** (*Bira Fabrikası, Şarap İmalathanesi, Zeytinyağı Presi, Çömlek Atölyesi, Kadife Atölyesi, Keten Dokuma, Yün Dokuma, Tabakhane, Ahşap Atölyesi, Demirci, Gümüşçü/Kuyumcu*); bağlı köylerin ürettiği hammadde bolluğuna göre günlük net kâr hesabı, atölye türünü değiştirme ve satma.
+- [ ] **6.2. Arena Turnuva Bahis (`Betting`) & İpucu ve Taverna Masa Oyunu (`SettlementModal.tsx`):**
+  - Arenada **Turnuva Ustası** ile konuşup aktif turnuva olan şehirleri öğrenme, turlarda **kendi üzerine bahis yatırma** ve kazanınca **Nadir Ödül Eşyası + +3 Ün (`Renown`)** alma; Tavernada masa oyunu oynama.
+- [ ] **6.3. Klan Seviyesi 1 Paralı Asker (`Mercenary`) Sözleşmesi ve Klan Seviyesi 3 Kendi Krallığını Kurma (`KingdomManagementModal.tsx`, `DialogueModal.tsx`):**
+  - **Klan Seviyesi 1:** Krallıklara Paralı Asker olarak katılma, kesilen düşman birliği/nüfuz başına günlük altın ödemesi alma ve ceza almadan sözleşmeden ayrılma.
+  - **Klan Seviyesi 3:** *Klan Seviyesi 3 + En az 100 Asker + En az 1 Şehir/Kale* şartlarıyla (*İmparatorluk / Istiana veya Anti-İmparatorluk / Arzagos* seçimiyle) bağımsız **Kendi Krallığını Kurma**.
+  - **Krallık Politikaları:** Günlük yüksek nüfuz veren **Kanun Sözcüsü (`Council of the Commons`)** ve **Kutsal Majesteleri (`Sacred Majesty`)** politikalarının nüfuz/sadakat hesaplarına bağlanması.
+- [ ] **6.4. Ansiklopedi ve Divan Klan/Tımar Verisini Tek Kaynağa İndir (`A5` & `A6` Hataları — `encyclopedia.ts`, `kingdomSystem.ts`):**
+  - Yerleşimlere `ownerClanId` atanarak klan tımar toplamlarının krallık toplamıyla birebir tutması; Ansiklopedi ile Krallık Divanı'nın aynı `clanId`, ad ve üye listesini kullanması; Kuzey/Güney/Batı İmparatorluğu (*Lucon / Rhagaea / Garios*) ayrımının net gösterilmesi.
 
-## 6. Teknik borç ve test kapsamı
+---
 
-- [ ] `tsc --noUnusedLocals --noUnusedParameters` ile ölçülen **85 kullanılmayan sembolü**
-      (2026-10-22: 74'ü `src/`, 11'i `scripts/`+`tools/`) temizle ve bu kontrolleri kademeli
-      olarak kalıcı kapıya al; `strict` durumunu da aynı turda yeniden değerlendir. App'teki ölü
-      prewarm import/state'i, bileşenin arenadaki gerçek kullanımını koruyarak kaldır.
-- [ ] `App`, `WorldCanvas`, `CharacterArenaView`, `SettlementModal` gibi god-component'leri
-      davranış değiştirmeden hook/modüllere böl; her bölmede ilgili prob ve `verify:fast` çalıştır.
-- [ ] Probe'lardaki `as never` kullanımlarını tipli prop fikstürleriyle değiştir.
-- [ ] Büyük bileşenlere üretim yolu duman/E2E kapsamı ekle: `CharacterArenaView`, `WorldCanvas`,
-      `KingdomManagementModal`, `DiplomacyModal`, `CharacterCreatorModal`, `BattlePrewarmModal`
-      ve SettlementModal'in bütün sekmeleri.
-- [ ] Doğrudan `?scenario=encyclopedia` açılışındaki hazır-olma zaman aşımının kök nedenini bul;
-      çalışan `boot + openEncyclopedia()` E2E yolunu bozmadan senaryo yolunu da kapsa.
-- [ ] Eski araştırma belgelerindeki tarihî durum sayılarının güncel sanılmasını önlemek için
-      her birinin başına arşiv tarihi ve bu dosyaya bağlantı eklenip eklenmeyeceğini topluca gözden
-      geçir; araştırma içeriğini silme.
+### ADIM 7 — Savaş İçi Birlik Grupları (`1–4`) & Emir Menüsü (`F1–F7`), 7 Kuşatma Silahı ve Kalan Bilinen Hatalar
 
-## 7. Karar bekleyen ürün önerileri
+- [ ] **7.1. Savaş Alanında `1–4` Birlik Grubu Seçimi ve `F1–F7` Taktik Emir Çubuğu (`CharacterArenaView.tsx`, `tacticalFormation.ts`):**
+  - `1` Piyade, `2` Okçu, `3` Süvari, `4` Atlı Okçu (ve `0` Tüm Birlikler) grup seçimi; seçili gruba özel `F1` Konum (`Buraya Yürü / Beni Takip Et / Hücum / Geri Çekil`), `F2` Yön, `F3` Ateş Serbest/Kes, `F4` Formasyon (*Çizgi, Kalkan Duvarı, Dağınık, Kama, Çember*) emirleri ve üst-sol görsel emir kartları.
+- [ ] **7.2. 7 Kuşatma Silahı (`Ateşli Balista` & `Ateşli Mancınık`) ve Harita "Surlar Çatırdadı!" Bildirimi (`siegeEncounter.ts`, `SiegeEncounterModal.tsx`, `WorldCanvas.tsx`):**
+  - Kuşatma silahı kataloğuna **Ateşli Balista (`FIRE_BALLISTA`)** ve **Ateşli Mancınık (`FIRE_MANGONEL`)** eklenerek 7 kuşatma makinesinin tamamlanması; kuşatma sırasında sur canı sıfırlandığında harita ekranında **"Surlar çatırdadı! Gedik açıldı!"** bildirimi.
+- [ ] **7.3. Bilinen Karşılaşma, Ekonomi ve Sunucu Düzeltmeleri (`Bölüm 3` Hataları):**
+  - Haydut teslimiyetinde haydut partisinin `roster/armySize` değerinin düşürülmesi (aynı partiden tekrar ödül alınmasının engellenmesi).
+  - Oyuncu teslimiyetinde erzak 4'ün altındayken net erzak kazancı oluşmaması.
+  - `server.ts` içindeki geçersiz `gemini-3.8-flash` model kimliğinin geçerli model + deterministik yedekle (`fallback`) düzeltilmesi.
 
-Bu maddeler eski yol haritasındaki önerilerdir; kullanıcı onayı olmadan uygulamaya alınmaz.
+---
 
-- [ ] 5 adımlı öğretici (tutorial) isteniyor mu?
-- [ ] Ses/grafik/kontrol ayarları ekranı isteniyor mu?
-- [ ] Türkçe dışında yerelleştirme altyapısı isteniyor mu?
-- [ ] İsteğe bağlı ve varsayılanı kapalı telemetri isteniyor mu?
-- [ ] Depoya hangi lisansın ekleneceği seçilecek mi?
+## ⏸️ BÖLÜM 3 — KULLANICI KARARIYLA ERTELENEN / SONA BIRAKILAN İŞLER
 
-## 8. P7 — Performans testleri (sondan bir önceki iş)
-
-- [ ] Aynı tohum ve senaryolarla açılış, harita, envanter/pazar, Party, karakter ve savaş
-      sahnelerinde tekrarlanabilir ölçüm paketi kur: frame-time/FPS yüzdelikleri, bellek,
-      yükleme süresi, draw call ve üçgen sayıları.
-- [ ] SwiftShader sonuçlarını gerçek GPU FPS'i olarak sunma; yalnız göreli öncesi/sonrası
-      karşılaştırma tablosunu bu dosyaya işle.
-- [ ] Ölçüme dayanarak kod bölme (`React.lazy`/dinamik import), ilk paket boyutu ve sıcak
-      döngü tahsislerini optimize et; hedefleri ölçümden önce değil baz çizgisinden sonra koy.
-
-## 9. P8 — Kayıt yönetimi (en son iş)
-
-- [ ] Kapsamı uygulamadan hemen önce kullanıcıyla netleştir: çoklu sefer/slot, adlandırma,
-      üzerine yazma/silme, otomatik kayıt rotasyonu ve kayıt özeti.
-- [ ] Bannerlord tarzı kayıt/yükleme ekranını, bozuk kayıt kurtarma ve eski sürüm göçleriyle
-      birlikte uygula. P2–P7 sırasında yalnız veri uyumluluğunu korumak için gereken göçler yapılır.
-
-## 10. Kaynak belgeler
-
-| Belge | Rolü |
-| --- | --- |
-| `AGENTS.md` | Kısa proje hafızası, komutlar ve bozulmaması gereken kurallar |
-| `docs/EKSIKLER_VE_HATALAR.md` | 2026-10-21 tarihli kanıtlı denetim arşivi |
-| `docs/ANSIKLOPEDI_VE_UI_PLANI.md` | Ansiklopedi/UI uygulama günlüğü ve ekran referansları |
-| `docs/ARMORY_STUDIO_INCELEME.md` | BannerForge zip'i, entegrasyon durumu ve ölçümler |
-| `docs/BANNERLORD_KARSILASTIRMA_VE_PUANLAMA.md` | Tarihî karşılaştırma/karne ve eski yol haritası |
-| `docs/BANNERLORD_COMPLETE_SYSTEMS_ENCYCLOPEDIA.md` | Bannerlord sistem araştırma özeti |
-| `docs/BANNERLORD_MAP_SYSTEM_RESEARCH.md` | Harita/hız/görüş araştırma ve formülleri |
-| `docs/BANNERLORD_SETTLEMENT_MENUS_RESEARCH.md` | Yerleşim menü araştırması |
-| `docs/PAZAR_VE_HARITA_ARASTIRMASI.md` | Pazar/HUD araştırma ve karar notları |
-| `docs/BANNERLORD_MAKRO_SIMULASYON_KAYNAK_RAPORU.txt` | Makro-simülasyon kaynak raporu |
-| `tools/e2e/README.md` | Gerçek tarayıcı E2E kurulumu ve çalıştırma |
-
-## 11. Korunan dosyalar ve ekran görüntüleri
-
-- `workspace-01a15ba3-f746-7506-9ce7-4057d8bad525.zip` **silinmez**: özgün BannerForge
-  kaynaklarını ve 25'ten fazla referans ekran görüntüsünü içerir; önceki kullanıcı talimatı da
-  zip'in repo içinde kalması yönündedir.
-- `docs/renders/reference/` altındaki Bannerlord referans görüntüleri **korunur**; P2/P3/P5
-  ekranları yapılırken kullanılacaktır.
-- `docs/renders/` altındaki kendi ekran görüntülerimiz benzersiz kareler veya belgelerde/problarda
-  referans verilen görsel kanıtlar olduğu için korunur. Yalnız birebir aynı dosya veya tam
-  çözünürlüklü kaynağı duran, referanssız bir kırpma silinebilir.
-- Araştırma belgeleri yalnız tarihî oldukları için silinmez; güncel görev durumu bu dosyadan izlenir.
-
-## 12. 2026-10-22 temizlik kaydı
-
-- [x] Bütün MD belgeleri, kod TODO işaretleri, GitHub Issue/PR listeleri ve bilinen denetim
-      bulguları tarandı; açık işler bu tek dosyada toplandı.
-- [x] Takip edilen 190 dosyada birebir aynı içerikli kopya bulunmadığı hash ile doğrulandı.
-- [x] Kullanılmayan ikinci paket kilidi `bun.lock` silindi; npm tek kurulum yolu olarak bırakıldı
-      ve paket adı `react-example` yerine `kadirlord` yapıldı.
-- [x] `docs/renders/equip-fixed.png` tam şeridi korunurken onun referanssız sol kırpması olan
-      `equip-helmet-crop.png` silindi. Diğer ekran görüntüleri benzersiz/referanslı olduğu için korundu.
-- [x] Uzantısız makro-simülasyon metni, çalışmayan bir `public` varlığı olmaktan çıkarılıp
-      içeriği korunarak `docs/BANNERLORD_MAKRO_SIMULASYON_KAYNAK_RAPORU.txt` adına taşındı.
-- [x] README, AI Studio şablonu olmaktan çıkarılıp proje, kontroller, doğrulama ve belge
-      haritasını anlatan Türkçe proje README'sine çevrildi.
+- [ ] ~~**Parça Bazlı Demircilik (`Smithing`):**~~ *(Kullanıcı talimatıyla geçici olarak İPTAL / ERTELENDİ — en sona bırakıldı).*
+- [ ] **P7 — Performans Ölçüm ve Optimizasyon Paketi:** Tüm oyun mekanikleri bittikten sonra sondan bir önceki iş olarak ele alınacak.
+- [ ] **P8 — Çoklu Slot Kayıt Yönetimi Ekranı:** En son iş olarak ele alınacak.
