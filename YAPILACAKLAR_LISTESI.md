@@ -22,41 +22,73 @@
 - Bannerlord P1 veri temeli tamamlandı: sayısal stat'lı eşya tanımları, adetli/kilitli yığınlar,
   tanım kimliğine bağlı ekipman, gerçek oyuncu/yoldaş kayıtları, XP/yaralı alanlı birlik ve
   tutsak yığınları; kayıt biçimi v4 ve v1–v3 göçü `ensureBannerlordFoundation` ile çalışıyor.
+- P2'nin pazar dilimi tamamlandı (`59a9d10`): bekleyen-transfer taslağı, kalıcı şehir stoğu ve
+  tüccar kasası, adetli alım/satım, kalıcı kilit, ziyaret edilmiş şehir söylentileri ve gerçek
+  `Vazgeç/Bitti` atomikliği pazar ekranına bağlandı.
+- P2'nin saha envanteri dilimi tamamlandı (`0d41b25`): tam ekran üç sütun `I` ekranı, sol Discard,
+  kahraman geçiş okları, savaş/sivil setler, bütün kahramanlar için tek kuşan/çıkar çekirdeği ve
+  Discard'ın gerçek birlik XP dağıtımı çalışıyor.
 - Bu konsolidasyonun temizlik kısmı için Bölüm 12'ye bakın.
 
 ## 2. Sıradaki ana yol — Bannerlord paketleri
 
 ### P2 — Envanter, Discard, pazar, ganimet ve lojistik
 
-- [ ] **Tek bekleyen-transfer çekirdeği kur:** Taşıma işlemleri kampanyayı hemen değiştirmesin;
-      `Done` atomik onaylasın, `Cancel` hiçbir alanı değiştirmeden geri alsın. Tek adet, çoklu adet
-      ve yığının tamamı; sürükle-bırak ile satır düğmeleri/oklar aynı çekirdeği kullansın.
-- [ ] **Saha Envanteri (`I`) ekranını tam ekran üç sütun yap:** Sol Discard, ortada 360°
-      döndürülebilir kahraman + binek ve 12 slot, sağda parti envanteri. Üstte oyuncu/eş/yoldaş
-      geçiş okları, gerçek savaş/sivil set sekmeleri ve toplam sayısal zırh/stat özeti olsun.
-- [ ] **Ekipman akışını canlı modelde tamamla:** Kuşanma seçili kahramanın aktif setine yazılsın,
-      yığından bir adet düşsün, eski parça envantere dönsün; sivil yasallık ve slot uyumu
-      doğrulanıp 3B görünüme yansısın.
-- [ ] **Discard uygulamasını bitir:** P1'deki perk/tavan/kapasite önizlemesini gerçek dağıtıma
-      bağla. XP yalnız bir sonraki kademeye ilerleyebilen normal birlik yığınlarına gitsin;
-      taşma kırmızı gösterilsin ve boşa gitsin. Zırh/koşum ile silah/kalkan/sadak ayrımı ve T0
-      35 tavanı kabul testleriyle kilitlensin.
-- [ ] **Şehir pazarını aynı ekrana taşı:** Sol şehir/tüccar stoğu, orta kahraman, sağ parti
-      envanteri. Kalıcı şehir stoğu ve tüccar kasası refah/üretimden türetilsin; oyuncunun
-      sattığı mallar stoğa dönsün; gösterilen, kontrol edilen ve ödenen satış fiyatı aynı olsun.
-- [ ] **Pazar liste işlevlerini tamamla:** İki listede de kategori, arama ve tür/ad/adet/fiyat/
-      ağırlık/hasar/zırh sıralaması; ortalama fiyat renkleri; yalnız ziyaret edilmiş şehirlerden
-      söylenti; kalıcı kilidin satış, toplu işlem ve Discard'ı engellemesi.
-- [ ] **Savaş sonrası ganimet ekranını ekle:** Sol ganimet, sağ parti envanteri; kapasiteye göre
-      seçim, yığın birleştirme ve Discard XP önizlemesi. Tutsak/kurtarılan akışı P3 ekranına bağlansın.
-- [ ] **Tek lojistik modeli kur:** Toplam ağırlık birim ağırlık × adetten; kapasite askerler,
+- [ ] **Bekleyen-transfer etkileşimini tamamla:** Saf transfer/kilit çekirdeği ve satır
+      düğmelerinde tık = 1, Shift = 5, Ctrl/Cmd = tümü çalışıyor; `Done` taslağı atomik işliyor,
+      `Cancel` kampanyayı değiştirmiyor. Sürükle-bırak ve satır okları henüz yok; eklenirse aynı
+      çekirdek kullanılacak.
+- [x] **Saha Envanteri (`I`) ekranını tam ekran üç sütun yap:** Sol Discard, ortada 360°
+      döndürülebilir kahraman + kuşanılmışsa binek ve 12 slot, sağda parti envanteri. Kahraman
+      geçiş okları, gerçek savaş/sivil set sekmeleri ve sayısal zırh/stat özeti bağlı.
+- [x] **Ekipman akışını canlı modelde tamamla:** Tek çekirdek seçili kahramanın seçili setine
+      yazar, yığından bir adet düşer, eski parçayı envantere döndürür; sivil yasallık ve slot
+      uyumu doğrulanır, 3B manken seçili setten türetilir.
+- [x] **Discard uygulamasını bitir:** Perk/tavan/kapasite önizlemesi gerçek XP dağıtımına bağlı.
+      XP yalnız terfi edebilen normal birlik yığınlarına kapasite kadar gider; taşma kırmızı
+      gösterilir ve boşa gider. Zırh/koşum ile silah/kalkan/sadak ayrımı ve T0 35 tavanı kural
+      testleriyle kilitli.
+- [x] **Şehir pazarını aynı ekrana taşı:** Sol kalıcı şehir stoğu, orta kahraman, sağ parti
+      envanteri. Tüccar kasası kalıcıdır; oyuncunun sattığı mallar stoğa döner; gösterilen ve
+      ödenen birim fiyat aynı tanım tabanlı yardımcıdan gelir.
+- [ ] **Pazar ortasındaki kahraman seçimini saha envanteriyle eşitle:** Pazar hâlâ yalnız oyuncu
+      kahramanını gösteriyor. Kahraman geçiş okları ve savaş/sivil set seçimi eklenmeli; ayrıca
+      sağdaki kuşanılmış-slot şeridinin ekran görüntüsünde kısmen kesilmesi görsel olarak
+      düzeltilmeli.
+- [x] **Pazar liste işlevlerini tamamla:** Kategori, arama ve kademe/ad/adet/fiyat/ağırlık/
+      hasar/zırh sıralaması; ortalama fiyat renkleri; yalnız ziyaret edilmiş şehir söylentileri;
+      kalıcı kilidin satış, toplu satış ve Discard'ı engellemesi bağlı.
+- [ ] **Savaş sonrası ganimet ekranını ekle:** Sıradaki P2 dilimi budur. Sol ganimet, sağ parti
+      envanteri; kapasiteye göre seçim, yığın birleştirme ve Discard XP önizlemesi. Bugün
+      `resolveBattleOutcome` ganimeti ve altını doğrudan kampanyaya yazıyor; bekleyen ganimet
+      akışına ayrılmalı, tutsak/kurtarılan akışı P3 ekranına bağlansın.
+- [ ] **Tek lojistik modeli kur:** Toplam ağırlık birim ağırlık × adet hesabı ekranlarda doğru
+      gösteriliyor, ancak kapasite formülleri ve üretim hızı hâlâ tekilleşmedi. Kapasite askerler,
       yedek binekler ve yük hayvanlarından; bindirilmiş yaya hız bonusu, sürü cezası, aşırı yük,
-      yaralı ve tutsak hız bileşenleri tek hesapta toplansın.
-- [ ] **Erzak yığınlarını canlı tüketime bağla:** Dört özel yiyeceğin soyut `food` sayısına çevrilmesi
-      kalksın; bütün yiyecekler envanterden tüketilsin, çeşitlilik morali ve açlık etkileri işlesin.
-- [ ] **P2 kabul kapısı:** Transfer/Cancel atomikliği, Discard dağılımı, pazar fiyat/stok/kasa,
-      ganimet, kapasite/hız ve erzak için kural testleri; gerçek Chromium'da envanter + pazar E2E
-      ve ekran görüntüleri.
+      yaralı ve tutsak bileşenleri tek hesapta toplanacak.
+- [ ] **Erzak yığınlarını canlı tüketime bağla:** Dört özel yiyecek pazar geçiş katmanında hâlâ
+      soyut `food`/moral üretiyor. Bütün yiyecekler envanter yığınlarından tüketilecek,
+      çeşitlilik morali ve açlık etkileri işleyecek.
+- [ ] **P2 kabul kapısı:** Tamamlanan dilimlerde kural testleri **32/32**, `npm run verify:fast`
+      ve gerçek Chromium E2E **5/5** geçti (`market-pending-transfer`,
+      `field-inventory-discard` dahil). Ganimet, kapasite/hız ve erzak testleri bitmeden P2
+      kapısı kapanmayacak.
+
+#### P2 ilerleme kaydı — 2026-10-22
+
+- `59a9d10`: `src/game/marketTransaction.ts`, kalıcı `Settlement.marketStock/merchantGold/visited`,
+  taslak tabanlı `BannerlordMarketModal`, pazar E2E. Tarayıcıda yakalanan “`visited` yazılınca boş
+  stok” regresyonu sanitizasyon + başlatıcı tarafında kapatıldı ve teste eklendi.
+- `0d41b25`: `src/components/InventoryModal.tsx`, ortak `HeroMannequin`, bütün kahramanlar için
+  `equipInventoryItemForHero` / `unequipHeroEquipmentSlot` / `setHeroActiveEquipmentSet`, Discard UI
+  ve saha-envanteri E2E. Eski HUD kompakt envanter çekmecesi kaldırıldı; `I` ve HUD düğmesi artık
+  tam ekranı açar.
+- Test kancası pazar + envanter içindir: `openMarket/closeMarket`, `openInventory/closeInventory`,
+  envanter/kahraman ekipmanı/birlik XP snapshot alanları. Tarayıcı Discard akışı kilitsiz katır
+  adedini doğrular; Discard XP dağıtımının kendisi saf kural testinde perkli zırh senaryosuyla
+  doğrulanır.
+- **Devam noktası:** Önce ganimet ekranı, sonra tek lojistik modeli, en son erzak yığınları.
+  Performans (P7) ve kayıt sistemi (P8) kullanıcı kararıyla hâlâ en sonda.
 
 ### P3 — Party (`P`), birlikler ve tutsaklar
 
