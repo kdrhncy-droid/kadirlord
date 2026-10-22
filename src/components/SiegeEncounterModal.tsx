@@ -9,6 +9,7 @@ import {
 import {
   SIEGE_RANGED_SLOTS,
   breakInLossRate,
+  combineBesiegerForces,
   type SiegeEncounterView,
 } from '../game/siegeEncounter';
 import { buildHeroRegistry, type HeroRecord } from '../game/heroes';
@@ -81,14 +82,23 @@ function ActionIcon({ name }: { name: ActionIconName }) {
   );
 }
 
-function CrestBadge({ color }: { color: string }) {
+function CrestBadge({ color, variant = 'sword' }: { color: string; variant?: 'sword' | 'castle' }) {
   return (
     <span
-      className="inline-flex h-7 w-6 shrink-0 items-center justify-center rounded-b-md border border-[#d4af37]/70 shadow-inner"
-      style={{ backgroundColor: color }}
+      className="inline-flex h-8 w-7 shrink-0 items-center justify-center border border-[#d4af37]/85 shadow-inner"
+      style={{
+        backgroundColor: color,
+        clipPath: 'polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%)',
+      }}
       aria-hidden="true"
     >
-      <span className="h-2.5 w-1.5 rounded-sm border border-[#fde68a]/80 bg-black/25" />
+      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 fill-[#fde68a]">
+        {variant === 'castle' ? (
+          <path d="M3 2H5V4H7V2H9V4H11V2H13V13H3V2ZM6 13V9H10V13H6Z" />
+        ) : (
+          <path d="M8 1.5L9.6 5.1L13.5 5.6L10.6 8.3L11.4 12.2L8 10.2L4.6 12.2L5.4 8.3L2.5 5.6L6.4 5.1L8 1.5Z" />
+        )}
+      </svg>
     </span>
   );
 }
@@ -290,7 +300,7 @@ function SiegeIllustration({
   }, [factionColor]);
 
   return (
-    <div className="relative min-h-[220px] flex-1 overflow-hidden border-t border-[#c6a15b]/35 bg-[#111719]">
+    <div className="relative h-36 shrink-0 overflow-hidden border-t border-[#c6a15b]/35 bg-[#111719]">
       {imageUrl && (
         <img
           src={imageUrl}
@@ -389,6 +399,10 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
   onTalkSurrender,
 }) => {
   const { settlement, role, besiegers } = view;
+  const combinedBesiegerLord = useMemo(
+    () => combineBesiegerForces(besiegers),
+    [besiegers],
+  );
   const defenderFaction = FACTION_INFO[settlement.faction];
   const attackerFaction = FACTION_INFO[view.attackerFaction];
   const playerTroops = getTotalTroops(campaign.roster);
@@ -411,20 +425,108 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
     return <PartySlot key={lord.id} name={lord.name} troops={troops} hero={hero} />;
   };
 
+  const foodDaysLeft = Math.max(0, Math.ceil((settlement.foodStock ?? 0) / 3));
+
   return (
     <div
       data-testid="siege-encounter-modal"
-      className="fixed inset-0 z-50 pointer-events-none flex items-stretch justify-start p-3 sm:p-5"
+      className="fixed inset-0 z-50 pointer-events-none flex items-stretch justify-start p-3 sm:p-4"
     >
-      <aside className="pointer-events-auto flex w-full max-w-[435px] flex-col overflow-hidden rounded border-2 border-[#c6a15b]/80 bg-[#14100c]/95 text-[#f4ecd8] shadow-[0_0_50px_rgba(0,0,0,0.92)] backdrop-blur-sm">
+      {/* Bannerlord Üst Orta Kuşatma Karşılaşma Barı (Top-Center Siege Header) */}
+      <div
+        data-testid="siege-top-banner"
+        className="pointer-events-auto fixed top-2.5 left-[calc(50%+185px)] z-50 hidden -translate-x-1/2 items-stretch rounded border-2 border-[#c6a15b]/80 bg-[#14100c]/95 text-[#f4ecd8] shadow-[0_10px_35px_rgba(0,0,0,0.9)] backdrop-blur-sm xl:flex"
+      >
+        {/* Sol: Kuşatan Partiler */}
+        <div className="flex items-center gap-1.5 border-r border-[#c6a15b]/35 px-3 py-1.5">
+          {role === 'attacker' && (
+            <div className="flex flex-col items-center rounded border border-[#c6a15b]/45 bg-[#1f1812] px-2 py-1 min-w-[72px]">
+              <span className="text-[11px] font-mono-tabular font-bold text-[#fde68a]">{playerTroops}</span>
+              <span className="max-w-[76px] truncate text-[9px] text-[#86efac]">{campaign.playerName}</span>
+            </div>
+          )}
+          {besiegers.slice(0, 3).map((lord) => {
+            const hero = heroRegistry[lord.id];
+            const troops = Math.max(1, lord.armySize || getTotalTroops(lord.roster));
+            return (
+              <div
+                key={`top-${lord.id}`}
+                className="flex items-center gap-1.5 rounded border border-[#c6a15b]/45 bg-[#1f1812] px-2 py-1"
+              >
+                {hero && <LordAvatar hero={hero} />}
+                <div className="min-w-0">
+                  <div className="text-[11px] font-mono-tabular font-bold text-[#fde68a]">{troops}</div>
+                  <div className="max-w-[78px] truncate text-[9px] text-[#fca5a5]">{lord.name}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Orta: Sancaklar + Asker Karşılaştırması + Güç Çubuğu + Erzak Günü */}
+        <div className="flex items-center gap-3 px-4 py-1.5">
+          <div className="flex flex-col items-center text-[10px] text-[#d1c5b0]">
+            <CrestBadge color={attackerFaction.color} variant="sword" />
+            <span className="mt-0.5 font-mono-tabular text-[9px] text-[#fbbf24]">
+              {(settlement.siegeEngines ?? []).length}/7 Silah
+            </span>
+          </div>
+
+          <div className="flex min-w-[175px] flex-col items-center">
+            <div className="font-display text-xs font-bold uppercase tracking-[0.22em] text-[#e2d6c1]">
+              Kuşatma
+            </div>
+            <div className="mt-0.5 flex items-center gap-2 font-display text-base font-extrabold text-[#fde68a]">
+              <span className="font-mono-tabular">{view.attackerTroops}</span>
+              <span className="text-xs text-[#c6a15b]">⚔</span>
+              <span className="font-mono-tabular">{view.defenderTroops}</span>
+            </div>
+            <div className="mt-1 h-2 w-full overflow-hidden rounded-full border border-[#c6a15b]/45 bg-[#3b1d5e]">
+              <div
+                className="h-full bg-gradient-to-r from-[#b45309] to-[#f59e0b]"
+                style={{ width: `${attackerRatio}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col items-center text-[10px] text-[#d1c5b0]">
+            <CrestBadge color={defenderFaction.color} variant="castle" />
+            <span className="mt-0.5 font-mono-tabular text-[9px] text-[#93c5fd]">
+              {foodDaysLeft} gün erzak
+            </span>
+          </div>
+        </div>
+
+        {/* Sağ: Savunan Garnizon / Milis / İçerideki Parti */}
+        <div className="flex items-center gap-1.5 border-l border-[#c6a15b]/35 px-3 py-1.5">
+          <div className="flex flex-col items-center rounded border border-[#c6a15b]/45 bg-[#1f1812] px-2 py-1 min-w-[70px]">
+            <span className="text-[11px] font-mono-tabular font-bold text-[#fde68a]">{settlement.garrison}</span>
+            <span className="text-[9px] text-[#93c5fd]">Garnizon</span>
+          </div>
+          {(settlement.militia ?? 0) > 0 && (
+            <div className="flex flex-col items-center rounded border border-[#c6a15b]/45 bg-[#1f1812] px-2 py-1 min-w-[64px]">
+              <span className="text-[11px] font-mono-tabular font-bold text-[#fde68a]">{settlement.militia}</span>
+              <span className="text-[9px] text-[#cbd5e1]">Milis</span>
+            </div>
+          )}
+          {role === 'defender' && (
+            <div className="flex flex-col items-center rounded border border-[#c6a15b]/45 bg-[#1f1812] px-2 py-1 min-w-[72px]">
+              <span className="text-[11px] font-mono-tabular font-bold text-[#fde68a]">{playerTroops}</span>
+              <span className="max-w-[76px] truncate text-[9px] text-[#86efac]">{campaign.playerName}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <aside className="pointer-events-auto flex w-full max-w-[425px] flex-col overflow-hidden rounded border-2 border-[#c6a15b]/80 bg-[#14100c]/95 text-[#f4ecd8] shadow-[0_0_50px_rgba(0,0,0,0.92)] backdrop-blur-sm">
         {/* Başlık */}
-        <header className="border-b border-[#c6a15b]/35 bg-gradient-to-b from-[#251c13] to-[#17120d] px-4 py-3">
+        <header className="border-b border-[#c6a15b]/35 bg-gradient-to-b from-[#251c13] to-[#17120d] px-4 py-2.5">
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#c6a15b]">
                 {settlement.type === 'CASTLE' ? 'Kale Kuşatma Durumu' : 'Şehir Kuşatma Durumu'}
               </div>
-              <h2 className="font-display text-xl font-bold text-[#fde68a]">
+              <h2 className="font-display text-lg font-bold text-[#fde68a]">
                 {settlement.name}
               </h2>
             </div>
@@ -436,16 +538,20 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
               Kapat
             </button>
           </div>
-          <p className="mt-1.5 text-xs leading-relaxed text-[#d1c5b0]">
-            {defenderFaction.name} · Kuşatan: {besiegers[0]?.name ?? campaign.playerName} · Erzak: {settlement.foodStock}
+          <p className="mt-1 text-[11px] leading-snug text-[#d1c5b0]">
+            {defenderFaction.name} · Kuşatan:{' '}
+            {besiegers.length > 1
+              ? `${besiegers[0].name} ve ${besiegers.length - 1} müttefik komutan (${view.attackerTroops} asker)`
+              : (besiegers[0]?.name ?? campaign.playerName)}{' '}
+            · Erzak: {settlement.foodStock} ({foodDaysLeft} gün)
           </p>
         </header>
 
         {/* İki sütunlu kuvvet tablosu (Bannerlord karşılaşma paneli düzeni) */}
-        <section className="border-b border-[#c6a15b]/25 bg-[#19130e] px-4 py-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
+        <section className="border-b border-[#c6a15b]/25 bg-[#19130e] px-4 py-2">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <CrestBadge color={attackerFaction.color} />
+              <CrestBadge color={attackerFaction.color} variant="sword" />
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-[#fca5a5]">Kuşatan</div>
                 <div className="text-xs font-bold text-[#f4ecd8]">{attackerFaction.name}</div>
@@ -456,21 +562,26 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
                 <div className="text-[10px] uppercase tracking-wider text-[#93c5fd]">Savunan</div>
                 <div className="text-xs font-bold text-[#f4ecd8]">{defenderFaction.name}</div>
               </div>
-              <CrestBadge color={defenderFaction.color} />
+              <CrestBadge color={defenderFaction.color} variant="castle" />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5">
+          <div className="grid grid-cols-2 gap-1.5">
+            <div className="space-y-1">
               {role === 'attacker' && (
                 <PartySlot name={campaign.playerName} troops={playerTroops} icon="player" />
               )}
-              {besiegers.slice(0, 3).map(renderLordRow)}
+              {besiegers.slice(0, 2).map(renderLordRow)}
+              {besiegers.length > 2 && (
+                <div className="rounded border border-[#c6a15b]/20 bg-[#140f0a] px-2 py-0.5 text-center text-[10px] text-[#fde68a]">
+                  +{besiegers.length - 2} sancakbeyi daha müşterek kuşatmada
+                </div>
+              )}
               {besiegers.length === 0 && role !== 'attacker' && (
                 <PartySlot name="Kuşatma Ordusu" troops={view.attackerTroops} icon="player" />
               )}
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <PartySlot name="Garnizon" troops={settlement.garrison} icon="garrison" />
               {role === 'defender' && (
                 <PartySlot name={campaign.playerName} troops={playerTroops} icon="player" />
@@ -479,8 +590,8 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
           </div>
 
           {/* Güç oranı çubuğu */}
-          <div className="mt-2.5">
-            <div className="h-2 overflow-hidden rounded-full border border-[#c6a15b]/35 bg-[#1d3557]">
+          <div className="mt-2">
+            <div className="h-1.5 overflow-hidden rounded-full border border-[#c6a15b]/35 bg-[#1d3557]">
               <div
                 className="h-full bg-gradient-to-r from-[#b45309] to-[#f59e0b]"
                 style={{ width: `${attackerRatio}%` }}
@@ -497,7 +608,7 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
         />
 
         {/* Sur ve kamp ilerleme çubukları */}
-        <section className="space-y-2 border-b border-[#c6a15b]/25 bg-[#15100b] px-4 py-2.5 text-xs">
+        <section className="space-y-1.5 border-b border-[#c6a15b]/25 bg-[#15100b] px-4 py-2 text-xs">
           <div>
             <div className="mb-1 flex justify-between text-[11px]">
               <span className="uppercase tracking-wider text-[#a89b84]">Sol Sur</span>
@@ -541,7 +652,7 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
         </section>
 
         {/* Eylemler */}
-        <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3">
+        <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-4 py-2.5">
           {role === 'attacker' && (
             <>
               <ActionButton
@@ -584,10 +695,14 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
                 testId="siege-action-attack-camp"
                 icon="attack"
                 title="Kuşatan Orduya Taarruz"
-                subtitle={`${besiegers[0]?.name ?? 'Düşman'} kampına meydan muharebesi aç`}
-                disabled={!besiegers[0]}
+                subtitle={
+                  besiegers.length > 1
+                    ? `${besiegers[0].name} ve ${besiegers.length - 1} müttefikinin (${view.attackerTroops} asker) müşterek ordusuna meydan muharebesi aç`
+                    : `${besiegers[0]?.name ?? 'Düşman'} kampına meydan muharebesi aç`
+                }
+                disabled={!combinedBesiegerLord}
                 primary
-                onClick={() => besiegers[0] && onAttackBesiegers(besiegers[0])}
+                onClick={() => combinedBesiegerLord && onAttackBesiegers(combinedBesiegerLord)}
               />
               <ActionButton
                 testId="siege-action-break-in"
@@ -621,8 +736,12 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
                 testId="siege-action-sally"
                 icon="sally"
                 title="Huruc Harekâtı (Sally Out)"
-                subtitle="Kapıdan fırlayıp kuşatma kampına saldır"
-                onClick={() => onSallyOut(besiegers[0] ?? null)}
+                subtitle={
+                  besiegers.length > 1
+                    ? `Kapıdan fırlayıp ${besiegers.length} komutanın (${view.attackerTroops} asker) müşterek kuşatma kampına saldır`
+                    : 'Kapıdan fırlayıp kuşatma kampına saldır'
+                }
+                onClick={() => onSallyOut(combinedBesiegerLord)}
               />
               <ActionButton
                 testId="siege-action-surrender"
@@ -669,7 +788,7 @@ const ActionButton: React.FC<ActionButtonProps> = ({
     data-testid={testId}
     disabled={disabled}
     onClick={onClick}
-    className={`w-full rounded border px-3.5 py-2.5 text-left transition-all ${
+    className={`w-full rounded border px-3 py-2 text-left transition-all ${
       disabled
         ? 'cursor-not-allowed border-[#c6a15b]/15 bg-[#1a1510]/60 opacity-45'
         : primary
@@ -680,8 +799,8 @@ const ActionButton: React.FC<ActionButtonProps> = ({
     <div className="flex items-center gap-2.5">
       <ActionIcon name={icon} />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-bold text-[#fde68a]">{title}</div>
-        <div className="mt-0.5 text-[11px] text-[#c7baa5]">{subtitle}</div>
+        <div className="text-xs font-bold text-[#fde68a]">{title}</div>
+        <div className="mt-0.5 text-[10px] leading-tight text-[#c7baa5]">{subtitle}</div>
       </div>
     </div>
   </button>

@@ -72,6 +72,14 @@ import {
   troopStackTotals,
 } from './game/bannerlordFoundation';
 import { KingdomManagementModal } from './components/KingdomManagementModal';
+import { ArmyCohesionHudWidget, ArmyModal } from './components/ArmyModal';
+import {
+  boostArmyCohesion,
+  createOrExpandPlayerArmy,
+  disbandArmy,
+  removeLordFromArmy,
+  setPlayerArmyTargetSettlement,
+} from './game/armySystem';
 import { CharacterArenaView } from './components/CharacterArenaView';
 import { CharacterCreatorModal } from './components/CharacterCreatorModal';
 import { BannerlordPauseModal } from './components/BannerlordPauseModal';
@@ -86,6 +94,7 @@ import { advanceWorldDay } from './game/worldSim';
 import {
   applyBreakInCasualties,
   buildSiegeEncounterView,
+  distributeCombinedBesiegerCasualties,
   enterBesiegedSettlement,
   liftPlayerSiege,
   resolveSiegeRole,
@@ -191,6 +200,10 @@ export default function App() {
   const [isCharacterModalOpen, setIsCharacterModalOpen] = useState(false);
   const [pendingBattleLoot, setPendingBattleLoot] = useState<PendingBattleLoot | null>(null);
   const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
+  const [isArmyModalOpen, setIsArmyModalOpen] = useState(false);
+  const [battleSiegeSettlementContextId, setBattleSiegeSettlementContextId] = useState<
+    string | null
+  >(null);
   const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'campaign' | 'character_arena'>('campaign');
   // Faz 1: Bannerlord Ansiklopedisi (N)
@@ -396,6 +409,7 @@ export default function App() {
             food: patch.food ?? prev.food,
             morale: patch.morale ?? prev.morale,
             renown: patch.renown ?? prev.renown,
+            influence: patch.influence ?? prev.influence,
             prisoners: patch.prisoners ?? prev.prisoners,
             roster: patch.roster ? { ...prev.roster, ...patch.roster } : prev.roster,
             playerMaxHp,
@@ -622,7 +636,7 @@ export default function App() {
     inventory: isInventoryModalOpen,
     party: isPartyModalOpen,
     market: isMarketModalOpen,
-    kingdom: isKingdomModalOpen,
+    kingdom: isKingdomModalOpen || isArmyModalOpen,
     dialogue: !!(dialogueLord || dialogueSettlement),
     settlement: !!activeSettlementModal || !!activeSiegeSettlementId,
     diplomacy: !!activeDiplomacyLord,
@@ -648,6 +662,7 @@ export default function App() {
         break;
       case 'kingdom':
         setIsKingdomModalOpen(false);
+        setIsArmyModalOpen(false);
         break;
       case 'dialogue':
         if (isForcedEncounter) break;
@@ -1812,7 +1827,11 @@ export default function App() {
                 setCampaign((prev) => liftPlayerSiege(prev, liveSettlement.id));
                 setActiveSiegeSettlementId(null);
               }}
-              onAttackBesiegers={(lord) => handleStartFieldBattle(lord)}
+              onAttackBesiegers={(lord) => {
+                setBattleSiegeSettlementContextId(liveSettlement.id);
+                setActiveSiegeSettlementId(null);
+                handleStartFieldBattle(lord);
+              }}
               onBreakIn={() => {
                 setCampaign((prev) =>
                   enterBesiegedSettlement(applyBreakInCasualties(prev), liveSettlement.id),
@@ -1821,8 +1840,13 @@ export default function App() {
               onObserve={() => setActiveSiegeSettlementId(null)}
               onDefendWalls={() => handleStartSiegeBattle(liveSettlement)}
               onSallyOut={(lord) => {
-                if (lord) handleStartFieldBattle(lord);
-                else handleStartSiegeBattle(liveSettlement);
+                if (lord) {
+                  setBattleSiegeSettlementContextId(liveSettlement.id);
+                  setActiveSiegeSettlementId(null);
+                  handleStartFieldBattle(lord);
+                } else {
+                  handleStartSiegeBattle(liveSettlement);
+                }
               }}
               onTalkSurrender={() => {
                 setCampaign((prev) => ({
@@ -2259,12 +2283,99 @@ export default function App() {
           pendingLoot={pendingBattleLoot}
           onClose={() => {
             setPendingBattleLoot(null);
+            setBattleSiegeSettlementContextId(null);
             setGameState('playing');
           }}
           onCommit={(result) => {
-            setCampaign(result.nextState);
+            let nextState = result.nextState;
+            if (battleSiegeSettlementContextId) {
+              nextState = {
+                ...nextState,
+                lords: distributeCombinedBesiegerCasualties(
+                  nextState.lords,
+                  battleSiegeSettlementContextId,
+                  true,
+                  pendingBattleLoot.enemiesDefeatedCount,
+                  nextState.day,
+                ),
+              };
+            }
+            setCampaign(nextState);
             setPendingBattleLoot(null);
+            setBattleSiegeSettlementContextId(null);
             setGameState('playing');
+          }}
+        />
+      )}
+
+      {/* 7A. BANNERLORD ORDU & UYUM (ARMY MANAGEMENT) MODAL */}
+      {gameState === 'playing' && subMode === 'overworld' && !dialogueLord && !dialogueSettlement && (
+        <div className="fixed right-4 bottom-24 z-40 flex flex-col items-end gap-2 pointer-events-none">
+          <ArmyCohesionHudWidget
+            campaign={campaign}
+            onOpenArmyModal={() => setIsArmyModalOpen(true)}
+            onQuickBoostCohesion={() => {
+              const res = boostArmyCohesion(campaign);
+              if (res.success) {
+                setCampaign(res.nextState);
+                showToast(`Ordu uyumu +10 artırıldı (-${res.influenceSpent} Nüfuz).`);
+              } else if (res.reason) {
+                showToast(res.reason);
+              }
+            }}
+          />
+          <button
+            type="button"
+            data-testid="open-army-modal-btn"
+            onClick={() => setIsArmyModalOpen(true)}
+            className="pointer-events-auto flex items-center gap-2 rounded border-2 border-[#c6a15b]/80 bg-[#19130d]/95 px-3.5 py-2 text-xs font-bold text-[#fde68a] shadow-[0_6px_24px_rgba(0,0,0,0.85)] hover:border-[#fbbf24] hover:bg-[#261c13]"
+          >
+            <span>Ordu Yönetimi</span>
+            <span className="rounded bg-[#2b2015] px-1.5 py-0.5 font-mono-tabular text-[11px] text-[#fbbf24]">
+              ★ {Math.round(campaign.influence ?? 0)}
+            </span>
+          </button>
+        </div>
+      )}
+
+      {isArmyModalOpen && gameState === 'playing' && (
+        <ArmyModal
+          campaign={campaign}
+          onClose={() => setIsArmyModalOpen(false)}
+          onCreateOrExpandArmy={(selectedIds, targetId) => {
+            const res = createOrExpandPlayerArmy(campaign, selectedIds, targetId);
+            if (res.success) {
+              setCampaign(res.nextState);
+              showToast(
+                `${res.army?.name ?? 'Ordu'} sancağı altında birlikler toplandı (-${res.influenceSpent} Nüfuz)!`,
+              );
+            } else if (res.reason) {
+              showToast(res.reason);
+            }
+          }}
+          onBoostCohesion={() => {
+            const res = boostArmyCohesion(campaign);
+            if (res.success) {
+              setCampaign(res.nextState);
+              showToast(`Ordu uyumu +10 artırıldı (-${res.influenceSpent} Nüfuz).`);
+            } else if (res.reason) {
+              showToast(res.reason);
+            }
+          }}
+          onRemoveMember={(lordId) => {
+            const army = (campaign.armies ?? []).find((a) => a.leaderId === 'player');
+            if (!army) return;
+            setCampaign((prev) => removeLordFromArmy(prev, army.id, lordId));
+            showToast('Birlik ordudan ayrıldı.');
+          }}
+          onDisbandArmy={() => {
+            const res = disbandArmy(campaign);
+            setCampaign(res.nextState);
+            setIsArmyModalOpen(false);
+            showToast('Ordu dağıtıldı.');
+          }}
+          onSelectTargetSettlement={(settlementId) => {
+            setCampaign((prev) => setPlayerArmyTargetSettlement(prev, settlementId));
           }}
         />
       )}

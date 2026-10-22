@@ -370,7 +370,7 @@ export function createContinentalForestsAndRocksGroup(): THREE.Group {
     if (tx > -505 && tx < 365 && tz > -325 && tz < 305) {
       for (let sIdx = 0; sIdx < SETTLEMENT_TERRACES.length; sIdx++) {
         const st = SETTLEMENT_TERRACES[sIdx];
-        const clearR = st.radius + 2.2;
+        const clearR = st.radius >= 8.5 ? Math.max(st.radius + 2.2, 30.5) : st.radius + 2.2;
         const dx = tx - st.x;
         if (dx > clearR || dx < -clearR) continue;
         const dz = tz - st.z;

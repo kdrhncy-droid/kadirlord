@@ -12,7 +12,8 @@ import {
 } from './encounter.ts';
 import { computeLandPath, isNavigableLandAt, stepAlongLandOnly } from './navigation.ts';
 import type { LordAgent, Settlement, TroopRoster } from './rules.ts';
-import { getSiegeCampPoint } from './siegeMechanics.ts';
+import { getArmyEscortSlotPoint } from './armySystem.ts';
+import { getSiegeCampPoint, getSiegeCampSlotPoint } from './siegeMechanics.ts';
 
 export interface BannerlordSpeedBreakdown {
   baseSpeed: number;
@@ -323,12 +324,56 @@ export function stepLordCampaignRoute(
  *
  * Emir değişmediyse rota korunur (her karede A* çalışmaz).
  */
+export interface ApplyLordOrderOptions {
+  /** Yerleşimi kuşatan diğer lordlarla çakışmamak için yuva indeksi (0 = merkez, 1 = sağ kanat, 2 = sol kanat...). */
+  siegeSlotIndex?: number;
+  totalBesiegers?: number;
+  siegeAnchorPos?: { x: number; z: number };
+  /** Oyuncunun ordusuna bağlı üye lord ise eskort indeks numarası. */
+  armyEscortIndex?: number;
+  armyLeaderFacing?: number;
+}
+
 export function applyLordOrderToRoute(
   lord: LordAgent,
   route: LordLiveRouteState,
   settlements: Settlement[],
   playerPos?: { x: number; z: number },
+  options?: ApplyLordOrderOptions,
 ): void {
+  // Oyuncu ordusuna bağlı üye lord (kuşatma emri yoksa komutanın eskort hattında yürür)
+  if (
+    options?.armyEscortIndex !== undefined &&
+    options.armyEscortIndex >= 0 &&
+    playerPos &&
+    lord.order?.kind !== 'SIEGE'
+  ) {
+    const escortPt = getArmyEscortSlotPoint(
+      playerPos.x,
+      playerPos.z,
+      options.armyLeaderFacing ?? 0,
+      options.armyEscortIndex,
+    );
+    const qx = Math.round(escortPt.x * 2) / 2;
+    const qz = Math.round(escortPt.z * 2) / 2;
+    const key = `army-escort:${options.armyEscortIndex}:${qx}:${qz}`;
+    const dist = Math.hypot(route.x - escortPt.x, route.z - escortPt.z);
+    route.currentAction =
+      dist <= 12
+        ? 'Ordu sancağı altında eskort düzeninde ilerliyor'
+        : 'Ordu sancağına katılmak üzere hızla ilerliyor';
+
+    if (route.orderKey !== key || route.waypoints.length === 0) {
+      route.orderKey = key;
+      if (dist <= 20) {
+        route.waypoints = [{ x: escortPt.x, z: escortPt.z }];
+      } else {
+        route.waypoints = computeLandPath(route.x, route.z, escortPt.x, escortPt.z);
+      }
+    }
+    return;
+  }
+
   const order = lord.order;
   if (!order) return;
 
@@ -366,14 +411,22 @@ export function applyLordOrderToRoute(
     const target = settlements.find((s) => s.id === order.targetSettlementId);
     if (target) {
       if (order.kind === 'SIEGE') {
-        const campPoint = getSiegeCampPoint(target, route.x, route.z);
-        targetX = campPoint.x;
-        targetZ = campPoint.z;
+        const slotIdx = options?.siegeSlotIndex ?? 0;
+        const totalBesiegers = options?.totalBesiegers ?? 1;
+        const anchorX = options?.siegeAnchorPos?.x ?? route.x;
+        const anchorZ = options?.siegeAnchorPos?.z ?? route.z;
+        const campSlot =
+          slotIdx > 0 || totalBesiegers > 1
+            ? getSiegeCampSlotPoint(target, anchorX, anchorZ, slotIdx, totalBesiegers)
+            : getSiegeCampPoint(target, route.x, route.z);
+        targetX = campSlot.x;
+        targetZ = campSlot.z;
+        key = `set:${target.id}:slot:${slotIdx}`;
       } else {
         targetX = target.x + 4.5;
         targetZ = target.z + 4.5;
+        key = `set:${target.id}`;
       }
-      key = `set:${target.id}`;
       action =
         order.kind === 'SIEGE'
           ? `${target.name} kuşatma hattına ilerliyor`
@@ -410,6 +463,9 @@ export function applyTacticalPlayerReactionToRoute(params: {
   playerStrength: number;
   nearbyHostileStrength?: number;
   onCooldown?: boolean;
+  siegeDefenderStrength?: number;
+  totalBesiegerStrength?: number;
+  routeOptions?: ApplyLordOrderOptions;
 }): HostileReactionKind {
   const {
     lord,
@@ -420,6 +476,9 @@ export function applyTacticalPlayerReactionToRoute(params: {
     playerStrength,
     nearbyHostileStrength = 0,
     onCooldown = false,
+    siegeDefenderStrength = 0,
+    totalBesiegerStrength,
+    routeOptions,
   } = params;
 
   // Karşılaşma dokunulmazlığı (cooldown) aktifse düşman oyuncudan uzaklaşır
@@ -447,6 +506,8 @@ export function applyTacticalPlayerReactionToRoute(params: {
     playerZ,
     playerStrength,
     nearbyHostileStrength,
+    siegeDefenderStrength,
+    totalBesiegerStrength,
   });
 
   if (reaction.kind === 'PURSUE_PLAYER' && reaction.targetPos) {
@@ -489,6 +550,6 @@ export function applyTacticalPlayerReactionToRoute(params: {
     route.tacticalState = null;
     route.orderKey = undefined;
   }
-  applyLordOrderToRoute(lord, route, settlements, { x: playerX, z: playerZ });
+  applyLordOrderToRoute(lord, route, settlements, { x: playerX, z: playerZ }, routeOptions);
   return 'PATROL';
 }

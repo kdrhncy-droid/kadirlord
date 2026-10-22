@@ -64,6 +64,7 @@ export interface KadirlordPlayerPatch {
   food?: number;
   morale?: number;
   renown?: number;
+  influence?: number;
   playerHp?: number;
   playerMaxHp?: number;
   prisoners?: number;
@@ -78,6 +79,10 @@ export interface KadirlordLordPatch {
   relation?: number;
   isAtWarWithPlayer?: boolean;
   isAlliedWithPlayer?: boolean;
+  isPlayerClan?: boolean;
+  clanTier?: number;
+  foodDays?: number;
+  order?: LordAgent['order'];
   currentAction?: string;
 }
 

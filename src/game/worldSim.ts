@@ -31,6 +31,12 @@ import {
   getTotalTroops,
 } from './rules';
 import { SIEGE_CAMP_STANDOFF } from './siegeMechanics';
+import { advanceArmiesDaily, getPlayerArmy } from './armySystem';
+import {
+  evaluateSiegeThreatReaction,
+  getLordPartyStrength,
+  getPlayerPartyStrength,
+} from './encounter';
 import { type FeudalClanRecord, calculateWarDesireAndTribute } from './kingdomSystem';
 import { hashString, mulberry32 } from './rng';
 
@@ -271,11 +277,101 @@ export interface OrderContext {
 }
 
 /** Bir lordu en mantıklı stratejik emre yönlendirir (saf; lordu değiştirmez). */
+export function inspectSettlementSiegeThreat(
+  state: CampaignState,
+  world: WorldState,
+  settlement: Settlement,
+  besiegingFaction: FactionId,
+  positions: WorldTickOptions['lordPositions'],
+  playerPos: WorldVec,
+) {
+  const besiegers = state.lords.filter(
+    (l) =>
+      l.faction === besiegingFaction &&
+      l.order?.kind === 'SIEGE' &&
+      l.order.targetSettlementId === settlement.id,
+  );
+  const totalBesiegerStrength = Math.max(
+    1,
+    besiegers.reduce((sum, l) => sum + getLordPartyStrength(l), 0),
+  );
+  const defenderStrength = Math.round(
+    settlement.garrison * 1.15 + (settlement.militia ?? 0) * 0.55,
+  );
+
+  const reliefLords = state.lords.filter((other) => {
+    if (other.faction === besiegingFaction || other.faction === 'bandits') return false;
+    const hostileToBesiegers =
+      other.faction === settlement.faction || areAtWar(world, other.faction, besiegingFaction);
+    if (!hostileToBesiegers) return false;
+    const p = positionOf(positions, other);
+    return distance(p.x, p.z, settlement.x, settlement.z) <= 55;
+  });
+
+  let reliefForceStrength = reliefLords.reduce(
+    (sum, l) => sum + getLordPartyStrength(l),
+    0,
+  );
+  let closestDist = reliefLords.reduce((minD, l) => {
+    const p = positionOf(positions, l);
+    return Math.min(minD, distance(p.x, p.z, settlement.x, settlement.z));
+  }, 999);
+  let reliefPos: WorldVec = { x: settlement.x + 25, z: settlement.z };
+
+  if (reliefLords.length > 0) {
+    const firstPos = positionOf(positions, reliefLords[0]);
+    reliefPos = firstPos;
+  }
+
+  // Oyuncu da kuşatmacılara düşmansa ve 55m içindeyse yardım kuvvetine dahil edilir
+  const playerHostileToBesiegers =
+    settlement.faction === 'player' ||
+    besiegers.some((b) => b.isAtWarWithPlayer);
+  const playerDist = distance(playerPos.x, playerPos.z, settlement.x, settlement.z);
+
+  if (playerHostileToBesiegers && playerDist <= 55) {
+    const playerArmy = getPlayerArmy(state);
+    const memberIds = new Set(playerArmy?.memberLordIds ?? []);
+    const armyMemberStrength = state.lords
+      .filter((l) => memberIds.has(l.id))
+      .reduce((sum, l) => sum + getLordPartyStrength(l), 0);
+
+    reliefForceStrength += getPlayerPartyStrength(state) + armyMemberStrength;
+    if (playerDist < closestDist) {
+      closestDist = playerDist;
+      reliefPos = playerPos;
+    }
+  }
+
+  return evaluateSiegeThreatReaction({
+    totalBesiegerStrength,
+    reliefForceStrength,
+    defenderStrength,
+    distance: closestDist,
+    reliefPos,
+    siegePos: { x: settlement.x, z: settlement.z },
+  });
+}
+
 export function decideLordOrder(ctx: OrderContext): LordOrder | undefined {
   const { state, world, lord, pos, positions, rand, playerPos } = ctx;
   const day = state.day;
 
   if (lord.faction === 'player') return lord.order;
+
+  // Oyuncunun ordusuna bağlı üye lordlar kendi başlarına stratejik emir değiştirmez
+  const playerArmy = getPlayerArmy(state);
+  if (playerArmy && playerArmy.memberLordIds.includes(lord.id)) {
+    if (playerArmy.targetSettlementId) {
+      return {
+        kind: 'SIEGE',
+        targetSettlementId: playerArmy.targetSettlementId,
+        sinceDay: lord.order?.sinceDay ?? day,
+        siegeProgress: lord.order?.siegeProgress ?? 20,
+      };
+    }
+    return lord.order;
+  }
 
   const myFiefs = state.settlements.filter((s) => s.faction === lord.faction);
   const enemies = enemiesOf(world, lord.faction);
@@ -284,10 +380,21 @@ export function decideLordOrder(ctx: OrderContext): LordOrder | undefined {
   );
   const army = armyOf(lord);
 
-  // 0) Süren kuşatma: hedef hâlâ düşman elindeyse emri koru (ilerleme sıfırlanmasın).
+  // 0) Süren kuşatma: hedef hâlâ düşman elindeyse tehdit değerlendirmesi yap, tehdit yoksa emri koru.
   if (lord.order?.kind === 'SIEGE' && lord.order.targetSettlementId) {
     const current = state.settlements.find((s) => s.id === lord.order?.targetSettlementId);
     if (current && current.faction !== lord.faction && enemies.includes(current.faction)) {
+      const threat = inspectSettlementSiegeThreat(
+        state,
+        world,
+        current,
+        lord.faction,
+        positions,
+        playerPos,
+      );
+      if (threat.kind === 'LIFT_SIEGE') {
+        return { kind: 'FLEE', sinceDay: day };
+      }
       return lord.order;
     }
   }
@@ -409,6 +516,8 @@ export function advanceSieges(
   let fiefsChangedHands = 0;
   const siegeCooldowns: Record<string, number> = { ...(world.siegeCooldowns ?? {}) };
 
+  const playerPos = { x: state.playerX, z: state.playerZ };
+
   for (const lord of lords) {
     if (lord.order?.kind !== 'SIEGE' || !lord.order.targetSettlementId) continue;
     const target = settlements.find((s) => s.id === lord.order?.targetSettlementId);
@@ -418,6 +527,37 @@ export function advanceSieges(
     }
     if (target.faction === lord.faction) {
       lord.order = { kind: 'DEFEND', targetSettlementId: target.id, sinceDay: state.day };
+      continue;
+    }
+
+    // Kuşatma Tehdit AI kontrolü: Üstün bir yardım ordusu yaklaştıysa kuşatmayı kaldır!
+    const threat = inspectSettlementSiegeThreat(
+      { ...state, settlements, lords },
+      world,
+      target,
+      lord.faction,
+      positions,
+      playerPos,
+    );
+    if (threat.kind === 'LIFT_SIEGE') {
+      for (const coLord of lords) {
+        if (
+          coLord.faction === lord.faction &&
+          coLord.order?.kind === 'SIEGE' &&
+          coLord.order.targetSettlementId === target.id
+        ) {
+          coLord.order = { kind: 'FLEE', sinceDay: state.day };
+          coLord.currentAction = threat.actionLabel;
+          if (threat.targetPos) {
+            coLord.targetX = threat.targetPos.x;
+            coLord.targetZ = threat.targetPos.z;
+          }
+        }
+      }
+      events.push({
+        category: 'WAR',
+        text: `${lord.name} komutasındaki kuşatma kuvvetleri, yaklaşan üstün yardım ordusu karşısında ${target.name} kuşatmasını kaldırıp geri çekildi.`,
+      });
       continue;
     }
 
@@ -432,11 +572,22 @@ export function advanceSieges(
       continue;
     }
 
+    // Aynı yerleşimi kuşatan ve menzilde olan tüm müttefik lordların ortak gücü
+    const coBesiegers = lords.filter((other) => {
+      if (other.order?.kind !== 'SIEGE' || other.order.targetSettlementId !== target.id) {
+        return false;
+      }
+      if (other.faction !== lord.faction) return false;
+      const p = positionOf(positions, other);
+      return distance(p.x, p.z, target.x, target.z) <= radius;
+    });
+    const combinedAttack = coBesiegers.reduce((sum, l) => sum + armyOf(l), 0);
+
     // Bannerlord'da garnizon + milis birlikte savunur; saldıran ordu kuşatma
-    // makineleriyle çarpanlı vurur. Günlük ilerleme 6–45 arasında kalır ki
+    // makineleriyle çarpanlı vurur. Günlük ilerleme 4–26 arasında kalır ki
     // hiçbir kuşatma sonsuza kadar sürmesin (hedef: 5–15 gün).
     const defence = target.garrison * 0.7 + (target.militia ?? 0) * 0.3;
-    const attack = armyOf(lord);
+    const attack = Math.max(armyOf(lord), combinedAttack);
     const dailyGain = clamp(8 + (attack * 1.1 - defence) * 0.45, 4, 26);
     const nextProgress = Math.round(progress + dailyGain);
 
@@ -470,13 +621,16 @@ export function advanceSieges(
       }
     }
 
-    // Saldıran ordu yıpranır.
-    const losses = Math.max(2, Math.round(attack * 0.18 + rand() * 3));
-    const remaining = Math.max(5, attack - losses);
-    lord.armySize = remaining;
-    lord.roster = scaleRoster(lord.roster, remaining / Math.max(1, attack));
-    lord.foodDays = Math.max(2, (lord.foodDays ?? 6) - 3);
-    lord.order = { kind: 'DEFEND', targetSettlementId: target.id, sinceDay: state.day };
+    // Saldıran ordu(lar) yıpranır.
+    for (const coLord of coBesiegers) {
+      const coArmy = armyOf(coLord);
+      const losses = Math.max(2, Math.round(coArmy * 0.18 + rand() * 2));
+      const remaining = Math.max(5, coArmy - losses);
+      coLord.armySize = remaining;
+      coLord.roster = scaleRoster(coLord.roster, remaining / Math.max(1, coArmy));
+      coLord.foodDays = Math.max(2, (coLord.foodDays ?? 6) - 3);
+      coLord.order = { kind: 'DEFEND', targetSettlementId: target.id, sinceDay: state.day };
+    }
 
     const war = wars.find(
       (w) => (w.a === newFaction && w.b === oldFaction) || (w.a === oldFaction && w.b === newFaction),
@@ -700,6 +854,15 @@ export function advanceWorldDay(state: CampaignState, opts: WorldTickOptions = {
   stats.reinforcements += upkeep.reinforcements;
   upkeep.events.forEach((e) => pushEvent(e.category, e.text));
 
+  /* 4b. Görev 2: Ordu & Uyum & Erzak Paylaşımı */
+  const armyTick = advanceArmiesDaily({
+    ...base,
+    lords,
+    settlements: upkeep.settlements,
+  });
+  lords = armyTick.nextState.lords;
+  armyTick.events.forEach((e) => pushEvent(e.category, e.text));
+
   /* 5. Oyuncu avı teması (savaş başlatmaz; harita karşılaşmayı yönetir) */
   for (const lord of lords) {
     if (lord.order?.kind !== 'HUNT_PLAYER') continue;
@@ -725,6 +888,9 @@ export function advanceWorldDay(state: CampaignState, opts: WorldTickOptions = {
   return {
     state: {
       ...base,
+      food: armyTick.nextState.food,
+      influence: armyTick.nextState.influence,
+      armies: armyTick.nextState.armies,
       lords,
       settlements: upkeep.settlements,
       chronicle,

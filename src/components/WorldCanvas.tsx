@@ -15,6 +15,8 @@ import {
   getWallSections,
 } from '../game/rules';
 import { besiegedSettlementIdSet, getSiegeCampPoint } from '../game/siegeEncounter';
+import { getPlayerArmy } from '../game/armySystem';
+import { getLordPartyStrength } from '../game/encounter';
 import {
   CONTINENTAL_LANDMARKS,
   MAP_HEIGHT,
@@ -950,6 +952,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     const renderer = new THREE.WebGLRenderer({
       antialias: !isHeadless,
+      preserveDrawingBuffer: isHeadless,
       powerPreference: 'high-performance',
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -1081,17 +1084,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
       if (s.type !== 'VILLAGE') {
         const camp = new THREE.Group();
-        const ring = new THREE.Mesh(siegeRingGeo, siegeRingMat);
-        camp.add(ring);
-        for (let i = 0; i < 3; i++) {
-          const smoke = new THREE.Mesh(siegeSmokeGeo, siegeSmokeMat);
-          const a = (i / 3) * Math.PI * 2;
-          smoke.position.set(Math.cos(a) * 6.2, 1.6, Math.sin(a) * 6.2);
-          smoke.userData.baseY = 1.6;
-          smoke.userData.siegeSmoke = true;
-          smoke.userData.smokeIndex = i;
-          camp.add(smoke);
-        }
         camp.position.set(s.x, sy + 0.12, s.z);
         camp.matrixAutoUpdate = false;
         camp.updateMatrix();
@@ -2267,13 +2259,22 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     let lastTime = performance.now();
     let elapsedTotal = 0;
     let headlessFrameSkip = 0;
+    let headlessRenderedFrames = 0;
 
     const tick = (now: number) => {
       rafId = requestAnimationFrame(tick);
 
       if (isHeadless) {
-        headlessFrameSkip = (headlessFrameSkip + 1) % 4;
+        const camSettled =
+          headlessRenderedFrames >= 2 &&
+          stateRef.current.campaignTimeScale === 0 &&
+          Math.abs(camFocusX - targetCamFocusX) < 0.05 &&
+          Math.abs(camFocusZ - targetCamFocusZ) < 0.05 &&
+          Math.abs(camZoomDist - targetCamZoomDist) < 0.05;
+        const skipModulo = camSettled ? 20 : 4;
+        headlessFrameSkip = (headlessFrameSkip + 1) % skipModulo;
         if (headlessFrameSkip !== 0) return;
+        headlessRenderedFrames++;
       }
 
       const rawDt = (now - lastTime) / 1000;
@@ -2465,6 +2466,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
         const worldSimDt = dt * (isWorldEffectivelyPaused ? 0 : timeScale);
         const playerStrength = getPlayerPartyStrength(camp);
+        const activePlayerArmy = getPlayerArmy(camp);
+        const playerArmyMemberIds = activePlayerArmy?.memberLordIds ?? [];
 
         // F. Advance Lord Parties Along Authentic Land Routes (Frozen if paused or in dialogue)
         if (!isWorldEffectivelyPaused) {
@@ -2500,7 +2503,49 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           const isThisLordTalking = activeTalkingLordId === l.id;
           if (!isWorldEffectivelyPaused && !isThisLordTalking && timeScale > 0) {
             const onCooldown = (encounterCooldowns.get(l.id) ?? 0) > elapsedTotal;
-            // Gerçek zamanlı kovalama (güçlüyse) / kaçma (zayıfsa) veya stratejik emir
+            let siegeSlotIndex = 0;
+            let totalBesiegers = 1;
+            let siegeAnchorPos: { x: number; z: number } | undefined;
+            let siegeDefenderStrength = 0;
+            let totalBesiegerStrength: number | undefined;
+
+            if (l.order?.kind === 'SIEGE' && l.order.targetSettlementId) {
+              const siegeTargetId = l.order.targetSettlementId;
+              const targetSettlement = camp.settlements.find((s) => s.id === siegeTargetId);
+              const coBesiegers = camp.lords.filter(
+                (other) =>
+                  other.order?.kind === 'SIEGE' &&
+                  other.order.targetSettlementId === siegeTargetId,
+              );
+              const playerAlsoBesieging =
+                camp.playerSiege?.settlementId === siegeTargetId && !camp.playerSiege.inside;
+              const idxInSiege = Math.max(
+                0,
+                coBesiegers.findIndex((other) => other.id === l.id),
+              );
+              siegeSlotIndex = idxInSiege + (playerAlsoBesieging ? 1 : 0);
+              totalBesiegers = coBesiegers.length + (playerAlsoBesieging ? 1 : 0);
+              const firstCo = coBesiegers[0];
+              const firstRoute = firstCo ? lordLiveRoutes.get(firstCo.id) : undefined;
+              siegeAnchorPos = playerAlsoBesieging
+                ? { x: playerOverworldX, z: playerOverworldZ }
+                : firstRoute
+                  ? { x: firstRoute.x, z: firstRoute.z }
+                  : { x: route.x, z: route.z };
+              if (targetSettlement) {
+                siegeDefenderStrength = Math.round(
+                  targetSettlement.garrison * 1.15 + (targetSettlement.militia ?? 0) * 0.55,
+                );
+              }
+              totalBesiegerStrength = coBesiegers.reduce(
+                (sum, other) => sum + getLordPartyStrength(other),
+                0,
+              );
+            }
+
+            const escortIdx = playerArmyMemberIds.indexOf(l.id);
+
+            // Gerçek zamanlı kovalama (güçlüyse) / kaçma (zayıfsa) / kuşatma tehdit AI veya stratejik emir
             applyTacticalPlayerReactionToRoute({
               lord: l,
               route,
@@ -2509,6 +2554,15 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               playerZ: playerOverworldZ,
               playerStrength,
               onCooldown,
+              siegeDefenderStrength,
+              totalBesiegerStrength,
+              routeOptions: {
+                siegeSlotIndex,
+                totalBesiegers,
+                siegeAnchorPos,
+                armyEscortIndex: escortIdx >= 0 ? escortIdx : undefined,
+                armyLeaderFacing: overworldPlayer.root.rotation.y,
+              },
             });
             stepLordCampaignRoute(l, route, dt, timeScale, camp.settlements);
             route.cachedY = Math.max(0.25, groundHeightAt(route.x, route.z));
@@ -2781,7 +2835,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         }
 
         // Smooth Exponential Damping for Bannerlord Strategic Map Camera (Focus XZ, Focus Y, Yaw, Zoom)
-        const camDamp = 1 - Math.exp(-11.0 * dt);
+        const camDamp = isHeadless ? 1 : 1 - Math.exp(-11.0 * dt);
         camFocusX = THREE.MathUtils.lerp(camFocusX, targetCamFocusX, camDamp);
         camFocusZ = THREE.MathUtils.lerp(camFocusZ, targetCamFocusZ, camDamp);
         camYaw = THREE.MathUtils.lerp(camYaw, targetCamYaw, camDamp);

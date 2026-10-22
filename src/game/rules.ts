@@ -24,6 +24,7 @@ import {
   advanceDailyPartyFood,
   calculateDailyFoodDemand,
 } from './foodSystem.ts';
+import type { ArmyRecord } from './armySystem';
 import {
   SIEGE_MELEE_SLOTS,
   SIEGE_RANGED_SLOTS,
@@ -407,6 +408,10 @@ export interface LordAgent {
   morphDNA?: CharacterMorphDNA;
   /** Faz 11: stratejik emir (canlı dünya simülasyonu yazar, harita uygular). */
   order?: LordOrder;
+  /** Görev 2: Ordu & Uyum sistemi — lordun bağlı olduğu ordu ve klan bilgisi. */
+  armyId?: string | null;
+  isPlayerClan?: boolean;
+  clanTier?: number;
 }
 
 export interface ChronicleEvent {
@@ -459,6 +464,9 @@ export interface CampaignState {
   world?: WorldState;
   /** Oyuncunun yürüttüğü kuşatma (Görev 1). Yoksa lord kuşatmaları tek kaynaktır. */
   playerSiege?: PlayerSiegeState | null;
+  /** Görev 2: Oyuncunun bağlı olduğu krallık ve aktif ordular (`ArmyRecord[]`). */
+  playerFaction?: FactionId;
+  armies?: ArmyRecord[];
 }
 
 export interface PlayerSiegeState {
@@ -3208,6 +3216,7 @@ export function createInitialCampaignState(
       SURGEON: 'Hekim Helena (+%25 Yaralı Kurtarma)',
       ENGINEER: 'Mimar Torvald (+%30 Kuşatma İnşası)',
     },
+    armies: [],
   });
 }
 
