@@ -15,6 +15,8 @@ import {
   getWallSections,
 } from '../game/rules';
 import { besiegedSettlementIdSet, getSiegeCampPoint } from '../game/siegeEncounter';
+import { getPlayerArmy } from '../game/armySystem';
+import { getLordPartyStrength } from '../game/encounter';
 import {
   CONTINENTAL_LANDMARKS,
   MAP_HEIGHT,
@@ -2454,6 +2456,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
         const worldSimDt = dt * (isWorldEffectivelyPaused ? 0 : timeScale);
         const playerStrength = getPlayerPartyStrength(camp);
+        const activePlayerArmy = getPlayerArmy(camp);
+        const playerArmyMemberIds = activePlayerArmy?.memberLordIds ?? [];
 
         // F. Advance Lord Parties Along Authentic Land Routes (Frozen if paused or in dialogue)
         if (!isWorldEffectivelyPaused) {
@@ -2489,7 +2493,49 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           const isThisLordTalking = activeTalkingLordId === l.id;
           if (!isWorldEffectivelyPaused && !isThisLordTalking && timeScale > 0) {
             const onCooldown = (encounterCooldowns.get(l.id) ?? 0) > elapsedTotal;
-            // Gerçek zamanlı kovalama (güçlüyse) / kaçma (zayıfsa) veya stratejik emir
+            let siegeSlotIndex = 0;
+            let totalBesiegers = 1;
+            let siegeAnchorPos: { x: number; z: number } | undefined;
+            let siegeDefenderStrength = 0;
+            let totalBesiegerStrength: number | undefined;
+
+            if (l.order?.kind === 'SIEGE' && l.order.targetSettlementId) {
+              const siegeTargetId = l.order.targetSettlementId;
+              const targetSettlement = camp.settlements.find((s) => s.id === siegeTargetId);
+              const coBesiegers = camp.lords.filter(
+                (other) =>
+                  other.order?.kind === 'SIEGE' &&
+                  other.order.targetSettlementId === siegeTargetId,
+              );
+              const playerAlsoBesieging =
+                camp.playerSiege?.settlementId === siegeTargetId && !camp.playerSiege.inside;
+              const idxInSiege = Math.max(
+                0,
+                coBesiegers.findIndex((other) => other.id === l.id),
+              );
+              siegeSlotIndex = idxInSiege + (playerAlsoBesieging ? 1 : 0);
+              totalBesiegers = coBesiegers.length + (playerAlsoBesieging ? 1 : 0);
+              const firstCo = coBesiegers[0];
+              const firstRoute = firstCo ? lordLiveRoutes.get(firstCo.id) : undefined;
+              siegeAnchorPos = playerAlsoBesieging
+                ? { x: playerOverworldX, z: playerOverworldZ }
+                : firstRoute
+                  ? { x: firstRoute.x, z: firstRoute.z }
+                  : { x: route.x, z: route.z };
+              if (targetSettlement) {
+                siegeDefenderStrength = Math.round(
+                  targetSettlement.garrison * 1.15 + (targetSettlement.militia ?? 0) * 0.55,
+                );
+              }
+              totalBesiegerStrength = coBesiegers.reduce(
+                (sum, other) => sum + getLordPartyStrength(other),
+                0,
+              );
+            }
+
+            const escortIdx = playerArmyMemberIds.indexOf(l.id);
+
+            // Gerçek zamanlı kovalama (güçlüyse) / kaçma (zayıfsa) / kuşatma tehdit AI veya stratejik emir
             applyTacticalPlayerReactionToRoute({
               lord: l,
               route,
@@ -2498,6 +2544,15 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               playerZ: playerOverworldZ,
               playerStrength,
               onCooldown,
+              siegeDefenderStrength,
+              totalBesiegerStrength,
+              routeOptions: {
+                siegeSlotIndex,
+                totalBesiegers,
+                siegeAnchorPos,
+                armyEscortIndex: escortIdx >= 0 ? escortIdx : undefined,
+                armyLeaderFacing: overworldPlayer.root.rotation.y,
+              },
             });
             stepLordCampaignRoute(l, route, dt, timeScale, camp.settlements);
             route.cachedY = Math.max(0.25, groundHeightAt(route.x, route.z));

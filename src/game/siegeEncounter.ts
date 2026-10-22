@@ -1,10 +1,10 @@
 /**
- * siegeEncounter.ts — Görev 1: Canlı kuşatma karşılaşma durumu ve yardımcıları
+ * siegeEncounter.ts — Görev 1 + Çoklu Lord Kuşatma Çemberi & Müşterek Muharebe
  *
  * Kuşatılan bir yerleşime tıklandığında normal şehir menüsü yerine Bannerlord'un
  * üç bağlamlı kuşatma ekranı açılır:
  *   1. `attacker`  — oyuncu yerleşimi bizzat kuşatıyor
- *   2. `outsider`  — yabancı bir lord kuşatıyor, oyuncu dışarıdan yaklaştı
+ *   2. `outsider`  — yabancı bir lord/ordu kuşatıyor, oyuncu dışarıdan yaklaştı
  *   3. `defender`  — oyuncunun kendi mülkü kuşatılıyor veya oyuncu hatları yarıp içeri girdi
  */
 import {
@@ -13,28 +13,39 @@ import {
   LordAgent,
   Settlement,
   TroopRoster,
+  deductCasualtiesFromRoster,
   getTotalTroops,
 } from './rules';
 import {
+  SIEGE_CAMP_SLOT_ANGLE_STEP,
   SIEGE_CAMP_STANDOFF,
   SIEGE_MELEE_SLOTS,
   SIEGE_RANGED_SLOTS,
   canFitSiegeEngine,
+  countSiegeEngineSlots,
+  getBesiegerSlotAssignments,
   getSiegeCampPoint,
+  getSiegeCampSlotPoint,
   getWallSections,
   normalizeSiegeEngineSlots,
   removeDestroyedSiegeEngines,
   setWallSections,
   wallBreached,
 } from './siegeMechanics';
+import { getPlayerArmy } from './armySystem';
 import { troopStackTotals } from './bannerlordFoundation';
+import { snapToNearestLand } from './navigation';
 
 export {
+  SIEGE_CAMP_SLOT_ANGLE_STEP,
   SIEGE_CAMP_STANDOFF,
   SIEGE_MELEE_SLOTS,
   SIEGE_RANGED_SLOTS,
   canFitSiegeEngine,
+  countSiegeEngineSlots,
+  getBesiegerSlotAssignments,
   getSiegeCampPoint,
+  getSiegeCampSlotPoint,
   getWallSections,
   normalizeSiegeEngineSlots,
   removeDestroyedSiegeEngines,
@@ -67,6 +78,149 @@ export function getBesiegingLords(state: CampaignState, settlementId: string): L
     (lord) =>
       lord.order?.kind === 'SIEGE' && lord.order.targetSettlementId === settlementId,
   );
+}
+
+/**
+ * Bir yerleşimi kuşatan tüm düşman lordların birliklerini (`TroopRoster`) tek bir
+ * müşterek kuşatma ordusu komutanı altında birleştirir.
+ * Oyuncu dışarıdan "Kuşatan Orduya Taarruz" veya içeriden "Huruc Harekâtı (Sally Out)"
+ * başlattığında yalnız `besiegers[0]` ile değil, tüm kuşatmacıların birleşik ordusuyla savaşır!
+ */
+export function combineBesiegerForces(besiegers: readonly LordAgent[]): LordAgent | null {
+  if (besiegers.length === 0) return null;
+  if (besiegers.length === 1) {
+    const single = besiegers[0];
+    const roster: TroopRoster = single.roster ?? {
+      militia: Math.max(2, Math.floor(single.armySize * 0.35)),
+      archer: Math.max(2, Math.floor(single.armySize * 0.28)),
+      cavalry: Math.max(1, Math.floor(single.armySize * 0.22)),
+      guard: Math.max(1, Math.floor(single.armySize * 0.15)),
+    };
+    return {
+      ...single,
+      roster: { ...roster },
+      armySize: Math.max(1, getTotalTroops(roster)),
+    };
+  }
+
+  const combinedRoster: TroopRoster = {
+    militia: 0,
+    archer: 0,
+    cavalry: 0,
+    guard: 0,
+  };
+  let totalWounded = 0;
+  let totalPrisoners = 0;
+  let moraleSum = 0;
+
+  for (const lord of besiegers) {
+    const r: TroopRoster = lord.roster ?? {
+      militia: Math.max(2, Math.floor(lord.armySize * 0.35)),
+      archer: Math.max(2, Math.floor(lord.armySize * 0.28)),
+      cavalry: Math.max(1, Math.floor(lord.armySize * 0.22)),
+      guard: Math.max(1, Math.floor(lord.armySize * 0.15)),
+    };
+    combinedRoster.militia += Math.max(0, r.militia);
+    combinedRoster.archer += Math.max(0, r.archer);
+    combinedRoster.cavalry += Math.max(0, r.cavalry);
+    combinedRoster.guard += Math.max(0, r.guard);
+    totalWounded += lord.wounded ?? 0;
+    totalPrisoners += lord.prisoners ?? 0;
+    moraleSum += lord.morale ?? 75;
+  }
+
+  const commander = besiegers[0];
+  const combinedTotal = Math.max(1, getTotalTroops(combinedRoster));
+
+  return {
+    ...commander,
+    roster: combinedRoster,
+    armySize: combinedTotal,
+    wounded: totalWounded,
+    prisoners: totalPrisoners,
+    morale: Math.round(moraleSum / besiegers.length),
+    currentAction: `${commander.name} ve ${besiegers.length - 1} müttefik komutanın müşterek kuşatma ordusu`,
+  };
+}
+
+/**
+ * Müşterek kuşatma muharebesi tamamlandığında zayiatı kuşatmaya katılan TÜM düşman
+ * lordlara orantılı olarak dağıtır ve zafer halinde hepsinin kuşatma emrini kaldırıp
+ * güvenli karaya geri çekilmelerini sağlar.
+ */
+export function distributeCombinedBesiegerCasualties(
+  lords: readonly LordAgent[],
+  settlementId: string,
+  victory: boolean,
+  enemiesDefeatedCount: number,
+  day: number,
+): LordAgent[] {
+  const besiegers = lords.filter(
+    (l) => l.order?.kind === 'SIEGE' && l.order.targetSettlementId === settlementId,
+  );
+  if (besiegers.length === 0) return [...lords];
+
+  const totalInitialTroops = Math.max(
+    1,
+    besiegers.reduce((sum, l) => sum + Math.max(1, getTotalTroops(l.roster)), 0),
+  );
+
+  return lords.map((lord) => {
+    const isBesieger =
+      lord.order?.kind === 'SIEGE' && lord.order.targetSettlementId === settlementId;
+    if (!isBesieger) return lord;
+
+    const currentRoster: TroopRoster = lord.roster ?? {
+      militia: Math.max(2, Math.floor(lord.armySize * 0.35)),
+      archer: Math.max(2, Math.floor(lord.armySize * 0.28)),
+      cavalry: Math.max(1, Math.floor(lord.armySize * 0.22)),
+      guard: Math.max(1, Math.floor(lord.armySize * 0.15)),
+    };
+    const lordTroops = Math.max(1, getTotalTroops(currentRoster));
+    const share = lordTroops / totalInitialTroops;
+    const lordCasualties = Math.max(1, Math.round(enemiesDefeatedCount * share));
+
+    let updatedRoster = deductCasualtiesFromRoster(currentRoster, lordCasualties);
+    let updatedTotal = getTotalTroops(updatedRoster);
+
+    if (victory) {
+      const maxSurviving = Math.max(2, Math.floor(lordTroops * 0.25));
+      if (updatedTotal > maxSurviving) {
+        updatedRoster = deductCasualtiesFromRoster(
+          updatedRoster,
+          updatedTotal - maxSurviving,
+        );
+        updatedTotal = getTotalTroops(updatedRoster);
+      }
+      if (updatedTotal <= 0) {
+        updatedRoster = { militia: 1, archer: 0, cavalry: 0, guard: 0 };
+        updatedTotal = 1;
+      }
+      const retreatPt = snapToNearestLand(lord.x + 20, lord.z - 20);
+      return {
+        ...lord,
+        roster: updatedRoster,
+        armySize: updatedTotal,
+        wounded: (lord.wounded ?? 1) + Math.max(1, Math.floor(lordCasualties * 0.35)),
+        x: retreatPt.x,
+        z: retreatPt.z,
+        targetX: retreatPt.x,
+        targetZ: retreatPt.z,
+        currentAction: 'Kuşatma bozgunundan sonra ordusunu yeniden topluyor',
+        order: {
+          kind: 'FLEE' as const,
+          sinceDay: day,
+        },
+      };
+    }
+
+    return {
+      ...lord,
+      roster: updatedRoster,
+      armySize: Math.max(1, updatedTotal),
+      wounded: (lord.wounded ?? 1) + Math.floor(lordCasualties * 0.25),
+    };
+  });
 }
 
 /** Haritada duman/çember gösterilecek tüm kuşatılan yerleşim kimlikleri. */
@@ -161,15 +315,63 @@ export function buildSiegeEncounterView(
   };
 }
 
-/** Oyuncu bir yerleşimi kuşatmaya başlar. */
+/**
+ * Oyuncu bir yerleşimi kuşatmaya başlar.
+ * Oyuncunun aktif bir ordusu (`ArmyRecord`) varsa ordudaki tüm üye lordlar da
+ * otomatik olarak kuşatma çemberindeki yay yuvalarına (`slotIndex = 1..N`) yerleşir!
+ */
 export function startPlayerSiege(state: CampaignState, settlementId: string): CampaignState {
   const settlement = state.settlements.find((s) => s.id === settlementId);
   if (!settlement || settlement.type === 'VILLAGE') return state;
-  const campPoint = getSiegeCampPoint(settlement, state.playerX, state.playerZ);
+
+  const campPoint = getSiegeCampSlotPoint(
+    settlement,
+    state.playerX,
+    state.playerZ,
+    0,
+    1,
+  );
+  const playerArmy = getPlayerArmy(state);
+  const memberIds = playerArmy?.memberLordIds ?? [];
+
+  const nextLords = state.lords.map((lord) => {
+    const memberIdx = memberIds.indexOf(lord.id);
+    if (memberIdx === -1) return lord;
+    const slotPt = getSiegeCampSlotPoint(
+      settlement,
+      state.playerX,
+      state.playerZ,
+      memberIdx + 1,
+      memberIds.length + 1,
+    );
+    return {
+      ...lord,
+      x: slotPt.x,
+      z: slotPt.z,
+      targetX: slotPt.x,
+      targetZ: slotPt.z,
+      currentAction: `${settlement.name} kuşatma çemberinde (${playerArmy?.name ?? 'Ordu'})`,
+      order: {
+        kind: 'SIEGE' as const,
+        targetSettlementId: settlement.id,
+        sinceDay: state.day,
+        siegeProgress: Math.max(12, state.playerSiege?.campProgress ?? 18),
+      },
+    };
+  });
+
+  const nextArmies = (state.armies ?? []).map((a) =>
+    a.leaderId === 'player'
+      ? { ...a, targetSettlementId: settlement.id, orderKind: 'SIEGE' as const }
+      : a,
+  );
+
   return {
     ...state,
     playerX: campPoint.x,
     playerZ: campPoint.z,
+    lords: nextLords,
+    armies: nextArmies,
     playerSiege: {
       settlementId,
       campProgress: Math.max(12, state.playerSiege?.campProgress ?? 18),
@@ -183,8 +385,38 @@ export function liftPlayerSiege(state: CampaignState, settlementId?: string): Ca
   if (!state.playerSiege) return state;
   const targetId = settlementId ?? state.playerSiege.settlementId;
   if (settlementId && state.playerSiege.settlementId !== settlementId) return state;
+
+  const playerArmy = getPlayerArmy(state);
+  const memberSet = new Set(playerArmy?.memberLordIds ?? []);
+
+  const nextLords = state.lords.map((lord) => {
+    if (
+      memberSet.has(lord.id) &&
+      lord.order?.kind === 'SIEGE' &&
+      lord.order.targetSettlementId === targetId
+    ) {
+      return {
+        ...lord,
+        currentAction: `${playerArmy?.name ?? 'Ordu'} eskort hattında ilerliyor`,
+        order: {
+          kind: 'PATROL' as const,
+          sinceDay: state.day,
+        },
+      };
+    }
+    return lord;
+  });
+
+  const nextArmies = (state.armies ?? []).map((a) =>
+    a.leaderId === 'player' && a.targetSettlementId === targetId
+      ? { ...a, targetSettlementId: undefined, orderKind: 'GATHERING' as const }
+      : a,
+  );
+
   return {
     ...state,
+    lords: nextLords,
+    armies: nextArmies,
     settlements: state.settlements.map((settlement) =>
       settlement.id === targetId ? removeDestroyedSiegeEngines(settlement) : settlement,
     ),

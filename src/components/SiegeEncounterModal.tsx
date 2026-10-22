@@ -9,6 +9,7 @@ import {
 import {
   SIEGE_RANGED_SLOTS,
   breakInLossRate,
+  combineBesiegerForces,
   type SiegeEncounterView,
 } from '../game/siegeEncounter';
 import { buildHeroRegistry, type HeroRecord } from '../game/heroes';
@@ -398,6 +399,10 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
   onTalkSurrender,
 }) => {
   const { settlement, role, besiegers } = view;
+  const combinedBesiegerLord = useMemo(
+    () => combineBesiegerForces(besiegers),
+    [besiegers],
+  );
   const defenderFaction = FACTION_INFO[settlement.faction];
   const attackerFaction = FACTION_INFO[view.attackerFaction];
   const playerTroops = getTotalTroops(campaign.roster);
@@ -534,7 +539,11 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
             </button>
           </div>
           <p className="mt-1 text-[11px] leading-snug text-[#d1c5b0]">
-            {defenderFaction.name} · Kuşatan: {besiegers[0]?.name ?? campaign.playerName} · Erzak: {settlement.foodStock} ({foodDaysLeft} gün)
+            {defenderFaction.name} · Kuşatan:{' '}
+            {besiegers.length > 1
+              ? `${besiegers[0].name} ve ${besiegers.length - 1} müttefik komutan (${view.attackerTroops} asker)`
+              : (besiegers[0]?.name ?? campaign.playerName)}{' '}
+            · Erzak: {settlement.foodStock} ({foodDaysLeft} gün)
           </p>
         </header>
 
@@ -563,6 +572,11 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
                 <PartySlot name={campaign.playerName} troops={playerTroops} icon="player" />
               )}
               {besiegers.slice(0, 2).map(renderLordRow)}
+              {besiegers.length > 2 && (
+                <div className="rounded border border-[#c6a15b]/20 bg-[#140f0a] px-2 py-0.5 text-center text-[10px] text-[#fde68a]">
+                  +{besiegers.length - 2} sancakbeyi daha müşterek kuşatmada
+                </div>
+              )}
               {besiegers.length === 0 && role !== 'attacker' && (
                 <PartySlot name="Kuşatma Ordusu" troops={view.attackerTroops} icon="player" />
               )}
@@ -681,10 +695,14 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
                 testId="siege-action-attack-camp"
                 icon="attack"
                 title="Kuşatan Orduya Taarruz"
-                subtitle={`${besiegers[0]?.name ?? 'Düşman'} kampına meydan muharebesi aç`}
-                disabled={!besiegers[0]}
+                subtitle={
+                  besiegers.length > 1
+                    ? `${besiegers[0].name} ve ${besiegers.length - 1} müttefikinin (${view.attackerTroops} asker) müşterek ordusuna meydan muharebesi aç`
+                    : `${besiegers[0]?.name ?? 'Düşman'} kampına meydan muharebesi aç`
+                }
+                disabled={!combinedBesiegerLord}
                 primary
-                onClick={() => besiegers[0] && onAttackBesiegers(besiegers[0])}
+                onClick={() => combinedBesiegerLord && onAttackBesiegers(combinedBesiegerLord)}
               />
               <ActionButton
                 testId="siege-action-break-in"
@@ -718,8 +736,12 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
                 testId="siege-action-sally"
                 icon="sally"
                 title="Huruc Harekâtı (Sally Out)"
-                subtitle="Kapıdan fırlayıp kuşatma kampına saldır"
-                onClick={() => onSallyOut(besiegers[0] ?? null)}
+                subtitle={
+                  besiegers.length > 1
+                    ? `Kapıdan fırlayıp ${besiegers.length} komutanın (${view.attackerTroops} asker) müşterek kuşatma kampına saldır`
+                    : 'Kapıdan fırlayıp kuşatma kampına saldır'
+                }
+                onClick={() => onSallyOut(combinedBesiegerLord)}
               />
               <ActionButton
                 testId="siege-action-surrender"

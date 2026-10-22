@@ -1,29 +1,6 @@
 /**
- * encounter.ts — Bannerlord Kampanya Haritası Kovalama, Kaçma ve Zorunlu Karşılaşma Motoru
- *
- * Mount & Blade II: Bannerlord'daki `AiBanditPatrolBehavior`, `AiEngagePartyBehavior`
- * ve `PlayerEncounter` sistemlerinin saf (pure) ve deterministik karşılığı:
- *
- *  1. Gerçek Zamanlı Görüş & Güç Analizi (`evaluateHostileReaction`):
- *     - Düşman lordlar (`isAtWarWithPlayer`) ve haydutlar (`faction === 'bandits'`)
- *       oyuncu menzile girdiğinde iki tarafın toplam parti gücünü (`calculatePartyStrength`) karşılaştırır.
- *     - Güç oranı (ρ = DüşmanGücü / OyuncuGücü) eşiği:
- *       · ρ >= 1.02 (lord) / 1.08 (haydut) → `PURSUE_PLAYER` (oyuncunun canlı koordinatına kilitlenir)
- *       · ρ <= 0.88 → `FLEE_FROM_PLAYER` (oyuncunun tersi vektöre kaçar)
- *       · Ara bölge → `PATROL` (temkinli devriyeye devam eder)
- *
- *  2. Otomatik Harita Yakalaması (`checkMapInterception`):
- *     - Oyuncu tıklamamış olsa bile düşman veya haydut `INTERCEPT_RADIUS` (3.2m) içine girdiğinde
- *       harita zamanı durur ve zorunlu karşılaşma (`PlayerEncounter`) açılır.
- *     - Kaçış, rüşvet veya ateşkes sonrasında `ENCOUNTER_COOLDOWN_MS` (6 sn) boyunca
- *       aynı partinin oyuncuyu anında tekrar yakalaması engellenir.
- *
- *  3. Taktik Karşılaşma Aksiyonları:
- *     - Rüşvet / Geçiş Hakkı (`calculateBribeCost`)
- *     - Artçı Bırakıp Kaçma (`calculateSacrificeEscape`, `applySacrificeEscape`)
- *     - Askerleri Gönder / Otomatik Çözüm (`simulateSendTroopsBattle`)
- *     - Zayıf Haydutların Teslim Olması (`resolveCorneredBanditSurrender`)
- *     - Oyuncunun Teslim Olması (`applyPlayerSurrender`)
+ * encounter.ts — Bannerlord Kampanya Haritası Kovalama, Kaçma, Kuşatma Tehdit AI
+ * ve Zorunlu Karşılaşma Motoru
  */
 import { isNavigableLandAt, snapToNearestLand } from './navigation.ts';
 import {
@@ -37,7 +14,37 @@ import {
 export const INTERCEPT_RADIUS = 3.2;
 export const ENCOUNTER_COOLDOWN_SEC = 6.5;
 
+export const SIEGE_RELIEF_DETECTION_RADIUS = 55;
+export const SIEGE_INTERCEPT_RADIUS = 28;
+
 export type HostileReactionKind = 'PURSUE_PLAYER' | 'FLEE_FROM_PLAYER' | 'PATROL';
+
+export type SiegeThreatReactionKind = 'SIEGE' | 'LIFT_SIEGE' | 'INTERCEPT';
+
+export interface SiegeThreatReaction {
+  kind: SiegeThreatReactionKind;
+  totalBesiegerStrength: number;
+  reliefForceStrength: number;
+  defenderStrength: number;
+  distance: number;
+  targetPos: { x: number; z: number } | null;
+  actionLabel: string;
+}
+
+export interface SiegeThreatInput {
+  /** Yerleşimi kuşatan tüm lordların toplam muharebe gücü. */
+  totalBesiegerStrength: number;
+  /** Yaklaşan yardım ordusunun (oyuncu veya düşman krallık ordusu) toplam gücü. */
+  reliefForceStrength: number;
+  /** Kuşatılan yerleşimin garnizon + milis savunma gücü. */
+  defenderStrength: number;
+  /** Yardım ordusunun kuşatma kampına olan mesafesi (metre). */
+  distance: number;
+  /** Yardım ordusunun anlık konumu (INTERCEPT/LIFT_SIEGE vektörü için). */
+  reliefPos?: { x: number; z: number };
+  /** Kuşatma kampının veya kuşatan lordun anlık konumu. */
+  siegePos?: { x: number; z: number };
+}
 
 export type EncounterScenario =
   | 'BANDIT_CAUGHT_PLAYER'
@@ -57,6 +64,8 @@ export interface HostileReaction {
   targetPos: { x: number; z: number } | null;
   /** Harita üzerinde ve istihbaratta görünecek canlı aksiyon metni. */
   actionLabel: string;
+  /** Kuşatma altındaki bir lordun yardım ordusuna tepkisi (`LIFT_SIEGE` / `INTERCEPT` / `SIEGE`). */
+  siegeReaction?: SiegeThreatReactionKind;
 }
 
 export interface InterceptionEvent {
@@ -92,8 +101,95 @@ export function getPlayerPartyStrength(campaign: CampaignState): number {
 }
 
 /**
+ * Kuşatma altındaki bir yerleşime yaklaşan yardım ordusuna (relief force) karşı
+ * kuşatan lordların vereceği taktik tepkiyi hesaplar:
+ *
+ *  1. `LIFT_SIEGE` (Kuşatmayı Kaldırıp Çekilme):
+ *     Yardım ordusu `distance <= 55m` içindeyse ve
+ *     `reliefForceStrength + defenderStrength * 0.5 >= totalBesiegerStrength * 1.35`
+ *     ise kuşatmacılar iki ateş arasında (kale garnizonunun hurucu + yardım ordusu)
+ *     ezilmemek için kuşatmayı kaldırıp geri çekilir.
+ *
+ *  2. `INTERCEPT` (Kuşatma Çemberinden Çıkıp Meydanda Karşılama):
+ *     Yardım ordusu `distance <= 28m` içindeyse ve
+ *     `totalBesiegerStrength >= reliefForceStrength * 1.15`
+ *     ise kuşatmacılar üstünlüklerini kullanarak yaklaşan yardım kuvvetini kaleden
+ *     uzakta karşılayıp imha etmek üzere üzerine yürür.
+ *
+ *  3. `SIEGE` (Kuşatmaya Devam):
+ *     Diğer durumlarda kuşatma çemberi korunur.
+ */
+export function evaluateSiegeThreatReaction(input: SiegeThreatInput): SiegeThreatReaction {
+  const totalBesiegerStrength = Math.max(1, input.totalBesiegerStrength);
+  const reliefForceStrength = Math.max(0, input.reliefForceStrength);
+  const defenderStrength = Math.max(0, input.defenderStrength);
+  const distance = Math.max(0, input.distance);
+
+  const siegePos = input.siegePos ?? { x: 0, z: 0 };
+  const reliefPos = input.reliefPos ?? { x: siegePos.x + 20, z: siegePos.z };
+
+  // 1. Üstün yardım ordusu + garnizon hurucu tehdidi → Kuşatmayı kaldır ve çekil
+  if (
+    reliefForceStrength > 0 &&
+    distance <= SIEGE_RELIEF_DETECTION_RADIUS &&
+    reliefForceStrength + defenderStrength * 0.5 >= totalBesiegerStrength * 1.35
+  ) {
+    const dx = siegePos.x - reliefPos.x;
+    const dz = siegePos.z - reliefPos.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const nx = dx / len;
+    const nz = dz / len;
+
+    let retreatTarget = snapToNearestLand(siegePos.x + nx * 34, siegePos.z + nz * 34);
+    if (!isNavigableLandAt(retreatTarget.x, retreatTarget.z)) {
+      retreatTarget = snapToNearestLand(siegePos.x - nx * 24, siegePos.z + nx * 24);
+    }
+
+    return {
+      kind: 'LIFT_SIEGE',
+      totalBesiegerStrength,
+      reliefForceStrength,
+      defenderStrength,
+      distance,
+      targetPos: retreatTarget,
+      actionLabel: 'Üstün yardım ordusu karşısında kuşatmayı kaldırıp çekiliyor!',
+    };
+  }
+
+  // 2. Zayıf yardım ordusu fazla yaklaştı → Çemberden çıkıp meydanda karşıla
+  if (
+    reliefForceStrength > 0 &&
+    distance <= SIEGE_INTERCEPT_RADIUS &&
+    totalBesiegerStrength >= reliefForceStrength * 1.15
+  ) {
+    const goal = snapToNearestLand(reliefPos.x, reliefPos.z);
+    return {
+      kind: 'INTERCEPT',
+      totalBesiegerStrength,
+      reliefForceStrength,
+      defenderStrength,
+      distance,
+      targetPos: { x: goal.x, z: goal.z },
+      actionLabel: 'Yardım kuvvetini kuşatma hattı önünde karşılamaya çıkıyor!',
+    };
+  }
+
+  // 3. Kuşatmaya devam
+  return {
+    kind: 'SIEGE',
+    totalBesiegerStrength,
+    reliefForceStrength,
+    defenderStrength,
+    distance,
+    targetPos: null,
+    actionLabel: 'Kuşatma çemberini koruyor',
+  };
+}
+
+/**
  * Bir düşman lordunun veya haydut birliğinin oyuncuya göre gerçek zamanlı
- * kovalama (`PURSUE_PLAYER`) veya kaçma (`FLEE_FROM_PLAYER`) kararını verir.
+ * kovalama (`PURSUE_PLAYER`), kaçma (`FLEE_FROM_PLAYER`) veya kuşatma tehdidi
+ * (`LIFT_SIEGE` / `INTERCEPT`) kararını verir.
  */
 export function evaluateHostileReaction(params: {
   lord: LordAgent;
@@ -103,6 +199,8 @@ export function evaluateHostileReaction(params: {
   playerZ: number;
   playerStrength: number;
   nearbyHostileStrength?: number;
+  siegeDefenderStrength?: number;
+  totalBesiegerStrength?: number;
 }): HostileReaction {
   const {
     lord,
@@ -112,15 +210,18 @@ export function evaluateHostileReaction(params: {
     playerZ,
     playerStrength,
     nearbyHostileStrength = 0,
+    siegeDefenderStrength = 0,
+    totalBesiegerStrength,
   } = params;
 
   const distance = Math.hypot(lordX - playerX, lordZ - playerZ);
   const enemyStrength = getLordPartyStrength(lord);
-  const effectiveEnemyStrength = enemyStrength + nearbyHostileStrength * 0.6;
+  const effectiveEnemyStrength =
+    totalBesiegerStrength ?? enemyStrength + nearbyHostileStrength * 0.6;
   const safePlayerStrength = Math.max(1, playerStrength);
   const strengthRatio = Number((effectiveEnemyStrength / safePlayerStrength).toFixed(2));
 
-  if (!isHostileToPlayer(lord) || lord.order?.kind === 'SIEGE') {
+  if (!isHostileToPlayer(lord)) {
     return {
       kind: 'PATROL',
       strengthRatio,
@@ -129,6 +230,56 @@ export function evaluateHostileReaction(params: {
       distance,
       targetPos: null,
       actionLabel: lord.currentAction || 'Devriye geziyor',
+    };
+  }
+
+  // Kuşatma altındaki düşman lordları artık körü körüne sabit kalmaz;
+  // yaklaşan oyuncu/yardım ordusuna göre LIFT_SIEGE veya INTERCEPT kararı verir!
+  if (lord.order?.kind === 'SIEGE') {
+    const siegeEval = evaluateSiegeThreatReaction({
+      totalBesiegerStrength: effectiveEnemyStrength,
+      reliefForceStrength: safePlayerStrength,
+      defenderStrength: siegeDefenderStrength,
+      distance,
+      reliefPos: { x: playerX, z: playerZ },
+      siegePos: { x: lordX, z: lordZ },
+    });
+
+    if (siegeEval.kind === 'LIFT_SIEGE') {
+      return {
+        kind: 'FLEE_FROM_PLAYER',
+        strengthRatio,
+        enemyStrength,
+        playerStrength: safePlayerStrength,
+        distance,
+        targetPos: siegeEval.targetPos,
+        actionLabel: siegeEval.actionLabel,
+        siegeReaction: 'LIFT_SIEGE',
+      };
+    }
+
+    if (siegeEval.kind === 'INTERCEPT') {
+      return {
+        kind: 'PURSUE_PLAYER',
+        strengthRatio,
+        enemyStrength,
+        playerStrength: safePlayerStrength,
+        distance,
+        targetPos: siegeEval.targetPos,
+        actionLabel: siegeEval.actionLabel,
+        siegeReaction: 'INTERCEPT',
+      };
+    }
+
+    return {
+      kind: 'PATROL',
+      strengthRatio,
+      enemyStrength,
+      playerStrength: safePlayerStrength,
+      distance,
+      targetPos: null,
+      actionLabel: lord.currentAction || siegeEval.actionLabel,
+      siegeReaction: 'SIEGE',
     };
   }
 
@@ -162,7 +313,6 @@ export function evaluateHostileReaction(params: {
     const nx = dx / len;
     const nz = dz / len;
 
-    // Tam tersi yöne doğru güvenli kara noktası bul (engele takılırsa açıyı esnet)
     let fleeTarget = { x: lordX + nx * 28, z: lordZ + nz * 28 };
     if (!isNavigableLandAt(fleeTarget.x, fleeTarget.z)) {
       const angles = [0.45, -0.45, 0.9, -0.9, 1.35, -1.35];
@@ -307,7 +457,7 @@ export function checkHostileMapInterception(params: {
 /**
  * Haydut veya düşman birliğine savaştan kaçınmak için ödenecek geçiş/rüşvet bedeli.
  */
-export function calculateBribeCost(lord: LordAgent, campaign: CampaignState): number {
+export function calculateBribeCost(lord: LordAgent, _campaign: CampaignState): number {
   const enemyStrength = getLordPartyStrength(lord);
   const rawCost = Math.round(enemyStrength * 2.6 + lord.armySize * 7);
   return Math.max(45, Math.min(850, rawCost));
@@ -315,7 +465,6 @@ export function calculateBribeCost(lord: LordAgent, campaign: CampaignState): nu
 
 /**
  * Savaş öncesi karşılaşma ekranında "Artçı Bırakıp Kaç" seçeneğinin maliyetini hesaplar.
- * Bannerlord'da oyuncu çemberi yarıp kaçmak için bir kısım askerini geride bırakır.
  */
 export function calculateSacrificeEscape(
   campaign: CampaignState,
@@ -335,7 +484,6 @@ export function calculateSacrificeEscape(
   const playerStrength = getPlayerPartyStrength(campaign);
   const ratio = enemyStrength / Math.max(1, playerStrength);
 
-  // Düşman ne kadar güçlüyse artçı olarak bırakılacak asker sayısı o kadar artar (%18 - %30)
   const share = Math.min(0.32, Math.max(0.16, 0.18 * ratio));
   const targetLoss = Math.max(2, Math.min(totalTroops - 1, Math.round(totalTroops * share)));
 
@@ -409,7 +557,6 @@ export function applySacrificeEscape(
 
 /**
  * "Askerleri Gönder" (Send Troops / Auto-Resolve) muharebe simülasyonu.
- * İki tarafın gücüne ve oyuncunun Taktik (Tactics) becerisine göre sonucu hesaplar.
  */
 export function simulateSendTroopsBattle(
   campaign: CampaignState,
@@ -450,7 +597,10 @@ export function simulateSendTroopsBattle(
 
   const enemiesDefeated = victory
     ? Math.max(4, lord.armySize)
-    : Math.max(1, Math.round(lord.armySize * (effectivePlayerPower / Math.max(1, enemyStrength)) * 0.5));
+    : Math.max(
+        1,
+        Math.round(lord.armySize * (effectivePlayerPower / Math.max(1, enemyStrength)) * 0.5),
+      );
 
   return {
     victory,
@@ -461,7 +611,6 @@ export function simulateSendTroopsBattle(
 
 /**
  * Oyuncu kaçan zayıf bir haydut grubunu yakalayıp teslim olmaya zorladığında çalışır.
- * Oyuncu gücü haydut gücünün en az 1.8 katıysa haydutlar savaşmadan silah bırakır.
  */
 export function resolveCorneredBanditSurrender(
   campaign: CampaignState,
