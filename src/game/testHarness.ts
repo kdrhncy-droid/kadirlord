@@ -103,6 +103,22 @@ export interface KadirlordTestSnapshot {
     quantity: number;
     locked: boolean;
   }>;
+  inventoryOpen: boolean;
+  heroes: Array<{
+    id: string;
+    name: string;
+    activeEquipmentSet: string;
+    equipment: {
+      BATTLE: Record<string, string | null>;
+      CIVILIAN: Record<string, string | null>;
+    };
+  }>;
+  troopStacks: Array<{
+    troopId: string;
+    count: number;
+    wounded: number;
+    xp: number;
+  }>;
   market: {
     open: boolean;
     settlementId: string | null;
@@ -134,6 +150,8 @@ export interface KadirlordTestApi {
   closeEncyclopedia: () => void;
   openMarket: (settlementId?: string) => boolean;
   closeMarket: () => void;
+  openInventory: () => void;
+  closeInventory: () => void;
 }
 
 declare global {

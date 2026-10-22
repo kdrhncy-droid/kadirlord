@@ -23,7 +23,6 @@ import {
   constructSiegeEngine,
   createInitialCampaignState,
   deployReservedSiegeEngines,
-  equipInventoryItem,
   executeLordBarterOffer,
   forcePeasantsRecruits,
   forcePeasantsSupplies,
@@ -55,6 +54,7 @@ import { SettlementModal } from './components/SettlementModal';
 import { DialogueModal } from './components/DialogueModal';
 import { DiplomacyModal } from './components/DiplomacyModal';
 import { BannerlordMarketModal } from './components/BannerlordMarketModal';
+import { InventoryModal } from './components/InventoryModal';
 import { KingdomManagementModal } from './components/KingdomManagementModal';
 import { CharacterArenaView } from './components/CharacterArenaView';
 import { CharacterCreatorModal } from './components/CharacterCreatorModal';
@@ -149,6 +149,7 @@ export default function App() {
     e2eRequest.enabled ? initialE2ESetup.encounterScenario : undefined,
   );
   const [isMarketModalOpen, setIsMarketModalOpen] = useState(false);
+  const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
   const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
   const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'campaign' | 'character_arena'>('campaign');
@@ -225,6 +226,7 @@ export default function App() {
     isEncyclopediaOpen,
     activeSettlementModal,
     isMarketModalOpen,
+    isInventoryModalOpen,
   });
   testStateRef.current = {
     campaign,
@@ -237,6 +239,7 @@ export default function App() {
     isEncyclopediaOpen,
     activeSettlementModal,
     isMarketModalOpen,
+    isInventoryModalOpen,
   };
 
   useEffect(() => {
@@ -285,6 +288,22 @@ export default function App() {
             definitionId: item.definitionId ?? item.id,
             quantity: Math.max(1, Math.floor(item.quantity ?? 1)),
             locked: Boolean(item.locked),
+          })),
+          inventoryOpen: state.isInventoryModalOpen,
+          heroes: (current.heroes ?? []).map((hero) => ({
+            id: hero.id,
+            name: hero.name,
+            activeEquipmentSet: hero.activeEquipmentSet,
+            equipment: {
+              BATTLE: { ...hero.equipment.BATTLE },
+              CIVILIAN: { ...hero.equipment.CIVILIAN },
+            },
+          })),
+          troopStacks: (current.troopStacks ?? []).map((stack) => ({
+            troopId: stack.troopId,
+            count: stack.count,
+            wounded: stack.wounded,
+            xp: stack.xp,
           })),
           market: {
             open: state.isMarketModalOpen,
@@ -391,6 +410,8 @@ export default function App() {
         return true;
       },
       closeMarket: () => setIsMarketModalOpen(false),
+      openInventory: () => setIsInventoryModalOpen(true),
+      closeInventory: () => setIsInventoryModalOpen(false),
     };
 
     window.__kadirlordTest = api;
@@ -427,6 +448,7 @@ export default function App() {
     setIsForcedEncounter(false);
     setEncounterScenario(undefined);
     setIsMarketModalOpen(false);
+    setIsInventoryModalOpen(false);
     setIsKingdomModalOpen(false);
     setIsEncyclopediaOpen(false);
     setOutcomeSnapshot(null);
@@ -444,6 +466,7 @@ export default function App() {
   /** O an açık olan UI katmanları (Esc sırası ve duraklatma bunlardan türetilir). */
   const uiLayers: UiLayerFlags = {
     creator: isCharacterCreatorOpen,
+    inventory: isInventoryModalOpen,
     market: isMarketModalOpen,
     kingdom: isKingdomModalOpen,
     dialogue: !!(dialogueLord || dialogueSettlement),
@@ -456,6 +479,9 @@ export default function App() {
     switch (layer) {
       case 'creator':
         setIsCharacterCreatorOpen(false);
+        break;
+      case 'inventory':
+        setIsInventoryModalOpen(false);
         break;
       case 'market':
         setIsMarketModalOpen(false);
@@ -565,6 +591,7 @@ export default function App() {
     setDialogueLord(null);
     setDialogueSettlement(null);
     setIsMarketModalOpen(false);
+    setIsInventoryModalOpen(false);
     setIsKingdomModalOpen(false);
     setIsEncyclopediaOpen(false);
     setOutcomeSnapshot(null);
@@ -700,6 +727,7 @@ export default function App() {
     activeDiplomacyLord,
     isEncyclopediaOpen,
     isMarketModalOpen,
+    isInventoryModalOpen,
     isKingdomModalOpen,
     isCharacterCreatorOpen,
     dialogueLord,
@@ -1408,10 +1436,10 @@ export default function App() {
             if (res.success) setCampaign(res.nextState);
             return res.reason || null;
           }}
-          onEquipItem={(itemId) => {
-            const res = equipInventoryItem(campaign, itemId);
-            if (res.success) setCampaign(res.nextState);
-            return res.reason || null;
+          onOpenInventoryModal={() => {
+            // Pazar kendi bekleyen-transfer ekranıyken saha envanteri onun
+            // üstüne ikinci bir taslak açmaz; diğer durumlarda I aç/kapatır.
+            if (!isMarketModalOpen) setIsInventoryModalOpen((prev) => !prev);
           }}
           onUpgradeTroop={(fromTier, toTier) => {
             const res = upgradeTroopTier(campaign, fromTier, toTier, 1);
@@ -1851,6 +1879,14 @@ export default function App() {
             setIsMarketModalOpen(false);
             setViewMode('character_arena');
           }}
+        />
+      )}
+
+      {isInventoryModalOpen && gameState === 'playing' && subMode === 'overworld' && (
+        <InventoryModal
+          campaign={campaign}
+          onClose={() => setIsInventoryModalOpen(false)}
+          onUpdateCampaign={(next) => setCampaign(next)}
         />
       )}
 

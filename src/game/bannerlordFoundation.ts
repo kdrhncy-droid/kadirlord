@@ -76,7 +76,7 @@ const SKILL_IDS: BannerlordSkillId[] = [
   'engineering',
 ];
 
-const EQUIPMENT_SLOTS: EquipmentSlotId[] = [
+export const EQUIPMENT_SLOT_IDS: EquipmentSlotId[] = [
   'HEAD',
   'SHOULDER',
   'BODY',
@@ -90,6 +90,7 @@ const EQUIPMENT_SLOTS: EquipmentSlotId[] = [
   'WEAPON3',
   'WEAPON4',
 ];
+const EQUIPMENT_SLOTS = EQUIPMENT_SLOT_IDS;
 
 const ITEM_CATEGORIES: ItemCategory[] = ['WEAPON', 'SHIELD', 'ARMOR', 'FOOD', 'HORSE', 'TRADE'];
 const ITEM_STAT_KEYS: Array<keyof ItemStats> = [
@@ -978,6 +979,290 @@ export function toggleInventoryStackLocked(
     success: true,
     items: nextItems,
     stack: nextItems.find((item) => inventoryStackKey(item) === key) ?? null,
+  };
+}
+
+export interface HeroEquipmentResult {
+  success: boolean;
+  reason?: string;
+  nextState: CampaignState;
+  heroId: string | null;
+  slot: EquipmentSlotId | null;
+  equipmentSet: EquipmentSetId | null;
+  equippedDefinitionId: string | null;
+  returnedDefinitionId: string | null;
+}
+
+function equipmentFailure(
+  state: CampaignState,
+  reason: string,
+  partial: Partial<Omit<HeroEquipmentResult, 'success' | 'reason' | 'nextState'>> = {},
+): HeroEquipmentResult {
+  return {
+    success: false,
+    reason,
+    nextState: state,
+    heroId: partial.heroId ?? null,
+    slot: partial.slot ?? null,
+    equipmentSet: partial.equipmentSet ?? null,
+    equippedDefinitionId: partial.equippedDefinitionId ?? null,
+    returnedDefinitionId: partial.returnedDefinitionId ?? null,
+  };
+}
+
+function legacyPlayerEquipmentText(
+  state: CampaignState,
+  slot: EquipmentSlotId,
+  definition: ItemDefinition | null,
+): Record<EquipmentSlotId, string> {
+  const current = (state.equipment ?? {}) as Record<EquipmentSlotId, string>;
+  return {
+    ...current,
+    [slot]: definition
+      ? definition.statBonus
+        ? `${definition.name} (${definition.statBonus})`
+        : definition.name
+      : 'Kuşanılmış Eşya Yok',
+  };
+}
+
+/**
+ * Herhangi bir parti kahramanının seçili ekipman setine bir envanter
+ * yığınından tek adet kuşanır. Eski eşya aynı işlemde envantere döner.
+ * Sivil sete yalnız `civilianLegal` tanımlar girebilir.
+ */
+export function equipInventoryItemForHero(
+  state: CampaignState,
+  heroId: string,
+  stackId: string,
+  equipmentSet?: EquipmentSetId,
+): HeroEquipmentResult {
+  const normalized = ensureBannerlordFoundation(state);
+  const hero = normalized.heroes?.find((candidate) => candidate.id === heroId);
+  if (!hero || !hero.isInPlayerParty) {
+    return equipmentFailure(state, 'Kuşanacak kahraman partide bulunamadı.', { heroId });
+  }
+
+  const targetSet: EquipmentSetId =
+    equipmentSet === 'CIVILIAN' || equipmentSet === 'BATTLE'
+      ? equipmentSet
+      : hero.activeEquipmentSet;
+  const items = normalized.inventoryItems ?? [];
+  const stack =
+    items.find((item) => item.id === stackId) ??
+    items.find((item) => (item.definitionId ?? item.id) === stackId);
+  if (!stack) {
+    return equipmentFailure(state, 'Eşya envanterde bulunamadı.', {
+      heroId: hero.id,
+      equipmentSet: targetSet,
+    });
+  }
+
+  const definitionId = stack.definitionId ?? stack.id;
+  const definition = resolveItemDefinition(normalized, definitionId);
+  if (!definition || definition.slot === 'TRADE') {
+    return equipmentFailure(state, 'Bu eşya kuşanılamaz.', {
+      heroId: hero.id,
+      equipmentSet: targetSet,
+      equippedDefinitionId: definitionId,
+    });
+  }
+  const slot = definition.slot;
+  if (targetSet === 'CIVILIAN' && !definition.civilianLegal) {
+    return equipmentFailure(state, `"${definition.name}" sivil kıyafetle taşınamaz.`, {
+      heroId: hero.id,
+      slot,
+      equipmentSet: targetSet,
+      equippedDefinitionId: definition.id,
+    });
+  }
+
+  const previousDefinitionId = hero.equipment[targetSet][slot] ?? null;
+  if (previousDefinitionId === definition.id) {
+    return equipmentFailure(state, `"${definition.name}" zaten kuşanılmış.`, {
+      heroId: hero.id,
+      slot,
+      equipmentSet: targetSet,
+      equippedDefinitionId: definition.id,
+    });
+  }
+
+  const removal = removeInventoryStackQuantity(items, stack.id, 1, { allowLocked: true });
+  if (!removal.success) {
+    return equipmentFailure(state, removal.reason ?? 'Eşya kuşanılamadı.', {
+      heroId: hero.id,
+      slot,
+      equipmentSet: targetSet,
+      equippedDefinitionId: definition.id,
+    });
+  }
+
+  let nextItems = removal.items;
+  if (previousDefinitionId) {
+    const previousDefinition = resolveItemDefinition(normalized, previousDefinitionId);
+    if (!previousDefinition) {
+      return equipmentFailure(state, 'Çıkarılan ekipmanın tanımı bulunamadı.', {
+        heroId: hero.id,
+        slot,
+        equipmentSet: targetSet,
+        equippedDefinitionId: definition.id,
+        returnedDefinitionId: previousDefinitionId,
+      });
+    }
+    nextItems = addItemDefinitionToInventory(
+      { customItemDefinitions: normalized.customItemDefinitions, inventoryItems: nextItems },
+      previousDefinitionId,
+      1,
+      previousDefinition.baseValue,
+    );
+  }
+
+  const nextHeroes = normalized.heroes?.map((candidate) =>
+    candidate.id === hero.id
+      ? {
+          ...candidate,
+          equipment: {
+            ...candidate.equipment,
+            [targetSet]: {
+              ...candidate.equipment[targetSet],
+              [slot]: definition.id,
+            },
+          },
+        }
+      : candidate,
+  );
+  const isPlayer = hero.id === PLAYER_HERO_ID || hero.kind === 'PLAYER';
+
+  return {
+    success: true,
+    nextState: ensureBannerlordFoundation({
+      ...normalized,
+      heroes: nextHeroes,
+      inventoryItems: nextItems,
+      equipment:
+        isPlayer && targetSet === 'BATTLE'
+          ? legacyPlayerEquipmentText(normalized, slot, definition)
+          : normalized.equipment,
+    }),
+    heroId: hero.id,
+    slot,
+    equipmentSet: targetSet,
+    equippedDefinitionId: definition.id,
+    returnedDefinitionId: previousDefinitionId,
+  };
+}
+
+/** Seçili kahramanın seçili setindeki bir slotu boşaltır ve eşyayı partiye geri koyar. */
+export function unequipHeroEquipmentSlot(
+  state: CampaignState,
+  heroId: string,
+  slot: EquipmentSlotId,
+  equipmentSet?: EquipmentSetId,
+): HeroEquipmentResult {
+  const normalized = ensureBannerlordFoundation(state);
+  const hero = normalized.heroes?.find((candidate) => candidate.id === heroId);
+  if (!hero || !hero.isInPlayerParty) {
+    return equipmentFailure(state, 'Ekipmanı çıkarılacak kahraman partide bulunamadı.', {
+      heroId,
+      slot,
+    });
+  }
+
+  const targetSet: EquipmentSetId =
+    equipmentSet === 'CIVILIAN' || equipmentSet === 'BATTLE'
+      ? equipmentSet
+      : hero.activeEquipmentSet;
+  const definitionId = hero.equipment[targetSet][slot] ?? null;
+  if (!definitionId) {
+    return equipmentFailure(state, 'Bu slot zaten boş.', {
+      heroId: hero.id,
+      slot,
+      equipmentSet: targetSet,
+    });
+  }
+  const definition = resolveItemDefinition(normalized, definitionId);
+  if (!definition) {
+    return equipmentFailure(state, 'Çıkarılan ekipmanın tanımı bulunamadı.', {
+      heroId: hero.id,
+      slot,
+      equipmentSet: targetSet,
+      returnedDefinitionId: definitionId,
+    });
+  }
+
+  const nextItems = addItemDefinitionToInventory(
+    {
+      customItemDefinitions: normalized.customItemDefinitions,
+      inventoryItems: normalized.inventoryItems,
+    },
+    definitionId,
+    1,
+    definition.baseValue,
+  );
+  const nextHeroes = normalized.heroes?.map((candidate) =>
+    candidate.id === hero.id
+      ? {
+          ...candidate,
+          equipment: {
+            ...candidate.equipment,
+            [targetSet]: {
+              ...candidate.equipment[targetSet],
+              [slot]: null,
+            },
+          },
+        }
+      : candidate,
+  );
+  const isPlayer = hero.id === PLAYER_HERO_ID || hero.kind === 'PLAYER';
+
+  return {
+    success: true,
+    nextState: ensureBannerlordFoundation({
+      ...normalized,
+      heroes: nextHeroes,
+      inventoryItems: nextItems,
+      equipment:
+        isPlayer && targetSet === 'BATTLE'
+          ? legacyPlayerEquipmentText(normalized, slot, null)
+          : normalized.equipment,
+    }),
+    heroId: hero.id,
+    slot,
+    equipmentSet: targetSet,
+    equippedDefinitionId: null,
+    returnedDefinitionId: definitionId,
+  };
+}
+
+/** Bir kahramanın aktif savaş/sivil setini değiştirir; oyuncuda eski metin aynasını da senkronlar. */
+export function setHeroActiveEquipmentSet(
+  state: CampaignState,
+  heroId: string,
+  equipmentSet: EquipmentSetId,
+): HeroEquipmentResult {
+  const normalized = ensureBannerlordFoundation(state);
+  const hero = normalized.heroes?.find((candidate) => candidate.id === heroId);
+  if (!hero || !hero.isInPlayerParty) {
+    return equipmentFailure(state, 'Seti değiştirilecek kahraman partide bulunamadı.', {
+      heroId,
+      equipmentSet,
+    });
+  }
+  const isPlayer = hero.id === PLAYER_HERO_ID || hero.kind === 'PLAYER';
+  return {
+    success: true,
+    nextState: ensureBannerlordFoundation({
+      ...normalized,
+      heroes: normalized.heroes?.map((candidate) =>
+        candidate.id === hero.id ? { ...candidate, activeEquipmentSet: equipmentSet } : candidate,
+      ),
+      outfitMode: isPlayer ? equipmentSet : normalized.outfitMode,
+    }),
+    heroId: hero.id,
+    slot: null,
+    equipmentSet,
+    equippedDefinitionId: null,
+    returnedDefinitionId: null,
   };
 }
 

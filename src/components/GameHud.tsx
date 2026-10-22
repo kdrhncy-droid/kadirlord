@@ -55,7 +55,7 @@ interface GameHudProps {
   onAdvanceDay: () => void;
   onAllocateAttribute?: (attrId: AttributeId) => string | null;
   onAllocateFocus?: (skillId: BannerlordSkillId) => string | null;
-  onEquipItem?: (itemId: string) => string | null;
+  onOpenInventoryModal?: () => void;
   onUpgradeTroop?: (fromTier: UnitTierId, toTier: UnitTierId) => string | null;
   onRecruitPrisoners?: () => string | null;
   onOpenMarketModal?: () => void;
@@ -125,7 +125,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   onAdvanceDay,
   onAllocateAttribute,
   onAllocateFocus,
-  onEquipItem,
+  onOpenInventoryModal,
   onUpgradeTroop,
   onRecruitPrisoners,
   onOpenMarketModal,
@@ -138,11 +138,8 @@ export const GameHud: React.FC<GameHudProps> = ({
   const [dockCollapsed, setDockCollapsed] = useState(false);
   /** Faz 4: Atlas ve Vakanüvis tek "Harita & Günlük" panelinde birleşti. */
   const [worldPane, setWorldPane] = useState<'atlas' | 'chronicle' | 'quests'>('atlas');
-  const [activeTab, setActiveTab] = useState<
-    'none' | 'army' | 'character' | 'inventory' | 'world'
-  >('none');
+  const [activeTab, setActiveTab] = useState<'none' | 'army' | 'character' | 'world'>('none');
   const [hudFeedback, setHudFeedback] = useState<string | null>(null);
-  const [outfitMode, setOutfitMode] = useState<'BATTLE' | 'CIVILIAN'>('BATTLE');
   const [hoveredLabelId, setHoveredLabelId] = useState<string | null>(null);
   const [councilAdvice, setCouncilAdvice] = useState<string | null>(null);
   const [councilLoading, setCouncilLoading] = useState(false);
@@ -164,9 +161,9 @@ export const GameHud: React.FC<GameHudProps> = ({
           onOpenCharacterCreator();
         }
       } else if (e.code === 'KeyI') {
-        // Bannerlord'da I yalnız envanteri açar. Pazar **yalnızca yerleşim
-        // içindeyken** erişilebilir (bkz. canTrade); burada pazar açılmaz.
-        setActiveTab((prev) => (prev === 'inventory' ? 'none' : 'inventory'));
+        // Bannerlord'da I tam ekran saha envanterini açar/kapatır.
+        e.preventDefault();
+        onOpenInventoryModal?.();
       } else if (e.code === 'F9') {
         // Faz 4: Arena düğmesi HUD'dan kalktı; test için F9 (ana menüde de var).
         if (onOpenCharacterArena) onOpenCharacterArena();
@@ -182,7 +179,13 @@ export const GameHud: React.FC<GameHudProps> = ({
     };
     window.addEventListener('keydown', onKeyH);
     return () => window.removeEventListener('keydown', onKeyH);
-  }, [onOpenKingdomModal, onOpenCharacterCreator, onOpenCharacterArena, onStartQuickBattle]);
+  }, [
+    onOpenInventoryModal,
+    onOpenKingdomModal,
+    onOpenCharacterCreator,
+    onOpenCharacterArena,
+    onStartQuickBattle,
+  ]);
 
   const questLog = useMemo(() => buildQuestLog(campaign), [campaign]);
   const totalTroops = getTotalTroops(campaign.roster);
@@ -1065,133 +1068,6 @@ export const GameHud: React.FC<GameHudProps> = ({
           </div>
         )}
 
-        {/* Expandable Inventory & 12-Slot Equipment Drawer */}
-        {subMode === 'overworld' && activeTab === 'inventory' && !dockCollapsed && (
-          <div className="hud-panel rounded-lg p-4 w-full max-w-5xl pointer-events-auto max-h-[70vh] overflow-y-auto">
-            <div className="flex flex-wrap items-center justify-between border-b border-[#c6a15b]/25 pb-2 mb-3 gap-2">
-              <div>
-                <h3 className="text-sm font-bold text-[#fef08a]">
-                  🎒 Envanter ve 12 Ekipman Slotu ({outfitMode === 'BATTLE' ? '⚔️ Savaş Donanımı' : '👘 Sivil Kıyafet Seti'})
-                </h3>
-                <p className="text-xs text-[#b5a890]">
-                  Taşıma Kapasitesi: 138 / {totalTroops * 10 + 300} kg · Hazine: {campaign.gold} Dinar
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {onOpenMarketModal && (
-                  <button
-                    type="button"
-                    disabled={!canTrade}
-                    onClick={canTrade ? onOpenMarketModal : undefined}
-                    title={
-                      canTrade
-                        ? 'Pazaryeri (yalnız yerleşim içinde)'
-                        : 'Pazara girmek için bir şehir, kale veya köye girin'
-                    }
-                    className={`px-3 py-1 rounded text-xs font-bold border flex items-center gap-1.5 shadow ${
-                      canTrade
-                        ? 'bg-[#b45309] hover:bg-[#d97706] text-white border-[#f59e0b]/40'
-                        : 'bg-[#241f19] text-[#8b8072] border-[#c6a15b]/20 cursor-not-allowed'
-                    }`}
-                  >
-                    <span aria-hidden="true">⚖</span>
-                    <span>Pazaryeri {canTrade ? '' : '(yerleşimde)'}</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setOutfitMode((prev) => (prev === 'BATTLE' ? 'CIVILIAN' : 'BATTLE'))
-                  }
-                  className="px-2.5 py-1 rounded text-xs font-bold bg-[#26211a] hover:bg-[#362f25] text-[#fde68a] border border-[#c6a15b]/40"
-                >
-                  {outfitMode === 'BATTLE' ? '👘 Sivil Sete Geç' : '⚔️ Savaş Setine Geç'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('none')}
-                  className="text-xs text-[#c6a15b] hover:underline whitespace-nowrap shrink-0"
-                >
-                  Kapat [I]
-                </button>
-              </div>
-            </div>
-
-            {hudFeedback && (
-              <div className="mb-3 px-3 py-1.5 rounded bg-[#262015] border border-[#f59e0b]/40 text-xs text-[#fde68a]">
-                {hudFeedback}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
-              {/* Left & Center: 12 Equipped Slots */}
-              <div className="lg:col-span-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {(
-                  [
-                    { slot: 'HEAD', label: '🪖 Başlık (Head)' },
-                    { slot: 'SHOULDER', label: '🧣 Omuzluk (Shoulder)' },
-                    { slot: 'BODY', label: '🥋 Gövde Zırhı (Body)' },
-                    { slot: 'GLOVES', label: '🧤 Eldiven (Gloves)' },
-                    { slot: 'LEG', label: '👢 Çizme (Leg)' },
-                    { slot: 'MOUNT', label: '🐎 Savaş Atı (Mount)' },
-                    { slot: 'HARNESS', label: '🛡️ At Zırhı (Harness)' },
-                    { slot: 'BANNER', label: '🦅 Sancak (Banner)' },
-                    { slot: 'WEAPON1', label: '🗡️ Silah Slotu I' },
-                    { slot: 'WEAPON2', label: '🛡️ Silah Slotu II' },
-                    { slot: 'WEAPON3', label: '🔱 Silah Slotu III' },
-                    { slot: 'WEAPON4', label: '🏹 Silah Slotu IV' },
-                  ] as const
-                ).map((eq) => (
-                  <div
-                    key={eq.slot}
-                    className="p-2.5 rounded bg-[#181510] border border-[#c6a15b]/30"
-                  >
-                    <div className="text-[10px] text-[#c6a15b] font-bold">{eq.label}</div>
-                    <div className="text-[#f8f0df] font-semibold mt-0.5 leading-snug">
-                      {campaign.equipment?.[eq.slot] ?? 'Standart Donanım'}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Right: Bag & Loot Items */}
-              <div className="p-3 rounded bg-[#14110d] border border-[#c6a15b]/25 space-y-2">
-                <div className="font-bold text-[#fef08a] border-b border-[#c6a15b]/20 pb-1">
-                  Envanter Çantası & Yedek Ganimetler
-                </div>
-                {(campaign.inventoryItems ?? []).map((item) => (
-                  <div
-                    key={item.id}
-                    className="p-2 rounded bg-[#1c1812] border border-[#c6a15b]/20 flex items-center justify-between gap-2"
-                  >
-                    <div>
-                      <div className="font-semibold text-[#f8f0df]">{item.name}</div>
-                      <div className="text-[10px] text-[#34d399]">{item.statBonus}</div>
-                      <div className="text-[10px] text-[#a89b84]">
-                        Değer: {item.value} D · Ağırlık: {item.weight} kg
-                      </div>
-                    </div>
-                    {item.slot !== 'TRADE' && onEquipItem && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const err = onEquipItem(item.id);
-                          setHudFeedback(
-                            err || `🛡️ "${item.name}" kuşanıldı!`,
-                          );
-                        }}
-                        className="px-2.5 py-1 rounded text-[11px] font-bold bg-[#b45309] hover:bg-[#d97706] text-white shrink-0"
-                      >
-                        Kuşan
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
         {subMode === 'overworld' && activeTab === 'world' && worldPane === 'quests' && !dockCollapsed && (
           <div
             data-testid="quest-log"
@@ -1404,7 +1280,6 @@ export const GameHud: React.FC<GameHudProps> = ({
                     {(
                       [
                         { id: 'character' as const, label: 'Karakter [C]' },
-                        { id: 'inventory' as const, label: 'Envanter [I]' },
                         { id: 'army' as const, label: `Ordum (${getTotalTroops(campaign.roster)})` },
                       ] as const
                     ).map((b) => (
@@ -1421,6 +1296,14 @@ export const GameHud: React.FC<GameHudProps> = ({
                         {b.label}
                       </button>
                     ))}
+                    <button
+                      type="button"
+                      onClick={onOpenInventoryModal}
+                      data-testid="hud-open-inventory"
+                      className="px-2.5 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]"
+                    >
+                      Envanter [I]
+                    </button>
                     <button
                       type="button"
                       onClick={() => setActiveTab(activeTab === 'world' ? 'none' : 'world')}

@@ -458,6 +458,183 @@ try {
     assertNoPageProblems(problems, 'market-pending-transfer');
   });
 
+  await runTest('field-inventory-discard', async () => {
+    const { page, problems } = await openPage(browser, {
+      scenario: 'boot',
+      timeScale: '0',
+    });
+    activePage = page;
+
+    const stackByDefinition = (state, definitionId) =>
+      state.inventory.find((item) => item.definitionId === definitionId);
+    const totalQuantity = (state) =>
+      state.inventory.reduce((sum, item) => sum + item.quantity, 0);
+    const heroById = (state, heroId) => state.heroes.find((hero) => hero.id === heroId);
+
+    const initial = await getTestState(page);
+    const playerHero = heroById(initial, 'hero_player');
+    const companion = initial.heroes.find((hero) => hero.id !== 'hero_player');
+    assert(playerHero, 'snapshot oyuncu kahramanını içermiyor');
+    assert(companion, 'snapshot yoldaş kahramanı içermiyor');
+    assert(!initial.inventoryOpen, 'saha envanteri başlangıçta kapalı olmalı');
+    assert(stackByDefinition(initial, 'item_thamaskene_sword'), 'başlangıç kılıcı yok');
+
+    await page.evaluate(() => window.__kadirlordTest.openInventory());
+    await page.waitForSelector('[data-testid="inventory-modal"]', { timeout: TIMEOUT_MS });
+    await page.waitForSelector('[data-testid="inventory-hero-mannequin"] canvas', {
+      timeout: TIMEOUT_MS,
+    });
+
+    await page.click('[data-testid="inventory-hero-next"]');
+    await page.waitForFunction(
+      (name) =>
+        document.querySelector('[data-testid="inventory-selected-hero"]')?.textContent?.trim() ===
+        name,
+      { timeout: TIMEOUT_MS },
+      companion.name,
+    );
+
+    await page.click('[data-testid="inventory-equip-item_thamaskene_sword"]');
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-testid="inventory-slot-WEAPON1"]')
+          ?.textContent?.includes('Thamaskene'),
+      { timeout: TIMEOUT_MS },
+    );
+    const afterDraftEquip = await getTestState(page);
+    assert(
+      heroById(afterDraftEquip, companion.id).equipment.BATTLE.WEAPON1 === null,
+      'bekleyen kuşanma Bitti öncesi kampanyayı değiştirdi',
+    );
+    assert(
+      totalQuantity(afterDraftEquip) === totalQuantity(initial),
+      'bekleyen kuşanma Bitti öncesi envanteri değiştirdi',
+    );
+    await screenshot(page, 'inventory-field.png');
+
+    await page.click('[data-testid="inventory-cancel"]');
+    await page.waitForSelector('[data-testid="inventory-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+    const afterEquipCancel = await getTestState(page);
+    assert(
+      heroById(afterEquipCancel, companion.id).equipment.BATTLE.WEAPON1 === null,
+      'Vazgeç yoldaş kuşanmasını işledi',
+    );
+
+    await page.evaluate(() => window.__kadirlordTest.openInventory());
+    await page.waitForSelector('[data-testid="inventory-modal"]', { timeout: TIMEOUT_MS });
+    await page.click('[data-testid="inventory-hero-next"]');
+    await page.click('[data-testid="inventory-equip-item_thamaskene_sword"]');
+    await page.click('[data-testid="inventory-done"]');
+    await page.waitForSelector('[data-testid="inventory-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+    const afterEquipDone = await getTestState(page);
+    assert(
+      heroById(afterEquipDone, companion.id).equipment.BATTLE.WEAPON1 ===
+        'item_thamaskene_sword',
+      'Bitti yoldaş kuşanmasını işlemedi',
+    );
+    assert(
+      !stackByDefinition(afterEquipDone, 'item_thamaskene_sword'),
+      'Bitti kuşanılan kılıcı envanterden düşürmedi',
+    );
+
+    // Sivil sete ağır zırh giremez; başarısız taslak işlemi de Cancel ile atılır.
+    await page.evaluate(() => window.__kadirlordTest.openInventory());
+    await page.waitForSelector('[data-testid="inventory-modal"]', { timeout: TIMEOUT_MS });
+    await page.click('[data-testid="inventory-set-civilian"]');
+    await page.click('[data-testid="inventory-equip-item_cataphract_armor"]');
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-testid="inventory-modal"]')
+          ?.textContent?.includes('sivil kıyafetle taşınamaz'),
+      { timeout: TIMEOUT_MS },
+    );
+    await page.click('[data-testid="inventory-cancel"]');
+    await page.waitForSelector('[data-testid="inventory-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+    const afterCivilianCancel = await getTestState(page);
+    assert(
+      heroById(afterCivilianCancel, 'hero_player').activeEquipmentSet === 'BATTLE',
+      'Vazgeç sivil set seçimini işledi',
+    );
+
+    // Discard önce yalnız önizleme listesindedir; Cancel hiçbir adedi düşürmez.
+    const mulesBefore = stackByDefinition(afterCivilianCancel, 'item_sumpter_mule');
+    assert(mulesBefore, 'yük katırı yığını yok');
+    await page.evaluate(() => window.__kadirlordTest.openInventory());
+    await page.waitForSelector('[data-testid="inventory-modal"]', { timeout: TIMEOUT_MS });
+    await page.click('[data-testid="inventory-discard-item_sumpter_mule"]');
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-testid="inventory-discard-list"]')
+          ?.textContent?.includes('×1'),
+      { timeout: TIMEOUT_MS },
+    );
+    const afterDraftDiscard = await getTestState(page);
+    assert(
+      stackByDefinition(afterDraftDiscard, 'item_sumpter_mule').quantity === mulesBefore.quantity,
+      'bekleyen Discard Bitti öncesi kampanyayı değiştirdi',
+    );
+    await page.click('[data-testid="inventory-cancel"]');
+    await page.waitForSelector('[data-testid="inventory-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+
+    await page.evaluate(() => window.__kadirlordTest.openInventory());
+    await page.waitForSelector('[data-testid="inventory-modal"]', { timeout: TIMEOUT_MS });
+    await page.click('[data-testid="inventory-discard-item_sumpter_mule"]');
+    await page.click('[data-testid="inventory-done"]');
+    await page.waitForSelector('[data-testid="inventory-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+    const afterDiscardDone = await getTestState(page);
+    assert(
+      stackByDefinition(afterDiscardDone, 'item_sumpter_mule').quantity ===
+        mulesBefore.quantity - 1,
+      'Bitti Discard adedini düşürmedi',
+    );
+
+    // Kalıcı kilit de taslaktadır; kilitli yığının At düğmesi kapalıdır.
+    await page.evaluate(() => window.__kadirlordTest.openInventory());
+    await page.waitForSelector('[data-testid="inventory-modal"]', { timeout: TIMEOUT_MS });
+    await page.click('[data-testid="inventory-lock-item_sumpter_mule"]');
+    const lockedDiscardDisabled = await page.$eval(
+      '[data-testid="inventory-discard-item_sumpter_mule"]',
+      (button) => button.disabled,
+    );
+    assert(lockedDiscardDisabled, 'kilitli yığının Discard düğmesi açık kaldı');
+    const beforeLockDone = await getTestState(page);
+    assert(
+      !stackByDefinition(beforeLockDone, 'item_sumpter_mule').locked,
+      'bekleyen kilit Bitti öncesi kampanyayı değiştirdi',
+    );
+    await page.click('[data-testid="inventory-done"]');
+    await page.waitForSelector('[data-testid="inventory-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+    const afterLockDone = await getTestState(page);
+    assert(
+      stackByDefinition(afterLockDone, 'item_sumpter_mule').locked,
+      'Bitti kalıcı kilidi işlemedi',
+    );
+
+    await screenshot(page, 'inventory-after-done.png');
+    assertNoPageProblems(problems, 'field-inventory-discard');
+  });
+
   const failed = results.filter((result) => !result.ok);
   console.log(`\n${failed.length === 0 ? '✅' : '❌'} E2E: ${results.length - failed.length}/${results.length} başarılı`);
   console.log(`📸 Çıktılar: ${ARTIFACT_DIR}`);

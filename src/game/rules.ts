@@ -15,9 +15,8 @@ import {
 } from './characterMorph.ts';
 import { generateLordParties } from './heroGen.ts';
 import {
-  addItemDefinitionToInventory,
   ensureBannerlordFoundation,
-  inventoryItemQuantity,
+  equipInventoryItemForHero,
   PLAYER_HERO_ID,
 } from './bannerlordFoundation';
 
@@ -3236,65 +3235,13 @@ export function equipInventoryItem(
   state: CampaignState,
   itemId: string,
 ): { success: boolean; reason?: string; nextState: CampaignState } {
-  const normalized = ensureBannerlordFoundation(state);
-  const items = normalized.inventoryItems ?? [];
-  const itemIndex = items.findIndex((i) => i.id === itemId || i.definitionId === itemId);
-  const item = itemIndex >= 0 ? items[itemIndex] : undefined;
-  if (!item) {
-    return { success: false, reason: 'Eşya envanterde bulunamadı.', nextState: state };
-  }
-  if (item.slot === 'TRADE') {
-    return { success: false, reason: 'Ticaret malları ve yük katırları doğrudan envanterde pasif kapasite sağlar.', nextState: state };
-  }
-
-  const playerHero = normalized.heroes?.find((hero) => hero.id === PLAYER_HERO_ID || hero.kind === 'PLAYER');
-  if (!playerHero) {
-    return { success: false, reason: 'Oyuncu kahraman kaydı bulunamadı.', nextState: state };
-  }
-  const activeSet = playerHero.activeEquipmentSet;
-  const previousDefinitionId = playerHero.equipment[activeSet][item.slot] ?? null;
-  const selectedDefinitionId = item.definitionId ?? item.id;
-  const quantity = inventoryItemQuantity(item);
-  const itemsAfterRemoval =
-    quantity > 1
-      ? items.map((candidate, index) =>
-          index === itemIndex ? { ...candidate, quantity: quantity - 1 } : candidate,
-        )
-      : items.filter((_, index) => index !== itemIndex);
-  const stateAfterRemoval: CampaignState = {
-    ...normalized,
-    inventoryItems: itemsAfterRemoval,
-  };
-  const nextItems = previousDefinitionId
-    ? addItemDefinitionToInventory(stateAfterRemoval, previousDefinitionId, 1)
-    : itemsAfterRemoval;
-  const currentEq = (normalized.equipment ?? {}) as Record<EquipmentSlotId, string>;
-
+  // Eski oyuncu-only API artık her kahramanın kullandığı tek kuşanma
+  // çekirdeğine devreder; aktif set ve sivil yasallık orada doğrulanır.
+  const result = equipInventoryItemForHero(state, PLAYER_HERO_ID, itemId);
   return {
-    success: true,
-    nextState: ensureBannerlordFoundation({
-      ...normalized,
-      equipment: {
-        ...currentEq,
-        [item.slot]: item.statBonus ? `${item.name} (${item.statBonus})` : item.name,
-      },
-      heroes: normalized.heroes?.map((hero) =>
-        hero.id === playerHero.id
-          ? {
-              ...hero,
-              equipment: {
-                ...hero.equipment,
-                [activeSet]: {
-                  ...hero.equipment[activeSet],
-                  [item.slot]: selectedDefinitionId,
-                },
-              },
-            }
-          : hero,
-      ),
-      inventoryItems: nextItems,
-      morale: item.slot === 'BANNER' ? Math.min(100, normalized.morale + 5) : normalized.morale,
-    }),
+    success: result.success,
+    reason: result.reason,
+    nextState: result.nextState,
   };
 }
 

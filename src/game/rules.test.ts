@@ -87,6 +87,7 @@ import {
   discardEligibility,
   discardXpCapForTier,
   ensureBannerlordFoundation,
+  equipInventoryItemForHero,
   getPlayerHero,
   getRoleHero,
   inventoryTotalQuantity,
@@ -96,9 +97,11 @@ import {
   previewDiscardDonation,
   prisonerStackTotal,
   resolveItemDefinition,
+  setHeroActiveEquipmentSet,
   toggleInventoryStackLocked,
   transferInventoryQuantity,
   troopStackTotals,
+  unequipHeroEquipmentSlot,
   validateTroopDefinitions,
 } from './bannerlordFoundation.ts';
 import { SAVE_VERSION, createSaveData, parseSave, serializeSave } from './saveGame.ts';
@@ -1680,6 +1683,82 @@ test('P2 market draft: persistent stock and merchant gold move atomically with p
     soldAll.nextState.inventoryItems?.some((item) => item.definitionId === armor.definitionId),
     true,
   );
+});
+
+test('P2 hero equipment: companions, civilian legality and exact stack returns share one core', () => {
+  const state = createInitialCampaignState('Komutan Demirhan', 'noble');
+  const companionId = COMPANION_HERO_IDS.Aybars;
+  const sword = state.inventoryItems?.find(
+    (item) => item.definitionId === 'item_thamaskene_sword',
+  )!;
+  const steed = state.inventoryItems?.find((item) => item.definitionId === 'item_noble_steed')!;
+
+  const equipped = equipInventoryItemForHero(state, companionId, sword.id, 'BATTLE');
+  assert.equal(equipped.success, true);
+  assert.equal(
+    equipped.nextState.heroes?.find((hero) => hero.id === companionId)?.equipment.BATTLE.WEAPON1,
+    sword.definitionId,
+  );
+  assert.equal(
+    equipped.nextState.inventoryItems?.some((item) => item.definitionId === sword.definitionId),
+    false,
+  );
+
+  const unequipped = unequipHeroEquipmentSlot(
+    equipped.nextState,
+    companionId,
+    'WEAPON1',
+    'BATTLE',
+  );
+  assert.equal(unequipped.success, true);
+  assert.equal(
+    unequipped.nextState.heroes?.find((hero) => hero.id === companionId)?.equipment.BATTLE.WEAPON1,
+    null,
+  );
+  assert.equal(
+    unequipped.nextState.inventoryItems?.find((item) => item.definitionId === sword.definitionId)
+      ?.quantity,
+    1,
+  );
+
+  // Sivil olmayan ağır silah sivil sete giremez ve başarısız işlem girdiyi aynen döndürür.
+  const illegalCivilian = equipInventoryItemForHero(state, companionId, sword.id, 'CIVILIAN');
+  assert.equal(illegalCivilian.success, false);
+  assert.strictEqual(illegalCivilian.nextState, state);
+
+  const civilianMount = equipInventoryItemForHero(state, companionId, steed.id, 'CIVILIAN');
+  assert.equal(civilianMount.success, true);
+  assert.equal(
+    civilianMount.nextState.heroes?.find((hero) => hero.id === companionId)?.equipment.CIVILIAN.MOUNT,
+    steed.definitionId,
+  );
+  assert.equal(
+    civilianMount.nextState.heroes?.find((hero) => hero.id === companionId)?.activeEquipmentSet,
+    'BATTLE',
+  );
+
+  const activated = setHeroActiveEquipmentSet(civilianMount.nextState, companionId, 'CIVILIAN');
+  assert.equal(activated.success, true);
+  assert.equal(
+    activated.nextState.heroes?.find((hero) => hero.id === companionId)?.activeEquipmentSet,
+    'CIVILIAN',
+  );
+  assert.equal(activated.nextState.outfitMode, 'BATTLE');
+
+  // Oyuncu takasında önceki silah kaybolmaz; bir adet olarak envantere döner.
+  const playerBefore = getPlayerHero(state)!;
+  const previousWeaponId = playerBefore.equipment.BATTLE.WEAPON1!;
+  const playerEquipped = equipInventoryItemForHero(state, PLAYER_HERO_ID, sword.id, 'BATTLE');
+  assert.equal(playerEquipped.success, true);
+  assert.equal(playerEquipped.returnedDefinitionId, previousWeaponId);
+  assert.equal(getPlayerHero(playerEquipped.nextState)?.equipment.BATTLE.WEAPON1, sword.definitionId);
+  assert.equal(
+    playerEquipped.nextState.inventoryItems?.find(
+      (item) => item.definitionId === previousWeaponId,
+    )?.quantity,
+    1,
+  );
+  assert.ok(playerEquipped.nextState.equipment?.WEAPON1.includes(sword.name));
 });
 
 

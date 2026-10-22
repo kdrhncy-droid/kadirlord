@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import * as THREE from 'three';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   CALRADIA_MARKETPLACE_ITEMS,
   CampaignState,
@@ -9,16 +8,17 @@ import {
   MarketCategory,
   MarketplaceItem,
   Settlement,
-  equipInventoryItem,
   getTotalTroops,
-  unequipEquipmentSlot,
 } from '../game/rules';
 import {
+  PLAYER_HERO_ID,
+  equipInventoryItemForHero,
   getPlayerHero,
   inventoryItemQuantity,
   inventoryTotalWeight,
   resolveItemDefinition,
   toggleInventoryStackLocked,
+  unequipHeroEquipmentSlot,
 } from '../game/bannerlordFoundation';
 import {
   buyFromMarket,
@@ -29,17 +29,9 @@ import {
   sellAllSurplusToMarket,
   sellToMarket,
 } from '../game/marketTransaction';
-import {
-  ArmorTier,
-  HelmetType,
-  ShieldType,
-  WeaponType,
-  applyEquipmentToRig,
-  createCharacterRig,
-  deriveRigVisualOptionsFromEquipment,
-  updateRigAnimation,
-} from '../game/characterRig';
+import { deriveRigVisualOptionsFromEquipment } from '../game/characterRig';
 import { sound } from '../game/sound';
+import { HeroMannequin } from './HeroMannequin';
 import { ItemIcon } from './ItemIcon';
 import { CATEGORY_ICON_KEYS, ITEM_ICON_KEYS, type ItemIconKey } from '../game/itemIcons';
 import {
@@ -167,12 +159,6 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
   /** Faz 7: seans özeti (Bannerlord'daki net sonuç). */
   const [session, setSession] = useState(emptySession);
 
-  // 3D Preview Canvas ref
-  const canvasMountRef = useRef<HTMLDivElement>(null);
-  const rotationAngleRef = useRef(0);
-  const isDraggingRef = useRef(false);
-  const lastMouseXRef = useRef(0);
-
   const settlementName = liveSettlement?.name || settlement?.name || 'Pazaryeri & Ordugah';
 
   // Katalog tezgahı + oyuncunun bu şehre sattığı katalog dışı tanımlar.
@@ -289,104 +275,6 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
     return totals;
   }, [campaign, playerHero]);
 
-  // Mount 3D Character Preview Canvas in center
-  useEffect(() => {
-    const container = canvasMountRef.current;
-    if (!container) return;
-
-    const width = container.clientWidth || 320;
-    const height = container.clientHeight || 460;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#14100c');
-
-    const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 50);
-    camera.position.set(0, 1.15, 3.2);
-    camera.lookAt(0, 0.95, 0);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
-    renderer.shadowMap.enabled = true;
-    container.appendChild(renderer.domElement);
-
-    // Warm Key + Cool Fill Studio Lighting
-    const keyLight = new THREE.DirectionalLight('#fffbeb', 1.8);
-    keyLight.position.set(3, 4, 3);
-    keyLight.castShadow = true;
-    scene.add(keyLight);
-
-    const fillLight = new THREE.DirectionalLight('#93c5fd', 0.8);
-    fillLight.position.set(-3, 2, -2);
-    scene.add(fillLight);
-
-    const hemiLight = new THREE.HemisphereLight('#fef08a', '#1e1b18', 0.6);
-    scene.add(hemiLight);
-
-    // Pedestal Ground Disc
-    const discGeo = new THREE.CylinderGeometry(1.2, 1.3, 0.1, 24);
-    const discMat = new THREE.MeshStandardMaterial({ color: '#262018', roughness: 0.85 });
-    const disc = new THREE.Mesh(discGeo, discMat);
-    disc.position.y = -0.05;
-    disc.receiveShadow = true;
-    scene.add(disc);
-
-    // Character Rig
-    const rig = createCharacterRig(visualOptions);
-    scene.add(rig.root);
-
-    let animationFrameId: number;
-    let clock = new THREE.Clock();
-
-    const renderLoop = () => {
-      animationFrameId = requestAnimationFrame(renderLoop);
-      const delta = clock.getDelta();
-      const elapsed = clock.getElapsedTime();
-
-      // Apply drag or slow idle rotation
-      if (!isDraggingRef.current) {
-        rotationAngleRef.current += delta * 0.25;
-      }
-      rig.root.rotation.y = rotationAngleRef.current;
-
-      updateRigAnimation(rig, 'IDLE', elapsed, delta);
-      renderer.render(scene, camera);
-    };
-
-    renderLoop();
-
-    const onMouseDown = (e: MouseEvent) => {
-      isDraggingRef.current = true;
-      lastMouseXRef.current = e.clientX;
-    };
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isDraggingRef.current) return;
-      const deltaX = e.clientX - lastMouseXRef.current;
-      lastMouseXRef.current = e.clientX;
-      rotationAngleRef.current += deltaX * 0.015;
-    };
-    const onMouseUp = () => {
-      isDraggingRef.current = false;
-    };
-
-    container.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-      container.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      renderer.dispose();
-      if (container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
-      }
-    };
-  }, [visualOptions]);
-
   const quantityFromClick = (
     event: React.MouseEvent,
     available: number,
@@ -473,7 +361,12 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
 
   // Equip handler
   const handleEquip = (itemId: string) => {
-    const res = equipInventoryItem(campaign, itemId);
+    const res = equipInventoryItemForHero(
+      campaign,
+      playerHero?.id ?? PLAYER_HERO_ID,
+      itemId,
+      playerHero?.activeEquipmentSet,
+    );
     if (!res.success) {
       setFeedback(res.reason || 'Eşya kuşanılamadı.');
       return;
@@ -485,7 +378,12 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
 
   // Unequip handler
   const handleUnequip = (slot: EquipmentSlotId) => {
-    const res = unequipEquipmentSlot(campaign, slot);
+    const res = unequipHeroEquipmentSlot(
+      campaign,
+      playerHero?.id ?? PLAYER_HERO_ID,
+      slot,
+      playerHero?.activeEquipmentSet,
+    );
     if (!res.success) {
       setFeedback(res.reason || 'Çıkarılamadı.');
       return;
@@ -779,10 +677,15 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
             </div>
 
             {/* 3D Model Viewport */}
-            <div
-              ref={canvasMountRef}
-              className="flex-1 w-full relative cursor-grab active:cursor-grabbing overflow-hidden min-h-[220px]"
-            />
+            <div className="flex-1 w-full relative overflow-hidden min-h-[220px]">
+              <HeroMannequin
+                visualOptions={visualOptions}
+                showMount={Boolean(
+                  playerHero?.equipment[playerHero.activeEquipmentSet].MOUNT,
+                )}
+                testId="market-hero-mannequin"
+              />
+            </div>
 
             {/* Armor & Encumbrance Stats Dock */}
             <div className="p-3 border-t border-[#c6a15b]/20 bg-[#16120e] space-y-2.5 shrink-0 text-xs">
