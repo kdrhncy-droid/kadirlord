@@ -2256,42 +2256,25 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     // Main 60Hz Loop
     let rafId = 0;
-    let headlessIdleTimer = 0;
     let lastTime = performance.now();
     let elapsedTotal = 0;
     let headlessFrameSkip = 0;
     let headlessRenderedFrames = 0;
-    let lastHeadlessCampRef: CampaignState | null = null;
-    let lastHeadlessSubMode: string | null = null;
 
     const tick = (now: number) => {
+      rafId = requestAnimationFrame(tick);
+
       if (isHeadless) {
-        const campChanged =
-          lastHeadlessCampRef !== stateRef.current.campaign ||
-          lastHeadlessSubMode !== stateRef.current.subMode;
-        if (campChanged) {
-          lastHeadlessCampRef = stateRef.current.campaign;
-          lastHeadlessSubMode = stateRef.current.subMode;
-          headlessRenderedFrames = 0;
-        }
         const camSettled =
           headlessRenderedFrames >= 2 &&
           stateRef.current.campaignTimeScale === 0 &&
           Math.abs(camFocusX - targetCamFocusX) < 0.05 &&
           Math.abs(camFocusZ - targetCamFocusZ) < 0.05 &&
           Math.abs(camZoomDist - targetCamZoomDist) < 0.05;
-        if (camSettled) {
-          headlessIdleTimer = window.setTimeout(() => {
-            rafId = requestAnimationFrame(tick);
-          }, 250);
-          return;
-        }
-        rafId = requestAnimationFrame(tick);
-        headlessFrameSkip = (headlessFrameSkip + 1) % 3;
+        const skipModulo = camSettled ? 20 : 4;
+        headlessFrameSkip = (headlessFrameSkip + 1) % skipModulo;
         if (headlessFrameSkip !== 0) return;
         headlessRenderedFrames++;
-      } else {
-        rafId = requestAnimationFrame(tick);
       }
 
       const rawDt = (now - lastTime) / 1000;
@@ -3710,7 +3693,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     return () => {
       cancelAnimationFrame(rafId);
-      if (headlessIdleTimer) window.clearTimeout(headlessIdleTimer);
       resizeObserver.disconnect();
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
