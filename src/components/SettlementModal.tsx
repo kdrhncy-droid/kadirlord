@@ -24,6 +24,7 @@ import {
   FACTION_INFO,
   Settlement,
   SettlementDailyDefault,
+  SiegeBombardTarget,
   SiegeEngineType,
   UNIT_DEFINITIONS,
   UnitTierId,
@@ -146,7 +147,7 @@ interface SettlementModalProps {
     moveToReserve?: boolean,
   ) =>string | null;
   onDeployReserveEngines?: (settlementId: string) =>string | null;
-  onBombardWalls?: (settlementId: string) =>string | null;
+  onBombardWalls?: (settlementId: string, target: SiegeBombardTarget) =>string | null;
   onOpenFullMarket?: () =>void;
   /** Faz 6: yerleşim reisi/muhtarı ile diyalog. */
   onTalkToReeve?: () =>void;
@@ -194,6 +195,8 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
     return Math.round(lords.reduce((a, l) =>a + l.relation, 0) / lords.length);
   })();
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [siegeBombardTarget, setSiegeBombardTarget] =
+    useState<SiegeBombardTarget>('WALL_LEFT');
   const [selectedNotable, setSelectedNotable] = useState<SettlementNotable | null>(null);
   const [isRecruitmentModalOpen, setIsRecruitmentModalOpen] = useState(false);
   const [tournamentResult, setTournamentResult] = useState<{
@@ -1667,11 +1670,23 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <select
+                      aria-label="Bombardıman hedefi"
+                      value={siegeBombardTarget}
+                      onChange={(event) =>
+                        setSiegeBombardTarget(event.target.value as SiegeBombardTarget)
+                      }
+                      className="rounded border border-[#c6a15b]/50 bg-[#17120d] px-2 py-2 text-xs text-[#fde68a]"
+                    >
+                      <option value="WALL_LEFT">Sol Sur</option>
+                      <option value="WALL_RIGHT">Sağ Sur</option>
+                      <option value="PEOPLE">Askerler</option>
+                    </select>
                     <button
                       type="button"
                       onClick={() =>{
                         if (!onBombardWalls) return;
-                        const err = onBombardWalls(settlement.id);
+                        const err = onBombardWalls(settlement.id, siegeBombardTarget);
                         if (err) setFeedback(err);
                         else {
                           sound.playHit();

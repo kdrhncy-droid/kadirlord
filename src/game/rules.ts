@@ -24,6 +24,21 @@ import {
   advanceDailyPartyFood,
   calculateDailyFoodDemand,
 } from './foodSystem.ts';
+import {
+  SIEGE_MELEE_SLOTS,
+  SIEGE_RANGED_SLOTS,
+  canFitSiegeEngine,
+  getWallSections,
+  normalizeSiegeEngineSlots,
+  setWallSections,
+} from './siegeMechanics';
+export {
+  SIEGE_MELEE_SLOTS,
+  SIEGE_RANGED_SLOTS,
+  getWallSections,
+  removeDestroyedSiegeEngines,
+  setWallSections,
+} from './siegeMechanics';
 
 export type FactionId =
   | 'player'
@@ -287,7 +302,9 @@ export interface Settlement {
   workshopOwner?: 'player';
   siegeEngines?: SiegeEngineType[];
   reserveEngines?: SiegeEngineType[];
+  siegeEngineHp?: number[];
   wallHealth?: number;
+  wallSections?: [number, number];
   /** Faz B0: yerleşimin ileri gelenleri (deterministik üretilir, kayda yazılır). */
   notables?: SettlementNotable[];
   /** P2: kalıcı pazar stoğu (tanım kimliği → adet). İlk pazar ziyaretinde türetilir. */
@@ -1190,6 +1207,9 @@ export function settlementWorkshopIncome(settlement: Settlement): number {
   return base + (WORKSHOP_TYPE_BONUS[settlement.workshopType] ?? 0);
 }
 
+// AYAR SABİTİ — yerleşim kuşatması sırasında günlük erzak tüketimi.
+export const SIEGE_GARRISON_FOOD_PER_DAY = 3;
+
 export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState {
   const wage = calculateDailyWage(state.roster);
   const foodResult = advanceDailyPartyFood(state);
@@ -1198,6 +1218,11 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
   let playerSettlementTaxes = 0;
   let playerWorkshopIncome = 0;
   const updatedSettlements = state.settlements.map((s) => {
+    const besieged =
+      state.playerSiege?.settlementId === s.id ||
+      state.lords.some(
+        (lord) => lord.order?.kind === 'SIEGE' && lord.order.targetSettlementId === s.id,
+      );
     if (s.faction === 'player') {
       playerSettlementTaxes += Math.round(s.prosperity * 0.25);
     }
@@ -1208,7 +1233,9 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
     return {
       ...s,
       prosperity: Math.min(999, s.prosperity + 2),
-      foodStock: Math.min(60, s.foodStock + 3),
+      foodStock: besieged
+        ? Math.max(0, s.foodStock - SIEGE_GARRISON_FOOD_PER_DAY)
+        : Math.min(60, s.foodStock + 3),
       recruitPool: {
         militia: Math.min(12, s.recruitPool.militia + 2),
         archer: Math.min(8, s.recruitPool.archer + 1),
@@ -1404,6 +1431,11 @@ export function resolveBattleOutcome(
         ...s,
         faction: 'player' as FactionId,
         garrison: s.id === conqueredSettlementId ? Math.max(20, Math.floor(s.garrison * 0.6)) : s.garrison,
+        wallHealth: 100,
+        wallSections: [100, 100] as [number, number],
+        siegeEngines: [],
+        reserveEngines: [],
+        siegeEngineHp: [],
       };
     }
     return s;
@@ -3492,6 +3524,18 @@ export function constructSiegeEngine(
         : engineType === 'MANGONEL'
           ? 65
           : 50;
+  const currentActive = s.siegeEngines ?? [];
+  const currentReserve = s.reserveEngines ?? [];
+  if (!moveToReserve && !canFitSiegeEngine(currentActive, engineType)) {
+    const ranged = engineType === 'TREBUCHET' || engineType === 'MANGONEL' || engineType === 'BALLISTA';
+    return {
+      success: false,
+      reason: ranged
+        ? `Menzilli kuşatma yuvaları dolu (${SIEGE_RANGED_SLOTS}); yeni silahı rezerve çekin.`
+        : `Yakın kuşatma yuvaları dolu (${SIEGE_MELEE_SLOTS}); yeni silahı rezerve çekin.`,
+      nextState: state,
+    };
+  }
   if (state.gold < cost) {
     return {
       success: false,
@@ -3499,15 +3543,16 @@ export function constructSiegeEngine(
       nextState: state,
     };
   }
-  const currentActive = s.siegeEngines ?? [];
-  const currentReserve = s.reserveEngines ?? [];
 
   const nextSettlements = state.settlements.map((item, i) =>
     i === idx
       ? {
           ...item,
-          siegeEngines: moveToReserve ? currentActive : [...currentActive, engineType].slice(0, 6),
+          siegeEngines: moveToReserve ? currentActive : [...currentActive, engineType],
           reserveEngines: moveToReserve ? [...currentReserve, engineType] : currentReserve,
+          siegeEngineHp: moveToReserve
+            ? item.siegeEngineHp ?? currentActive.map(() => 100)
+            : [...(item.siegeEngineHp ?? currentActive.map(() => 100)), 100],
         }
       : item,
   );
@@ -3540,12 +3585,21 @@ export function deployReservedSiegeEngines(
   const reserve = s.reserveEngines ?? [];
   if (reserve.length === 0) return { success: false, nextState: state };
 
+  const active = s.siegeEngines ?? [];
+  const activeHp = s.siegeEngineHp ?? active.map(() => 100);
+  const slots = normalizeSiegeEngineSlots([...active, ...reserve], []);
+  const deployedCount = slots.siegeEngines.length - active.length;
+  if (deployedCount <= 0) return { success: false, nextState: state };
   const nextSettlements = state.settlements.map((item, i) =>
     i === idx
       ? {
           ...item,
-          siegeEngines: [...(item.siegeEngines ?? []), ...reserve].slice(0, 6),
-          reserveEngines: [],
+          siegeEngines: slots.siegeEngines,
+          reserveEngines: slots.reserveEngines,
+          siegeEngineHp: [
+            ...activeHp,
+            ...reserve.slice(0, deployedCount).map(() => 100),
+          ],
         }
       : item,
   );
@@ -3558,9 +3612,25 @@ export function deployReservedSiegeEngines(
   };
 }
 
+export type SiegeBombardTarget = 'WALL_LEFT' | 'WALL_RIGHT' | 'PEOPLE' | 'auto';
+
+// AYAR SABİTİ — Bannerlord değerleri XML'de, doğrulanmadı; oranlar Dev Blog #121'e göre
+export const SIEGE_BOMBARD_DAMAGE: Record<
+  SiegeEngineType,
+  { wall: number; people: number }
+> = {
+  TREBUCHET: { wall: 24, people: 1 },
+  MANGONEL: { wall: 14, people: 8 },
+  BALLISTA: { wall: 5, people: 20 },
+  BATTERING_RAM: { wall: 0, people: 0 },
+  SIEGE_TOWER: { wall: 0, people: 0 },
+};
+
+// TODO: Defender RangedEngines are not represented, so bombardment has no counter-fire.
 export function bombardSettlementWalls(
   state: CampaignState,
   settlementId: string,
+  target: SiegeBombardTarget = 'auto',
 ): {
   success: boolean;
   reason?: string;
@@ -3572,26 +3642,50 @@ export function bombardSettlementWalls(
   if (idx === -1) return { success: false, reason: 'Yerleşim bulunamadı.', nextState: state };
   const s = state.settlements[idx];
   const activeEngines = s.siegeEngines ?? [];
-  if (activeEngines.length === 0) {
+  const rangedEngines = activeEngines.filter(
+    (engine) => SIEGE_BOMBARD_DAMAGE[engine].wall > 0 || SIEGE_BOMBARD_DAMAGE[engine].people > 0,
+  );
+  if (rangedEngines.length === 0) {
     return {
       success: false,
-      reason: 'Sur bombardımanı için önce en az 1 kuşatma silahı (Trebuchet, Mangonel veya Balista) sahaya sürmelisiniz.',
+      reason: 'Bombardıman için sahada en az bir menzilli kuşatma silahı bulunmalıdır.',
       nextState: state,
     };
   }
-  const trebuchetCount = activeEngines.filter((e) => e === 'TREBUCHET').length;
-  const mangonelCount = activeEngines.filter((e) => e === 'MANGONEL').length;
-  const wallDamage = Math.min(100, trebuchetCount * 35 + mangonelCount * 20 + activeEngines.length * 10);
-  const currentWallHp = s.wallHealth ?? 100;
-  const nextWallHp = Math.max(0, currentWallHp - wallDamage);
-  const garrisonLoss = Math.min(Math.max(1, s.garrison - 4), Math.max(3, Math.round(wallDamage * 0.25)));
+  const wallSections = getWallSections(s);
+  const effectiveTarget =
+    target === 'auto'
+      ? wallSections[0] <= wallSections[1]
+        ? 'WALL_LEFT'
+        : 'WALL_RIGHT'
+      : target;
+  const wallDamage = Math.min(
+    100,
+    rangedEngines.reduce((sum, engine) => sum + SIEGE_BOMBARD_DAMAGE[engine].wall, 0),
+  );
+  const peopleDamage = rangedEngines.reduce(
+    (sum, engine) => sum + SIEGE_BOMBARD_DAMAGE[engine].people,
+    0,
+  );
+  const nextWallSections: [number, number] = [...wallSections];
+  if (effectiveTarget === 'WALL_LEFT') {
+    nextWallSections[0] = Math.max(0, nextWallSections[0] - wallDamage);
+  } else if (effectiveTarget === 'WALL_RIGHT') {
+    nextWallSections[1] = Math.max(0, nextWallSections[1] - wallDamage);
+  }
+  const nextWallHealth = Math.round((nextWallSections[0] + nextWallSections[1]) / 2);
+  const garrisonLoss =
+    effectiveTarget === 'PEOPLE'
+      ? Math.min(Math.max(0, s.garrison - 4), Math.max(3, Math.round(peopleDamage)))
+      : 0;
+  // AYAR SABİTİ — mevcut 18 erzak kaybı korunmuştur; Bannerlord değeri doğrulanmadı.
   const foodLoss = Math.min(s.foodStock, 18);
 
   const nextSettlements = state.settlements.map((item, i) =>
     i === idx
       ? {
           ...item,
-          wallHealth: nextWallHp,
+          ...setWallSections(item, nextWallSections),
           garrison: Math.max(4, item.garrison - garrisonLoss),
           foodStock: Math.max(0, item.foodStock - foodLoss),
         }
@@ -3600,7 +3694,7 @@ export function bombardSettlementWalls(
 
   return {
     success: true,
-    wallHealthAfter: nextWallHp,
+    wallHealthAfter: nextWallHealth,
     garrisonLost: garrisonLoss,
     nextState: {
       ...state,
@@ -3612,7 +3706,7 @@ export function bombardSettlementWalls(
           id: `bombard-${state.day}-${settlementId}`,
           day: state.day + 1,
           category: 'WAR',
-          text: `${s.name} surları kuşatma silahlarıyla dövüldü! Duvar sağlığı %${nextWallHp} seviyesine indi, ${garrisonLoss} savunmacı saf dışı kaldı.`,
+          text: `${s.name} kuşatma silahlarıyla dövüldü. Duvar sağlığı %${nextWallHealth} seviyesinde; ${garrisonLoss} savunmacı saf dışı kaldı.`,
         },
         ...state.chronicle,
       ].slice(0, 30),

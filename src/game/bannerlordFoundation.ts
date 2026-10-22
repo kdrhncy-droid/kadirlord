@@ -14,6 +14,10 @@ import { CALRADIA_MARKETPLACE_ITEMS, type MarketplaceItem } from './marketRules'
 import { hashString } from './rng';
 import { CULTURE_TROOPS } from './troops';
 import { getPartyFoodUnits } from './foodSystem.ts';
+import {
+  normalizeSiegeEngineSlots,
+  setWallSections,
+} from './siegeMechanics';
 import type {
   AttributeId,
   BannerlordSkillId,
@@ -2296,9 +2300,37 @@ export function ensureBannerlordFoundation(state: CampaignState): CampaignState 
     ...ITEM_DEFINITION_BY_ID.keys(),
     ...customDefinitions.keys(),
   ]);
-  const settlements = (state.settlements ?? []).map((settlement) =>
-    sanitizeSettlementMarket(settlement, validDefinitionIds),
-  );
+  const settlements = (state.settlements ?? []).map((rawSettlement) => {
+    const settlement = sanitizeSettlementMarket(rawSettlement, validDefinitionIds);
+    const activeEngines = settlement.siegeEngines ?? [];
+    const activeHp = settlement.siegeEngineHp ?? [];
+    const hpByType = new Map<string, number[]>();
+    activeEngines.forEach((engine, index) => {
+      const value = activeHp[index];
+      const hp = Math.round(Math.max(0, Math.min(100, Number.isFinite(value) ? value : 100)));
+      const values = hpByType.get(engine) ?? [];
+      values.push(hp);
+      hpByType.set(engine, values);
+    });
+    const normalizedSlots = normalizeSiegeEngineSlots(
+      activeEngines,
+      settlement.reserveEngines ?? [],
+    );
+    const siegeEngineHp = normalizedSlots.siegeEngines.map(
+      (engine) => hpByType.get(engine)?.shift() ?? 100,
+    );
+    const legacyWallHealth = settlement.wallHealth ?? 100;
+    const wallSections: [number, number] = [
+      settlement.wallSections?.[0] ?? legacyWallHealth,
+      settlement.wallSections?.[1] ?? legacyWallHealth,
+    ];
+    return {
+      ...setWallSections(settlement, wallSections),
+      siegeEngines: normalizedSlots.siegeEngines,
+      reserveEngines: normalizedSlots.reserveEngines,
+      siegeEngineHp,
+    };
+  });
   for (const settlement of settlements) {
     for (const definitionId of Object.keys(settlement.marketStock ?? {})) {
       if (customDefinitions.has(definitionId)) usedCustomDefinitionIds.add(definitionId);

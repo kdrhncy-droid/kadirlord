@@ -122,10 +122,12 @@ import {
   type UiLayerFlags,
 } from './game/uiSession';
 import {
+  buildE2ESiegeScenario,
   buildE2EScenario,
   parseE2ERequest,
   type KadirlordTestApi,
 } from './game/testHarness';
+import type { SiegeEncounterRole } from './game/siegeEncounter';
 
 export default function App() {
   const search = typeof window !== 'undefined' ? window.location.search : '';
@@ -155,6 +157,8 @@ export default function App() {
   const cameraActionsRef = useRef<CameraControlActions | null>(null);
   /** Faz 11: harita katmanı lordların gerçek konumlarını buraya yazar (React render'ı yok). */
   const lordPositionsRef = useRef<Map<string, { x: number; z: number }>>(new Map());
+  const lordPositionCommandsRef = useRef(new Map<string, { x: number; z: number }>());
+  const playerPositionCommandRef = useRef<{ x: number; z: number } | null>(null);
   /** Faz 11: savaş isteği hesabı için klan kayıtları (interval kapanışında bayatlamasın). */
   const macroStateRef = useRef<KingdomMacroState | null>(null);
   macroStateRef.current = macroState;
@@ -406,6 +410,14 @@ export default function App() {
         if (!testStateRef.current.campaign.lords.some((lord) => lord.id === lordId)) {
           return false;
         }
+        if (patch.x !== undefined || patch.z !== undefined) {
+          const campaignLord = testStateRef.current.campaign.lords.find((lord) => lord.id === lordId)!;
+          const live = lordPositionsRef.current.get(lordId);
+          lordPositionCommandsRef.current.set(lordId, {
+            x: patch.x ?? live?.x ?? campaignLord.x,
+            z: patch.z ?? live?.z ?? campaignLord.z,
+          });
+        }
         const applyPatch = (lord: LordAgent): LordAgent => {
           const roster = patch.roster ?? lord.roster;
           return {
@@ -428,6 +440,50 @@ export default function App() {
         const lord = testStateRef.current.campaign.lords.find((item) => item.id === lordId);
         return lord ? { x: lord.x, z: lord.z } : null;
       },
+      openSiege: (role, options) => {
+        const setup = buildE2ESiegeScenario(testStateRef.current.campaign, role);
+        if (!setup) return false;
+        const settlement = setup.campaign.settlements.find(
+          (item) => item.id === setup.settlementId,
+        );
+        if (!settlement) return false;
+        const besieger = setup.campaign.lords.find(
+          (lord) =>
+            lord.order?.kind === 'SIEGE' &&
+            lord.order.targetSettlementId === settlement.id,
+        );
+        const campX = role === 'attacker' ? setup.campaign.playerX : (besieger?.x ?? settlement.x + 1);
+        const campZ = role === 'attacker' ? setup.campaign.playerZ : (besieger?.z ?? settlement.z);
+        setup.campaign.lords
+          .filter(
+            (lord) =>
+              lord.order?.kind === 'SIEGE' &&
+              lord.order.targetSettlementId === settlement.id,
+          )
+          .forEach((lord) => {
+            lordPositionCommandsRef.current.set(lord.id, { x: lord.x, z: lord.z });
+          });
+        if (role !== 'defender') {
+          playerPositionCommandRef.current = {
+            x: setup.campaign.playerX,
+            z: setup.campaign.playerZ,
+          };
+        }
+        const campAngle = Math.atan2(campZ - settlement.z, campX - settlement.x);
+        const focusOffset = options?.focusOnCamp ? 8 : 0;
+        setCampaign(setup.campaign);
+        setActiveSettlementModal(null);
+        setDialogueLord(null);
+        setDialogueSettlement(null);
+        setActiveSiegeSettlementId(setup.settlementId);
+        cameraActionsRef.current?.focusOnCoords(
+          settlement.x + Math.cos(campAngle) * focusOffset,
+          settlement.z + Math.sin(campAngle) * focusOffset,
+          34,
+        );
+        return true;
+      },
+      closeSiege: () => setActiveSiegeSettlementId(null),
       openDialogue: (lordId, options) => {
         const current = testStateRef.current.campaign;
         const lord = current.lords.find((item) => item.id === lordId);
@@ -501,6 +557,10 @@ export default function App() {
     window.__kadirlordTest = api;
     document.body.dataset.e2eReady = 'true';
     document.body.dataset.e2eScenario = e2eRequest.scenario;
+    if (e2eRequest.siegeRole) {
+      api.openSiege(e2eRequest.siegeRole, { focusOnCamp: e2eRequest.focusSiegeCamp });
+      if (e2eRequest.focusSiegeCamp) api.closeSiege();
+    }
 
     return () => {
       if (window.__kadirlordTest === api) delete window.__kadirlordTest;
@@ -742,6 +802,13 @@ export default function App() {
    * dönülür (eski sürümde hız 0'da kalıyordu — Faz 10a).
    */
   const uiPausesWorld = countLayers(uiLayers) > 0;
+  const setMapTimeScale = useCallback(
+    (timeScale: TimeScale) => {
+      if (uiPausesWorld && timeScale !== 0) return;
+      setCampaignTimeScale(timeScale);
+    },
+    [uiPausesWorld],
+  );
   useEffect(() => {
     if (uiPausesWorld && !pausedByUiRef.current) {
       if (campaignTimeScale !== 0) speedBeforeUiRef.current = speedBeforeUi(campaignTimeScale);
@@ -1398,10 +1465,12 @@ export default function App() {
         battleTargetSettlementId={battleTargetSettlementId}
         cameraActionsRef={cameraActionsRef}
         lordPositionsRef={lordPositionsRef}
+        lordPositionCommandsRef={lordPositionCommandsRef}
+        playerPositionCommandRef={playerPositionCommandRef}
         activeDiplomacyLordId={activeDiplomacyLord?.id ?? null}
         activeDialogueLordId={dialogueLord?.id ?? null}
         activeSettlementModalId={activeSettlementModal?.id ?? null}
-        onSetTimeScale={setCampaignTimeScale}
+        onSetTimeScale={setMapTimeScale}
         onUpdatePlayerPos={handleUpdatePlayerPos}
         onOpenSettlement={handleOpenSettlement}
         onOpenDiplomacy={(l) => {
@@ -1649,7 +1718,7 @@ export default function App() {
           activeOrder={activeOrder}
           battleTelemetry={battleTelemetry}
           muted={muted}
-          onSetTimeScale={(s) => setCampaignTimeScale(s)}
+          onSetTimeScale={setMapTimeScale}
           onToggleMute={() => {
             const next = sound.toggleMute();
             setMuted(next);
@@ -1840,8 +1909,8 @@ export default function App() {
             if (res.success) setCampaign(res.nextState);
             return null;
           }}
-          onBombardWalls={(settlementId) => {
-            const res = bombardSettlementWalls(campaign, settlementId);
+          onBombardWalls={(settlementId, target) => {
+            const res = bombardSettlementWalls(campaign, settlementId, target);
             if (res.success) setCampaign(res.nextState);
             return res.reason || null;
           }}

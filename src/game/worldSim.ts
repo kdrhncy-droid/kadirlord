@@ -30,6 +30,7 @@ import {
   getSettlementArrivalRadius,
   getTotalTroops,
 } from './rules';
+import { SIEGE_CAMP_STANDOFF } from './siegeMechanics';
 import { type FeudalClanRecord, calculateWarDesireAndTribute } from './kingdomSystem';
 import { hashString, mulberry32 } from './rng';
 
@@ -421,7 +422,7 @@ export function advanceSieges(
     }
 
     const pos = positionOf(positions, lord);
-    const radius = getSettlementArrivalRadius(target.type) + 3;
+    const radius = Math.max(getSettlementArrivalRadius(target.type) + 3, SIEGE_CAMP_STANDOFF + 4);
     const dist = distance(pos.x, pos.z, target.x, target.z);
     const progress = lord.order.siegeProgress ?? 0;
 
@@ -455,9 +456,12 @@ export function advanceSieges(
     const newFaction = lord.faction;
     target.faction = newFaction;
     target.garrison = Math.max(6, Math.round(attack * 0.3));
-    target.wallHealth = Math.max(25, Math.round((target.wallHealth ?? 100) * 0.6));
+    const postConquestWall = Math.max(25, Math.round((target.wallHealth ?? 100) * 0.6));
+    target.wallHealth = postConquestWall;
+    target.wallSections = [postConquestWall, postConquestWall];
     target.siegeEngines = [];
     target.reserveEngines = [];
+    target.siegeEngineHp = [];
 
     // Bağlı köyler de el değiştirir (Bannerlord kuralı).
     for (const village of settlements) {
@@ -542,14 +546,24 @@ export function advanceUpkeep(
   const events: Array<{ category: string; text: string }> = [];
   let reinforcements = 0;
 
-  // Garnizonlar kuşatma altında değilse yavaşça toparlanır.
+  // Garnizonlar kuşatma altında değilse yavaşça toparlanır; kuşatmada erzak bittiyse açlıktan erir.
   for (const settlement of nextSettlements) {
-    const besieged = lords.some(
+    const besiegedByLord = lords.some(
       (l) => l.order?.kind === 'SIEGE' && l.order.targetSettlementId === settlement.id,
     );
+    const besiegedByPlayer =
+      state.playerSiege?.settlementId === settlement.id && !state.playerSiege.inside;
+    const besieged = besiegedByLord || besiegedByPlayer;
     if (!besieged) {
       const cap = settlement.type === 'TOWN' ? 70 : settlement.type === 'CASTLE' ? 50 : 12;
       settlement.garrison = Math.min(cap, settlement.garrison + 1);
+    } else if (settlement.type !== 'VILLAGE' && settlement.foodStock <= 0 && settlement.garrison > 0) {
+      const loss = Math.max(1, Math.round(settlement.garrison * 0.1));
+      settlement.garrison = Math.max(0, settlement.garrison - loss);
+      events.push({
+        category: 'WAR',
+        text: `${settlement.name} garnizonu açlıktan kırılıyor (-${loss} asker).`,
+      });
     }
   }
 

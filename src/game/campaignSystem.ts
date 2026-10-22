@@ -12,6 +12,7 @@ import {
 } from './encounter.ts';
 import { computeLandPath, isNavigableLandAt, stepAlongLandOnly } from './navigation.ts';
 import type { LordAgent, Settlement, TroopRoster } from './rules.ts';
+import { getSiegeCampPoint } from './siegeMechanics.ts';
 
 export interface BannerlordSpeedBreakdown {
   baseSpeed: number;
@@ -364,8 +365,14 @@ export function applyLordOrderToRoute(
   } else if (order.targetSettlementId) {
     const target = settlements.find((s) => s.id === order.targetSettlementId);
     if (target) {
-      targetX = target.x + 4.5;
-      targetZ = target.z + 4.5;
+      if (order.kind === 'SIEGE') {
+        const campPoint = getSiegeCampPoint(target, route.x, route.z);
+        targetX = campPoint.x;
+        targetZ = campPoint.z;
+      } else {
+        targetX = target.x + 4.5;
+        targetZ = target.z + 4.5;
+      }
       key = `set:${target.id}`;
       action =
         order.kind === 'SIEGE'
