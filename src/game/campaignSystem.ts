@@ -229,8 +229,8 @@ export function stepLordCampaignRoute(
     route.currentAction,
   );
 
-  // Pick a new patrol destination settlement if waypoints are empty
-  if (route.waypoints.length === 0) {
+  // Pick a new patrol destination settlement if waypoints are empty (never override an active SIEGE camp!)
+  if (route.waypoints.length === 0 && lord.order?.kind !== 'SIEGE') {
     const candidateSettlements = settlements.filter(
       (s) =>
         (lord.faction === 'bandits' ? s.type === 'VILLAGE' : s.faction === lord.faction) &&
@@ -422,19 +422,34 @@ export function applyLordOrderToRoute(
         targetX = campSlot.x;
         targetZ = campSlot.z;
         key = `set:${target.id}:slot:${slotIdx}`;
+        const distToSlot = Math.hypot(route.x - targetX, route.z - targetZ);
+        if (distToSlot <= 1.25) {
+          route.x = targetX;
+          route.z = targetZ;
+          route.rotY = Math.atan2(target.x - route.x, target.z - route.z);
+          route.waypoints = [];
+          route.orderKey = key;
+          route.targetSettlementId = target.id;
+          route.currentAction = `${target.name} kuşatma çemberinde bekliyor`;
+          return;
+        }
+        action = `${target.name} kuşatma hattına ilerliyor`;
+      } else if (order.kind === 'DEFEND' && options?.siegeAnchorPos) {
+        targetX = options.siegeAnchorPos.x;
+        targetZ = options.siegeAnchorPos.z;
+        key = `defend-siege:${target.id}:${Math.round(targetX / 4)}:${Math.round(targetZ / 4)}`;
+        action = `${target.name} kuşatmasını yarmak için yardıma koşuyor`;
       } else {
         targetX = target.x + 4.5;
         targetZ = target.z + 4.5;
         key = `set:${target.id}`;
-      }
-      action =
-        order.kind === 'SIEGE'
-          ? `${target.name} kuşatma hattına ilerliyor`
-          : order.kind === 'DEFEND'
+        action =
+          order.kind === 'DEFEND'
             ? `${target.name} savunmasına koşuyor`
             : order.kind === 'REINFORCE'
               ? `${target.name} garnizonunda asker topluyor`
               : `${target.name} bölgesini denetliyor`;
+      }
     }
   }
 

@@ -399,15 +399,17 @@ export function decideLordOrder(ctx: OrderContext): LordOrder | undefined {
     }
   }
 
-  // 1) Kendi yerleşimim kuşatma altında mı?
-  const besiegedOwn = myFiefs.filter((f) =>
-    state.lords.some(
-      (other) =>
-        other.id !== lord.id &&
-        other.faction !== lord.faction &&
-        other.order?.kind === 'SIEGE' &&
-        other.order.targetSettlementId === f.id,
-    ),
+  // 1) Kendi yerleşimim kuşatma altında mı? (Hem AI lord kuşatması hem de oyuncunun aktif kuşatması kontrol edilir)
+  const besiegedOwn = myFiefs.filter(
+    (f) =>
+      (state.playerSiege?.settlementId === f.id && !state.playerSiege.inside) ||
+      state.lords.some(
+        (other) =>
+          other.id !== lord.id &&
+          other.faction !== lord.faction &&
+          other.order?.kind === 'SIEGE' &&
+          other.order.targetSettlementId === f.id,
+      ),
   );
   if (besiegedOwn.length > 0) {
     const target = besiegedOwn.sort(
