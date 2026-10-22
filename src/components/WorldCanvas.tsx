@@ -1081,17 +1081,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
       if (s.type !== 'VILLAGE') {
         const camp = new THREE.Group();
-        const ring = new THREE.Mesh(siegeRingGeo, siegeRingMat);
-        camp.add(ring);
-        for (let i = 0; i < 3; i++) {
-          const smoke = new THREE.Mesh(siegeSmokeGeo, siegeSmokeMat);
-          const a = (i / 3) * Math.PI * 2;
-          smoke.position.set(Math.cos(a) * 6.2, 1.6, Math.sin(a) * 6.2);
-          smoke.userData.baseY = 1.6;
-          smoke.userData.siegeSmoke = true;
-          smoke.userData.smokeIndex = i;
-          camp.add(smoke);
-        }
         camp.position.set(s.x, sy + 0.12, s.z);
         camp.matrixAutoUpdate = false;
         camp.updateMatrix();

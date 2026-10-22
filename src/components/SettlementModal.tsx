@@ -1666,7 +1666,7 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
                        Kuşatma Kampı Mühendisliği: {settlement.name}
                     </h3>
                     <div className="text-xs text-[#fecaca] mt-0.5 font-mono-tabular">
-                      Sur Seviyesi: {settlement.wallLevel ?? 2} · Duvar Sağlığı: %{settlement.wallHealth ?? 100} · Savunmacı Garnizon: {settlement.garrison} Asker · Savunmacı Erzağı: {settlement.foodStock}
+                      Sur Seviyesi: {settlement.wallLevel ?? 2} · Sol Sur: %{settlement.wallSections?.[0] ?? settlement.wallHealth ?? 100} · Sağ Sur: %{settlement.wallSections?.[1] ?? settlement.wallHealth ?? 100} · Savunmacı Garnizon: {settlement.garrison} Asker · Savunmacı Erzağı: {settlement.foodStock}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1710,43 +1710,71 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
                 </div>
 
                 {/* Active & Reserve Siege Engines */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                  <div className="p-3 rounded bg-[#1f1a14] border border-[#c6a15b]/30">
-                    <div className="font-bold text-[#fef08a] mb-1">
-                      Sahadaki Kuşatma Silahları ({(settlement.siegeEngines ?? []).length}/6)
-                    </div>
-                    <div className="text-[#d1c5b0]">
-                      {(settlement.siegeEngines ?? []).length >0
-                        ? (settlement.siegeEngines ?? []).join('· ')
-                        : 'Henüz sahada aktif kuşatma silahı yok.'}
-                    </div>
-                  </div>
-                  <div className="p-3 rounded bg-[#1f1a14] border border-[#c6a15b]/30 flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-[#fef08a] mb-1">
-                        Rezervdeki Silahlar ({(settlement.reserveEngines ?? []).length})
+                {(() => {
+                  const engineLabelMap: Record<string, string> = {
+                    TREBUCHET: 'Mancınık (Trebuchet)',
+                    MANGONEL: 'Mangonel',
+                    BALLISTA: 'Balista',
+                    BATTERING_RAM: 'Koçbaşı',
+                    SIEGE_TOWER: 'Kuşatma Kulesi',
+                  };
+                  const activeEngines = settlement.siegeEngines ?? [];
+                  const reserveEngines = settlement.reserveEngines ?? [];
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div className="p-3 rounded bg-[#1f1a14] border border-[#c6a15b]/30">
+                        <div className="font-bold text-[#fef08a] mb-1.5">
+                          Sahadaki Kuşatma Silahları ({activeEngines.length}/7)
+                        </div>
+                        {activeEngines.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {activeEngines.map((eng, idx) => (
+                              <span
+                                key={`${eng}-${idx}`}
+                                className="inline-flex items-center gap-1 rounded border border-[#10b981]/50 bg-[#14261c] px-2 py-0.5 text-[11px] font-semibold text-[#a7f3d0]"
+                              >
+                                {engineLabelMap[eng] ?? eng}
+                                <span className="font-mono-tabular text-[10px] text-[#34d399]">
+                                  %{settlement.siegeEngineHp?.[idx] ?? 100}
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-[#d1c5b0]">Henüz sahada aktif kuşatma silahı yok.</div>
+                        )}
                       </div>
-                      <div className="text-[#d1c5b0]">
-                        {(settlement.reserveEngines ?? []).length >0
-                          ? (settlement.reserveEngines ?? []).join('· ')
-                          : 'Rezerv boş (Trebuchetleri biriktirip aynı anda sürün).'}
+                      <div className="p-3 rounded bg-[#1f1a14] border border-[#c6a15b]/30 flex items-center justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-[#fef08a] mb-1">
+                            Rezervdeki Silahlar ({reserveEngines.length})
+                          </div>
+                          <div className="text-[#d1c5b0]">
+                            {reserveEngines.length > 0
+                              ? reserveEngines.map((eng) => engineLabelMap[eng] ?? eng).join(' · ')
+                              : 'Rezerv boş (Trebuchetleri biriktirip aynı anda sürün).'}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={reserveEngines.length === 0}
+                          onClick={() => {
+                            if (!onDeployReserveEngines) return;
+                            onDeployReserveEngines(settlement.id);
+                            setFeedback('Rezervdeki tüm kuşatma silahları aynı anda sahaya sürüldü!');
+                          }}
+                          className={`px-3 py-1.5 rounded text-xs font-bold whitespace-nowrap transition-colors ${
+                            reserveEngines.length > 0
+                              ? 'bg-[#15803d] hover:bg-[#16a34a] text-white'
+                              : 'bg-[#262018] text-[#78716c] border border-[#c6a15b]/20 cursor-not-allowed'
+                          }`}
+                        >
+                          Tümünü Sahaya Sür
+                        </button>
                       </div>
                     </div>
-                    {(settlement.reserveEngines ?? []).length >0 && (
-                      <button
-                        type="button"
-                        onClick={() =>{
-                          if (!onDeployReserveEngines) return;
-                          onDeployReserveEngines(settlement.id);
-                          setFeedback('Rezervdeki tüm kuşatma silahları aynı anda sahaya sürüldü!');
-                        }}
-                        className="px-3 py-1.5 rounded text-xs font-bold bg-[#15803d] hover:bg-[#16a34a] text-white whitespace-nowrap"
-                      >
-                        Tümünü Sahaya Sür
-                      </button>
-                    )}
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Build Siege Engines */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
