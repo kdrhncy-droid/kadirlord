@@ -286,6 +286,12 @@ export interface Settlement {
   wallHealth?: number;
   /** Faz B0: yerleşimin ileri gelenleri (deterministik üretilir, kayda yazılır). */
   notables?: SettlementNotable[];
+  /** P2: kalıcı pazar stoğu (tanım kimliği → adet). İlk pazar ziyaretinde türetilir. */
+  marketStock?: Record<string, number>;
+  /** P2: oyuncunun satışlarını sınırlayan kalıcı tüccar kasası. */
+  merchantGold?: number;
+  /** P2: ticaret söylentileri yalnız ziyaret edilmiş yerleşimler için görünür. */
+  visited?: boolean;
 }
 
 export function getSettlementArrivalRadius(type: 'TOWN' | 'CASTLE' | 'VILLAGE'): number {

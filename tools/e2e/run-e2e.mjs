@@ -336,6 +336,128 @@ try {
     assertNoPageProblems(problems, 'forced-encounter');
   });
 
+  await runTest('market-pending-transfer', async () => {
+    const { page, problems } = await openPage(browser, {
+      scenario: 'boot',
+      timeScale: '0',
+    });
+    activePage = page;
+
+    const inventoryQuantity = (state) =>
+      state.inventory.reduce((sum, item) => sum + item.quantity, 0);
+
+    await page.evaluate(() => window.__kadirlordTest.setPlayer({ gold: 20_000 }));
+    const initial = await getTestState(page);
+    const initialQuantity = inventoryQuantity(initial);
+    assert(!initial.market.open, 'pazar başlangıçta kapalı olmalı');
+
+    const opened = await page.evaluate(() => window.__kadirlordTest.openMarket());
+    assert(opened, 'test kancası pazarı açamadı');
+    await page.waitForSelector('[data-testid="market-modal"]', { timeout: TIMEOUT_MS });
+    await page.waitForSelector('button[data-testid^="market-buy-"]:not([disabled])', {
+      timeout: TIMEOUT_MS,
+    });
+
+    const buyButton = await page.$('button[data-testid^="market-buy-"]:not([disabled])');
+    assert(buyButton, 'satın alınabilir pazar eşyası bulunamadı');
+    const buyTestId = await buyButton.evaluate((element) => element.dataset.testid);
+    const boughtDefinitionId = buyTestId.replace('market-buy-', '');
+
+    await buyButton.click();
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="market-modal"]')?.textContent?.includes('1 alış'),
+      { timeout: TIMEOUT_MS },
+    );
+    const afterDraftBuy = await getTestState(page);
+    assert(
+      afterDraftBuy.player.gold === initial.player.gold,
+      'bekleyen alış Bitti öncesi kampanya altınını değiştirdi',
+    );
+    assert(
+      inventoryQuantity(afterDraftBuy) === initialQuantity,
+      'bekleyen alış Bitti öncesi kampanya envanterini değiştirdi',
+    );
+    await screenshot(page, 'market-pending.png');
+
+    await page.click('[data-testid="market-cancel"]');
+    await page.waitForSelector('[data-testid="market-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+    const afterCancel = await getTestState(page);
+    assert(afterCancel.player.gold === initial.player.gold, 'Vazgeç altını değiştirdi');
+    assert(
+      inventoryQuantity(afterCancel) === initialQuantity,
+      'Vazgeç envanteri değiştirdi',
+    );
+
+    const settlementId = afterCancel.market.settlementId;
+    assert(settlementId, 'aktif pazar yerleşimi kayboldu');
+    await page.evaluate((id) => window.__kadirlordTest.openMarket(id), settlementId);
+    await page.waitForSelector('[data-testid="market-modal"]', { timeout: TIMEOUT_MS });
+    await page.click(`button[data-testid="market-buy-${boughtDefinitionId}"]`);
+    await page.click('[data-testid="market-done"]');
+    await page.waitForSelector('[data-testid="market-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+
+    const afterDone = await getTestState(page);
+    assert(afterDone.player.gold < initial.player.gold, 'Bitti alış altınını düşürmedi');
+    assert(
+      inventoryQuantity(afterDone) === initialQuantity + 1,
+      'Bitti satın alınan eşyayı envantere eklemedi',
+    );
+    assert(
+      Object.hasOwn(afterDone.market.stock, boughtDefinitionId),
+      'Bitti kalıcı şehir stoğunu yazmadı',
+    );
+    assert((afterDone.market.merchantGold ?? 0) > 0, 'Bitti tüccar kasasını yazmadı');
+
+    const stockBeforeSale = afterDone.market.stock;
+    await page.evaluate((id) => window.__kadirlordTest.openMarket(id), settlementId);
+    await page.waitForSelector('button[data-testid^="market-sell-"]:not([disabled])', {
+      timeout: TIMEOUT_MS,
+    });
+    const sellButton = await page.$('button[data-testid^="market-sell-"]:not([disabled])');
+    assert(sellButton, 'satılabilir oyuncu eşyası bulunamadı');
+    const sellTestId = await sellButton.evaluate((element) => element.dataset.testid);
+    const soldStackId = sellTestId.replace('market-sell-', '');
+    const soldStack = afterDone.inventory.find((item) => item.id === soldStackId);
+    assert(soldStack, `satış yığını snapshot içinde yok: ${soldStackId}`);
+
+    await sellButton.click();
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="market-modal"]')?.textContent?.includes('1 satış'),
+      { timeout: TIMEOUT_MS },
+    );
+    const afterDraftSale = await getTestState(page);
+    assert(
+      afterDraftSale.player.gold === afterDone.player.gold,
+      'bekleyen satış Bitti öncesi kampanya altınını değiştirdi',
+    );
+    await page.click('[data-testid="market-done"]');
+    await page.waitForSelector('[data-testid="market-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+
+    const afterSale = await getTestState(page);
+    assert(afterSale.player.gold > afterDone.player.gold, 'Bitti satış altınını eklemedi');
+    assert(
+      inventoryQuantity(afterSale) === inventoryQuantity(afterDone) - 1,
+      'Bitti satılan eşyayı envanterden düşürmedi',
+    );
+    assert(
+      (afterSale.market.stock[soldStack.definitionId] ?? 0) ===
+        (stockBeforeSale[soldStack.definitionId] ?? 0) + 1,
+      'satılan eşya kalıcı şehir stoğuna dönmedi',
+    );
+
+    await screenshot(page, 'market-after-done.png');
+    assertNoPageProblems(problems, 'market-pending-transfer');
+  });
+
   const failed = results.filter((result) => !result.ok);
   console.log(`\n${failed.length === 0 ? '✅' : '❌'} E2E: ${results.length - failed.length}/${results.length} başarılı`);
   console.log(`📸 Çıktılar: ${ARTIFACT_DIR}`);

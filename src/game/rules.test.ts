@@ -83,6 +83,7 @@ import {
   TROOP_DEFINITIONS,
   calculateLearningHardCap,
   calculateLearningSoftCap,
+  applyDiscardDonation,
   discardEligibility,
   discardXpCapForTier,
   ensureBannerlordFoundation,
@@ -95,10 +96,19 @@ import {
   previewDiscardDonation,
   prisonerStackTotal,
   resolveItemDefinition,
+  toggleInventoryStackLocked,
+  transferInventoryQuantity,
   troopStackTotals,
   validateTroopDefinitions,
 } from './bannerlordFoundation.ts';
 import { SAVE_VERSION, createSaveData, parseSave, serializeSave } from './saveGame.ts';
+import {
+  buyFromMarket,
+  getMarketSettlement,
+  initializeMarketSettlement,
+  sellAllSurplusToMarket,
+  sellToMarket,
+} from './marketTransaction.ts';
 
 test('initial campaign state creates balanced troops, 211 authentic continental settlements (51 Towns with 2 villages each, 29 Castles with 1 village each) on flat dry plateaus, and 9 lords', () => {
   const state = createInitialCampaignState('Komutan Alparslan', 'noble');
@@ -1452,6 +1462,224 @@ test('P0/P1 Bannerlord foundation: canonical heroes, stacks, troop trees, migrat
     ),
   });
   assert.equal(discardEligibility(weaponPerkState, sword).eligible, true);
+});
+
+test('P2 inventory core: pending transfers are atomic and Discard distributes real troop XP', () => {
+  const state = createInitialCampaignState('Komutan Demirhan', 'noble');
+  const mules = state.inventoryItems?.find((item) => item.definitionId === 'item_sumpter_mule')!;
+
+  // Bekleyen transfer iki listeyi aynı anda değiştirir; UI Cancel'da bu
+  // taslak listeleri atacağı için kampanya girdisi hiç mutasyona uğramaz.
+  const moved = transferInventoryQuantity(state.inventoryItems, [], mules.id, 2);
+  assert.equal(moved.success, true);
+  assert.equal(
+    moved.sourceItems.find((item) => item.definitionId === mules.definitionId)?.quantity,
+    1,
+  );
+  assert.equal(moved.destinationItems[0].quantity, 2);
+  assert.equal(
+    state.inventoryItems?.find((item) => item.definitionId === mules.definitionId)?.quantity,
+    3,
+  );
+
+  const movedBack = transferInventoryQuantity(
+    moved.destinationItems,
+    moved.sourceItems,
+    moved.destinationItems[0].id,
+    1,
+  );
+  assert.equal(movedBack.success, true);
+  assert.equal(movedBack.sourceItems[0].quantity, 1);
+  assert.equal(
+    movedBack.destinationItems.find((item) => item.definitionId === mules.definitionId)?.quantity,
+    2,
+  );
+
+  const invalid = transferInventoryQuantity(state.inventoryItems, [], mules.id, 99);
+  assert.equal(invalid.success, false);
+  assert.strictEqual(invalid.sourceItems, state.inventoryItems);
+
+  const lockedItems = state.inventoryItems?.map((item) =>
+    item.id === mules.id ? { ...item, locked: true } : item,
+  );
+  const lockedMove = transferInventoryQuantity(lockedItems, [], mules.id, 1);
+  assert.equal(lockedMove.success, false);
+  assert.strictEqual(lockedMove.sourceItems, lockedItems);
+
+  // Aynı tanımın kilitli ve açık satırları kilit değişiminde tek yığında birleşir.
+  const sword = state.inventoryItems?.find((item) => item.definitionId === 'item_thamaskene_sword')!;
+  const splitLockItems = [
+    { ...sword, quantity: 1, locked: false },
+    { ...sword, id: `${sword.id}_locked`, quantity: 2, locked: true },
+  ];
+  const mergedLock = toggleInventoryStackLocked(splitLockItems, sword.id);
+  assert.equal(mergedLock.success, true);
+  assert.equal(mergedLock.items.length, 1);
+  assert.equal(mergedLock.items[0].quantity, 3);
+  assert.equal(mergedLock.items[0].locked, true);
+
+  // Perk yokken atılan silah gerçekten yok olur ama XP üretmez.
+  const plainDiscard = applyDiscardDonation(state, [{ stackId: sword.id, quantity: 1 }]);
+  assert.equal(plainDiscard.success, true);
+  assert.equal(plainDiscard.preview.grossXp, 0);
+  assert.equal(
+    plainDiscard.nextState.inventoryItems?.some((item) => item.definitionId === sword.definitionId),
+    false,
+  );
+  assert.equal(plainDiscard.nextState.troopStacks?.reduce((sum, stack) => sum + stack.xp, 0), 0);
+
+  // Paid in Promise ile zırh yalnız sıradaki kademe kapasitesi kadar XP verir;
+  // 2 acemi × 50 XP kapasite varken 300 XP'nin 200'ü boşa gider.
+  const armor = state.inventoryItems?.find((item) => item.definitionId === 'item_cataphract_armor')!;
+  const armorPerkState = ensureBannerlordFoundation({
+    ...state,
+    roster: { militia: 2, archer: 0, cavalry: 0, guard: 0 },
+    troopStacks: [{ troopId: 'player_recruit', count: 2, wounded: 0, xp: 0 }],
+    heroes: state.heroes?.map((hero) =>
+      hero.id === PLAYER_HERO_ID
+        ? { ...hero, perks: [...hero.perks, 'paid_in_promise'] }
+        : hero,
+    ),
+  });
+  const donated = applyDiscardDonation(armorPerkState, [{ stackId: armor.id, quantity: 1 }]);
+  assert.equal(donated.success, true);
+  assert.equal(donated.preview.grossXp, 300);
+  assert.equal(donated.preview.acceptedXp, 100);
+  assert.equal(donated.preview.overflowXp, 200);
+  assert.deepEqual(donated.distribution, [
+    { troopId: 'player_recruit', xpBefore: 0, xpApplied: 100, xpAfter: 100, capacityBefore: 100 },
+  ]);
+  assert.equal(donated.nextState.troopStacks?.[0].xp, 100);
+  assert.equal(
+    donated.nextState.inventoryItems?.some((item) => item.definitionId === armor.definitionId),
+    false,
+  );
+  assert.deepEqual(troopStackTotals(donated.nextState.troopStacks), donated.nextState.roster);
+
+  // Kilitli seçim veya yinelenen seçimle taşan adet bütün işlemi geri alır.
+  const lockedArmorState = {
+    ...armorPerkState,
+    inventoryItems: armorPerkState.inventoryItems?.map((item) =>
+      item.id === armor.id ? { ...item, locked: true } : item,
+    ),
+  };
+  const lockedDiscard = applyDiscardDonation(lockedArmorState, [{ stackId: armor.id, quantity: 1 }]);
+  assert.equal(lockedDiscard.success, false);
+  assert.strictEqual(lockedDiscard.nextState, lockedArmorState);
+
+  const duplicateOverflow = applyDiscardDonation(armorPerkState, [
+    { stackId: armor.id, quantity: 1 },
+    { stackId: armor.id, quantity: 1 },
+  ]);
+  assert.equal(duplicateOverflow.success, false);
+  assert.strictEqual(duplicateOverflow.nextState, armorPerkState);
+});
+
+test('P2 market draft: persistent stock and merchant gold move atomically with player gold', () => {
+  const state = { ...createInitialCampaignState('Komutan Demirhan', 'noble'), gold: 20_000 };
+  const town = state.settlements.find((settlement) => settlement.type === 'TOWN')!;
+
+  const initialized = initializeMarketSettlement(state, town.id);
+  const initializedAgain = initializeMarketSettlement(initialized, town.id);
+  assert.deepEqual(initializedAgain, initialized);
+  const market = getMarketSettlement(initialized, town.id)!;
+  assert.equal(market.visited, true);
+  assert.ok((market.merchantGold ?? 0) > 0);
+  assert.ok(Object.values(market.marketStock ?? {}).some((quantity) => quantity >= 2));
+
+  // App yerleşime girişte önce `visited` yazar; bu sıra ilk pazar stoğunu
+  // boş bir nesneyle ezip tezgahı ıssız bırakmamalıdır (tarayıcı regresyonu).
+  const visitedBeforeMarket = {
+    ...state,
+    settlements: state.settlements.map((settlement) =>
+      settlement.id === town.id ? { ...settlement, visited: true } : settlement,
+    ),
+  };
+  const initializedAfterVisit = initializeMarketSettlement(visitedBeforeMarket, town.id);
+  assert.ok(
+    Object.keys(getMarketSettlement(initializedAfterVisit, town.id)?.marketStock ?? {}).length > 0,
+  );
+
+  const [buyDefinitionId, stockBefore] = Object.entries(market.marketStock ?? {}).find(
+    ([definitionId, quantity]) =>
+      quantity >= 2 &&
+      !['mkt_grain_sack', 'mkt_cured_meat', 'mkt_smoked_fish', 'mkt_cheese_wheel'].includes(
+        definitionId,
+      ),
+  )!;
+  const inventoryQuantityBefore = inventoryTotalQuantity(initialized.inventoryItems);
+  const bought = buyFromMarket(initialized, town.id, buyDefinitionId, 2);
+  assert.equal(bought.success, true);
+  assert.equal(bought.nextState.gold, initialized.gold - bought.totalPrice);
+  assert.equal(inventoryTotalQuantity(bought.nextState.inventoryItems), inventoryQuantityBefore + 2);
+  const marketAfterBuy = getMarketSettlement(bought.nextState, town.id)!;
+  assert.equal(marketAfterBuy.marketStock?.[buyDefinitionId], stockBefore - 2);
+  assert.equal(marketAfterBuy.merchantGold, (market.merchantGold ?? 0) + bought.totalPrice);
+
+  // Fonksiyon girdisi değişmez; modal Cancel'da taslağı atmak bu yüzden yeterlidir.
+  assert.equal(initialized.gold, 20_000);
+  assert.equal(getMarketSettlement(initialized, town.id)?.marketStock?.[buyDefinitionId], stockBefore);
+
+  // Satış, gösterilen birim fiyatın aynısını öder ve malı kalıcı stoğa geri koyar.
+  const armor = initialized.inventoryItems?.find(
+    (item) => item.definitionId === 'item_cataphract_armor',
+  )!;
+  const armorStockBefore = market.marketStock?.[armor.definitionId!] ?? 0;
+  const sold = sellToMarket(initialized, town.id, armor.id, 1);
+  assert.equal(sold.success, true);
+  assert.equal(sold.nextState.gold, initialized.gold + sold.totalPrice);
+  assert.equal(sold.totalPrice, sold.unitPrice);
+  assert.equal(
+    sold.nextState.inventoryItems?.some((item) => item.definitionId === armor.definitionId),
+    false,
+  );
+  const marketAfterSell = getMarketSettlement(sold.nextState, town.id)!;
+  assert.equal(marketAfterSell.marketStock?.[armor.definitionId!], armorStockBefore + 1);
+  assert.equal(marketAfterSell.merchantGold, (market.merchantGold ?? 0) - sold.totalPrice);
+  assert.ok(resolveItemDefinition(sold.nextState, armor.definitionId));
+
+  const lockedState = {
+    ...initialized,
+    inventoryItems: initialized.inventoryItems?.map((item) =>
+      item.id === armor.id ? { ...item, locked: true } : item,
+    ),
+  };
+  const lockedSale = sellToMarket(lockedState, town.id, armor.id, 1);
+  assert.equal(lockedSale.success, false);
+  assert.strictEqual(lockedSale.nextState, lockedState);
+
+  const poorMerchantState = {
+    ...initialized,
+    settlements: initialized.settlements.map((settlement) =>
+      settlement.id === town.id ? { ...settlement, merchantGold: 1 } : settlement,
+    ),
+  };
+  const poorSale = sellToMarket(poorMerchantState, town.id, armor.id, 1);
+  assert.equal(poorSale.success, false);
+  assert.strictEqual(poorSale.nextState, poorMerchantState);
+
+  // Toplu satış kilitli satırlara ve ticaret mallarına dokunmadan yığının tamamını satar.
+  const swordDefinitionId = 'item_thamaskene_sword';
+  const sellAllState = {
+    ...initialized,
+    inventoryItems: initialized.inventoryItems?.map((item) => ({
+      ...item,
+      quantity: item.definitionId === swordDefinitionId ? 2 : item.quantity,
+      locked: item.definitionId !== swordDefinitionId,
+    })),
+  };
+  const soldAll = sellAllSurplusToMarket(sellAllState, town.id);
+  assert.equal(soldAll.totalQuantity, 2);
+  assert.equal(soldAll.soldStackCount, 1);
+  assert.ok(soldAll.totalEarned > 0);
+  assert.equal(
+    soldAll.nextState.inventoryItems?.some((item) => item.definitionId === swordDefinitionId),
+    false,
+  );
+  assert.equal(
+    soldAll.nextState.inventoryItems?.some((item) => item.definitionId === armor.definitionId),
+    true,
+  );
 });
 
 

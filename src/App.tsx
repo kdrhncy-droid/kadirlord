@@ -223,6 +223,8 @@ export default function App() {
     isForcedEncounter,
     encounterScenario,
     isEncyclopediaOpen,
+    activeSettlementModal,
+    isMarketModalOpen,
   });
   testStateRef.current = {
     campaign,
@@ -233,6 +235,8 @@ export default function App() {
     isForcedEncounter,
     encounterScenario,
     isEncyclopediaOpen,
+    activeSettlementModal,
+    isMarketModalOpen,
   };
 
   useEffect(() => {
@@ -276,6 +280,25 @@ export default function App() {
             scenario: state.encounterScenario ?? null,
           },
           encyclopediaOpen: state.isEncyclopediaOpen,
+          inventory: (current.inventoryItems ?? []).map((item) => ({
+            id: item.id,
+            definitionId: item.definitionId ?? item.id,
+            quantity: Math.max(1, Math.floor(item.quantity ?? 1)),
+            locked: Boolean(item.locked),
+          })),
+          market: {
+            open: state.isMarketModalOpen,
+            settlementId: state.activeSettlementModal?.id ?? null,
+            merchantGold:
+              current.settlements.find(
+                (settlement) => settlement.id === state.activeSettlementModal?.id,
+              )?.merchantGold ?? null,
+            stock: {
+              ...(current.settlements.find(
+                (settlement) => settlement.id === state.activeSettlementModal?.id,
+              )?.marketStock ?? {}),
+            },
+          },
           counts: {
             lords: current.lords.length,
             settlements: current.settlements.length,
@@ -351,6 +374,23 @@ export default function App() {
       },
       openEncyclopedia: () => setIsEncyclopediaOpen(true),
       closeEncyclopedia: () => setIsEncyclopediaOpen(false),
+      openMarket: (settlementId) => {
+        const current = testStateRef.current.campaign;
+        const settlement = settlementId
+          ? current.settlements.find((candidate) => candidate.id === settlementId)
+          : current.settlements.find((candidate) => candidate.type === 'TOWN');
+        if (!settlement) return false;
+        setCampaign((prev) => ({
+          ...prev,
+          settlements: prev.settlements.map((candidate) =>
+            candidate.id === settlement.id ? { ...candidate, visited: true } : candidate,
+          ),
+        }));
+        setActiveSettlementModal({ ...settlement, visited: true });
+        setIsMarketModalOpen(true);
+        return true;
+      },
+      closeMarket: () => setIsMarketModalOpen(false),
     };
 
     window.__kadirlordTest = api;
@@ -691,6 +731,23 @@ export default function App() {
     }, intervalMs);
     return () => clearInterval(timer);
   }, [gameState, subMode, campaignTimeScale]);
+
+  const handleOpenSettlement = useCallback((settlement: Settlement) => {
+    setCampaign((prev) => {
+      const current = prev.settlements.find((candidate) => candidate.id === settlement.id) ?? settlement;
+      if (current.visited) {
+        setActiveSettlementModal(current);
+        return prev;
+      }
+      const settlements = prev.settlements.map((candidate) =>
+        candidate.id === settlement.id ? { ...candidate, visited: true } : candidate,
+      );
+      setActiveSettlementModal(
+        settlements.find((candidate) => candidate.id === settlement.id) ?? current,
+      );
+      return { ...prev, settlements };
+    });
+  }, []);
 
   const handleUpdatePlayerPos = useCallback(
     (
@@ -1086,9 +1143,7 @@ export default function App() {
         activeSettlementModalId={activeSettlementModal?.id ?? null}
         onSetTimeScale={setCampaignTimeScale}
         onUpdatePlayerPos={handleUpdatePlayerPos}
-        onOpenSettlement={(s) => {
-          setActiveSettlementModal(s);
-        }}
+        onOpenSettlement={handleOpenSettlement}
         onOpenDiplomacy={(l) => {
           const info = classifyEncounterScenario(l, campaign);
           setDialogueLord(l);
@@ -1330,9 +1385,7 @@ export default function App() {
             setActiveOrder(ord);
             sound.playWarhorn();
           }}
-          onOpenSettlement={(s) => {
-            setActiveSettlementModal(s);
-          }}
+          onOpenSettlement={handleOpenSettlement}
           onOpenDiplomacy={(l) => {
             setActiveDiplomacyLord(l);
           }}

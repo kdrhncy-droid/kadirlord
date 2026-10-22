@@ -97,6 +97,18 @@ export interface KadirlordTestSnapshot {
     scenario: EncounterScenario | null;
   };
   encyclopediaOpen: boolean;
+  inventory: Array<{
+    id: string;
+    definitionId: string;
+    quantity: number;
+    locked: boolean;
+  }>;
+  market: {
+    open: boolean;
+    settlementId: string | null;
+    merchantGold: number | null;
+    stock: Record<string, number>;
+  };
   counts: {
     lords: number;
     settlements: number;
@@ -120,6 +132,8 @@ export interface KadirlordTestApi {
   closeDialogue: () => void;
   openEncyclopedia: () => void;
   closeEncyclopedia: () => void;
+  openMarket: (settlementId?: string) => boolean;
+  closeMarket: () => void;
 }
 
 declare global {

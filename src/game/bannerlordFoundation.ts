@@ -31,6 +31,7 @@ import type {
   ItemDefinition,
   ItemStats,
   PrisonerStack,
+  Settlement,
   TroopDefinition,
   TroopRoster,
   TroopStack,
@@ -731,6 +732,253 @@ export function addItemDefinitionToInventory(
     tier: definition.tier,
   });
   return items;
+}
+
+/** Aynı tanım + aynı kilit durumundaki yığınlar tek satırda birleşir. */
+export function inventoryStackKey(item: Pick<InventoryItem, 'id' | 'definitionId' | 'locked'>): string {
+  return `${item.definitionId ?? item.id}|${item.locked ? 'locked' : 'open'}`;
+}
+
+export interface InventoryStackRemovalResult {
+  success: boolean;
+  reason?: string;
+  items: InventoryItem[];
+  removedStack: InventoryItem | null;
+  removedQuantity: number;
+}
+
+function cloneInventoryStack(item: InventoryItem, quantity = inventoryItemQuantity(item)): InventoryItem {
+  return {
+    ...item,
+    definitionId: item.definitionId ?? item.id,
+    quantity: Math.max(0, Math.floor(quantity)),
+    locked: Boolean(item.locked),
+    stats: item.stats ? { ...item.stats } : undefined,
+  };
+}
+
+function mergedUnitValue(
+  current: InventoryItem,
+  incomingUnitValue: number,
+  incomingQuantity: number,
+): number {
+  const currentQuantity = inventoryItemQuantity(current);
+  const totalQuantity = currentQuantity + incomingQuantity;
+  if (totalQuantity <= 0) return Math.max(0, Math.round(finiteNumber(current.value, 0)));
+  return Math.max(
+    0,
+    Math.round(
+      (Math.max(0, finiteNumber(current.value, 0)) * currentQuantity +
+        Math.max(0, finiteNumber(incomingUnitValue, 0)) * incomingQuantity) /
+        totalQuantity,
+    ),
+  );
+}
+
+/**
+ * Bir şablon yığınının belirtilen adedini hedef listeye ekler.
+ * Aynı tanım/kilit anahtarı varsa adetler ve birim değer (ağırlıklı ortalama)
+ * birleşir; yoksa çakışmayan kararlı bir yığın kimliği üretilir.
+ */
+export function addInventoryStackQuantity(
+  destinationItems: InventoryItem[] | undefined,
+  template: InventoryItem,
+  quantity: number,
+  options: { unitValue?: number; locked?: boolean } = {},
+): InventoryItem[] {
+  const safeQuantity = Math.max(0, Math.floor(finiteNumber(quantity, 0)));
+  const items = [...(destinationItems ?? [])];
+  if (safeQuantity <= 0) return items;
+
+  const incoming = cloneInventoryStack(template, safeQuantity);
+  incoming.locked = options.locked ?? incoming.locked;
+  const incomingUnitValue = Math.max(
+    0,
+    Math.round(finiteNumber(options.unitValue, finiteNumber(template.value, 0))),
+  );
+  const key = inventoryStackKey(incoming);
+  const existingIndex = items.findIndex((item) => inventoryStackKey(item) === key);
+  if (existingIndex >= 0) {
+    const current = items[existingIndex];
+    items[existingIndex] = {
+      ...cloneInventoryStack(current, inventoryItemQuantity(current) + safeQuantity),
+      value: mergedUnitValue(current, incomingUnitValue, safeQuantity),
+      stats: current.stats ? { ...current.stats } : incoming.stats ? { ...incoming.stats } : undefined,
+    };
+    return items;
+  }
+
+  const definitionId = incoming.definitionId ?? incoming.id;
+  const usedIds = new Set(items.map((item) => item.id));
+  let stackId = incoming.id;
+  if (!stackId || usedIds.has(stackId)) stackId = `stack_${definitionId}`;
+  let suffix = 2;
+  while (usedIds.has(stackId)) {
+    stackId = `stack_${definitionId}_${suffix}`;
+    suffix += 1;
+  }
+
+  items.push({
+    ...incoming,
+    id: stackId,
+    definitionId,
+    quantity: safeQuantity,
+    value: incomingUnitValue,
+  });
+  return items;
+}
+
+/** Bir yığından adet düşürür; doğrulama başarısızsa girdi listesini aynen döndürür. */
+export function removeInventoryStackQuantity(
+  sourceItems: InventoryItem[] | undefined,
+  stackId: string,
+  quantity: number,
+  options: { allowLocked?: boolean } = {},
+): InventoryStackRemovalResult {
+  const items = [...(sourceItems ?? [])];
+  const safeQuantity = Math.floor(finiteNumber(quantity, 0));
+  if (safeQuantity <= 0) {
+    return {
+      success: false,
+      reason: 'Taşınacak adet en az 1 olmalıdır.',
+      items: sourceItems ?? [],
+      removedStack: null,
+      removedQuantity: 0,
+    };
+  }
+
+  const index = items.findIndex((item) => item.id === stackId);
+  if (index < 0) {
+    return {
+      success: false,
+      reason: 'Eşya yığını bulunamadı.',
+      items: sourceItems ?? [],
+      removedStack: null,
+      removedQuantity: 0,
+    };
+  }
+
+  const source = items[index];
+  if (source.locked && !options.allowLocked) {
+    return {
+      success: false,
+      reason: 'Kilitli eşyalar taşınamaz, satılamaz veya atılamaz.',
+      items: sourceItems ?? [],
+      removedStack: null,
+      removedQuantity: 0,
+    };
+  }
+
+  const available = inventoryItemQuantity(source);
+  if (safeQuantity > available) {
+    return {
+      success: false,
+      reason: `Yığında yalnız ${available} adet var.`,
+      items: sourceItems ?? [],
+      removedStack: null,
+      removedQuantity: 0,
+    };
+  }
+
+  const nextItems =
+    safeQuantity === available
+      ? items.filter((_, itemIndex) => itemIndex !== index)
+      : items.map((item, itemIndex) =>
+          itemIndex === index
+            ? cloneInventoryStack(item, available - safeQuantity)
+            : item,
+        );
+
+  return {
+    success: true,
+    items: nextItems,
+    removedStack: cloneInventoryStack(source, safeQuantity),
+    removedQuantity: safeQuantity,
+  };
+}
+
+export interface InventoryTransferResult {
+  success: boolean;
+  reason?: string;
+  sourceItems: InventoryItem[];
+  destinationItems: InventoryItem[];
+  movedStack: InventoryItem | null;
+  movedQuantity: number;
+}
+
+/**
+ * Bannerlord ekranlarının ortak bekleyen-transfer atomu.
+ * Kaynak ile hedef aynı anda güncellenir; doğrulama başarısızsa iki liste de
+ * değişmeden döner. UI bu sonucu yalnız taslak durumda saklar, `Done`da
+ * kampanyaya işler; `Cancel` taslağı atar.
+ */
+export function transferInventoryQuantity(
+  sourceItems: InventoryItem[] | undefined,
+  destinationItems: InventoryItem[] | undefined,
+  stackId: string,
+  quantity: number,
+  options: { allowLocked?: boolean; destinationUnitValue?: number } = {},
+): InventoryTransferResult {
+  const removal = removeInventoryStackQuantity(sourceItems, stackId, quantity, {
+    allowLocked: options.allowLocked,
+  });
+  if (!removal.success || !removal.removedStack) {
+    return {
+      success: false,
+      reason: removal.reason,
+      sourceItems: sourceItems ?? [],
+      destinationItems: destinationItems ?? [],
+      movedStack: null,
+      movedQuantity: 0,
+    };
+  }
+
+  return {
+    success: true,
+    sourceItems: removal.items,
+    destinationItems: addInventoryStackQuantity(
+      destinationItems,
+      removal.removedStack,
+      removal.removedQuantity,
+      { unitValue: options.destinationUnitValue },
+    ),
+    movedStack: removal.removedStack,
+    movedQuantity: removal.removedQuantity,
+  };
+}
+
+/**
+ * Bir yığının tamamını kilitler/kilidini açar. Karşı kilit durumunda aynı
+ * tanım varsa iki yığın birleşir; böylece kanonik listede aynı tanımdan en
+ * fazla bir kilitli ve bir açık satır kalır.
+ */
+export function toggleInventoryStackLocked(
+  sourceItems: InventoryItem[] | undefined,
+  stackId: string,
+): { success: boolean; reason?: string; items: InventoryItem[]; stack: InventoryItem | null } {
+  const items = [...(sourceItems ?? [])];
+  const index = items.findIndex((item) => item.id === stackId);
+  if (index < 0) {
+    return {
+      success: false,
+      reason: 'Eşya yığını bulunamadı.',
+      items: sourceItems ?? [],
+      stack: null,
+    };
+  }
+
+  const source = cloneInventoryStack(items[index]);
+  const nextLocked = !source.locked;
+  const remaining = items.filter((_, itemIndex) => itemIndex !== index);
+  const nextItems = addInventoryStackQuantity(remaining, source, inventoryItemQuantity(source), {
+    locked: nextLocked,
+  });
+  const key = `${source.definitionId ?? source.id}|${nextLocked ? 'locked' : 'open'}`;
+  return {
+    success: true,
+    items: nextItems,
+    stack: nextItems.find((item) => inventoryStackKey(item) === key) ?? null,
+  };
 }
 
 function makeSkills(
@@ -1569,6 +1817,160 @@ export function previewDiscardDonation(
   };
 }
 
+export interface DiscardStackSelection {
+  stackId: string;
+  quantity: number;
+}
+
+export interface DiscardDistributionLine {
+  troopId: string;
+  xpBefore: number;
+  xpApplied: number;
+  xpAfter: number;
+  capacityBefore: number;
+}
+
+export interface ApplyDiscardResult {
+  success: boolean;
+  reason?: string;
+  nextState: CampaignState;
+  preview: DiscardPreview;
+  distribution: DiscardDistributionLine[];
+  removedSelections: DiscardStackSelection[];
+}
+
+const EMPTY_DISCARD_PREVIEW: DiscardPreview = {
+  lines: [],
+  grossXp: 0,
+  capacityXp: 0,
+  acceptedXp: 0,
+  overflowXp: 0,
+  exceedsCapacity: false,
+};
+
+/**
+ * Discard seçimini gerçekten uygular: kilitsiz yığınlardan adet düşer ve
+ * uygun perk varsa XP'yi, yalnız bir sonraki kademeye ilerleyebilen birlik
+ * yığınlarının kalan kapasitesi kadar dağıtır. Taşan XP Bannerlord'daki gibi
+ * boşa gider. Herhangi bir seçim geçersizse hiçbir alan değişmez.
+ */
+export function applyDiscardDonation(
+  state: CampaignState,
+  selections: DiscardStackSelection[],
+): ApplyDiscardResult {
+  const fail = (reason: string, preview: DiscardPreview = EMPTY_DISCARD_PREVIEW): ApplyDiscardResult => ({
+    success: false,
+    reason,
+    nextState: state,
+    preview,
+    distribution: [],
+    removedSelections: [],
+  });
+
+  const aggregated = new Map<string, number>();
+  for (const selection of selections) {
+    const quantity = Math.floor(finiteNumber(selection.quantity, 0));
+    if (!selection.stackId || quantity <= 0) return fail('Atılacak her yığının adedi en az 1 olmalıdır.');
+    aggregated.set(selection.stackId, (aggregated.get(selection.stackId) ?? 0) + quantity);
+  }
+  if (aggregated.size === 0) return fail('Atılacak eşya seçilmedi.');
+
+  const normalized = ensureBannerlordFoundation(state);
+  const inventoryById = new Map((normalized.inventoryItems ?? []).map((item) => [item.id, item]));
+  const definitionSelections = new Map<string, number>();
+
+  for (const [stackId, quantity] of aggregated) {
+    const stack = inventoryById.get(stackId);
+    if (!stack) return fail('Atılacak eşyalardan biri envanterde bulunamadı.');
+    if (stack.locked) return fail('Kilitli eşyalar atılamaz. Önce kilidini kaldır.');
+    if (quantity > inventoryItemQuantity(stack)) {
+      return fail(`"${stack.name}" yığınında yalnız ${inventoryItemQuantity(stack)} adet var.`);
+    }
+    const definitionId = stack.definitionId ?? stack.id;
+    definitionSelections.set(definitionId, (definitionSelections.get(definitionId) ?? 0) + quantity);
+  }
+
+  const preview = previewDiscardDonation(
+    normalized,
+    [...definitionSelections].map(([definitionId, quantity]) => ({ definitionId, quantity })),
+  );
+
+  let remainingItems = normalized.inventoryItems ?? [];
+  for (const [stackId, quantity] of aggregated) {
+    const removal = removeInventoryStackQuantity(remainingItems, stackId, quantity);
+    if (!removal.success) return fail(removal.reason ?? 'Eşya atılamadı.', preview);
+    remainingItems = removal.items;
+  }
+
+  let xpLeft = preview.acceptedXp;
+  const distribution: DiscardDistributionLine[] = [];
+  const nextTroopStacks = sanitizeTroopStacks(normalized.troopStacks).map((stack) => {
+    if (xpLeft <= 0) return stack;
+    const definition = getTroopDefinition(stack.troopId);
+    if (!definition || definition.upgrades.length === 0) return stack;
+    const capacityBefore = Math.max(0, stack.count * definition.upgradeXp - stack.xp);
+    const xpApplied = Math.min(xpLeft, capacityBefore);
+    if (xpApplied <= 0) return stack;
+    xpLeft -= xpApplied;
+    const nextStack = { ...stack, xp: stack.xp + xpApplied };
+    distribution.push({
+      troopId: stack.troopId,
+      xpBefore: stack.xp,
+      xpApplied,
+      xpAfter: nextStack.xp,
+      capacityBefore,
+    });
+    return nextStack;
+  });
+
+  return {
+    success: true,
+    nextState: ensureBannerlordFoundation({
+      ...normalized,
+      inventoryItems: remainingItems,
+      troopStacks: nextTroopStacks,
+    }),
+    preview,
+    distribution,
+    removedSelections: [...aggregated].map(([stackId, quantity]) => ({ stackId, quantity })),
+  };
+}
+
+function sanitizeSettlementMarket(
+  settlement: Settlement,
+  validDefinitionIds: Set<string>,
+): Settlement {
+  const hasMarketFields =
+    settlement.marketStock !== undefined ||
+    settlement.merchantGold !== undefined ||
+    settlement.visited !== undefined;
+  if (!hasMarketFields) return settlement;
+
+  const next: Settlement = {
+    ...settlement,
+    merchantGold:
+      settlement.merchantGold === undefined
+        ? undefined
+        : clampInt(settlement.merchantGold, 0, 10_000_000, 0),
+    visited: settlement.visited === undefined ? undefined : Boolean(settlement.visited),
+  };
+
+  // Yalnız ziyaret bilgisi yazılmış bir yerleşimde stok alanı uydurma `{}`a
+  // dönüşmemeli; aksi hâlde ilk pazar başlatıcısı bunu gerçek stok sanır.
+  if (settlement.marketStock && typeof settlement.marketStock === 'object') {
+    const marketStock: Record<string, number> = {};
+    for (const [definitionId, quantity] of Object.entries(settlement.marketStock)) {
+      if (!validDefinitionIds.has(definitionId)) continue;
+      marketStock[definitionId] = clampInt(quantity, 0, 9999, 0);
+    }
+    next.marketStock = marketStock;
+  } else {
+    delete next.marketStock;
+  }
+
+  return next;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Ana göç kapısı
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1604,11 +2006,25 @@ export function ensureBannerlordFoundation(state: CampaignState): CampaignState 
     });
   }
 
+  const validDefinitionIds = new Set<string>([
+    ...ITEM_DEFINITION_BY_ID.keys(),
+    ...customDefinitions.keys(),
+  ]);
+  const settlements = (state.settlements ?? []).map((settlement) =>
+    sanitizeSettlementMarket(settlement, validDefinitionIds),
+  );
+  for (const settlement of settlements) {
+    for (const definitionId of Object.keys(settlement.marketStock ?? {})) {
+      if (customDefinitions.has(definitionId)) usedCustomDefinitionIds.add(definitionId);
+    }
+  }
+
   const roster = sanitizeRoster(state.roster);
   const prisoners = positiveInt(state.prisoners);
 
   return {
     ...state,
+    settlements,
     roster,
     prisoners,
     foundationVersion: FOUNDATION_VERSION,
