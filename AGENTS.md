@@ -4,6 +4,12 @@ Bu dosya, projede çalışan kod ajanlarının ilk okuması gereken kısa proje
 hafızasıdır. Ayrıntılar için `YAPILACAKLAR_LISTESI.md` ve `docs/` altındaki
 araştırma/denetim belgelerine bakın.
 
+> **📌 Aktif görev kaynağı (2026-10-22 konsolidasyonu):** Açık işlerin **tek ve güncel listesi**
+> [`YAPILACAKLAR_LISTESI.md`](YAPILACAKLAR_LISTESI.md)'dir. Bu dosyadaki ve `docs/*` içindeki
+> görev anlatımları tarihî nottur; yeni görev önce kanonik listeye eklenir, kapatma da yalnız
+> oradan yapılır. Bağlayıcı sıra kanonik listede tanımlıdır: P2 → P3 → P4 → P5 → P6 →
+> teknik/içerik borçları → **P7 performans (sondan bir önceki)** → **P8 kayıt (en son)**.
+
 ## Oyun nedir?
 
 **Sancak-ı Kalradya: Taht ve Kılıç**, Mount & Blade II: Bannerlord'dan

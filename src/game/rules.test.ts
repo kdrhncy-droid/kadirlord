@@ -41,6 +41,9 @@ import {
   buyMarketplaceItem,
   sellMarketplaceItem,
   unequipEquipmentSlot,
+  type CampaignState,
+  type InventoryItem,
+  type TroopStack,
 } from './rules.ts';
 import {
   CONTINENTAL_BRIDGES,
@@ -83,9 +86,11 @@ import {
   TROOP_DEFINITIONS,
   calculateLearningHardCap,
   calculateLearningSoftCap,
+  applyDiscardDonation,
   discardEligibility,
   discardXpCapForTier,
   ensureBannerlordFoundation,
+  equipInventoryItemForHero,
   getPlayerHero,
   getRoleHero,
   inventoryTotalQuantity,
@@ -95,10 +100,63 @@ import {
   previewDiscardDonation,
   prisonerStackTotal,
   resolveItemDefinition,
+  setHeroActiveEquipmentSet,
+  toggleInventoryStackLocked,
+  transferInventoryQuantity,
   troopStackTotals,
+  unequipHeroEquipmentSlot,
   validateTroopDefinitions,
 } from './bannerlordFoundation.ts';
 import { SAVE_VERSION, createSaveData, parseSave, serializeSave } from './saveGame.ts';
+import {
+  buyFromMarket,
+  getMarketSettlement,
+  initializeMarketSettlement,
+  sellAllSurplusToMarket,
+  sellToMarket,
+} from './marketTransaction.ts';
+import {
+  commitBattleLoot,
+  leaveAllUnlockedToLoot,
+  prepareBattleLoot,
+  previewLootDiscard,
+  takeAllLoot,
+  transferInventoryToLoot,
+  transferLootToInventory,
+} from './lootTransaction.ts';
+import {
+  calculatePartyCarryCapacity,
+  calculatePartyLogistics,
+  countPartyAnimals,
+  getPlayerPartyLogistics,
+} from './logistics.ts';
+import {
+  advanceDailyPartyFood,
+  calculateDailyFoodDemand,
+  calculateVarietyMoraleBonus,
+  consumePartyFood,
+  getPartyFoodSummary,
+  getPartyFoodUnits,
+  isEdibleFoodItem,
+} from './foodSystem.ts';
+import {
+  advanceDailyPartyHealthAndPrisoners,
+  calculatePartyLimitBreakdown,
+  calculatePrisonerLimitBreakdown,
+  dismissTroopStack,
+  getPartyLimit,
+  getPrisonerLimit,
+  getTroopUpgradeOptions,
+  ransomPrisonerStack,
+  recruitPrisonerStack,
+  transferTroopFromGarrison,
+  transferTroopToGarrison,
+  upgradeTroop,
+} from './partySystem.ts';
+import {
+  troopStackTotal,
+  troopStackWoundedTotal,
+} from './bannerlordFoundation.ts';
 
 test('initial campaign state creates balanced troops, 211 authentic continental settlements (51 Towns with 2 villages each, 29 Castles with 1 village each) on flat dry plateaus, and 9 lords', () => {
   const state = createInitialCampaignState('Komutan Alparslan', 'noble');
@@ -1453,6 +1511,759 @@ test('P0/P1 Bannerlord foundation: canonical heroes, stacks, troop trees, migrat
   });
   assert.equal(discardEligibility(weaponPerkState, sword).eligible, true);
 });
+
+test('P2 inventory core: pending transfers are atomic and Discard distributes real troop XP', () => {
+  const state = createInitialCampaignState('Komutan Demirhan', 'noble');
+  const mules = state.inventoryItems?.find((item) => item.definitionId === 'item_sumpter_mule')!;
+
+  // Bekleyen transfer iki listeyi aynı anda değiştirir; UI Cancel'da bu
+  // taslak listeleri atacağı için kampanya girdisi hiç mutasyona uğramaz.
+  const moved = transferInventoryQuantity(state.inventoryItems, [], mules.id, 2);
+  assert.equal(moved.success, true);
+  assert.equal(
+    moved.sourceItems.find((item) => item.definitionId === mules.definitionId)?.quantity,
+    1,
+  );
+  assert.equal(moved.destinationItems[0].quantity, 2);
+  assert.equal(
+    state.inventoryItems?.find((item) => item.definitionId === mules.definitionId)?.quantity,
+    3,
+  );
+
+  const movedBack = transferInventoryQuantity(
+    moved.destinationItems,
+    moved.sourceItems,
+    moved.destinationItems[0].id,
+    1,
+  );
+  assert.equal(movedBack.success, true);
+  assert.equal(movedBack.sourceItems[0].quantity, 1);
+  assert.equal(
+    movedBack.destinationItems.find((item) => item.definitionId === mules.definitionId)?.quantity,
+    2,
+  );
+
+  const invalid = transferInventoryQuantity(state.inventoryItems, [], mules.id, 99);
+  assert.equal(invalid.success, false);
+  assert.strictEqual(invalid.sourceItems, state.inventoryItems);
+
+  const lockedItems = state.inventoryItems?.map((item) =>
+    item.id === mules.id ? { ...item, locked: true } : item,
+  );
+  const lockedMove = transferInventoryQuantity(lockedItems, [], mules.id, 1);
+  assert.equal(lockedMove.success, false);
+  assert.strictEqual(lockedMove.sourceItems, lockedItems);
+
+  // Aynı tanımın kilitli ve açık satırları kilit değişiminde tek yığında birleşir.
+  const sword = state.inventoryItems?.find((item) => item.definitionId === 'item_thamaskene_sword')!;
+  const splitLockItems = [
+    { ...sword, quantity: 1, locked: false },
+    { ...sword, id: `${sword.id}_locked`, quantity: 2, locked: true },
+  ];
+  const mergedLock = toggleInventoryStackLocked(splitLockItems, sword.id);
+  assert.equal(mergedLock.success, true);
+  assert.equal(mergedLock.items.length, 1);
+  assert.equal(mergedLock.items[0].quantity, 3);
+  assert.equal(mergedLock.items[0].locked, true);
+
+  // Perk yokken atılan silah gerçekten yok olur ama XP üretmez.
+  const plainDiscard = applyDiscardDonation(state, [{ stackId: sword.id, quantity: 1 }]);
+  assert.equal(plainDiscard.success, true);
+  assert.equal(plainDiscard.preview.grossXp, 0);
+  assert.equal(
+    plainDiscard.nextState.inventoryItems?.some((item) => item.definitionId === sword.definitionId),
+    false,
+  );
+  assert.equal(plainDiscard.nextState.troopStacks?.reduce((sum, stack) => sum + stack.xp, 0), 0);
+
+  // Paid in Promise ile zırh yalnız sıradaki kademe kapasitesi kadar XP verir;
+  // 2 acemi × 50 XP kapasite varken 300 XP'nin 200'ü boşa gider.
+  const armor = state.inventoryItems?.find((item) => item.definitionId === 'item_cataphract_armor')!;
+  const armorPerkState = ensureBannerlordFoundation({
+    ...state,
+    roster: { militia: 2, archer: 0, cavalry: 0, guard: 0 },
+    troopStacks: [{ troopId: 'player_recruit', count: 2, wounded: 0, xp: 0 }],
+    heroes: state.heroes?.map((hero) =>
+      hero.id === PLAYER_HERO_ID
+        ? { ...hero, perks: [...hero.perks, 'paid_in_promise'] }
+        : hero,
+    ),
+  });
+  const donated = applyDiscardDonation(armorPerkState, [{ stackId: armor.id, quantity: 1 }]);
+  assert.equal(donated.success, true);
+  assert.equal(donated.preview.grossXp, 300);
+  assert.equal(donated.preview.acceptedXp, 100);
+  assert.equal(donated.preview.overflowXp, 200);
+  assert.deepEqual(donated.distribution, [
+    { troopId: 'player_recruit', xpBefore: 0, xpApplied: 100, xpAfter: 100, capacityBefore: 100 },
+  ]);
+  assert.equal(donated.nextState.troopStacks?.[0].xp, 100);
+  assert.equal(
+    donated.nextState.inventoryItems?.some((item) => item.definitionId === armor.definitionId),
+    false,
+  );
+  assert.deepEqual(troopStackTotals(donated.nextState.troopStacks), donated.nextState.roster);
+
+  // Kilitli seçim veya yinelenen seçimle taşan adet bütün işlemi geri alır.
+  const lockedArmorState = {
+    ...armorPerkState,
+    inventoryItems: armorPerkState.inventoryItems?.map((item) =>
+      item.id === armor.id ? { ...item, locked: true } : item,
+    ),
+  };
+  const lockedDiscard = applyDiscardDonation(lockedArmorState, [{ stackId: armor.id, quantity: 1 }]);
+  assert.equal(lockedDiscard.success, false);
+  assert.strictEqual(lockedDiscard.nextState, lockedArmorState);
+
+  const duplicateOverflow = applyDiscardDonation(armorPerkState, [
+    { stackId: armor.id, quantity: 1 },
+    { stackId: armor.id, quantity: 1 },
+  ]);
+  assert.equal(duplicateOverflow.success, false);
+  assert.strictEqual(duplicateOverflow.nextState, armorPerkState);
+});
+
+test('P2 market draft: persistent stock and merchant gold move atomically with player gold', () => {
+  const state = { ...createInitialCampaignState('Komutan Demirhan', 'noble'), gold: 20_000 };
+  const town = state.settlements.find((settlement) => settlement.type === 'TOWN')!;
+
+  const initialized = initializeMarketSettlement(state, town.id);
+  const initializedAgain = initializeMarketSettlement(initialized, town.id);
+  assert.deepEqual(initializedAgain, initialized);
+  const market = getMarketSettlement(initialized, town.id)!;
+  assert.equal(market.visited, true);
+  assert.ok((market.merchantGold ?? 0) > 0);
+  assert.ok(Object.values(market.marketStock ?? {}).some((quantity) => quantity >= 2));
+
+  // App yerleşime girişte önce `visited` yazar; bu sıra ilk pazar stoğunu
+  // boş bir nesneyle ezip tezgahı ıssız bırakmamalıdır (tarayıcı regresyonu).
+  const visitedBeforeMarket = {
+    ...state,
+    settlements: state.settlements.map((settlement) =>
+      settlement.id === town.id ? { ...settlement, visited: true } : settlement,
+    ),
+  };
+  const initializedAfterVisit = initializeMarketSettlement(visitedBeforeMarket, town.id);
+  assert.ok(
+    Object.keys(getMarketSettlement(initializedAfterVisit, town.id)?.marketStock ?? {}).length > 0,
+  );
+
+  const [buyDefinitionId, stockBefore] = Object.entries(market.marketStock ?? {}).find(
+    ([definitionId, quantity]) =>
+      quantity >= 2 &&
+      !['mkt_grain_sack', 'mkt_cured_meat', 'mkt_smoked_fish', 'mkt_cheese_wheel'].includes(
+        definitionId,
+      ),
+  )!;
+  const inventoryQuantityBefore = inventoryTotalQuantity(initialized.inventoryItems);
+  const bought = buyFromMarket(initialized, town.id, buyDefinitionId, 2);
+  assert.equal(bought.success, true);
+  assert.equal(bought.nextState.gold, initialized.gold - bought.totalPrice);
+  assert.equal(inventoryTotalQuantity(bought.nextState.inventoryItems), inventoryQuantityBefore + 2);
+  const marketAfterBuy = getMarketSettlement(bought.nextState, town.id)!;
+  assert.equal(marketAfterBuy.marketStock?.[buyDefinitionId], stockBefore - 2);
+  assert.equal(marketAfterBuy.merchantGold, (market.merchantGold ?? 0) + bought.totalPrice);
+
+  // Fonksiyon girdisi değişmez; modal Cancel'da taslağı atmak bu yüzden yeterlidir.
+  assert.equal(initialized.gold, 20_000);
+  assert.equal(getMarketSettlement(initialized, town.id)?.marketStock?.[buyDefinitionId], stockBefore);
+
+  // Satış, gösterilen birim fiyatın aynısını öder ve malı kalıcı stoğa geri koyar.
+  const armor = initialized.inventoryItems?.find(
+    (item) => item.definitionId === 'item_cataphract_armor',
+  )!;
+  const armorStockBefore = market.marketStock?.[armor.definitionId!] ?? 0;
+  const sold = sellToMarket(initialized, town.id, armor.id, 1);
+  assert.equal(sold.success, true);
+  assert.equal(sold.nextState.gold, initialized.gold + sold.totalPrice);
+  assert.equal(sold.totalPrice, sold.unitPrice);
+  assert.equal(
+    sold.nextState.inventoryItems?.some((item) => item.definitionId === armor.definitionId),
+    false,
+  );
+  const marketAfterSell = getMarketSettlement(sold.nextState, town.id)!;
+  assert.equal(marketAfterSell.marketStock?.[armor.definitionId!], armorStockBefore + 1);
+  assert.equal(marketAfterSell.merchantGold, (market.merchantGold ?? 0) - sold.totalPrice);
+  assert.ok(resolveItemDefinition(sold.nextState, armor.definitionId));
+
+  const lockedState = {
+    ...initialized,
+    inventoryItems: initialized.inventoryItems?.map((item) =>
+      item.id === armor.id ? { ...item, locked: true } : item,
+    ),
+  };
+  const lockedSale = sellToMarket(lockedState, town.id, armor.id, 1);
+  assert.equal(lockedSale.success, false);
+  assert.strictEqual(lockedSale.nextState, lockedState);
+
+  const poorMerchantState = {
+    ...initialized,
+    settlements: initialized.settlements.map((settlement) =>
+      settlement.id === town.id ? { ...settlement, merchantGold: 1 } : settlement,
+    ),
+  };
+  const poorSale = sellToMarket(poorMerchantState, town.id, armor.id, 1);
+  assert.equal(poorSale.success, false);
+  assert.strictEqual(poorSale.nextState, poorMerchantState);
+
+  // Toplu satış kilitli satırlara ve ticaret mallarına dokunmadan yığının tamamını satar.
+  const swordDefinitionId = 'item_thamaskene_sword';
+  const sellAllState = {
+    ...initialized,
+    inventoryItems: initialized.inventoryItems?.map((item) => ({
+      ...item,
+      quantity: item.definitionId === swordDefinitionId ? 2 : item.quantity,
+      locked: item.definitionId !== swordDefinitionId,
+    })),
+  };
+  const soldAll = sellAllSurplusToMarket(sellAllState, town.id);
+  assert.equal(soldAll.totalQuantity, 2);
+  assert.equal(soldAll.soldStackCount, 1);
+  assert.ok(soldAll.totalEarned > 0);
+  assert.equal(
+    soldAll.nextState.inventoryItems?.some((item) => item.definitionId === swordDefinitionId),
+    false,
+  );
+  assert.equal(
+    soldAll.nextState.inventoryItems?.some((item) => item.definitionId === armor.definitionId),
+    true,
+  );
+});
+
+test('P2 hero equipment: companions, civilian legality and exact stack returns share one core', () => {
+  const state = createInitialCampaignState('Komutan Demirhan', 'noble');
+  const companionId = COMPANION_HERO_IDS.Aybars;
+  const sword = state.inventoryItems?.find(
+    (item) => item.definitionId === 'item_thamaskene_sword',
+  )!;
+  const steed = state.inventoryItems?.find((item) => item.definitionId === 'item_noble_steed')!;
+
+  const equipped = equipInventoryItemForHero(state, companionId, sword.id, 'BATTLE');
+  assert.equal(equipped.success, true);
+  assert.equal(
+    equipped.nextState.heroes?.find((hero) => hero.id === companionId)?.equipment.BATTLE.WEAPON1,
+    sword.definitionId,
+  );
+  assert.equal(
+    equipped.nextState.inventoryItems?.some((item) => item.definitionId === sword.definitionId),
+    false,
+  );
+
+  const unequipped = unequipHeroEquipmentSlot(
+    equipped.nextState,
+    companionId,
+    'WEAPON1',
+    'BATTLE',
+  );
+  assert.equal(unequipped.success, true);
+  assert.equal(
+    unequipped.nextState.heroes?.find((hero) => hero.id === companionId)?.equipment.BATTLE.WEAPON1,
+    null,
+  );
+  assert.equal(
+    unequipped.nextState.inventoryItems?.find((item) => item.definitionId === sword.definitionId)
+      ?.quantity,
+    1,
+  );
+
+  // Sivil olmayan ağır silah sivil sete giremez ve başarısız işlem girdiyi aynen döndürür.
+  const illegalCivilian = equipInventoryItemForHero(state, companionId, sword.id, 'CIVILIAN');
+  assert.equal(illegalCivilian.success, false);
+  assert.strictEqual(illegalCivilian.nextState, state);
+
+  const civilianMount = equipInventoryItemForHero(state, companionId, steed.id, 'CIVILIAN');
+  assert.equal(civilianMount.success, true);
+  assert.equal(
+    civilianMount.nextState.heroes?.find((hero) => hero.id === companionId)?.equipment.CIVILIAN.MOUNT,
+    steed.definitionId,
+  );
+  assert.equal(
+    civilianMount.nextState.heroes?.find((hero) => hero.id === companionId)?.activeEquipmentSet,
+    'BATTLE',
+  );
+
+  const activated = setHeroActiveEquipmentSet(civilianMount.nextState, companionId, 'CIVILIAN');
+  assert.equal(activated.success, true);
+  assert.equal(
+    activated.nextState.heroes?.find((hero) => hero.id === companionId)?.activeEquipmentSet,
+    'CIVILIAN',
+  );
+  assert.equal(activated.nextState.outfitMode, 'BATTLE');
+
+  // Oyuncu takasında önceki silah kaybolmaz; bir adet olarak envantere döner.
+  const playerBefore = getPlayerHero(state)!;
+  const previousWeaponId = playerBefore.equipment.BATTLE.WEAPON1!;
+  const playerEquipped = equipInventoryItemForHero(state, PLAYER_HERO_ID, sword.id, 'BATTLE');
+  assert.equal(playerEquipped.success, true);
+  assert.equal(playerEquipped.returnedDefinitionId, previousWeaponId);
+  assert.equal(getPlayerHero(playerEquipped.nextState)?.equipment.BATTLE.WEAPON1, sword.definitionId);
+  assert.equal(
+    playerEquipped.nextState.inventoryItems?.find(
+      (item) => item.definitionId === previousWeaponId,
+    )?.quantity,
+    1,
+  );
+  assert.ok(playerEquipped.nextState.equipment?.WEAPON1.includes(sword.name));
+});
+
+test('P2 battle loot: pending loot preparation, selection, take all, discard XP and atomic commit', () => {
+  const initial = createInitialCampaignState('Komutan Baybars', 'noble');
+  // 1. Prepare pending battle loot
+  const pending = prepareBattleLoot(initial, {
+    enemyLordId: 'lord-kargi',
+    enemiesDefeated: 24,
+    losses: { militia: 2 },
+    isSiege: false,
+    seedKey: 'test-loot-seed-1',
+  });
+
+  assert.equal(pending.enemyLordId, 'lord-kargi');
+  assert.equal(pending.enemiesDefeatedCount, 24);
+  assert.ok(pending.goldLoot > 0);
+  assert.ok(pending.renownGain > 0);
+  assert.ok(pending.prisonersGain > 0);
+  assert.ok(pending.lootItems.length > 0);
+
+  // 2. Transfer item from loot to inventory
+  const firstLoot = pending.lootItems[0];
+  const initialInvCount = initial.inventoryItems?.length ?? 0;
+  const transferRes = transferLootToInventory(
+    pending.lootItems,
+    initial.inventoryItems ?? [],
+    firstLoot.id,
+    1,
+  );
+  assert.equal(transferRes.success, true);
+  assert.equal(transferRes.movedQuantity, 1);
+  assert.equal(
+    transferRes.destinationItems.some(
+      (item) => (item.definitionId ?? item.id) === (firstLoot.definitionId ?? firstLoot.id),
+    ),
+    true,
+  );
+
+  // 3. Take all loot
+  const takeAllRes = takeAllLoot(pending.lootItems, initial.inventoryItems ?? []);
+  assert.equal(takeAllRes.nextLoot.length, 0);
+  assert.ok(takeAllRes.movedCount >= pending.lootItems.length);
+  assert.ok(takeAllRes.nextInventory.length >= initialInvCount);
+
+  // 4. Leave all unlocked to loot
+  const leaveRes = leaveAllUnlockedToLoot(takeAllRes.nextInventory, []);
+  assert.ok(leaveRes.nextLoot.length > 0);
+  assert.equal(leaveRes.nextLoot.every((item) => !item.locked), true);
+
+  // 5. Discard XP preview on leftover loot
+  const preview = previewLootDiscard(initial, pending.lootItems);
+  assert.equal(typeof preview.grossXp, 'number');
+  assert.equal(typeof preview.acceptedXp, 'number');
+
+  // 6. Commit battle loot with discard XP
+  const stateWithPerks: CampaignState = {
+    ...initial,
+    heroes: (initial.heroes ?? []).map((h) =>
+      h.id === PLAYER_HERO_ID ? { ...h, perks: ['paid_in_promise', 'giving_hands'] } : h,
+    ),
+  };
+  const commitRes = commitBattleLoot(stateWithPerks, pending, {
+    finalInventoryItems: transferRes.destinationItems,
+    leftoverLootItems: transferRes.sourceItems,
+    applyDiscard: true,
+  });
+
+  assert.equal(commitRes.goldGained, pending.goldLoot);
+  assert.equal(commitRes.nextState.gold, initial.gold + pending.goldLoot);
+  assert.equal(commitRes.nextState.renown, initial.renown + pending.renownGain);
+  assert.equal(commitRes.nextState.battlesWon, initial.battlesWon + 1);
+  assert.equal(commitRes.nextState.roster.militia, Math.max(0, initial.roster.militia - 2));
+  assert.ok(commitRes.nextState.inventoryItems?.length);
+});
+
+test('P2 logistics: single carry capacity and party speed model calculates spare mounts, herd penalty and overburden drag', () => {
+  const state = createInitialCampaignState('Komutan Alparslan', 'noble');
+
+  // 1. Kapasite hesabı: Askerler + Yük hayvanları + Yedek binekler
+  const baseCapacity = calculatePartyCarryCapacity({
+    healthyTroops: 20,
+    inventoryItems: [],
+  });
+  // 40 taban + 20*20 = 440 kg
+  assert.equal(baseCapacity.totalCapacity, 440);
+  assert.equal(baseCapacity.isOverweight, false);
+
+  // 2 katır eklendiğinde (+100 kg/adet): 440 + 200 = 640 kg
+  const packMuleItem: InventoryItem = {
+    id: 'mkt_pack_mule',
+    definitionId: 'mkt_pack_mule',
+    name: 'Kervan Yük Katırı',
+    slot: 'TRADE',
+    category: 'HORSE',
+    quantity: 2,
+    locked: false,
+    value: 160,
+    weight: 0,
+    statBonus: '+100 kg Ordu Taşıma Kapasitesi',
+    civilianLegal: true,
+  };
+  const withMules = calculatePartyCarryCapacity({
+    healthyTroops: 20,
+    inventoryItems: [packMuleItem],
+  });
+  assert.equal(withMules.totalCapacity, 640);
+  assert.equal(withMules.packAnimalsCapacity, 200);
+
+  // 3 yedek binek atı eklendiğinde (+20 kg/adet): 640 + 60 = 700 kg
+  const spareHorseItem: InventoryItem = {
+    id: 'mkt_steppe_steed',
+    definitionId: 'mkt_steppe_steed',
+    name: 'Dayanıklı Bozkır Akıncı Atı',
+    slot: 'MOUNT',
+    category: 'HORSE',
+    quantity: 3,
+    locked: false,
+    value: 440,
+    weight: 0,
+    statBonus: 'Hız: 65 · Manevra: 70 · Can: 210',
+    civilianLegal: true,
+  };
+  const withHorsesAndMules = calculatePartyCarryCapacity({
+    healthyTroops: 20,
+    inventoryItems: [packMuleItem, spareHorseItem],
+  });
+  assert.equal(withHorsesAndMules.totalCapacity, 700);
+  assert.equal(withHorsesAndMules.spareMountsCapacity, 60);
+
+  // pack_mules perki yük hayvanı kapasitesini %20 artırır (200 -> 240)
+  const withPerk = calculatePartyCarryCapacity({
+    healthyTroops: 20,
+    inventoryItems: [packMuleItem, spareHorseItem],
+    perks: ['pack_mules'],
+  });
+  assert.equal(withPerk.packAnimalsCapacity, 240);
+  assert.equal(withPerk.totalCapacity, 740);
+
+  // 2. Aşırı yük (Overburdened) durumu ve hız cezası
+  const heavyArmorItem: InventoryItem = {
+    id: 'heavy_armor_batch',
+    name: 'Ağır Zırh Sandığı',
+    slot: 'BODY',
+    category: 'ARMOR',
+    quantity: 50,
+    locked: false,
+    value: 200,
+    weight: 20, // 50 * 20 = 1000 kg
+    statBonus: '+60 Gövde Zırhı',
+    civilianLegal: false,
+  };
+  const overweightLogistics = calculatePartyLogistics({
+    x: 10,
+    z: 80,
+    healthyTroops: 10, // Kapasite: 40 + 200 = 240 kg, ağırlık = 1000 kg
+    inventoryItems: [heavyArmorItem],
+  });
+  assert.equal(overweightLogistics.capacity.isOverweight, true);
+  assert.ok(overweightLogistics.overburdenPenalty < -1.0, 'Aşırı yük orduyu sert şekilde yavaşlatmalı');
+
+  // 3. Bindirilmiş Yaya Bonusu (Mounted Footmen Bonus)
+  // 15 yaya asker + 0 süvari + 10 yedek binek atı
+  const footmenLogisticsWithoutMounts = calculatePartyLogistics({
+    x: 10,
+    z: 80,
+    healthyTroops: 15,
+    cavalryCount: 0,
+    inventoryItems: [],
+  });
+  const footmenLogisticsWithMounts = calculatePartyLogistics({
+    x: 10,
+    z: 80,
+    healthyTroops: 15,
+    cavalryCount: 0,
+    inventoryItems: [{ ...spareHorseItem, quantity: 10 }],
+  });
+  assert.ok(
+    footmenLogisticsWithMounts.mountedFootmenBonus > 0,
+    'Yedek binek atları yaya askerlere bindirilmiş yaya hız bonusu vermeli',
+  );
+  assert.ok(
+    footmenLogisticsWithMounts.finalSpeed > footmenLogisticsWithoutMounts.finalSpeed,
+    'Atlı yayalara sahip ordu salt yaya ordudan hızlı olmalı',
+  );
+
+  // 4. Sürü Cezası (Herd Penalty)
+  // 5 asker ancak 30 hayvan güdülüyor (kişi başı 1.1'den çok fazla)
+  const herdLogistics = calculatePartyLogistics({
+    x: 10,
+    z: 80,
+    healthyTroops: 5,
+    cavalryCount: 0,
+    inventoryItems: [{ ...spareHorseItem, quantity: 30 }],
+  });
+  assert.ok(herdLogistics.herdPenalty < -0.5, 'Aşırı hayvan sayısı sürü cezası (herd penalty) üretmeli');
+
+  // 5. getPlayerPartyLogistics sefer durumundan eksiksiz hesap üretir
+  const playerLogistics = getPlayerPartyLogistics(state);
+  assert.ok(playerLogistics.capacity.totalCapacity > 300);
+  assert.ok(playerLogistics.finalSpeed >= 2.0 && playerLogistics.finalSpeed <= 6.5);
+  assert.equal(typeof playerLogistics.worldUnitsPerSecAt1x, 'number');
+});
+
+test('P2 erzak: envanter gıda yığınları, çeşitlilik morali, canlı tüketim ve açlık etkileri', () => {
+  const state = createInitialCampaignState('Komutan Demirhan', 'noble');
+
+  // 1. Envanter erzak yığınları ve çeşitlilik morali
+  const initialFoodItems = [
+    {
+      id: 'f1',
+      definitionId: 'mkt_grain_sack',
+      name: 'Tahıl Çuvalı',
+      slot: 'TRADE' as const,
+      category: 'FOOD' as const,
+      quantity: 20,
+      value: 20,
+      weight: 10,
+      statBonus: '',
+      civilianLegal: true,
+    },
+    {
+      id: 'f2',
+      definitionId: 'mkt_cured_meat',
+      name: 'Kurutulmuş Et',
+      slot: 'TRADE' as const,
+      category: 'FOOD' as const,
+      quantity: 8,
+      value: 45,
+      weight: 8,
+      statBonus: '',
+      civilianLegal: true,
+    },
+    {
+      id: 'f3',
+      definitionId: 'mkt_cheese_wheel',
+      name: 'Otlak Peyniri',
+      slot: 'TRADE' as const,
+      category: 'FOOD' as const,
+      quantity: 8,
+      value: 32,
+      weight: 5,
+      statBonus: '',
+      civilianLegal: true,
+    },
+  ];
+  const stateWithFood: CampaignState = {
+    ...state,
+    inventoryItems: [...(state.inventoryItems ?? []), ...initialFoodItems],
+    food: 36,
+  };
+
+  const summary = getPartyFoodSummary(stateWithFood.inventoryItems);
+  assert.equal(summary.totalFood, 36);
+  assert.equal(summary.distinctVarieties, 3);
+  assert.equal(summary.varietyMoraleBonus, 5); // 3 çeşit = +5 moral
+
+  // 2. Çeşitlilik moral bonusu eğrisi
+  assert.equal(calculateVarietyMoraleBonus(0), 0);
+  assert.equal(calculateVarietyMoraleBonus(1), 0);
+  assert.equal(calculateVarietyMoraleBonus(2), 2);
+  assert.equal(calculateVarietyMoraleBonus(3), 5);
+  assert.equal(calculateVarietyMoraleBonus(4), 8);
+  assert.equal(calculateVarietyMoraleBonus(5), 12);
+
+  // 3. Günlük tüketim envanterdeki gıda yığınlarından gerçek adetleri eksiltir
+  const nextDayState = advanceDailyEconomyAndWorld(stateWithFood);
+  assert.equal(nextDayState.day, 2);
+  assert.ok(nextDayState.food < stateWithFood.food);
+  const nextSummary = getPartyFoodSummary(nextDayState.inventoryItems);
+  assert.equal(nextSummary.totalFood, nextDayState.food);
+  assert.ok(nextSummary.totalFood < summary.totalFood);
+
+  // 4. Pazar alışverişinde alınan gıda doğrudan envanter yığınına işlenir ve toplam erzak artar
+  const town = state.settlements.find((s) => s.type === 'TOWN')!;
+  const initializedMarket = initializeMarketSettlement(state, town.id);
+  const liveSettlement = getMarketSettlement(initializedMarket, town.id)!;
+  const foodInStock = Object.entries(liveSettlement.marketStock ?? {}).find(
+    ([defId, qty]) => (defId === 'mkt_grain_sack' || defId === 'mkt_smoked_fish') && qty >= 1,
+  );
+  if (foodInStock) {
+    const [defId, stockQty] = foodInStock;
+    const buyQty = Math.min(1, stockQty);
+    const initialFoodCount = getPartyFoodUnits(initializedMarket.inventoryItems);
+    const buyRes = buyFromMarket(initializedMarket, town.id, defId, buyQty);
+    assert.equal(buyRes.success, true);
+    assert.equal(buyRes.quantity, buyQty);
+    const boughtSummary = getPartyFoodSummary(buyRes.nextState.inventoryItems);
+    assert.equal(boughtSummary.totalFood, initialFoodCount + buyQty);
+    assert.equal(buyRes.nextState.food, initialFoodCount + buyQty);
+  }
+
+  // 5. Yerleşimden hızlı erzak alımı (buyFoodAtSettlement) envantere tahıl çuvalı yığını ekler
+  const buySancaktepe = buyFoodAtSettlement(state, 'sancaktepe', 5);
+  assert.equal(buySancaktepe.success, true);
+  assert.equal(buySancaktepe.nextState.food, state.food + 5);
+  const sancaktepeFood = getPartyFoodSummary(buySancaktepe.nextState.inventoryItems);
+  assert.equal(sancaktepeFood.totalFood, 5);
+
+  // 6. Açlık (Starvation): Envanterde hiç gıda kalmadığında moral çöker ve askerler dermansız düşer
+  const starvingState: CampaignState = {
+    ...state,
+    food: 0,
+    inventoryItems: (state.inventoryItems ?? []).filter((i) => !isEdibleFoodItem(i)),
+    morale: 60,
+  };
+  const advanceStarving = advanceDailyPartyFood(starvingState);
+  assert.equal(advanceStarving.starving, true);
+  assert.ok(advanceStarving.moraleDelta <= -10, 'Açlık ciddi moral cezası vermeli');
+  assert.ok(advanceStarving.nextState.morale < starvingState.morale);
+  assert.ok(
+    advanceStarving.nextState.chronicle.some((c) => c.text.includes('açlık')),
+    'Vakayinameye açlık kaydı düşmeli',
+  );
+});
+
+test('P3 party system: capacity breakdown, troopStacks single source of truth, branching upgrades, horse consumption, garrison transfers, prisoner recruitment/ransom, and health progression', () => {
+  const base = createInitialCampaignState('Komutan Test', 'noble');
+  const state = ensureBannerlordFoundation(base);
+
+  // 1. Parti ve Tutsak kapasitesi dökümü
+  const partyCap = calculatePartyLimitBreakdown(state);
+  assert.equal(partyCap.base, 20);
+  assert.equal(partyCap.total >= 20, true);
+  assert.equal(partyCap.total, getPartyLimit(state));
+
+  const prisonerCap = calculatePrisonerLimitBreakdown(state);
+  assert.equal(prisonerCap.base, 10);
+  assert.equal(prisonerCap.total >= 10, true);
+  assert.equal(prisonerCap.total, getPrisonerLimit(state));
+
+  // 2. troopStacks tek kaynak yapısı ve roster senkronu
+  const initialRosterTotal = getTotalTroops(state.roster);
+  const initialStacksTotal = troopStackTotal(state.troopStacks);
+  assert.equal(initialStacksTotal, initialRosterTotal);
+  assert.deepEqual(troopStackTotals(state.troopStacks), state.roster);
+
+  // 3. Dallanan terfi ve tecrübe şartı
+  const testStacksState: CampaignState = {
+    ...state,
+    gold: 500,
+    roster: { militia: 4, archer: 0, cavalry: 0, guard: 0 },
+    troopStacks: [
+      { troopId: 'empire_recruit', count: 4, wounded: 0, xp: 200 }, // upgradeXp: 50 -> 4 tanesi terfiye hazır
+    ],
+    inventoryItems: [],
+  };
+  const syncedState = ensureBannerlordFoundation(testStacksState);
+  assert.equal(syncedState.roster.militia, 4);
+
+  const upgradeOpts = getTroopUpgradeOptions(syncedState, syncedState.troopStacks![0]);
+  assert.ok(upgradeOpts.length >= 1, 'En az 1 terfi dalı olmalı');
+  const infantryUpgrade = upgradeOpts.find((o) => o.targetDefinition.battleClass === 'militia' || o.targetDefinition.battleClass === 'guard') ?? upgradeOpts[0];
+  assert.equal(infantryUpgrade.readyCount, 4);
+  assert.equal(infantryUpgrade.canUpgrade, true);
+
+  // At şartı olan bir birliğe terfi denemesi (at yokken engellenmeli)
+  const cavalryOpt = upgradeOpts.find((o) => o.horseRequirement !== 'NONE');
+  if (cavalryOpt) {
+    assert.equal(cavalryOpt.hasHorse, false);
+    assert.equal(cavalryOpt.canUpgrade, false);
+    const failUpgrade = upgradeTroop(syncedState, 'empire_recruit', cavalryOpt.targetDefinition.id, 1);
+    assert.equal(failUpgrade.success, false);
+    assert.ok(failUpgrade.reason?.includes('at'), 'At eksikliği nedeniyle reddedilmeli');
+  }
+
+  // Yaya terfisi yapalım (altın ve XP düşer, hedef yığına geçer)
+  const upRes = upgradeTroop(syncedState, 'empire_recruit', infantryUpgrade.targetDefinition.id, 2);
+  assert.equal(upRes.success, true);
+  assert.equal(upRes.nextState.gold, syncedState.gold - infantryUpgrade.goldCost * 2);
+  const remainingSource = upRes.nextState.troopStacks!.find((s) => s.troopId === 'empire_recruit');
+  const targetStack = upRes.nextState.troopStacks!.find((s) => s.troopId === infantryUpgrade.targetDefinition.id);
+  assert.equal(remainingSource?.count, 2);
+  assert.equal(targetStack?.count, 2);
+  assert.equal(troopStackTotal(upRes.nextState.troopStacks), 4);
+  assert.equal(getTotalTroops(upRes.nextState.roster), 4);
+
+  // At ekleyelim ve süvari terfisi yapalım
+  const horseItem: InventoryItem = {
+    id: 'test_horse_1',
+    definitionId: 'horse_steppe',
+    name: 'Bozkır Binek Atı',
+    category: 'HORSE',
+    slot: 'MOUNT',
+    tier: 2,
+    weight: 200,
+    value: 120,
+    quantity: 2,
+    civilianLegal: true,
+    statBonus: 'Hız +42 · Manevra +38',
+  };
+  const stateWithHorse: CampaignState = {
+    ...syncedState,
+    inventoryItems: [horseItem],
+  };
+  const cavTarget = cavalryOpt?.targetDefinition.id;
+  if (cavTarget) {
+    const cavUpgrade = upgradeTroop(stateWithHorse, 'empire_recruit', cavTarget, 1);
+    assert.equal(cavUpgrade.success, true);
+    assert.equal(cavUpgrade.nextState.inventoryItems![0].quantity, 1, '1 binek atı tüketilmeli');
+    assert.ok(cavUpgrade.nextState.troopStacks!.some((s) => s.troopId === cavTarget));
+  }
+
+  // 4. Tutsak devşirme ve fidye
+  const stateWithPrisoners: CampaignState = {
+    ...state,
+    prisoners: 3,
+    prisonerStacks: [
+      { troopId: 'empire_recruit', count: 3, ready: 2, readinessProgress: 0 },
+    ],
+  };
+  const syncedPrisoners = ensureBannerlordFoundation(stateWithPrisoners);
+  assert.equal(syncedPrisoners.prisoners, 3);
+
+  // Devşir (recruit)
+  const recruitP = recruitPrisonerStack(syncedPrisoners, 'empire_recruit', 1);
+  assert.equal(recruitP.success, true);
+  assert.equal(recruitP.nextState.prisoners, 2);
+  assert.equal(troopStackTotal(recruitP.nextState.troopStacks), troopStackTotal(syncedPrisoners.troopStacks) + 1);
+  assert.equal(getTotalTroops(recruitP.nextState.roster), troopStackTotal(recruitP.nextState.troopStacks));
+
+  // Fidye (ransom)
+  const initialGold = recruitP.nextState.gold;
+  const ransomP = ransomPrisonerStack(recruitP.nextState, 'empire_recruit', 2);
+  assert.equal(ransomP.success, true);
+  assert.equal(ransomP.nextState.prisoners, 0);
+  assert.ok(ransomP.nextState.gold > initialGold, 'Fidye altın kazandırmalı');
+
+  // 5. Garnizon transferleri
+  const partyTroops: TroopStack[] = [
+    { troopId: 'empire_recruit', count: 10, wounded: 0, xp: 0 },
+  ];
+  const garrisonTroops: TroopStack[] = [];
+  const toGarrison = transferTroopToGarrison(partyTroops, garrisonTroops, 'empire_recruit', 4);
+  assert.equal(toGarrison.moved, 4);
+  assert.equal(toGarrison.partyStacks[0].count, 6);
+  assert.equal(toGarrison.garrisonStacks[0].count, 4);
+
+  const fromGarrison = transferTroopFromGarrison(toGarrison.partyStacks, toGarrison.garrisonStacks, 'empire_recruit', 2);
+  assert.equal(fromGarrison.moved, 2);
+  assert.equal(fromGarrison.partyStacks[0].count, 8);
+  assert.equal(fromGarrison.garrisonStacks[0].count, 2);
+
+  // 6. Günlük yaralı iyileşmesi ve tutsak hazırlığı
+  const stateWithWounded: CampaignState = {
+    ...state,
+    troopStacks: [
+      { troopId: 'empire_recruit', count: 5, wounded: 3, xp: 0 },
+    ],
+    prisonerStacks: [
+      { troopId: 'empire_archer_2', count: 4, ready: 0, readinessProgress: 0 },
+    ],
+  };
+  const healthTick = advanceDailyPartyHealthAndPrisoners(stateWithWounded, { isInSettlement: true });
+  assert.ok(healthTick.healedTroops >= 2, 'Yerleşimde en az 2 yaralı iyileşmeli');
+  assert.ok(healthTick.nextState.troopStacks![0].wounded < 3);
+  assert.ok(healthTick.prisonersBecameReady >= 1, 'En az 1 tutsak devşirilmeye hazır hale gelmeli');
+  assert.ok((healthTick.nextState.prisonerStacks![0].ready ?? 0) >= 1);
+});
+
+
 
 
 

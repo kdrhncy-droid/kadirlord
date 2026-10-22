@@ -24,12 +24,14 @@ import {
   FACTION_INFO,
   Settlement,
   SettlementDailyDefault,
+  SiegeBombardTarget,
   SiegeEngineType,
   UNIT_DEFINITIONS,
   UnitTierId,
   WorkshopTypeId,
   settlementWorkshopIncome,
 } from '../game/rules';
+import { BannerlordRecruitmentModal } from './BannerlordRecruitmentModal';
 import { recruitQuote, partyLimit, partySize, partyRoom } from '../game/recruitment';
 import { sound } from '../game/sound';
 import { generateNotables, type NotableIconKey, type SettlementNotable } from '../game/notables';
@@ -116,6 +118,7 @@ interface SettlementModalProps {
   campaign: CampaignState;
   onClose: () =>void;
   onRecruit: (settlementId: string, unitId: UnitTierId, amount: number) =>string | null;
+  onRecruitBatch?: (settlementId: string, recruits: Array<{ troopId: string; cost: number }>) =>string | null;
   onBuyFood: (settlementId: string, packs: number) =>string | null;
   onStartSiegeBattle: (settlement: Settlement) =>void;
   onHireMercenaries?: (settlementId: string) =>string | null;
@@ -144,7 +147,7 @@ interface SettlementModalProps {
     moveToReserve?: boolean,
   ) =>string | null;
   onDeployReserveEngines?: (settlementId: string) =>string | null;
-  onBombardWalls?: (settlementId: string) =>string | null;
+  onBombardWalls?: (settlementId: string, target: SiegeBombardTarget) =>string | null;
   onOpenFullMarket?: () =>void;
   /** Faz 6: yerleşim reisi/muhtarı ile diyalog. */
   onTalkToReeve?: () =>void;
@@ -158,6 +161,7 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
   campaign,
   onClose,
   onRecruit,
+  onRecruitBatch,
   onBuyFood,
   onStartSiegeBattle,
   onHireMercenaries,
@@ -191,7 +195,10 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
     return Math.round(lords.reduce((a, l) =>a + l.relation, 0) / lords.length);
   })();
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [siegeBombardTarget, setSiegeBombardTarget] =
+    useState<SiegeBombardTarget>('WALL_LEFT');
   const [selectedNotable, setSelectedNotable] = useState<SettlementNotable | null>(null);
+  const [isRecruitmentModalOpen, setIsRecruitmentModalOpen] = useState(false);
   const [tournamentResult, setTournamentResult] = useState<{
     victory: boolean;
     title: string;
@@ -452,25 +459,36 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
           <span className="text-[#a89b84] font-semibold text-[11px] whitespace-nowrap mr-2">
             İleri Gelenler:
           </span>
-          {notables.map((n) =>(
-            <button
-              key={n.id}
-              type="button"
-              title={`${n.name} — ${n.title}`}
-              onClick={() =>{
-                setSelectedNotable(n);
-                setFeedback(null);
-              }}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded border transition-all ${
-                selectedNotable?.id === n.id
-                  ? 'bg-[#3b2d18] border-[#fde68a] text-[#fef08a]'
-                  : 'bg-[#1e1a14] border-[#c6a15b]/30 text-[#d1c5b0] hover:bg-[#28221a]'
-              }`}
-            >
-              <span className="text-[#c6a15b]">{NOTABLE_ICONS[n.avatarIcon]}</span>
-              <span className="font-semibold whitespace-nowrap">{n.name}</span>
-            </button>
-          ))}
+          {notables.map((n, idx) => {
+            const hasIssue = n.power >= 50 || idx === 1; // Authentic Issue / Quest indicator
+            return (
+              <button
+                key={n.id}
+                type="button"
+                title={`${n.name} (${n.title})\n${hasIssue ? 'Mevcut bir sorunu var\n' : ''}İlişki: ${n.relation} · Güç: ${n.power}`}
+                onClick={() => {
+                  setSelectedNotable(n);
+                  setFeedback(null);
+                }}
+                className={`relative flex items-center gap-1.5 px-2.5 py-1 rounded border transition-all ${
+                  selectedNotable?.id === n.id
+                    ? 'bg-[#3b2d18] border-[#fde68a] text-[#fef08a]'
+                    : 'bg-[#1e1a14] border-[#c6a15b]/30 text-[#d1c5b0] hover:bg-[#28221a]'
+                }`}
+              >
+                <span className="text-[#c6a15b]">{NOTABLE_ICONS[n.avatarIcon]}</span>
+                <span className="font-semibold whitespace-nowrap">{n.name}</span>
+                {hasIssue && (
+                  <span
+                    title="Mevcut bir sorunu var (Görev)"
+                    className="w-4 h-4 rounded-full bg-cyan-500 text-black font-extrabold flex items-center justify-center text-[11px] shadow animate-pulse ml-0.5"
+                  >
+                    !
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* NOTABLE SPEECH POPUP (IF CLICKED) */}
@@ -680,12 +698,13 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
             {/* RECRUIT TROOPS BUTTON (ALL SETTLEMENTS) */}
             <button
               type="button"
-              onClick={() =>{
-                setActiveTab('recruit');
+              data-testid="settlement-open-recruitment"
+              onClick={() => {
+                setIsRecruitmentModalOpen(true);
                 setFeedback(null);
               }}
               className={`text-left px-3 py-2 rounded text-xs font-semibold flex items-center gap-2 transition-all ${
-                activeTab === 'recruit'
+                isRecruitmentModalOpen
                   ? 'bg-[#b45309] text-white border border-[#fde68a]/50 shadow'
                   : 'text-[#d1c5b0] hover:bg-[#221c15] border border-transparent'
               }`}
@@ -1651,11 +1670,23 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <select
+                      aria-label="Bombardıman hedefi"
+                      value={siegeBombardTarget}
+                      onChange={(event) =>
+                        setSiegeBombardTarget(event.target.value as SiegeBombardTarget)
+                      }
+                      className="rounded border border-[#c6a15b]/50 bg-[#17120d] px-2 py-2 text-xs text-[#fde68a]"
+                    >
+                      <option value="WALL_LEFT">Sol Sur</option>
+                      <option value="WALL_RIGHT">Sağ Sur</option>
+                      <option value="PEOPLE">Askerler</option>
+                    </select>
                     <button
                       type="button"
                       onClick={() =>{
                         if (!onBombardWalls) return;
-                        const err = onBombardWalls(settlement.id);
+                        const err = onBombardWalls(settlement.id, siegeBombardTarget);
                         if (err) setFeedback(err);
                         else {
                           sound.playHit();
@@ -1825,6 +1856,21 @@ export const SettlementModal: React.FC<SettlementModalProps>= ({
           </div>
         </div>
       </div>
+
+      {/* 5. BANNERLORD RECRUITMENT MODAL OVERLAY */}
+      {isRecruitmentModalOpen && (
+        <BannerlordRecruitmentModal
+          settlement={settlement}
+          campaign={campaign}
+          onCommitRecruits={(recruits) => {
+            if (onRecruitBatch) {
+              onRecruitBatch(settlement.id, recruits);
+            }
+            setIsRecruitmentModalOpen(false);
+          }}
+          onClose={() => setIsRecruitmentModalOpen(false)}
+        />
+      )}
     </div>
   );
 };

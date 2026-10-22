@@ -210,13 +210,21 @@ export const emptySession = (): MarketSession => ({
   net: 0,
 });
 
-export function addPurchase(s: MarketSession, gold: number): MarketSession {
-  const next = { ...s, spent: s.spent + gold, itemsBought: s.itemsBought + 1 };
+export function addPurchase(s: MarketSession, gold: number, quantity = 1): MarketSession {
+  const next = {
+    ...s,
+    spent: s.spent + gold,
+    itemsBought: s.itemsBought + Math.max(0, Math.floor(quantity)),
+  };
   return { ...next, net: next.earned - next.spent };
 }
 
-export function addSale(s: MarketSession, gold: number): MarketSession {
-  const next = { ...s, earned: s.earned + gold, itemsSold: s.itemsSold + 1 };
+export function addSale(s: MarketSession, gold: number, quantity = 1): MarketSession {
+  const next = {
+    ...s,
+    earned: s.earned + gold,
+    itemsSold: s.itemsSold + Math.max(0, Math.floor(quantity)),
+  };
   return { ...next, net: next.earned - next.spent };
 }
 

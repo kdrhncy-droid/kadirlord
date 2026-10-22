@@ -193,3 +193,83 @@ export function clearSave(storage: SaveStorage | null): void {
     /* yoksay */
   }
 }
+
+/* ───────────────────────── ÇOKLU KAYIT YUVALARI (MULTI-SLOT) ───────────────────────── */
+
+export interface SaveSlotInfo {
+  id: string;
+  name: string;
+  isAuto: boolean;
+  saveData: SaveData | null;
+}
+
+export const SAVE_SLOT_DEFINITIONS = [
+  { id: 'auto', name: 'Otomatik Sefer Kaydı', isAuto: true },
+  { id: 'quick', name: 'Hızlı Kayıt [F5]', isAuto: false },
+  { id: 'slot1', name: 'Kayıt Yuvası 1', isAuto: false },
+  { id: 'slot2', name: 'Kayıt Yuvası 2', isAuto: false },
+  { id: 'slot3', name: 'Kayıt Yuvası 3', isAuto: false },
+] as const;
+
+export function getSlotStorageKey(slotId: string): string {
+  if (slotId === 'slot1') return SAVE_KEY; // Geriye dönük uyumluluk
+  return `sancak-kalradya/sefer-${slotId}-v1`;
+}
+
+export function readAllSlots(storage: SaveStorage | null): SaveSlotInfo[] {
+  if (!storage) {
+    return SAVE_SLOT_DEFINITIONS.map((def) => ({
+      ...def,
+      saveData: null,
+    }));
+  }
+
+  return SAVE_SLOT_DEFINITIONS.map((def) => {
+    try {
+      const key = getSlotStorageKey(def.id);
+      const raw = storage.getItem(key);
+      const data = parseSave(raw);
+      return {
+        ...def,
+        saveData: data,
+      };
+    } catch {
+      return {
+        ...def,
+        saveData: null,
+      };
+    }
+  });
+}
+
+export function writeSaveToSlot(
+  storage: SaveStorage | null,
+  slotId: string,
+  input: SaveInput,
+  now = Date.now(),
+): boolean {
+  if (!storage) return false;
+  try {
+    const key = getSlotStorageKey(slotId);
+    storage.setItem(key, serializeSave(createSaveData(input, now)));
+    // Ana anahtarı da slot1 veya oto-kayıt ile senkron tut
+    if (slotId === 'slot1' || slotId === 'auto') {
+      storage.setItem(SAVE_KEY, serializeSave(createSaveData(input, now)));
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function deleteSaveSlot(storage: SaveStorage | null, slotId: string): void {
+  if (!storage) return;
+  try {
+    const key = getSlotStorageKey(slotId);
+    storage.removeItem(key);
+    if (slotId === 'slot1') storage.removeItem(SAVE_KEY);
+  } catch {
+    /* yoksay */
+  }
+}
+

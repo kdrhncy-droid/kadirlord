@@ -14,6 +14,7 @@ import { classifyEncounterScenario } from '../src/game/encounter.ts';
 import { createInitialCampaignState, getTotalTroops } from '../src/game/rules.ts';
 import {
   buildE2EScenario,
+  buildE2ESiegeScenario,
   createSeededRandom,
   parseE2ERequest,
   type E2EScenarioName,
@@ -123,6 +124,16 @@ const ok = (cond: boolean, label: string, detail = '') => {
 
   const encyclopedia = buildE2EScenario(base, 'encyclopedia');
   ok(encyclopedia.encyclopediaOpen && !encyclopedia.dialogueLord, 'encyclopedia: yalnız ansiklopedi açık');
+
+  const siegeReq = parseE2ERequest('?e2e=1&siege=outsider&siegeCamp=1', true);
+  ok(
+    siegeReq.enabled && siegeReq.siegeRole === 'outsider' && siegeReq.focusSiegeCamp,
+    'e2e=1, siege=outsider ve siegeCamp=1 DEV modunda çözülüyor',
+  );
+  for (const role of ['outsider', 'attacker', 'defender'] as const) {
+    const siegeSetup = buildE2ESiegeScenario(base, role);
+    ok(Boolean(siegeSetup?.settlementId), `dev siege (${role}): settlementId tanımlı`);
+  }
 
   ok(
     JSON.stringify(base.roster) === JSON.stringify(basePlayerRoster) &&

@@ -16,14 +16,23 @@ import {
 } from './encounter.ts';
 import {
   getTotalTroops,
+  setWallSections,
   type CampaignState,
+  type InventoryItem,
   type LordAgent,
+  type SiegeEngineType,
   type TroopRoster,
 } from './rules.ts';
+import {
+  getSiegeCampPoint,
+  SIEGE_CAMP_STANDOFF,
+  type SiegeEncounterRole,
+} from './siegeEncounter.ts';
 
 export const E2E_SCENARIOS = [
   'boot',
   'encyclopedia',
+  'party',
   'bandit-caught-player',
   'player-caught-bandit',
   'lord-caught-player',
@@ -37,6 +46,8 @@ export interface E2ERequest {
   scenario: E2EScenarioName;
   seed: number;
   timeScale: E2ETimeScale;
+  siegeRole: SiegeEncounterRole | null;
+  focusSiegeCamp: boolean;
 }
 
 export interface E2EScenarioSetup {
@@ -45,6 +56,7 @@ export interface E2EScenarioSetup {
   forcedEncounter: boolean;
   encounterScenario?: EncounterScenario;
   encyclopediaOpen: boolean;
+  partyOpen: boolean;
 }
 
 export interface KadirlordPlayerPatch {
@@ -59,6 +71,8 @@ export interface KadirlordPlayerPatch {
 }
 
 export interface KadirlordLordPatch {
+  x?: number;
+  z?: number;
   armySize?: number;
   roster?: TroopRoster;
   relation?: number;
@@ -97,6 +111,46 @@ export interface KadirlordTestSnapshot {
     scenario: EncounterScenario | null;
   };
   encyclopediaOpen: boolean;
+  partyOpen: boolean;
+  characterOpen: boolean;
+  inventory: Array<{
+    id: string;
+    definitionId: string;
+    quantity: number;
+    locked: boolean;
+  }>;
+  inventoryOpen: boolean;
+  heroes: Array<{
+    id: string;
+    name: string;
+    activeEquipmentSet: string;
+    equipment: {
+      BATTLE: Record<string, string | null>;
+      CIVILIAN: Record<string, string | null>;
+    };
+  }>;
+  troopStacks: Array<{
+    troopId: string;
+    count: number;
+    wounded: number;
+    xp: number;
+  }>;
+  market: {
+    open: boolean;
+    settlementId: string | null;
+    merchantGold: number | null;
+    stock: Record<string, number>;
+  };
+  loot: {
+    open: boolean;
+    itemCount: number;
+    gold: number;
+    items: Array<{
+      id: string;
+      definitionId: string;
+      quantity: number;
+    }>;
+  };
   counts: {
     lords: number;
     settlements: number;
@@ -113,6 +167,8 @@ export interface KadirlordTestApi {
   setPlayer: (patch: KadirlordPlayerPatch) => void;
   setLord: (lordId: string, patch: KadirlordLordPatch) => boolean;
   getLordPosition: (lordId: string) => { x: number; z: number } | null;
+  openSiege: (role: SiegeEncounterRole, options?: { focusOnCamp?: boolean }) => boolean;
+  closeSiege: () => void;
   openDialogue: (
     lordId: string,
     options?: { forced?: boolean; scenario?: EncounterScenario },
@@ -120,6 +176,92 @@ export interface KadirlordTestApi {
   closeDialogue: () => void;
   openEncyclopedia: () => void;
   closeEncyclopedia: () => void;
+  openParty: () => void;
+  closeParty: () => void;
+  openCharacter: () => void;
+  closeCharacter: () => void;
+  openMarket: (settlementId?: string) => boolean;
+  closeMarket: () => void;
+  openInventory: () => void;
+  closeInventory: () => void;
+  openLoot: (
+    lootItems?: InventoryItem[],
+    options?: { goldLoot?: number; enemiesDefeated?: number },
+  ) => boolean;
+  closeLoot: () => void;
+}
+
+export function buildE2ESiegeScenario(
+  base: CampaignState,
+  role: SiegeEncounterRole,
+): { campaign: CampaignState; settlementId: string } | null {
+  const settlement =
+    base.settlements.find((item) => item.type === 'CASTLE' && item.faction !== 'player') ??
+    base.settlements.find((item) => item.type === 'TOWN' && item.faction !== 'player');
+  if (!settlement) return null;
+
+  const besieger =
+    base.lords.find(
+      (lord) => lord.faction !== 'bandits' && lord.faction !== settlement.faction,
+    ) ?? base.lords.find((lord) => lord.faction !== settlement.faction);
+  if (!besieger) return null;
+
+  const campPoint = getSiegeCampPoint(settlement, besieger.x, besieger.z);
+  const approachDistance = Math.hypot(besieger.x - settlement.x, besieger.z - settlement.z);
+  const approachX = approachDistance > 0.001 ? (besieger.x - settlement.x) / approachDistance : 1;
+  const approachZ = approachDistance > 0.001 ? (besieger.z - settlement.z) / approachDistance : 0;
+  const playerPoint =
+    role === 'attacker'
+      ? campPoint
+      : role === 'outsider'
+        ? {
+            x: settlement.x + approachX * (SIEGE_CAMP_STANDOFF + 25),
+            z: settlement.z + approachZ * (SIEGE_CAMP_STANDOFF + 25),
+          }
+        : null;
+  const campaign: CampaignState = {
+    ...base,
+    playerX: playerPoint ? playerPoint.x : settlement.x,
+    playerZ: playerPoint ? playerPoint.z : settlement.z,
+    lords: base.lords.map((lord) =>
+      lord.id === besieger.id
+        ? {
+            ...lord,
+            x: campPoint.x,
+            z: campPoint.z,
+            targetX: campPoint.x,
+            targetZ: campPoint.z,
+            order: {
+              kind: 'SIEGE',
+              targetSettlementId: settlement.id,
+              sinceDay: base.day,
+              siegeProgress: 72,
+            },
+          }
+        : lord,
+    ),
+    settlements: base.settlements.map((item) => {
+      if (item.id !== settlement.id) return item;
+      const siegeEngines: SiegeEngineType[] =
+        item.siegeEngines && item.siegeEngines.length > 0
+          ? item.siegeEngines
+          : ['TREBUCHET', 'BALLISTA', 'BATTERING_RAM'];
+      const withWalls = setWallSections(item, [78, 52]);
+      return {
+        ...withWalls,
+        siegeEngines,
+        siegeEngineHp: siegeEngines.map((_, idx) => item.siegeEngineHp?.[idx] ?? 100),
+      };
+    }),
+    playerSiege:
+      role === 'attacker'
+        ? { settlementId: settlement.id, campProgress: 72, inside: false }
+        : role === 'defender'
+          ? { settlementId: settlement.id, campProgress: 72, inside: true }
+          : null,
+  };
+
+  return { campaign, settlementId: settlement.id };
 }
 
 declare global {
@@ -138,6 +280,10 @@ function isScenario(value: string | null): value is E2EScenarioName {
   return value !== null && (E2E_SCENARIOS as readonly string[]).includes(value);
 }
 
+function isSiegeRole(value: string | null): value is SiegeEncounterRole {
+  return value === 'attacker' || value === 'outsider' || value === 'defender';
+}
+
 function parseTimeScale(value: string | null, scenario: E2EScenarioName): E2ETimeScale {
   const parsed = Number(value);
   if (parsed === 0 || parsed === 1 || parsed === 2 || parsed === 4) return parsed;
@@ -154,12 +300,16 @@ export function parseE2ERequest(search: string, isDev: boolean): E2ERequest {
   const scenario: E2EScenarioName = isScenario(scenarioRaw) ? scenarioRaw : 'boot';
   const seedRaw = Number(params.get('seed'));
   const seed = Number.isFinite(seedRaw) && params.has('seed') ? Math.trunc(seedRaw) >>> 0 : 42;
+  const siegeRaw = params.get('siege');
+  const enabled = isDev && params.get('e2e') === '1';
 
   return {
-    enabled: isDev && params.get('e2e') === '1',
+    enabled,
     scenario,
     seed,
     timeScale: parseTimeScale(params.get('timeScale'), scenario),
+    siegeRole: enabled && isSiegeRole(siegeRaw) ? siegeRaw : null,
+    focusSiegeCamp: enabled && (params.get('focusSiegeCamp') === '1' || params.get('siegeCamp') === '1'),
   };
 }
 
@@ -238,6 +388,7 @@ function dialogueSetup(campaign: CampaignState, lord: LordAgent | null): E2EScen
       forcedEncounter: false,
       encounterScenario: undefined,
       encyclopediaOpen: false,
+      partyOpen: false,
     };
   }
 
@@ -248,6 +399,7 @@ function dialogueSetup(campaign: CampaignState, lord: LordAgent | null): E2EScen
     forcedEncounter: true,
     encounterScenario: info.scenario,
     encyclopediaOpen: false,
+    partyOpen: false,
   };
 }
 
@@ -280,6 +432,7 @@ export function buildE2EScenario(
         forcedEncounter: false,
         encounterScenario: undefined,
         encyclopediaOpen: false,
+        partyOpen: false,
       };
 
     case 'encyclopedia':
@@ -289,6 +442,17 @@ export function buildE2EScenario(
         forcedEncounter: false,
         encounterScenario: undefined,
         encyclopediaOpen: true,
+        partyOpen: false,
+      };
+
+    case 'party':
+      return {
+        campaign: base,
+        dialogueLord: null,
+        forcedEncounter: false,
+        encounterScenario: undefined,
+        encyclopediaOpen: false,
+        partyOpen: true,
       };
 
     case 'bandit-caught-player': {

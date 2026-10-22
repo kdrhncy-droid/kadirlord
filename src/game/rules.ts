@@ -17,9 +17,28 @@ import { generateLordParties } from './heroGen.ts';
 import {
   addItemDefinitionToInventory,
   ensureBannerlordFoundation,
-  inventoryItemQuantity,
+  equipInventoryItemForHero,
   PLAYER_HERO_ID,
 } from './bannerlordFoundation';
+import {
+  advanceDailyPartyFood,
+  calculateDailyFoodDemand,
+} from './foodSystem.ts';
+import {
+  SIEGE_MELEE_SLOTS,
+  SIEGE_RANGED_SLOTS,
+  canFitSiegeEngine,
+  getWallSections,
+  normalizeSiegeEngineSlots,
+  setWallSections,
+} from './siegeMechanics';
+export {
+  SIEGE_MELEE_SLOTS,
+  SIEGE_RANGED_SLOTS,
+  getWallSections,
+  removeDestroyedSiegeEngines,
+  setWallSections,
+} from './siegeMechanics';
 
 export type FactionId =
   | 'player'
@@ -283,9 +302,17 @@ export interface Settlement {
   workshopOwner?: 'player';
   siegeEngines?: SiegeEngineType[];
   reserveEngines?: SiegeEngineType[];
+  siegeEngineHp?: number[];
   wallHealth?: number;
+  wallSections?: [number, number];
   /** Faz B0: yerleşimin ileri gelenleri (deterministik üretilir, kayda yazılır). */
   notables?: SettlementNotable[];
+  /** P2: kalıcı pazar stoğu (tanım kimliği → adet). İlk pazar ziyaretinde türetilir. */
+  marketStock?: Record<string, number>;
+  /** P2: oyuncunun satışlarını sınırlayan kalıcı tüccar kasası. */
+  merchantGold?: number;
+  /** P2: ticaret söylentileri yalnız ziyaret edilmiş yerleşimler için görünür. */
+  visited?: boolean;
 }
 
 export function getSettlementArrivalRadius(type: 'TOWN' | 'CASTLE' | 'VILLAGE'): number {
@@ -430,6 +457,16 @@ export interface CampaignState {
   playerMorphDNA?: CharacterMorphDNA;
   /** Faz 11: savaşlar + sayaçlar (kayda yazılır). */
   world?: WorldState;
+  /** Oyuncunun yürüttüğü kuşatma (Görev 1). Yoksa lord kuşatmaları tek kaynaktır. */
+  playerSiege?: PlayerSiegeState | null;
+}
+
+export interface PlayerSiegeState {
+  settlementId: string;
+  /** Kamp kurulumu 0..100; 100 olmadan silah inşa edilmez. */
+  campProgress: number;
+  /** Oyuncu kuşatma hattını yararak garnizona katıldı. */
+  inside: boolean;
 }
 
 export const FACTION_INFO: Record<
@@ -590,8 +627,7 @@ export function calculateDailyWage(roster: TroopRoster): number {
 }
 
 export function calculateDailyFoodConsumption(roster: TroopRoster): number {
-  const total = getTotalTroops(roster);
-  return Math.max(1, Math.ceil((total + 1) / 4));
+  return calculateDailyFoodDemand(roster);
 }
 
 export function recruitUnit(
@@ -665,12 +701,20 @@ export function buyFoodAtSettlement(
     foodStock: nextSettlements[idx].foodStock - packs,
   };
 
+  const nextInventory = addItemDefinitionToInventory(
+    state,
+    'mkt_grain_sack',
+    packs,
+    costPerPack,
+  );
+
   return {
     success: true,
     nextState: {
       ...state,
       gold: state.gold - totalCost,
       food: state.food + packs,
+      inventoryItems: nextInventory,
       morale: Math.min(100, state.morale + 2),
       settlements: nextSettlements,
     },
@@ -1022,6 +1066,10 @@ export function raidAndPillageVillage(
     return l;
   });
 
+  let nextInventory = addItemDefinitionToInventory(state, 'mkt_grain_sack', 10, 0);
+  nextInventory = addItemDefinitionToInventory({ ...state, inventoryItems: nextInventory }, 'mkt_cured_meat', 3, 0);
+  nextInventory = addItemDefinitionToInventory({ ...state, inventoryItems: nextInventory }, 'mkt_cheese_wheel', 3, 0);
+
   return {
     success: true,
     goldLoot,
@@ -1030,6 +1078,7 @@ export function raidAndPillageVillage(
       ...state,
       gold: state.gold + goldLoot,
       food: state.food + foodLoot,
+      inventoryItems: nextInventory,
       morale: Math.max(10, state.morale - 4),
       renown: state.renown + 5,
       settlements: updatedSettlements,
@@ -1066,12 +1115,20 @@ export function forcePeasantsSupplies(
     prosperity: Math.max(10, v.prosperity - 15),
   };
 
+  const nextInventory = addItemDefinitionToInventory(
+    state,
+    'mkt_grain_sack',
+    foodGained,
+    0,
+  );
+
   return {
     success: true,
     foodGained,
     nextState: {
       ...state,
       food: state.food + foodGained,
+      inventoryItems: nextInventory,
       morale: Math.min(100, state.morale + 1),
       settlements: updatedSettlements,
       chronicle: [
@@ -1150,13 +1207,22 @@ export function settlementWorkshopIncome(settlement: Settlement): number {
   return base + (WORKSHOP_TYPE_BONUS[settlement.workshopType] ?? 0);
 }
 
+// AYAR SABİTİ — yerleşim kuşatması sırasında günlük erzak tüketimi.
+export const SIEGE_GARRISON_FOOD_PER_DAY = 3;
+
 export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState {
   const wage = calculateDailyWage(state.roster);
-  const foodUsed = calculateDailyFoodConsumption(state.roster);
+  const foodResult = advanceDailyPartyFood(state);
+  const stateAfterFood = foodResult.nextState;
 
   let playerSettlementTaxes = 0;
   let playerWorkshopIncome = 0;
   const updatedSettlements = state.settlements.map((s) => {
+    const besieged =
+      state.playerSiege?.settlementId === s.id ||
+      state.lords.some(
+        (lord) => lord.order?.kind === 'SIEGE' && lord.order.targetSettlementId === s.id,
+      );
     if (s.faction === 'player') {
       playerSettlementTaxes += Math.round(s.prosperity * 0.25);
     }
@@ -1167,7 +1233,9 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
     return {
       ...s,
       prosperity: Math.min(999, s.prosperity + 2),
-      foodStock: Math.min(60, s.foodStock + 3),
+      foodStock: besieged
+        ? Math.max(0, s.foodStock - SIEGE_GARRISON_FOOD_PER_DAY)
+        : Math.min(60, s.foodStock + 3),
       recruitPool: {
         militia: Math.min(12, s.recruitPool.militia + 2),
         archer: Math.min(8, s.recruitPool.archer + 1),
@@ -1177,12 +1245,9 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
     };
   });
 
-  const nextFood = Math.max(0, state.food - foodUsed);
   const nextGold = Math.max(0, state.gold + playerSettlementTaxes + playerWorkshopIncome - wage);
-  let moraleDelta = 0;
-  if (state.food < foodUsed) moraleDelta -= 10;
-  else moraleDelta += 2;
-  if (state.gold + playerSettlementTaxes + playerWorkshopIncome < wage) moraleDelta -= 8;
+  let wageMoraleDelta = 0;
+  if (state.gold + playerSettlementTaxes + playerWorkshopIncome < wage) wageMoraleDelta -= 8;
 
   const seasons: Array<'Bahar' | 'Yaz' | 'Güz' | 'Kış'> = ['Bahar', 'Yaz', 'Güz', 'Kış'];
   const nextDay = state.day + 1;
@@ -1198,18 +1263,17 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
             category: 'ECONOMY' as const,
             text: `Atölyelerin son on günde yaklaşık ${(playerWorkshopIncome * 10).toLocaleString('tr-TR')} Dinar kazandırdı.`,
           },
-          ...state.chronicle,
+          ...stateAfterFood.chronicle,
         ].slice(0, 20)
-      : state.chronicle;
+      : stateAfterFood.chronicle;
 
   return {
-    ...state,
+    ...stateAfterFood,
     day: nextDay,
     season: seasons[seasonIdx] || 'Güz',
     gold: nextGold,
     chronicle: economyChronicle,
-    food: nextFood,
-    morale: Math.max(15, Math.min(100, state.morale + moraleDelta)),
+    morale: Math.max(15, Math.min(100, stateAfterFood.morale + wageMoraleDelta)),
     playerHp: Math.min(state.playerMaxHp, state.playerHp + 15),
     settlements: updatedSettlements,
   };
@@ -1367,6 +1431,11 @@ export function resolveBattleOutcome(
         ...s,
         faction: 'player' as FactionId,
         garrison: s.id === conqueredSettlementId ? Math.max(20, Math.floor(s.garrison * 0.6)) : s.garrison,
+        wallHealth: 100,
+        wallSections: [100, 100] as [number, number],
+        siegeEngines: [],
+        reserveEngines: [],
+        siegeEngineHp: [],
       };
     }
     return s;
@@ -3191,8 +3260,6 @@ export function allocateAttributePoint(
         ...currentAttrs,
         [attrId]: currentAttrs[attrId] + 1,
       },
-      playerMaxHp: attrId === 'ENDURANCE' || attrId === 'VIGOR' ? state.playerMaxHp + 5 : state.playerMaxHp,
-      playerHp: attrId === 'ENDURANCE' || attrId === 'VIGOR' ? state.playerHp + 5 : state.playerHp,
     },
   };
 }
@@ -3218,7 +3285,7 @@ export function allocateFocusPoint(
       skills: {
         ...baseSkills,
         [skillId]: {
-          level: currentSkill.level + 10,
+          level: currentSkill.level,
           focus: currentSkill.focus + 1,
         },
       },
@@ -3230,65 +3297,13 @@ export function equipInventoryItem(
   state: CampaignState,
   itemId: string,
 ): { success: boolean; reason?: string; nextState: CampaignState } {
-  const normalized = ensureBannerlordFoundation(state);
-  const items = normalized.inventoryItems ?? [];
-  const itemIndex = items.findIndex((i) => i.id === itemId || i.definitionId === itemId);
-  const item = itemIndex >= 0 ? items[itemIndex] : undefined;
-  if (!item) {
-    return { success: false, reason: 'Eşya envanterde bulunamadı.', nextState: state };
-  }
-  if (item.slot === 'TRADE') {
-    return { success: false, reason: 'Ticaret malları ve yük katırları doğrudan envanterde pasif kapasite sağlar.', nextState: state };
-  }
-
-  const playerHero = normalized.heroes?.find((hero) => hero.id === PLAYER_HERO_ID || hero.kind === 'PLAYER');
-  if (!playerHero) {
-    return { success: false, reason: 'Oyuncu kahraman kaydı bulunamadı.', nextState: state };
-  }
-  const activeSet = playerHero.activeEquipmentSet;
-  const previousDefinitionId = playerHero.equipment[activeSet][item.slot] ?? null;
-  const selectedDefinitionId = item.definitionId ?? item.id;
-  const quantity = inventoryItemQuantity(item);
-  const itemsAfterRemoval =
-    quantity > 1
-      ? items.map((candidate, index) =>
-          index === itemIndex ? { ...candidate, quantity: quantity - 1 } : candidate,
-        )
-      : items.filter((_, index) => index !== itemIndex);
-  const stateAfterRemoval: CampaignState = {
-    ...normalized,
-    inventoryItems: itemsAfterRemoval,
-  };
-  const nextItems = previousDefinitionId
-    ? addItemDefinitionToInventory(stateAfterRemoval, previousDefinitionId, 1)
-    : itemsAfterRemoval;
-  const currentEq = (normalized.equipment ?? {}) as Record<EquipmentSlotId, string>;
-
+  // Eski oyuncu-only API artık her kahramanın kullandığı tek kuşanma
+  // çekirdeğine devreder; aktif set ve sivil yasallık orada doğrulanır.
+  const result = equipInventoryItemForHero(state, PLAYER_HERO_ID, itemId);
   return {
-    success: true,
-    nextState: ensureBannerlordFoundation({
-      ...normalized,
-      equipment: {
-        ...currentEq,
-        [item.slot]: item.statBonus ? `${item.name} (${item.statBonus})` : item.name,
-      },
-      heroes: normalized.heroes?.map((hero) =>
-        hero.id === playerHero.id
-          ? {
-              ...hero,
-              equipment: {
-                ...hero.equipment,
-                [activeSet]: {
-                  ...hero.equipment[activeSet],
-                  [item.slot]: selectedDefinitionId,
-                },
-              },
-            }
-          : hero,
-      ),
-      inventoryItems: nextItems,
-      morale: item.slot === 'BANNER' ? Math.min(100, normalized.morale + 5) : normalized.morale,
-    }),
+    success: result.success,
+    reason: result.reason,
+    nextState: result.nextState,
   };
 }
 
@@ -3509,6 +3524,18 @@ export function constructSiegeEngine(
         : engineType === 'MANGONEL'
           ? 65
           : 50;
+  const currentActive = s.siegeEngines ?? [];
+  const currentReserve = s.reserveEngines ?? [];
+  if (!moveToReserve && !canFitSiegeEngine(currentActive, engineType)) {
+    const ranged = engineType === 'TREBUCHET' || engineType === 'MANGONEL' || engineType === 'BALLISTA';
+    return {
+      success: false,
+      reason: ranged
+        ? `Menzilli kuşatma yuvaları dolu (${SIEGE_RANGED_SLOTS}); yeni silahı rezerve çekin.`
+        : `Yakın kuşatma yuvaları dolu (${SIEGE_MELEE_SLOTS}); yeni silahı rezerve çekin.`,
+      nextState: state,
+    };
+  }
   if (state.gold < cost) {
     return {
       success: false,
@@ -3516,15 +3543,16 @@ export function constructSiegeEngine(
       nextState: state,
     };
   }
-  const currentActive = s.siegeEngines ?? [];
-  const currentReserve = s.reserveEngines ?? [];
 
   const nextSettlements = state.settlements.map((item, i) =>
     i === idx
       ? {
           ...item,
-          siegeEngines: moveToReserve ? currentActive : [...currentActive, engineType].slice(0, 6),
+          siegeEngines: moveToReserve ? currentActive : [...currentActive, engineType],
           reserveEngines: moveToReserve ? [...currentReserve, engineType] : currentReserve,
+          siegeEngineHp: moveToReserve
+            ? item.siegeEngineHp ?? currentActive.map(() => 100)
+            : [...(item.siegeEngineHp ?? currentActive.map(() => 100)), 100],
         }
       : item,
   );
@@ -3557,12 +3585,21 @@ export function deployReservedSiegeEngines(
   const reserve = s.reserveEngines ?? [];
   if (reserve.length === 0) return { success: false, nextState: state };
 
+  const active = s.siegeEngines ?? [];
+  const activeHp = s.siegeEngineHp ?? active.map(() => 100);
+  const slots = normalizeSiegeEngineSlots([...active, ...reserve], []);
+  const deployedCount = slots.siegeEngines.length - active.length;
+  if (deployedCount <= 0) return { success: false, nextState: state };
   const nextSettlements = state.settlements.map((item, i) =>
     i === idx
       ? {
           ...item,
-          siegeEngines: [...(item.siegeEngines ?? []), ...reserve].slice(0, 6),
-          reserveEngines: [],
+          siegeEngines: slots.siegeEngines,
+          reserveEngines: slots.reserveEngines,
+          siegeEngineHp: [
+            ...activeHp,
+            ...reserve.slice(0, deployedCount).map(() => 100),
+          ],
         }
       : item,
   );
@@ -3575,9 +3612,25 @@ export function deployReservedSiegeEngines(
   };
 }
 
+export type SiegeBombardTarget = 'WALL_LEFT' | 'WALL_RIGHT' | 'PEOPLE' | 'auto';
+
+// AYAR SABİTİ — Bannerlord değerleri XML'de, doğrulanmadı; oranlar Dev Blog #121'e göre
+export const SIEGE_BOMBARD_DAMAGE: Record<
+  SiegeEngineType,
+  { wall: number; people: number }
+> = {
+  TREBUCHET: { wall: 24, people: 1 },
+  MANGONEL: { wall: 14, people: 8 },
+  BALLISTA: { wall: 5, people: 20 },
+  BATTERING_RAM: { wall: 0, people: 0 },
+  SIEGE_TOWER: { wall: 0, people: 0 },
+};
+
+// TODO: Defender RangedEngines are not represented, so bombardment has no counter-fire.
 export function bombardSettlementWalls(
   state: CampaignState,
   settlementId: string,
+  target: SiegeBombardTarget = 'auto',
 ): {
   success: boolean;
   reason?: string;
@@ -3589,26 +3642,50 @@ export function bombardSettlementWalls(
   if (idx === -1) return { success: false, reason: 'Yerleşim bulunamadı.', nextState: state };
   const s = state.settlements[idx];
   const activeEngines = s.siegeEngines ?? [];
-  if (activeEngines.length === 0) {
+  const rangedEngines = activeEngines.filter(
+    (engine) => SIEGE_BOMBARD_DAMAGE[engine].wall > 0 || SIEGE_BOMBARD_DAMAGE[engine].people > 0,
+  );
+  if (rangedEngines.length === 0) {
     return {
       success: false,
-      reason: 'Sur bombardımanı için önce en az 1 kuşatma silahı (Trebuchet, Mangonel veya Balista) sahaya sürmelisiniz.',
+      reason: 'Bombardıman için sahada en az bir menzilli kuşatma silahı bulunmalıdır.',
       nextState: state,
     };
   }
-  const trebuchetCount = activeEngines.filter((e) => e === 'TREBUCHET').length;
-  const mangonelCount = activeEngines.filter((e) => e === 'MANGONEL').length;
-  const wallDamage = Math.min(100, trebuchetCount * 35 + mangonelCount * 20 + activeEngines.length * 10);
-  const currentWallHp = s.wallHealth ?? 100;
-  const nextWallHp = Math.max(0, currentWallHp - wallDamage);
-  const garrisonLoss = Math.min(Math.max(1, s.garrison - 4), Math.max(3, Math.round(wallDamage * 0.25)));
+  const wallSections = getWallSections(s);
+  const effectiveTarget =
+    target === 'auto'
+      ? wallSections[0] <= wallSections[1]
+        ? 'WALL_LEFT'
+        : 'WALL_RIGHT'
+      : target;
+  const wallDamage = Math.min(
+    100,
+    rangedEngines.reduce((sum, engine) => sum + SIEGE_BOMBARD_DAMAGE[engine].wall, 0),
+  );
+  const peopleDamage = rangedEngines.reduce(
+    (sum, engine) => sum + SIEGE_BOMBARD_DAMAGE[engine].people,
+    0,
+  );
+  const nextWallSections: [number, number] = [...wallSections];
+  if (effectiveTarget === 'WALL_LEFT') {
+    nextWallSections[0] = Math.max(0, nextWallSections[0] - wallDamage);
+  } else if (effectiveTarget === 'WALL_RIGHT') {
+    nextWallSections[1] = Math.max(0, nextWallSections[1] - wallDamage);
+  }
+  const nextWallHealth = Math.round((nextWallSections[0] + nextWallSections[1]) / 2);
+  const garrisonLoss =
+    effectiveTarget === 'PEOPLE'
+      ? Math.min(Math.max(0, s.garrison - 4), Math.max(3, Math.round(peopleDamage)))
+      : 0;
+  // AYAR SABİTİ — mevcut 18 erzak kaybı korunmuştur; Bannerlord değeri doğrulanmadı.
   const foodLoss = Math.min(s.foodStock, 18);
 
   const nextSettlements = state.settlements.map((item, i) =>
     i === idx
       ? {
           ...item,
-          wallHealth: nextWallHp,
+          ...setWallSections(item, nextWallSections),
           garrison: Math.max(4, item.garrison - garrisonLoss),
           foodStock: Math.max(0, item.foodStock - foodLoss),
         }
@@ -3617,7 +3694,7 @@ export function bombardSettlementWalls(
 
   return {
     success: true,
-    wallHealthAfter: nextWallHp,
+    wallHealthAfter: nextWallHealth,
     garrisonLost: garrisonLoss,
     nextState: {
       ...state,
@@ -3629,7 +3706,7 @@ export function bombardSettlementWalls(
           id: `bombard-${state.day}-${settlementId}`,
           day: state.day + 1,
           category: 'WAR',
-          text: `${s.name} surları kuşatma silahlarıyla dövüldü! Duvar sağlığı %${nextWallHp} seviyesine indi, ${garrisonLoss} savunmacı saf dışı kaldı.`,
+          text: `${s.name} kuşatma silahlarıyla dövüldü. Duvar sağlığı %${nextWallHealth} seviyesinde; ${garrisonLoss} savunmacı saf dışı kaldı.`,
         },
         ...state.chronicle,
       ].slice(0, 30),

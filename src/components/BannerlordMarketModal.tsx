@@ -1,32 +1,39 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import * as THREE from 'three';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   CALRADIA_MARKETPLACE_ITEMS,
   CampaignState,
   EquipmentSlotId,
   InventoryItem,
+  ItemDefinition,
   MarketCategory,
   MarketplaceItem,
   Settlement,
-  buyMarketplaceItem,
-  equipInventoryItem,
   getTotalTroops,
-  sellMarketplaceItem,
-  unequipEquipmentSlot,
 } from '../game/rules';
 import {
-  ArmorTier,
-  HelmetType,
-  ShieldType,
-  WeaponType,
-  applyEquipmentToRig,
-  createCharacterRig,
-  deriveRigVisualOptionsFromEquipment,
-  updateRigAnimation,
-} from '../game/characterRig';
+  PLAYER_HERO_ID,
+  equipInventoryItemForHero,
+  getPlayerHero,
+  inventoryItemQuantity,
+  inventoryTotalWeight,
+  resolveItemDefinition,
+  toggleInventoryStackLocked,
+  unequipHeroEquipmentSlot,
+} from '../game/bannerlordFoundation';
+import {
+  buyFromMarket,
+  getMarketSettlement,
+  initializeMarketSettlement,
+  marketUnitBuyPrice,
+  marketUnitSellPrice,
+  sellAllSurplusToMarket,
+  sellToMarket,
+} from '../game/marketTransaction';
+import { deriveRigVisualOptionsFromEquipment } from '../game/characterRig';
 import { sound } from '../game/sound';
+import { HeroMannequin } from './HeroMannequin';
 import { ItemIcon } from './ItemIcon';
-import { CATEGORY_ICON_KEYS } from '../game/itemIcons';
+import { CATEGORY_ICON_KEYS, ITEM_ICON_KEYS, type ItemIconKey } from '../game/itemIcons';
 import {
   PRICE_TONE_CLASS,
   PRICE_TONE_LABEL,
@@ -38,10 +45,10 @@ import {
   emptySession,
   marketProfile,
   priceTone,
-  sellPriceAt,
   tradeRumours,
   type MarketProfile,
 } from '../game/market';
+import { calculatePartyCarryCapacity } from '../game/logistics';
 
 interface BannerlordMarketModalProps {
   settlement?: Settlement | null;
@@ -51,16 +58,48 @@ interface BannerlordMarketModalProps {
   onOpenArenaTest?: () => void;
 }
 
+function validIconKey(icon: string): ItemIconKey {
+  return ITEM_ICON_KEYS.includes(icon as ItemIconKey) ? (icon as ItemIconKey) : 'crate';
+}
+
+function definitionArmorTotal(definition: ItemDefinition): number {
+  return (
+    (definition.stats.armorHead ?? 0) +
+    (definition.stats.armorBody ?? 0) +
+    (definition.stats.armorArm ?? 0) +
+    (definition.stats.armorLeg ?? 0) +
+    (definition.stats.armorMount ?? 0)
+  );
+}
+
+function definitionToMarketRow(definition: ItemDefinition): MarketplaceItem {
+  return {
+    id: definition.id,
+    name: definition.name,
+    category: definition.category === 'TRADE' ? 'FOOD' : definition.category,
+    slot: definition.slot,
+    value: definition.baseValue,
+    weight: definition.weight,
+    statBonus: definition.statBonus,
+    iconKey: validIconKey(definition.icon),
+    civilianLegal: definition.civilianLegal,
+    tier: definition.tier,
+    description: 'Bu şehre satılmış, tezgahtaki eşya.',
+  };
+}
+
 export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
   settlement,
-  campaign,
+  campaign: committedCampaign,
   onClose,
   onUpdateCampaign,
   onOpenArenaTest,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<MarketCategory>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'tier' | 'price_asc' | 'price_desc' | 'weight'>('tier');
+  const [sortBy, setSortBy] = useState<
+    'tier' | 'name' | 'quantity' | 'price_asc' | 'price_desc' | 'weight' | 'damage' | 'armor'
+  >('tier');
   const [feedback, setFeedback] = useState<string | null>(null);
   /** Faz 7: tüccar kesesi yerleşkenin refahından türetilir. */
   const fallbackProfile = useMemo<MarketProfile>(
@@ -79,70 +118,140 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
     } as never),
     [],
   );
-  const profile = useMemo(
-    () => (settlement ? marketProfile(settlement) : fallbackProfile),
-    [settlement, fallbackProfile],
+  /**
+   * P2 bekleyen-transfer taslağı: bütün alış/satış/kuşanma/kilit işlemleri
+   * yalnız bu kopyada yaşar. `Bitti` taslağı tek seferde App'e işler;
+   * `Vazgeç`/Esc hiçbir kampanya alanını değiştirmeden kapatır.
+   */
+  const [draftCampaign, setDraftCampaign] = useState<CampaignState>(() =>
+    settlement ? initializeMarketSettlement(committedCampaign, settlement.id) : committedCampaign,
   );
-  const [merchantGold, setMerchantGold] = useState(profile.merchantGold);
   useEffect(() => {
-    setMerchantGold(profile.merchantGold);
-  }, [profile.settlementId, profile.merchantGold]);
+    setDraftCampaign(
+      settlement ? initializeMarketSettlement(committedCampaign, settlement.id) : committedCampaign,
+    );
+    setSession(emptySession());
+    setFeedback(null);
+    // committedCampaign bilinçli olarak bağımlılık değil: ekran açıkken dış
+    // durum değişimleri oyuncunun bekleyen işlem taslağını ezmemelidir.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settlement?.id]);
+
+  const campaign = draftCampaign;
+  const liveSettlement = settlement
+    ? (getMarketSettlement(draftCampaign, settlement.id) ?? settlement)
+    : null;
+  const profile = useMemo(
+    () => (liveSettlement ? marketProfile(liveSettlement) : fallbackProfile),
+    [liveSettlement, fallbackProfile],
+  );
+  const fallbackStock = useMemo(
+    () =>
+      Object.fromEntries(
+        buildMarketStock(CALRADIA_MARKETPLACE_ITEMS, fallbackProfile).map((entry) => [
+          entry.item.id,
+          entry.quantity,
+        ]),
+      ),
+    [fallbackProfile],
+  );
+  const stock = liveSettlement?.marketStock ?? fallbackStock;
+  const merchantGold = liveSettlement?.merchantGold ?? profile.merchantGold;
   /** Faz 7: seans özeti (Bannerlord'daki net sonuç). */
   const [session, setSession] = useState(emptySession);
-  /** Faz 7: tezgah stoğu — satın alınan mal azalır. */
-  const [stock, setStock] = useState<Record<string, number>>(() =>
-    Object.fromEntries(buildMarketStock(CALRADIA_MARKETPLACE_ITEMS, profile).map((s) => [s.item.id, s.quantity])),
-  );
-  useEffect(() => {
-    setStock(
-      Object.fromEntries(
-        buildMarketStock(CALRADIA_MARKETPLACE_ITEMS, profile).map((s) => [s.item.id, s.quantity]),
-      ),
-    );
-  }, [profile.settlementId]); // eslint-disable-line react-hooks/exhaustive-deps
-  /** Faz 7: toplu satışta korunacak eşyalar (kilit kolonu). */
-  const [lockedIds, setLockedIds] = useState<string[]>([]);
 
-  // 3D Preview Canvas ref
-  const canvasMountRef = useRef<HTMLDivElement>(null);
-  const rotationAngleRef = useRef(0);
-  const isDraggingRef = useRef(false);
-  const lastMouseXRef = useRef(0);
+  const settlementName = liveSettlement?.name || settlement?.name || 'Pazaryeri & Ordugah';
 
-  const settlementName = settlement?.name || 'Pazaryeri & Ordugah';
+  // Katalog tezgahı + oyuncunun bu şehre sattığı katalog dışı tanımlar.
+  const marketRows = useMemo<MarketplaceItem[]>(() => {
+    const rows = new Map(CALRADIA_MARKETPLACE_ITEMS.map((item) => [item.id, item]));
+    for (const definitionId of Object.keys(stock)) {
+      if (rows.has(definitionId)) continue;
+      const definition = resolveItemDefinition(campaign, definitionId);
+      if (definition) rows.set(definition.id, definitionToMarketRow(definition));
+    }
+    return [...rows.values()];
+  }, [campaign, stock]);
 
   // Filter Market Items
   const filteredMarketItems = useMemo(() => {
-    return CALRADIA_MARKETPLACE_ITEMS.filter((item) => {
-      const matchCat = selectedCategory === 'ALL' || item.category === selectedCategory;
-      const matchSearch =
-        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.statBonus.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchCat && matchSearch;
-    }).sort((a, b) => {
-      if (sortBy === 'price_asc') return a.value - b.value;
-      if (sortBy === 'price_desc') return b.value - a.value;
-      if (sortBy === 'weight') return a.weight - b.weight;
-      return b.tier - a.tier;
-    });
-  }, [selectedCategory, searchQuery, sortBy]);
+    return marketRows
+      .filter((item) => (stock[item.id] ?? 0) > 0)
+      .filter((item) => {
+        const matchCat = selectedCategory === 'ALL' || item.category === selectedCategory;
+        const matchSearch =
+          item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          item.statBonus.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchCat && matchSearch;
+      })
+      .sort((a, b) => {
+        if (sortBy === 'name') return a.name.localeCompare(b.name, 'tr');
+        if (sortBy === 'quantity') return (stock[b.id] ?? 0) - (stock[a.id] ?? 0);
+        if (sortBy === 'price_asc') return buyPriceAt(a, profile) - buyPriceAt(b, profile);
+        if (sortBy === 'price_desc') return buyPriceAt(b, profile) - buyPriceAt(a, profile);
+        if (sortBy === 'weight') return a.weight - b.weight;
+        if (sortBy === 'damage' || sortBy === 'armor') {
+          const defA = resolveItemDefinition(campaign, a.id);
+          const defB = resolveItemDefinition(campaign, b.id);
+          const valueA = defA
+            ? sortBy === 'damage'
+              ? (defA.stats.damage ?? 0)
+              : definitionArmorTotal(defA)
+            : 0;
+          const valueB = defB
+            ? sortBy === 'damage'
+              ? (defB.stats.damage ?? 0)
+              : definitionArmorTotal(defB)
+            : 0;
+          return valueB - valueA;
+        }
+        return b.tier - a.tier || a.name.localeCompare(b.name, 'tr');
+      });
+  }, [campaign, marketRows, profile, selectedCategory, searchQuery, sortBy, stock]);
 
   // Filter Player Backpack Items
   const filteredPlayerItems = useMemo(() => {
     const items = campaign.inventoryItems || [];
-    return items.filter((item) => {
-      const cat = item.category || 'TRADE';
-      const matchCat =
-        selectedCategory === 'ALL' ||
-        (selectedCategory === 'WEAPON' && cat === 'WEAPON') ||
-        (selectedCategory === 'SHIELD' && cat === 'SHIELD') ||
-        (selectedCategory === 'ARMOR' && cat === 'ARMOR') ||
-        (selectedCategory === 'FOOD' && cat === 'FOOD') ||
-        (selectedCategory === 'HORSE' && cat === 'HORSE');
-      const matchSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchCat && matchSearch;
-    });
-  }, [campaign.inventoryItems, selectedCategory, searchQuery]);
+    return items
+      .filter((item) => {
+        const definition = resolveItemDefinition(campaign, item.definitionId ?? item.id);
+        const rawCategory = definition?.category ?? item.category ?? 'TRADE';
+        const category = rawCategory === 'TRADE' ? 'FOOD' : rawCategory;
+        const matchCat = selectedCategory === 'ALL' || category === selectedCategory;
+        const matchSearch =
+          item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          item.statBonus.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchCat && matchSearch;
+      })
+      .sort((a, b) => {
+        if (sortBy === 'name') return a.name.localeCompare(b.name, 'tr');
+        if (sortBy === 'quantity') return inventoryItemQuantity(b) - inventoryItemQuantity(a);
+        if (sortBy === 'price_asc' || sortBy === 'price_desc') {
+          const defA = resolveItemDefinition(campaign, a.definitionId ?? a.id);
+          const defB = resolveItemDefinition(campaign, b.definitionId ?? b.id);
+          const priceA = defA ? marketUnitSellPrice(defA, profile) : a.value;
+          const priceB = defB ? marketUnitSellPrice(defB, profile) : b.value;
+          return sortBy === 'price_asc' ? priceA - priceB : priceB - priceA;
+        }
+        if (sortBy === 'weight') return a.weight - b.weight;
+        if (sortBy === 'damage' || sortBy === 'armor') {
+          const defA = resolveItemDefinition(campaign, a.definitionId ?? a.id);
+          const defB = resolveItemDefinition(campaign, b.definitionId ?? b.id);
+          const valueA = defA
+            ? sortBy === 'damage'
+              ? (defA.stats.damage ?? 0)
+              : definitionArmorTotal(defA)
+            : 0;
+          const valueB = defB
+            ? sortBy === 'damage'
+              ? (defB.stats.damage ?? 0)
+              : definitionArmorTotal(defB)
+            : 0;
+          return valueB - valueA;
+        }
+        return (b.tier ?? 0) - (a.tier ?? 0) || a.name.localeCompare(b.name, 'tr');
+      });
+  }, [campaign, profile, selectedCategory, searchQuery, sortBy]);
 
   // Derive Character Visual Options from equipped items
   const visualOptions = useMemo(
@@ -150,197 +259,180 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
     [campaign.equipment],
   );
 
-  // Mount 3D Character Preview Canvas in center
-  useEffect(() => {
-    const container = canvasMountRef.current;
-    if (!container) return;
+  const healthyTroops =
+    (draftCampaign.troopStacks ?? []).reduce((sum, s) => sum + s.count, 0) || 20;
+  const capacityBreakdown = useMemo(
+    () =>
+      calculatePartyCarryCapacity({
+        healthyTroops,
+        inventoryItems: draftCampaign.inventoryItems,
+        perks: draftCampaign.unlockedPerks,
+        state: draftCampaign,
+      }),
+    [draftCampaign, healthyTroops],
+  );
 
-    const width = container.clientWidth || 320;
-    const height = container.clientHeight || 460;
+  const playerHero = useMemo(() => getPlayerHero(campaign), [campaign]);
+  const armorTotals = useMemo(() => {
+    const totals = { head: 0, body: 0, arm: 0, leg: 0, mount: 0 };
+    if (!playerHero) return totals;
+    const equipmentSet = playerHero.equipment[playerHero.activeEquipmentSet];
+    for (const definitionId of Object.values(equipmentSet)) {
+      const definition = resolveItemDefinition(campaign, definitionId);
+      if (!definition) continue;
+      totals.head += definition.stats.armorHead ?? 0;
+      totals.body += definition.stats.armorBody ?? 0;
+      totals.arm += definition.stats.armorArm ?? 0;
+      totals.leg += definition.stats.armorLeg ?? 0;
+      totals.mount += definition.stats.armorMount ?? 0;
+    }
+    return totals;
+  }, [campaign, playerHero]);
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#14100c');
+  const quantityFromClick = (
+    event: React.MouseEvent,
+    available: number,
+    affordable = Number.POSITIVE_INFINITY,
+  ): number => {
+    const desired = event.ctrlKey || event.metaKey ? available : event.shiftKey ? 5 : 1;
+    const safeAffordable = Number.isFinite(affordable)
+      ? Math.max(0, Math.floor(affordable))
+      : available;
+    return Math.max(0, Math.min(desired, available, safeAffordable));
+  };
 
-    const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 50);
-    camera.position.set(0, 1.15, 3.2);
-    camera.lookAt(0, 0.95, 0);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
-    renderer.shadowMap.enabled = true;
-    container.appendChild(renderer.domElement);
-
-    // Warm Key + Cool Fill Studio Lighting
-    const keyLight = new THREE.DirectionalLight('#fffbeb', 1.8);
-    keyLight.position.set(3, 4, 3);
-    keyLight.castShadow = true;
-    scene.add(keyLight);
-
-    const fillLight = new THREE.DirectionalLight('#93c5fd', 0.8);
-    fillLight.position.set(-3, 2, -2);
-    scene.add(fillLight);
-
-    const hemiLight = new THREE.HemisphereLight('#fef08a', '#1e1b18', 0.6);
-    scene.add(hemiLight);
-
-    // Pedestal Ground Disc
-    const discGeo = new THREE.CylinderGeometry(1.2, 1.3, 0.1, 24);
-    const discMat = new THREE.MeshStandardMaterial({ color: '#262018', roughness: 0.85 });
-    const disc = new THREE.Mesh(discGeo, discMat);
-    disc.position.y = -0.05;
-    disc.receiveShadow = true;
-    scene.add(disc);
-
-    // Character Rig
-    const rig = createCharacterRig(visualOptions);
-    scene.add(rig.root);
-
-    let animationFrameId: number;
-    let clock = new THREE.Clock();
-
-    const renderLoop = () => {
-      animationFrameId = requestAnimationFrame(renderLoop);
-      const delta = clock.getDelta();
-      const elapsed = clock.getElapsedTime();
-
-      // Apply drag or slow idle rotation
-      if (!isDraggingRef.current) {
-        rotationAngleRef.current += delta * 0.25;
-      }
-      rig.root.rotation.y = rotationAngleRef.current;
-
-      updateRigAnimation(rig, 'IDLE', elapsed, delta);
-      renderer.render(scene, camera);
-    };
-
-    renderLoop();
-
-    const onMouseDown = (e: MouseEvent) => {
-      isDraggingRef.current = true;
-      lastMouseXRef.current = e.clientX;
-    };
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isDraggingRef.current) return;
-      const deltaX = e.clientX - lastMouseXRef.current;
-      lastMouseXRef.current = e.clientX;
-      rotationAngleRef.current += deltaX * 0.015;
-    };
-    const onMouseUp = () => {
-      isDraggingRef.current = false;
-    };
-
-    container.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-      container.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      renderer.dispose();
-      if (container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
-      }
-    };
-  }, [visualOptions]);
-
-  // Buy item handler
-  const handleBuy = (item: MarketplaceItem) => {
-    const quantity = stock[item.id] ?? 0;
+  // Buy item handler — yalnız taslak güncellenir.
+  const handleBuy = (item: MarketplaceItem, event: React.MouseEvent) => {
+    if (!liveSettlement) {
+      setFeedback('Pazar yalnız bir yerleşimin içinde kullanılabilir.');
+      return;
+    }
+    const available = stock[item.id] ?? 0;
+    const definition = resolveItemDefinition(campaign, item.id);
+    const unitPrice = definition ? marketUnitBuyPrice(definition, profile) : buyPriceAt(item, profile);
+    const affordable = unitPrice > 0 ? Math.floor(campaign.gold / unitPrice) : 0;
+    const quantity = quantityFromClick(event, available, affordable);
     if (quantity <= 0) {
       setFeedback(`Tezgahta "${item.name}" kalmadı.`);
       return;
     }
-    const price = buyPriceAt(item, profile);
-    const res = buyMarketplaceItem(campaign, { ...item, value: price }, settlementName);
+    const res = buyFromMarket(campaign, liveSettlement.id, item.id, quantity);
     if (!res.success) {
       setFeedback(res.reason || 'Satın alma başarısız.');
       return;
     }
     sound.playCoinChime();
-    setMerchantGold((prev) => prev + price);
-    setStock((prev) => ({ ...prev, [item.id]: Math.max(0, (prev[item.id] ?? 0) - 1) }));
-    setSession((prev) => addPurchase(prev, price));
-    setFeedback(`"${item.name}" satın alındı (-${price} Dinar).`);
-    onUpdateCampaign(res.nextState);
+    setDraftCampaign(res.nextState);
+    setSession((prev) => addPurchase(prev, res.totalPrice, res.quantity));
+    setFeedback(
+      `${res.quantity} adet "${item.name}" bekleyen işleme eklendi (-${res.totalPrice} Dinar). Bitti ile onayla.`,
+    );
   };
 
   // Sell item handler
-  const handleSell = (itemId: string) => {
-    const invItem = (campaign.inventoryItems || []).find((i) => i.id === itemId);
-    const expected = invItem ? sellPriceAt(invItem as never, profile) : 0;
+  const handleSell = (item: InventoryItem, event: React.MouseEvent) => {
+    const invItem = item;
+    const definition = resolveItemDefinition(campaign, item.definitionId ?? item.id);
+    const expected = definition ? marketUnitSellPrice(definition, profile) : item.value;
+    if (!liveSettlement) {
+      setFeedback('Pazar yalnız bir yerleşimin içinde kullanılabilir.');
+      return;
+    }
     if (invItem && merchantGold < expected) {
       setFeedback(
         `Tüccarın kesesinde yeterli altın yok (${merchantGold} Dinar). Daha az değerli mal sat veya başka şehre git.`,
       );
       return;
     }
-    const res = sellMarketplaceItem(campaign, itemId, settlementName);
+    const affordable = expected > 0 ? Math.floor(merchantGold / expected) : 0;
+    const quantity = quantityFromClick(event, inventoryItemQuantity(item), affordable);
+    const res = sellToMarket(campaign, liveSettlement.id, item.id, quantity);
     if (!res.success) {
       setFeedback(res.reason || 'Satış başarısız.');
       return;
     }
     sound.playCoinChime();
-    setMerchantGold((prev) => Math.max(0, prev - res.goldGained));
-    setSession((prev) => addSale(prev, res.goldGained));
-    setFeedback(`Eşya satıldı (+${res.goldGained} Dinar).`);
-    onUpdateCampaign(res.nextState);
+    setDraftCampaign(res.nextState);
+    setSession((prev) => addSale(prev, res.totalPrice, res.quantity));
+    setFeedback(
+      `${res.quantity} adet "${item.name}" bekleyen işleme eklendi (+${res.totalPrice} Dinar). Bitti ile onayla.`,
+    );
+  };
+
+  const handleToggleLock = (item: InventoryItem) => {
+    const res = toggleInventoryStackLocked(campaign.inventoryItems, item.id);
+    if (!res.success) {
+      setFeedback(res.reason || 'Kilit değiştirilemedi.');
+      return;
+    }
+    setDraftCampaign((prev) => ({ ...prev, inventoryItems: res.items }));
+    setFeedback(
+      res.stack?.locked
+        ? `"${item.name}" kilitlendi; Bitti'ye kadar taslakta korunur.`
+        : `"${item.name}" kilidi açıldı.`,
+    );
   };
 
   // Equip handler
   const handleEquip = (itemId: string) => {
-    const res = equipInventoryItem(campaign, itemId);
+    const res = equipInventoryItemForHero(
+      campaign,
+      playerHero?.id ?? PLAYER_HERO_ID,
+      itemId,
+      playerHero?.activeEquipmentSet,
+    );
     if (!res.success) {
       setFeedback(res.reason || 'Eşya kuşanılamadı.');
       return;
     }
     sound.playWarhorn();
-    setFeedback('Eşya kuşanıldı ve zırh değerleri güncellendi.');
-    onUpdateCampaign(res.nextState);
+    setDraftCampaign(res.nextState);
+    setFeedback('Eşya taslakta kuşanıldı; Bitti ile kalıcı olur, Vazgeç geri alır.');
   };
 
   // Unequip handler
   const handleUnequip = (slot: EquipmentSlotId) => {
-    const res = unequipEquipmentSlot(campaign, slot);
+    const res = unequipHeroEquipmentSlot(
+      campaign,
+      playerHero?.id ?? PLAYER_HERO_ID,
+      slot,
+      playerHero?.activeEquipmentSet,
+    );
     if (!res.success) {
       setFeedback(res.reason || 'Çıkarılamadı.');
       return;
     }
-    setFeedback(`Eşya çıkarıldı ve sırt çantasına alındı.`);
-    onUpdateCampaign(res.nextState);
+    setDraftCampaign(res.nextState);
+    setFeedback('Eşya taslakta çıkarıldı ve sırt çantasına alındı.');
   };
 
   // Quick: Sell all surplus loot
   const handleSellAllLoot = () => {
-    let current = campaign;
-    let totalGained = 0;
-    const items = [...(current.inventoryItems || [])];
-    for (const item of items) {
-      if (item.slot === 'TRADE' || item.name.includes('Katır') || item.category === 'FOOD') continue;
-      if (lockedIds.includes(item.id)) continue; // Faz 7: kilitli eşya satılmaz
-      const res = sellMarketplaceItem(current, item.id, settlementName);
-      if (res.success) {
-        current = res.nextState;
-        totalGained += res.goldGained;
-      }
+    if (!liveSettlement) {
+      setFeedback('Pazar yalnız bir yerleşimin içinde kullanılabilir.');
+      return;
     }
-    if (totalGained > 0) {
+    const res = sellAllSurplusToMarket(campaign, liveSettlement.id);
+    if (res.totalQuantity > 0) {
       sound.playCoinChime();
-      setMerchantGold((prev) => Math.max(0, prev - totalGained));
-      setFeedback(`Toplam ${totalGained} Dinar değerinde ganimet pazar loncasına satıldı!`);
-      onUpdateCampaign(current);
+      setDraftCampaign(res.nextState);
+      setSession((prev) => addSale(prev, res.totalEarned, res.totalQuantity));
+      setFeedback(
+        `${res.totalQuantity} adet fazla ganimet bekleyen işleme eklendi (+${res.totalEarned} Dinar). Bitti ile onayla.`,
+      );
     } else {
-      setFeedback('Satılacak yedek ganimet eşyası bulunmuyor.');
+      setFeedback('Satılacak kilitsiz yedek ganimet eşyası bulunmuyor veya tüccar kasası yetersiz.');
     }
+  };
+
+  const handleDone = () => {
+    onUpdateCampaign(draftCampaign);
+    onClose();
   };
 
   const totalTroops = getTotalTroops(campaign.roster);
   const maxCapacity = totalTroops * 12 + 350;
-  const currentWeight = (campaign.inventoryItems || []).reduce((acc, i) => acc + i.weight, 110);
+  const currentWeight = inventoryTotalWeight(campaign.inventoryItems);
   const isOverweight = currentWeight > maxCapacity;
 
   return (
@@ -349,6 +441,8 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="market-modal-title"
+      data-testid="market-modal"
+      data-market-settlement-id={liveSettlement?.id ?? ''}
     >
       <div className="w-full h-full max-w-7xl max-h-[96vh] rounded-lg border border-[#c6a15b]/40 bg-[#120f0c] shadow-2xl flex flex-col overflow-hidden text-[#f3ead8]">
         {/* HEADER BAR */}
@@ -373,6 +467,17 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                 <span>
                   Erzak:{' '}
                   <strong className="text-[#60a5fa] font-mono-tabular">{campaign.food} Gün</strong>
+                </span>
+                <span>·</span>
+                <span title="Ordu Taşıma Kapasitesi (askerler + binekler + yük hayvanları)">
+                  Kapasite:{' '}
+                  <strong
+                    className={`font-mono-tabular ${
+                      capacityBreakdown.isOverweight ? 'text-red-400 font-bold' : 'text-[#fbbf24]'
+                    }`}
+                  >
+                    {Math.round(capacityBreakdown.currentWeight)} / {capacityBreakdown.totalCapacity} kg
+                  </strong>
                 </span>
                 <span>·</span>
                 <span>
@@ -411,7 +516,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
               onClick={onClose}
               className="px-3 py-1.5 rounded text-xs font-bold bg-[#26211a] hover:bg-[#382f25] text-[#e2d6c1] border border-[#c6a15b]/30 transition-colors"
             >
-              Kapat [Esc]
+              Vazgeç [Esc]
             </button>
           </div>
         </div>
@@ -459,9 +564,13 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
               className="px-2 py-1 text-xs rounded bg-[#100d0a] border border-[#c6a15b]/30 text-[#e2d6c1] focus:outline-none"
             >
               <option value="tier">Kademeye Göre</option>
+              <option value="name">Ada Göre</option>
+              <option value="quantity">Adede Göre</option>
               <option value="price_asc">Fiyat (Artan)</option>
               <option value="price_desc">Fiyat (Azalan)</option>
               <option value="weight">Ağırlık (Hafif)</option>
+              <option value="damage">Hasara Göre</option>
+              <option value="armor">Zırha Göre</option>
             </select>
           </div>
         </div>
@@ -489,15 +598,23 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                 <ItemIcon iconKey="crate" size={13} className="inline-block align-[-2px] mr-1" />
                 Pazaryeri Tezgahı ({filteredMarketItems.length} Eşya)
               </span>
-              <span className="text-[11px] text-[#9ca3af]">Sol Tık: Satın Al</span>
+              <span className="text-[11px] text-[#9ca3af]">Tık 1 · Shift 5 · Ctrl tümü</span>
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
               {filteredMarketItems.map((item) => {
-                const price = buyPriceAt(item, profile);
+                const definition = resolveItemDefinition(campaign, item.id);
+                const price = definition ? marketUnitBuyPrice(definition, profile) : buyPriceAt(item, profile);
                 const quantity = stock[item.id] ?? 0;
                 const canAfford = campaign.gold >= price;
-                const rumours = settlement ? tradeRumours(campaign, item, settlement, [], 2) : [];
+                const visitedIds = campaign.settlements
+                  .filter((candidate) => candidate.visited)
+                  .map((candidate) => candidate.id);
+                const rumours = liveSettlement
+                  ? tradeRumours(campaign, item, liveSettlement, visitedIds, 12)
+                      .filter((rumour) => rumour.visited)
+                      .slice(0, 2)
+                  : [];
                 return (
                   <div
                     key={item.id}
@@ -555,7 +672,9 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                       <button
                         type="button"
                         disabled={!canAfford || quantity <= 0}
-                        onClick={() => handleBuy(item)}
+                        data-testid={`market-buy-${item.id}`}
+                        title="Tık: 1 adet · Shift: 5 adet · Ctrl: alınabilen tümü"
+                        onClick={(event) => handleBuy(item, event)}
                         className={`px-3 py-1 rounded text-[11px] font-bold transition-colors ${
                           canAfford && quantity > 0
                             ? 'bg-[#15803d] hover:bg-[#16a34a] text-white shadow'
@@ -583,10 +702,15 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
             </div>
 
             {/* 3D Model Viewport */}
-            <div
-              ref={canvasMountRef}
-              className="flex-1 w-full relative cursor-grab active:cursor-grabbing overflow-hidden min-h-[220px]"
-            />
+            <div className="flex-1 w-full relative overflow-hidden min-h-[220px]">
+              <HeroMannequin
+                visualOptions={visualOptions}
+                showMount={Boolean(
+                  playerHero?.equipment[playerHero.activeEquipmentSet].MOUNT,
+                )}
+                testId="market-hero-mannequin"
+              />
+            </div>
 
             {/* Armor & Encumbrance Stats Dock */}
             <div className="p-3 border-t border-[#c6a15b]/20 bg-[#16120e] space-y-2.5 shrink-0 text-xs">
@@ -618,19 +742,19 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
               <div className="grid grid-cols-2 gap-2 text-[11px]">
                 <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
                   <span className="text-[#a89b84] block"><ItemIcon iconKey="helmet" size={12} className="inline-block align-[-2px] mr-1" />Baş Zırhı</span>
-                  <span className="text-[#f8f0df] font-bold">+48 Zırh</span>
+                  <span className="text-[#f8f0df] font-bold">+{armorTotals.head} Zırh</span>
                 </div>
                 <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
                   <span className="text-[#a89b84] block"><ItemIcon iconKey="armor" size={12} className="inline-block align-[-2px] mr-1" />Gövde Zırhı</span>
-                  <span className="text-[#f8f0df] font-bold">+64 Zırh</span>
+                  <span className="text-[#f8f0df] font-bold">+{armorTotals.body} Zırh</span>
                 </div>
                 <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
                   <span className="text-[#a89b84] block"><ItemIcon iconKey="gloves" size={12} className="inline-block align-[-2px] mr-1" />Kol Zırhı</span>
-                  <span className="text-[#f8f0df] font-bold">+24 Zırh</span>
+                  <span className="text-[#f8f0df] font-bold">+{armorTotals.arm} Zırh</span>
                 </div>
                 <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
                   <span className="text-[#a89b84] block"><ItemIcon iconKey="boots" size={12} className="inline-block align-[-2px] mr-1" />Bacak Zırhı</span>
-                  <span className="text-[#f8f0df] font-bold">+32 Zırh</span>
+                  <span className="text-[#f8f0df] font-bold">+{armorTotals.leg} Zırh</span>
                 </div>
               </div>
 
@@ -658,7 +782,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
             </div>
 
             {/* 12 Equipped Slots Header Ribbon */}
-            <div className="p-2 border-b border-[#c6a15b]/15 bg-[#17130e] max-h-36 overflow-y-auto">
+            <div className="p-2 border-b border-[#c6a15b]/15 bg-[#17130e] max-h-36 overflow-y-auto shrink-0">
               <div className="text-[10px] text-[#c6a15b] font-bold mb-1">
                 Kuşanılmış Teçhizat Slotları:
               </div>
@@ -666,17 +790,28 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                 {(
                   [
                     { slot: 'HEAD', label: 'Başlık', icon: 'helmet' as const },
+                    { slot: 'SHOULDER', label: 'Omuzluk', icon: 'shoulder' as const },
                     { slot: 'BODY', label: 'Gövde', icon: 'armor' as const },
+                    { slot: 'GLOVES', label: 'Eldiven', icon: 'gloves' as const },
+                    { slot: 'LEG', label: 'Çizme', icon: 'boots' as const },
+                    { slot: 'MOUNT', label: 'Binek', icon: 'horse' as const },
+                    { slot: 'HARNESS', label: 'Koşum', icon: 'harness' as const },
+                    { slot: 'BANNER', label: 'Sancak', icon: 'cloth' as const },
                     { slot: 'WEAPON1', label: 'Silah I', icon: 'sword' as const },
                     { slot: 'WEAPON2', label: 'Kalkan / II', icon: 'shield' as const },
                     { slot: 'WEAPON3', label: 'Silah III', icon: 'spear' as const },
                     { slot: 'WEAPON4', label: 'Silah IV', icon: 'arrows' as const },
-                    { slot: 'MOUNT', label: 'Binek', icon: 'horse' as const },
-                    { slot: 'LEG', label: 'Çizme', icon: 'boots' as const },
                   ] as const
                 ).map((slotInfo) => {
-                  const eqName = campaign.equipment?.[slotInfo.slot] || 'Standart';
-                  const isEquipped = !eqName.includes('Boş') && !eqName.includes('Yok');
+                  const equippedDefinitionId = playerHero
+                    ? playerHero.equipment[playerHero.activeEquipmentSet][slotInfo.slot]
+                    : null;
+                  const equippedDefinition = resolveItemDefinition(campaign, equippedDefinitionId);
+                  const eqName =
+                    equippedDefinition?.name ??
+                    campaign.equipment?.[slotInfo.slot] ??
+                    'Boş Slot';
+                  const isEquipped = Boolean(equippedDefinitionId);
                   return (
                     <div
                       key={slotInfo.slot}
@@ -708,53 +843,56 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
             </div>
 
             {/* Backpack Inventory Items */}
-            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
               {filteredPlayerItems.length === 0 ? (
                 <div className="p-6 text-center text-xs text-[#a89b84]">
                   Bu kategoride envanterinizde eşya bulunmuyor. Sol taraftaki pazaryerinden kılıç,
                   zırh veya erzak satın alabilirsiniz.
                 </div>
               ) : (
-                filteredPlayerItems.map((item) => (
+                filteredPlayerItems.map((item) => {
+                  const definition = resolveItemDefinition(campaign, item.definitionId ?? item.id);
+                  const saleUnitPrice = definition
+                    ? marketUnitSellPrice(definition, profile)
+                    : item.value;
+                  const quantity = inventoryItemQuantity(item);
+                  const totalWeight = item.weight * quantity;
+                  return (
                   <div
                     key={item.id}
                     className="p-2 rounded bg-[#1c1712] border border-[#c6a15b]/20 flex items-center justify-between gap-2"
                   >
                     <div className="min-w-0">
                       <div className="text-xs font-semibold text-[#f8f0df] truncate">
-                        {item.name}
+                        {item.name} <span className="text-[#fbbf24]">×{quantity}</span>
                       </div>
                       <div className="text-[10px] text-[#34d399] truncate font-medium">
                         {item.statBonus}
                       </div>
                       <div className="text-[10px] text-[#a89b84] flex items-center gap-2">
-                        <span>Ağırlık: {item.weight} kg</span>
+                        <span>Ağırlık: {totalWeight.toFixed(1)} kg</span>
                         <span>·</span>
-                        <span className="text-[#fbbf24] font-mono">Değer: {item.value} D</span>
-                        <span className="text-[#8b8072]">
-                          · Satış ≈ {sellPriceAt(item as never, profile)} D
+                        <span className="text-[#fbbf24] font-mono">
+                          Birim değer: {item.value} D
                         </span>
+                        <span className="text-[#8b8072]">· Satış: {saleUnitPrice} D/adet</span>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button
                         type="button"
-                        onClick={() =>
-                          setLockedIds((prev) =>
-                            prev.includes(item.id)
-                              ? prev.filter((id) => id !== item.id)
-                              : [...prev, item.id],
-                          )
-                        }
-                        title={lockedIds.includes(item.id) ? 'Kilidi aç' : 'Kilitle (toplu satışta korunur)'}
+                        onClick={() => handleToggleLock(item)}
+                        data-testid={`market-lock-${item.id}`}
+                        aria-pressed={Boolean(item.locked)}
+                        title={item.locked ? 'Kilidi aç' : 'Kilitle (satış ve toplu satışta korunur)'}
                         className={`px-1.5 py-1 rounded text-[10px] font-bold border ${
-                          lockedIds.includes(item.id)
+                          item.locked
                             ? 'bg-[#3f2d12] text-[#fbbf24] border-[#fbbf24]/50'
                             : 'bg-[#1f1913] text-[#8b8072] border-[#c6a15b]/20'
                         }`}
                       >
-                        {lockedIds.includes(item.id) ? 'KİLİTLİ' : 'AÇIK'}
+                        {item.locked ? 'KİLİTLİ' : 'AÇIK'}
                       </button>
                       {item.slot !== 'TRADE' && (
                         <button
@@ -767,14 +905,18 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                       )}
                       <button
                         type="button"
-                        onClick={() => handleSell(item.id)}
-                        className="px-2 py-1 rounded text-[10px] font-bold bg-[#991b1b] hover:bg-[#b91c1c] text-white transition-colors"
+                        onClick={(event) => handleSell(item, event)}
+                        disabled={Boolean(item.locked) || merchantGold < saleUnitPrice}
+                        data-testid={`market-sell-${item.id}`}
+                        title="Tık: 1 adet · Shift: 5 adet · Ctrl: kasanın alabildiği tümü"
+                        className="px-2 py-1 rounded text-[10px] font-bold bg-[#991b1b] hover:bg-[#b91c1c] text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       >
-                        Sat (+{item.value} D)
+                        Sat (+{saleUnitPrice} D)
                       </button>
                     </div>
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
@@ -795,13 +937,24 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
             {session.net > 0 ? '+' : ''}
             {session.net} D · {session.itemsBought} alış / {session.itemsSold} satış
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fde68a]/50 shadow"
-          >
-            Bitir
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              data-testid="market-cancel"
+              className="px-4 py-1.5 rounded text-xs font-bold bg-[#26211a] hover:bg-[#382f25] text-[#e2d6c1] border border-[#c6a15b]/35 shadow"
+            >
+              Vazgeç
+            </button>
+            <button
+              type="button"
+              onClick={handleDone}
+              data-testid="market-done"
+              className="px-4 py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fde68a]/50 shadow"
+            >
+              Bitti
+            </button>
+          </div>
         </div>
       </div>
     </div>

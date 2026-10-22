@@ -20,10 +20,10 @@ import {
   buyFoodAtSettlement,
   buyOrChangeWorkshop,
   buyTavernRound,
+  calculatePartyStrength,
   constructSiegeEngine,
   createInitialCampaignState,
   deployReservedSiegeEngines,
-  equipInventoryItem,
   executeLordBarterOffer,
   forcePeasantsRecruits,
   forcePeasantsSupplies,
@@ -52,12 +52,29 @@ import type {
 import { WorldCanvas } from './components/WorldCanvas';
 import { GameHud } from './components/GameHud';
 import { SettlementModal } from './components/SettlementModal';
+import { SiegeEncounterModal } from './components/SiegeEncounterModal';
 import { DialogueModal } from './components/DialogueModal';
 import { DiplomacyModal } from './components/DiplomacyModal';
 import { BannerlordMarketModal } from './components/BannerlordMarketModal';
+import { InventoryModal } from './components/InventoryModal';
+import { BattleLootModal } from './components/BattleLootModal';
+import { PartyModal } from './components/PartyModal';
+import { CharacterModal } from './components/CharacterModal';
+import {
+  commitBattleLoot,
+  prepareBattleLoot,
+  type PendingBattleLoot,
+} from './game/lootTransaction';
+import { rollBattleLoot } from './game/loot';
+import {
+  inventoryItemQuantity,
+  getTroopDefinition,
+  troopStackTotals,
+} from './game/bannerlordFoundation';
 import { KingdomManagementModal } from './components/KingdomManagementModal';
 import { CharacterArenaView } from './components/CharacterArenaView';
 import { CharacterCreatorModal } from './components/CharacterCreatorModal';
+import { BannerlordPauseModal } from './components/BannerlordPauseModal';
 import { BattlePrewarmModal } from './components/BattlePrewarmModal';
 import { EncyclopediaModal } from './components/encyclopedia/EncyclopediaModal';
 import { BattleMemoryPool, PrewarmStageReport } from './game/battleEnginePool';
@@ -66,6 +83,14 @@ import {
   createInitialKingdomMacroState,
 } from './game/kingdomSystem';
 import { advanceWorldDay } from './game/worldSim';
+import {
+  applyBreakInCasualties,
+  buildSiegeEncounterView,
+  enterBesiegedSettlement,
+  liftPlayerSiege,
+  resolveSiegeRole,
+  startPlayerSiege,
+} from './game/siegeEncounter';
 import {
   type EncounterScenario,
   applyPlayerSurrender,
@@ -83,8 +108,10 @@ import {
   readSaveSummary,
   writeSave,
   type BackgroundChoice,
+  type SaveData,
   type SaveSummary,
 } from './game/saveGame';
+import type { CharacterMorphDNA } from './game/characterMorph';
 import {
   countLayers,
   speedAfterUi,
@@ -95,10 +122,12 @@ import {
   type UiLayerFlags,
 } from './game/uiSession';
 import {
+  buildE2ESiegeScenario,
   buildE2EScenario,
   parseE2ERequest,
   type KadirlordTestApi,
 } from './game/testHarness';
+import type { SiegeEncounterRole } from './game/siegeEncounter';
 
 export default function App() {
   const search = typeof window !== 'undefined' ? window.location.search : '';
@@ -128,6 +157,8 @@ export default function App() {
   const cameraActionsRef = useRef<CameraControlActions | null>(null);
   /** Faz 11: harita katmanı lordların gerçek konumlarını buraya yazar (React render'ı yok). */
   const lordPositionsRef = useRef<Map<string, { x: number; z: number }>>(new Map());
+  const lordPositionCommandsRef = useRef(new Map<string, { x: number; z: number }>());
+  const playerPositionCommandRef = useRef<{ x: number; z: number } | null>(null);
   /** Faz 11: savaş isteği hesabı için klan kayıtları (interval kapanışında bayatlamasın). */
   const macroStateRef = useRef<KingdomMacroState | null>(null);
   macroStateRef.current = macroState;
@@ -136,6 +167,10 @@ export default function App() {
   const [nearSettlement, setNearSettlement] = useState<Settlement | null>(null);
   const [nearLord, setNearLord] = useState<LordAgent | null>(null);
   const [activeSettlementModal, setActiveSettlementModal] = useState<Settlement | null>(null);
+  const [activeSiegeSettlementId, setActiveSiegeSettlementId] = useState<string | null>(null);
+  const [settlementModalInitialTab, setSettlementModalInitialTab] = useState<'overview' | 'siege'>(
+    'overview',
+  );
   const [activeDiplomacyLord, setActiveDiplomacyLord] = useState<LordAgent | null>(null);
   // Faz 6: yüz yüze diyalog ekranı (lord veya yerleşim reisi)
   const [dialogueLord, setDialogueLord] = useState<LordAgent | null>(
@@ -149,6 +184,12 @@ export default function App() {
     e2eRequest.enabled ? initialE2ESetup.encounterScenario : undefined,
   );
   const [isMarketModalOpen, setIsMarketModalOpen] = useState(false);
+  const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
+  const [isPartyModalOpen, setIsPartyModalOpen] = useState(
+    e2eRequest.enabled ? initialE2ESetup.partyOpen : false,
+  );
+  const [isCharacterModalOpen, setIsCharacterModalOpen] = useState(false);
+  const [pendingBattleLoot, setPendingBattleLoot] = useState<PendingBattleLoot | null>(null);
   const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
   const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'campaign' | 'character_arena'>('campaign');
@@ -223,6 +264,12 @@ export default function App() {
     isForcedEncounter,
     encounterScenario,
     isEncyclopediaOpen,
+    activeSettlementModal,
+    isMarketModalOpen,
+    isInventoryModalOpen,
+    isPartyModalOpen,
+    isCharacterModalOpen,
+    pendingBattleLoot,
   });
   testStateRef.current = {
     campaign,
@@ -233,6 +280,12 @@ export default function App() {
     isForcedEncounter,
     encounterScenario,
     isEncyclopediaOpen,
+    activeSettlementModal,
+    isMarketModalOpen,
+    isInventoryModalOpen,
+    isPartyModalOpen,
+    isCharacterModalOpen,
+    pendingBattleLoot,
   };
 
   useEffect(() => {
@@ -276,6 +329,53 @@ export default function App() {
             scenario: state.encounterScenario ?? null,
           },
           encyclopediaOpen: state.isEncyclopediaOpen,
+          inventory: (current.inventoryItems ?? []).map((item) => ({
+            id: item.id,
+            definitionId: item.definitionId ?? item.id,
+            quantity: Math.max(1, Math.floor(item.quantity ?? 1)),
+            locked: Boolean(item.locked),
+          })),
+          inventoryOpen: state.isInventoryModalOpen,
+          partyOpen: state.isPartyModalOpen,
+          characterOpen: state.isCharacterModalOpen,
+          heroes: (current.heroes ?? []).map((hero) => ({
+            id: hero.id,
+            name: hero.name,
+            activeEquipmentSet: hero.activeEquipmentSet,
+            equipment: {
+              BATTLE: { ...hero.equipment.BATTLE },
+              CIVILIAN: { ...hero.equipment.CIVILIAN },
+            },
+          })),
+          troopStacks: (current.troopStacks ?? []).map((stack) => ({
+            troopId: stack.troopId,
+            count: stack.count,
+            wounded: stack.wounded,
+            xp: stack.xp,
+          })),
+          market: {
+            open: state.isMarketModalOpen,
+            settlementId: state.activeSettlementModal?.id ?? null,
+            merchantGold:
+              current.settlements.find(
+                (settlement) => settlement.id === state.activeSettlementModal?.id,
+              )?.merchantGold ?? null,
+            stock: {
+              ...(current.settlements.find(
+                (settlement) => settlement.id === state.activeSettlementModal?.id,
+              )?.marketStock ?? {}),
+            },
+          },
+          loot: {
+            open: Boolean(state.pendingBattleLoot),
+            itemCount: state.pendingBattleLoot?.lootItems.length ?? 0,
+            gold: state.pendingBattleLoot?.goldLoot ?? 0,
+            items: (state.pendingBattleLoot?.lootItems ?? []).map((item) => ({
+              id: item.id,
+              definitionId: item.definitionId ?? item.id,
+              quantity: inventoryItemQuantity(item),
+            })),
+          },
           counts: {
             lords: current.lords.length,
             settlements: current.settlements.length,
@@ -310,6 +410,14 @@ export default function App() {
         if (!testStateRef.current.campaign.lords.some((lord) => lord.id === lordId)) {
           return false;
         }
+        if (patch.x !== undefined || patch.z !== undefined) {
+          const campaignLord = testStateRef.current.campaign.lords.find((lord) => lord.id === lordId)!;
+          const live = lordPositionsRef.current.get(lordId);
+          lordPositionCommandsRef.current.set(lordId, {
+            x: patch.x ?? live?.x ?? campaignLord.x,
+            z: patch.z ?? live?.z ?? campaignLord.z,
+          });
+        }
         const applyPatch = (lord: LordAgent): LordAgent => {
           const roster = patch.roster ?? lord.roster;
           return {
@@ -332,6 +440,50 @@ export default function App() {
         const lord = testStateRef.current.campaign.lords.find((item) => item.id === lordId);
         return lord ? { x: lord.x, z: lord.z } : null;
       },
+      openSiege: (role, options) => {
+        const setup = buildE2ESiegeScenario(testStateRef.current.campaign, role);
+        if (!setup) return false;
+        const settlement = setup.campaign.settlements.find(
+          (item) => item.id === setup.settlementId,
+        );
+        if (!settlement) return false;
+        const besieger = setup.campaign.lords.find(
+          (lord) =>
+            lord.order?.kind === 'SIEGE' &&
+            lord.order.targetSettlementId === settlement.id,
+        );
+        const campX = role === 'attacker' ? setup.campaign.playerX : (besieger?.x ?? settlement.x + 1);
+        const campZ = role === 'attacker' ? setup.campaign.playerZ : (besieger?.z ?? settlement.z);
+        setup.campaign.lords
+          .filter(
+            (lord) =>
+              lord.order?.kind === 'SIEGE' &&
+              lord.order.targetSettlementId === settlement.id,
+          )
+          .forEach((lord) => {
+            lordPositionCommandsRef.current.set(lord.id, { x: lord.x, z: lord.z });
+          });
+        if (role !== 'defender') {
+          playerPositionCommandRef.current = {
+            x: setup.campaign.playerX,
+            z: setup.campaign.playerZ,
+          };
+        }
+        const campAngle = Math.atan2(campZ - settlement.z, campX - settlement.x);
+        const focusOffset = options?.focusOnCamp ? 8 : 0;
+        setCampaign(setup.campaign);
+        setActiveSettlementModal(null);
+        setDialogueLord(null);
+        setDialogueSettlement(null);
+        setActiveSiegeSettlementId(setup.settlementId);
+        cameraActionsRef.current?.focusOnCoords(
+          settlement.x + Math.cos(campAngle) * focusOffset,
+          settlement.z + Math.sin(campAngle) * focusOffset,
+          34,
+        );
+        return true;
+      },
+      closeSiege: () => setActiveSiegeSettlementId(null),
       openDialogue: (lordId, options) => {
         const current = testStateRef.current.campaign;
         const lord = current.lords.find((item) => item.id === lordId);
@@ -351,11 +503,64 @@ export default function App() {
       },
       openEncyclopedia: () => setIsEncyclopediaOpen(true),
       closeEncyclopedia: () => setIsEncyclopediaOpen(false),
+      openParty: () => setIsPartyModalOpen(true),
+      closeParty: () => setIsPartyModalOpen(false),
+      openCharacter: () => setIsCharacterModalOpen(true),
+      closeCharacter: () => setIsCharacterModalOpen(false),
+      openMarket: (settlementId) => {
+        const current = testStateRef.current.campaign;
+        const settlement = settlementId
+          ? current.settlements.find((candidate) => candidate.id === settlementId)
+          : current.settlements.find((candidate) => candidate.type === 'TOWN');
+        if (!settlement) return false;
+        setCampaign((prev) => ({
+          ...prev,
+          settlements: prev.settlements.map((candidate) =>
+            candidate.id === settlement.id ? { ...candidate, visited: true } : candidate,
+          ),
+        }));
+        setActiveSettlementModal({ ...settlement, visited: true });
+        setIsMarketModalOpen(true);
+        return true;
+      },
+      closeMarket: () => setIsMarketModalOpen(false),
+      openInventory: () => setIsInventoryModalOpen(true),
+      closeInventory: () => setIsInventoryModalOpen(false),
+      openLoot: (lootItems, options) => {
+        const current = testStateRef.current.campaign;
+        const items =
+          lootItems && lootItems.length > 0
+            ? lootItems
+            : rollBattleLoot(current, {
+                enemyFaction: 'bandits',
+                defeated: options?.enemiesDefeated ?? 20,
+                siege: false,
+                seedKey: 'test-open-loot',
+              });
+        setPendingBattleLoot({
+          enemyLordId: null,
+          conqueredSettlementId: null,
+          enemiesDefeatedCount: options?.enemiesDefeated ?? 20,
+          playerTroopLosses: {},
+          goldLoot: options?.goldLoot ?? 180,
+          renownGain: 15,
+          prisonersGain: 4,
+          lootItems: items,
+          isSiegeVictory: false,
+          defeatedFaction: 'bandits',
+        });
+        return true;
+      },
+      closeLoot: () => setPendingBattleLoot(null),
     };
 
     window.__kadirlordTest = api;
     document.body.dataset.e2eReady = 'true';
     document.body.dataset.e2eScenario = e2eRequest.scenario;
+    if (e2eRequest.siegeRole) {
+      api.openSiege(e2eRequest.siegeRole, { focusOnCamp: e2eRequest.focusSiegeCamp });
+      if (e2eRequest.focusSiegeCamp) api.closeSiege();
+    }
 
     return () => {
       if (window.__kadirlordTest === api) delete window.__kadirlordTest;
@@ -370,12 +575,18 @@ export default function App() {
 
   /** Sefer başlatılırken kullanılan ad (karakter yaratıcıda değiştirilebilir). */
   const [playerName, setPlayerName] = useState('Komutan Demirhan');
+  const [isNewGameCreatorFlow, setIsNewGameCreatorFlow] = useState(false);
+  const [isTitleLoadOpen, setIsTitleLoadOpen] = useState(false);
 
-  const startGame = useCallback(() => {
+  const startGame = useCallback((customDna?: CharacterMorphDNA, customName?: string) => {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-    const fresh = createInitialCampaignState(playerName, backgroundChoice);
+    const finalName = customName || playerName;
+    const fresh = createInitialCampaignState(finalName, backgroundChoice);
+    if (customDna) {
+      fresh.playerMorphDNA = customDna;
+    }
     setCampaign(fresh);
     setMacroState(createInitialKingdomMacroState(fresh));
     setSubMode('overworld');
@@ -387,6 +598,9 @@ export default function App() {
     setIsForcedEncounter(false);
     setEncounterScenario(undefined);
     setIsMarketModalOpen(false);
+    setIsInventoryModalOpen(false);
+    setIsPartyModalOpen(false);
+    setIsCharacterModalOpen(false);
     setIsKingdomModalOpen(false);
     setIsEncyclopediaOpen(false);
     setOutcomeSnapshot(null);
@@ -404,10 +618,13 @@ export default function App() {
   /** O an açık olan UI katmanları (Esc sırası ve duraklatma bunlardan türetilir). */
   const uiLayers: UiLayerFlags = {
     creator: isCharacterCreatorOpen,
+    character: isCharacterModalOpen,
+    inventory: isInventoryModalOpen,
+    party: isPartyModalOpen,
     market: isMarketModalOpen,
     kingdom: isKingdomModalOpen,
     dialogue: !!(dialogueLord || dialogueSettlement),
-    settlement: !!activeSettlementModal,
+    settlement: !!activeSettlementModal || !!activeSiegeSettlementId,
     diplomacy: !!activeDiplomacyLord,
     pause: gameState === 'paused',
   };
@@ -416,6 +633,15 @@ export default function App() {
     switch (layer) {
       case 'creator':
         setIsCharacterCreatorOpen(false);
+        break;
+      case 'character':
+        setIsCharacterModalOpen(false);
+        break;
+      case 'inventory':
+        setIsInventoryModalOpen(false);
+        break;
+      case 'party':
+        setIsPartyModalOpen(false);
         break;
       case 'market':
         setIsMarketModalOpen(false);
@@ -432,6 +658,7 @@ export default function App() {
         break;
       case 'settlement':
         setActiveSettlementModal(null);
+        setActiveSiegeSettlementId(null);
         break;
       case 'diplomacy':
         setActiveDiplomacyLord(null);
@@ -525,6 +752,9 @@ export default function App() {
     setDialogueLord(null);
     setDialogueSettlement(null);
     setIsMarketModalOpen(false);
+    setIsInventoryModalOpen(false);
+    setIsPartyModalOpen(false);
+    setIsCharacterModalOpen(false);
     setIsKingdomModalOpen(false);
     setIsEncyclopediaOpen(false);
     setOutcomeSnapshot(null);
@@ -537,11 +767,48 @@ export default function App() {
     showToast(`Sefer yüklendi · Gün ${fresh.day}`);
   }, [showToast, startGame]);
 
+  /** BannerlordPauseModal veya kayıt ekranından gelen tam SaveData'yı yükler. */
+  const handleLoadSaveData = useCallback((data: SaveData) => {
+    const fresh = data.campaign;
+    setCampaign(fresh);
+    setMacroState(data.macroState);
+    setMetHeroIds(data.metHeroIds);
+    setBackgroundChoice(data.backgroundChoice);
+    setPlayerName(fresh.playerName);
+    setSubMode('overworld');
+    setViewMode('campaign');
+    setCampaignTimeScale(1);
+    setActiveSettlementModal(null);
+    setActiveDiplomacyLord(null);
+    setDialogueLord(null);
+    setDialogueSettlement(null);
+    setIsMarketModalOpen(false);
+    setIsInventoryModalOpen(false);
+    setIsPartyModalOpen(false);
+    setIsCharacterModalOpen(false);
+    setIsKingdomModalOpen(false);
+    setIsEncyclopediaOpen(false);
+    setOutcomeSnapshot(null);
+    setGameState('playing');
+    document.body.dataset.state = 'playing';
+    lastAutosaveDayRef.current = fresh.day;
+    cameraActionsRef.current?.focusOnCoords(fresh.playerX, fresh.playerZ, 52);
+    cameraActionsRef.current?.focusOnPlayer();
+    sound.playWarhorn();
+  }, []);
+
   /**
    * Dünya yalnız bir UI katmanı açıkken duraklatılır; kapanınca **önceki hıza**
    * dönülür (eski sürümde hız 0'da kalıyordu — Faz 10a).
    */
   const uiPausesWorld = countLayers(uiLayers) > 0;
+  const setMapTimeScale = useCallback(
+    (timeScale: TimeScale) => {
+      if (uiPausesWorld && timeScale !== 0) return;
+      setCampaignTimeScale(timeScale);
+    },
+    [uiPausesWorld],
+  );
   useEffect(() => {
     if (uiPausesWorld && !pausedByUiRef.current) {
       if (campaignTimeScale !== 0) speedBeforeUiRef.current = speedBeforeUi(campaignTimeScale);
@@ -583,14 +850,23 @@ export default function App() {
       if (gameState === 'title') {
         if (e.code === 'Enter' || e.code === 'Space') {
           e.preventDefault();
-          // Kayıt varsa Enter "devam et"tir; yeni sefer düğmeyle başlatılır.
+          // Kayıt varsa Enter "devam et"tir; yeni sefer karakter oluşturucuyla başlatılır.
           if (saveInfo) continueGame();
-          else startGame();
+          else {
+            setIsNewGameCreatorFlow(true);
+            setIsCharacterCreatorOpen(true);
+          }
         } else if (e.code === 'KeyB') {
           e.preventDefault();
+          setIsNewGameCreatorFlow(false);
           setIsCharacterCreatorOpen((prev) => !prev);
-        } else if (e.code === 'Escape' && isCharacterCreatorOpen) {
-          setIsCharacterCreatorOpen(false);
+        } else if (e.code === 'Escape') {
+          if (isCharacterCreatorOpen) {
+            setIsNewGameCreatorFlow(false);
+            setIsCharacterCreatorOpen(false);
+          } else if (isTitleLoadOpen) {
+            setIsTitleLoadOpen(false);
+          }
         }
         return;
       }
@@ -616,7 +892,21 @@ export default function App() {
         return;
       }
 
-      if (e.code === 'Escape' || e.code === 'KeyP') {
+      if (e.code === 'KeyC' && gameState === 'playing' && subMode === 'overworld') {
+        if (uiPausesWorld && !isCharacterModalOpen) return;
+        e.preventDefault();
+        setIsCharacterModalOpen((prev) => !prev);
+        return;
+      }
+
+      if (e.code === 'KeyP' && gameState === 'playing' && subMode === 'overworld') {
+        if (uiPausesWorld && !isPartyModalOpen) return;
+        e.preventDefault();
+        setIsPartyModalOpen((prev) => !prev);
+        return;
+      }
+
+      if (e.code === 'Escape') {
         if (uiPausesWorld) return;
         if (gameState === 'playing') {
           setGameState('paused');
@@ -660,6 +950,9 @@ export default function App() {
     activeDiplomacyLord,
     isEncyclopediaOpen,
     isMarketModalOpen,
+    isInventoryModalOpen,
+    isPartyModalOpen,
+    isCharacterModalOpen,
     isKingdomModalOpen,
     isCharacterCreatorOpen,
     dialogueLord,
@@ -691,6 +984,34 @@ export default function App() {
     }, intervalMs);
     return () => clearInterval(timer);
   }, [gameState, subMode, campaignTimeScale]);
+
+  const handleOpenSettlement = useCallback((settlement: Settlement) => {
+    setCampaign((prev) => {
+      const current = prev.settlements.find((candidate) => candidate.id === settlement.id) ?? settlement;
+      const nextState =
+        current.visited
+          ? prev
+          : {
+              ...prev,
+              settlements: prev.settlements.map((candidate) =>
+                candidate.id === settlement.id ? { ...candidate, visited: true } : candidate,
+              ),
+            };
+      const live =
+        nextState.settlements.find((candidate) => candidate.id === settlement.id) ?? current;
+      const role = resolveSiegeRole(nextState, live.id);
+      if (role) {
+        setSettlementModalInitialTab('overview');
+        setActiveSettlementModal(null);
+        setActiveSiegeSettlementId(live.id);
+      } else {
+        setSettlementModalInitialTab('overview');
+        setActiveSiegeSettlementId(null);
+        setActiveSettlementModal(live);
+      }
+      return nextState;
+    });
+  }, []);
 
   const handleUpdatePlayerPos = useCallback(
     (
@@ -753,6 +1074,57 @@ export default function App() {
           res.nextState.settlements.find((s) => s.id === settlementId) || null,
         );
         return res.nextState;
+      });
+      return errorMsg;
+    },
+    [],
+  );
+
+  const handleRecruitBatch = useCallback(
+    (settlementId: string, recruits: Array<{ troopId: string; cost: number }>): string | null => {
+      let errorMsg: string | null = null;
+      setCampaign((prev) => {
+        const totalCost = recruits.reduce((s, r) => s + r.cost, 0);
+        if (prev.gold < totalCost) {
+          errorMsg = 'Yetersiz dinar.';
+          return prev;
+        }
+
+        const nextStacks = [...(prev.troopStacks ?? [])];
+        for (const recruit of recruits) {
+          const existingIdx = nextStacks.findIndex(
+            (st) => st.troopId === recruit.troopId,
+          );
+          if (existingIdx >= 0) {
+            nextStacks[existingIdx] = {
+              ...nextStacks[existingIdx],
+              count: nextStacks[existingIdx].count + 1,
+            };
+          } else {
+            nextStacks.push({
+              troopId: recruit.troopId,
+              count: 1,
+              wounded: 0,
+              xp: 0,
+            });
+          }
+        }
+
+        const nextRoster = troopStackTotals(nextStacks);
+        const nextArmySize = getTotalTroops(nextRoster);
+        const nextStrength = calculatePartyStrength(nextRoster);
+
+        showToast(`${recruits.length} yeni asker sancağınıza katıldı! (-${totalCost} Dinar)`);
+        sound.playCoinChime();
+
+        return {
+          ...prev,
+          gold: Math.max(0, prev.gold - totalCost),
+          troopStacks: nextStacks,
+          roster: nextRoster,
+          armySize: nextArmySize,
+          strength: nextStrength,
+        };
       });
       return errorMsg;
     },
@@ -996,6 +1368,7 @@ export default function App() {
 
   const handleStartFieldBattle = useCallback((lord: LordAgent) => {
     setActiveDiplomacyLord(null);
+    setActiveSiegeSettlementId(null);
     setActiveSettlementModal(null);
     setBattleTargetLordId(lord.id);
     setBattleTargetSettlementId(null);
@@ -1006,6 +1379,7 @@ export default function App() {
   }, []);
 
   const handleStartSiegeBattle = useCallback((settlement: Settlement) => {
+    setActiveSiegeSettlementId(null);
     setActiveSettlementModal(null);
     setActiveDiplomacyLord(null);
     setBattleTargetSettlementId(settlement.id);
@@ -1033,34 +1407,44 @@ export default function App() {
       losses: Partial<TroopRoster>,
       enemiesDefeated: number,
     ) => {
-      setCampaign((prev) => {
-        const next = resolveBattleOutcome(
-          prev,
-          victory,
-          battleTargetLordId,
+      if (victory) {
+        const pending = prepareBattleLoot(campaign, {
+          enemyLordId: battleTargetLordId,
+          enemiesDefeated,
           losses,
-          enemiesDefeated,
-          battleTargetSettlementId,
-        );
-        const fiefsOwned = next.settlements.filter((s) => s.faction === 'player').length;
-
-        setOutcomeSnapshot({
-          victory,
-          title: victory ? 'MEYDAN ZAFERİ KAZANILDI' : 'SANCAK GERİ ÇEKİLDİ',
-          subtitle: victory
-            ? 'Düşman hatları yarıldı, ganimet ve esirler ordugaha taşındı.'
-            : 'Komutan yaralandı; muhafızlarınız sizi savaş meydanından çıkardı.',
-          enemiesDefeated,
-          renown: next.renown,
-          gold: next.gold,
-          fiefsOwned,
+          conqueredSettlementId: battleTargetSettlementId,
+          isSiege: Boolean(battleTargetSettlementId),
         });
-        return next;
-      });
-      setSubMode('overworld');
-      setGameState('gameover');
+        setPendingBattleLoot(pending);
+        setSubMode('overworld');
+      } else {
+        setCampaign((prev) => {
+          const next = resolveBattleOutcome(
+            prev,
+            false,
+            battleTargetLordId,
+            losses,
+            enemiesDefeated,
+            battleTargetSettlementId,
+          );
+          const fiefsOwned = next.settlements.filter((s) => s.faction === 'player').length;
+
+          setOutcomeSnapshot({
+            victory: false,
+            title: 'SANCAK GERİ ÇEKİLDİ',
+            subtitle: 'Komutan yaralandı; muhafızlarınız sizi savaş meydanından çıkardı.',
+            enemiesDefeated,
+            renown: next.renown,
+            gold: next.gold,
+            fiefsOwned,
+          });
+          return next;
+        });
+        setSubMode('overworld');
+        setGameState('gameover');
+      }
     },
-    [battleTargetLordId, battleTargetSettlementId],
+    [battleTargetLordId, battleTargetSettlementId, campaign],
   );
 
   return (
@@ -1081,14 +1465,14 @@ export default function App() {
         battleTargetSettlementId={battleTargetSettlementId}
         cameraActionsRef={cameraActionsRef}
         lordPositionsRef={lordPositionsRef}
+        lordPositionCommandsRef={lordPositionCommandsRef}
+        playerPositionCommandRef={playerPositionCommandRef}
         activeDiplomacyLordId={activeDiplomacyLord?.id ?? null}
         activeDialogueLordId={dialogueLord?.id ?? null}
         activeSettlementModalId={activeSettlementModal?.id ?? null}
-        onSetTimeScale={setCampaignTimeScale}
+        onSetTimeScale={setMapTimeScale}
         onUpdatePlayerPos={handleUpdatePlayerPos}
-        onOpenSettlement={(s) => {
-          setActiveSettlementModal(s);
-        }}
+        onOpenSettlement={handleOpenSettlement}
         onOpenDiplomacy={(l) => {
           const info = classifyEncounterScenario(l, campaign);
           setDialogueLord(l);
@@ -1269,7 +1653,9 @@ export default function App() {
                 data-start="true"
                 onClick={() => {
                   if (saveInfo && !window.confirm('Yeni sefer başlatılsın mı? Mevcut kayıt silinecek.')) return;
-                  startGame();
+                  setIsNewGameCreatorFlow(true);
+                  setIsCharacterCreatorOpen(true);
+                  sound.playCoin();
                 }}
                 className="px-7 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fbbf24]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
@@ -1277,7 +1663,20 @@ export default function App() {
               </button>
               <button
                 type="button"
+                data-testid="title-load-saves-btn"
                 onClick={() => {
+                  sound.playCoin();
+                  setIsTitleLoadOpen(true);
+                }}
+                className="px-5 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#261f17] hover:bg-[#382d22] text-[#fde68a] border border-[#c6a15b]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-2"
+              >
+                <span>📂</span>
+                <span>KAYIT YÜKLE (LOAD GAME)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsNewGameCreatorFlow(false);
                   setIsCharacterCreatorOpen(true);
                   sound.playCoin();
                 }}
@@ -1319,7 +1718,7 @@ export default function App() {
           activeOrder={activeOrder}
           battleTelemetry={battleTelemetry}
           muted={muted}
-          onSetTimeScale={(s) => setCampaignTimeScale(s)}
+          onSetTimeScale={setMapTimeScale}
           onToggleMute={() => {
             const next = sound.toggleMute();
             setMuted(next);
@@ -1330,9 +1729,7 @@ export default function App() {
             setActiveOrder(ord);
             sound.playWarhorn();
           }}
-          onOpenSettlement={(s) => {
-            setActiveSettlementModal(s);
-          }}
+          onOpenSettlement={handleOpenSettlement}
           onOpenDiplomacy={(l) => {
             setActiveDiplomacyLord(l);
           }}
@@ -1355,10 +1752,16 @@ export default function App() {
             if (res.success) setCampaign(res.nextState);
             return res.reason || null;
           }}
-          onEquipItem={(itemId) => {
-            const res = equipInventoryItem(campaign, itemId);
-            if (res.success) setCampaign(res.nextState);
-            return res.reason || null;
+          onOpenInventoryModal={() => {
+            // Pazar kendi bekleyen-transfer ekranıyken saha envanteri onun
+            // üstüne ikinci bir taslak açmaz; diğer durumlarda I aç/kapatır.
+            if (!isMarketModalOpen) setIsInventoryModalOpen((prev) => !prev);
+          }}
+          onOpenPartyModal={() => {
+            setIsPartyModalOpen((prev) => !prev);
+          }}
+          onOpenCharacterModal={() => {
+            setIsCharacterModalOpen((prev) => !prev);
           }}
           onUpgradeTroop={(fromTier, toTier) => {
             const res = upgradeTroopTier(campaign, fromTier, toTier, 1);
@@ -1385,9 +1788,66 @@ export default function App() {
         />
       )}
 
+      {gameState === 'playing' &&
+        activeSiegeSettlementId &&
+        (() => {
+          const siegeView = buildSiegeEncounterView(campaign, activeSiegeSettlementId);
+          if (!siegeView) return null;
+          const liveSettlement =
+            campaign.settlements.find((s) => s.id === activeSiegeSettlementId) ?? siegeView.settlement;
+          return (
+            <SiegeEncounterModal
+              view={siegeView}
+              campaign={campaign}
+              onClose={() => setActiveSiegeSettlementId(null)}
+              onOpenSiegeCamp={() => {
+                setCampaign((prev) => startPlayerSiege(prev, liveSettlement.id));
+                setSettlementModalInitialTab('siege');
+                setActiveSiegeSettlementId(null);
+                setActiveSettlementModal(liveSettlement);
+              }}
+              onAssaultBreach={() => handleStartSiegeBattle(liveSettlement)}
+              onAssaultRam={() => handleStartSiegeBattle(liveSettlement)}
+              onLiftSiege={() => {
+                setCampaign((prev) => liftPlayerSiege(prev, liveSettlement.id));
+                setActiveSiegeSettlementId(null);
+              }}
+              onAttackBesiegers={(lord) => handleStartFieldBattle(lord)}
+              onBreakIn={() => {
+                setCampaign((prev) =>
+                  enterBesiegedSettlement(applyBreakInCasualties(prev), liveSettlement.id),
+                );
+              }}
+              onObserve={() => setActiveSiegeSettlementId(null)}
+              onDefendWalls={() => handleStartSiegeBattle(liveSettlement)}
+              onSallyOut={(lord) => {
+                if (lord) handleStartFieldBattle(lord);
+                else handleStartSiegeBattle(liveSettlement);
+              }}
+              onTalkSurrender={() => {
+                setCampaign((prev) => ({
+                  ...prev,
+                  chronicle: [
+                    {
+                      id: `siege-surrender-talk-${prev.day}-${liveSettlement.id}`,
+                      day: prev.day,
+                      category: 'DIPLOMACY' as const,
+                      text: `${liveSettlement.name} teslim şartları konuşuldu; kuşatma sürüyor.`,
+                    },
+                    ...prev.chronicle,
+                  ].slice(0, 20),
+                }));
+                setActiveSiegeSettlementId(null);
+              }}
+            />
+          );
+        })()}
+
       {/* 3. SETTLEMENT & RECRUITMENT MODAL */}
       {gameState === 'playing' && activeSettlementModal && (
         <SettlementModal
+          key={`${activeSettlementModal.id}-${settlementModalInitialTab}`}
+          initialTab={settlementModalInitialTab}
           settlement={
             campaign.settlements.find((s) => s.id === activeSettlementModal.id) ??
             activeSettlementModal
@@ -1400,6 +1860,7 @@ export default function App() {
           }}
           onOpenCharacterArena={() => setViewMode('character_arena')}
           onRecruit={handleRecruit}
+          onRecruitBatch={handleRecruitBatch}
           onBuyFood={handleBuyFood}
           onStartSiegeBattle={handleStartSiegeBattle}
           onHireMercenaries={handleHireMercenaries}
@@ -1448,8 +1909,8 @@ export default function App() {
             if (res.success) setCampaign(res.nextState);
             return null;
           }}
-          onBombardWalls={(settlementId) => {
-            const res = bombardSettlementWalls(campaign, settlementId);
+          onBombardWalls={(settlementId, target) => {
+            const res = bombardSettlementWalls(campaign, settlementId, target);
             if (res.success) setCampaign(res.nextState);
             return res.reason || null;
           }}
@@ -1484,92 +1945,48 @@ export default function App() {
         />
       )}
 
-      {/* 5. PAUSE MODAL */}
+      {/* 5. PAUSE MODAL (BANNERLORD AUTHENTIC ESC MENÜSÜ) */}
       {gameState === 'paused' && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center p-4 pointer-events-auto"
-          style={{ backgroundColor: 'rgba(8, 7, 5, 0.82)' }}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="pause-modal-title"
-        >
-          <div className="hud-panel rounded-lg p-6 w-full max-w-md text-center">
-            <h2
-              id="pause-modal-title"
-              className="text-2xl font-display font-bold text-[#f8f0df]"
-            >
-              SEFER DURAKLATILDI
-            </h2>
-            <p className="text-xs text-[#b5a890] mt-1">
-              {campaign.playerName} · Gün {campaign.day} ({campaign.season})
-            </p>
+        <BannerlordPauseModal
+          campaign={campaign}
+          saveInput={{
+            campaign,
+            macroState,
+            metHeroIds,
+            backgroundChoice,
+          }}
+          onResume={() => setGameState('playing')}
+          onLoadSave={(loadedData) => {
+            handleLoadSaveData(loadedData);
+            showToast(`Kayıt yüklendi · ${loadedData.campaign.playerName} (Gün ${loadedData.campaign.day})`);
+          }}
+          onExitToTitle={() => {
+            setGameState('title');
+          }}
+          onShowToast={showToast}
+        />
+      )}
 
-            <div className="grid grid-cols-3 gap-2 my-5 p-3 rounded bg-[#16130e] border border-[#c6a15b]/20 font-mono-tabular">
-              <div>
-                <span className="text-[10px] text-[#a89b84] block">Asker</span>
-                <span className="text-base font-bold text-[#f3ead8]">
-                  {getTotalTroops(campaign.roster)}
-                </span>
-              </div>
-              <div>
-                <span className="text-[10px] text-[#a89b84] block">Hazine</span>
-                <span className="text-base font-bold text-[#fbbf24]">
-                  {campaign.gold}
-                </span>
-              </div>
-              <div>
-                <span className="text-[10px] text-[#a89b84] block">Nam</span>
-                <span className="text-base font-bold text-[#34d399]">
-                  {campaign.renown}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2.5">
-              <button
-                type="button"
-                onClick={() => setGameState('playing')}
-                className="w-full py-2.5 px-4 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white transition-colors"
-              >
-                Sefere Devam Et [Esc]
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const ok = persist();
-                  showToast(ok ? `Sefer kaydedildi · Gün ${campaign.day}` : 'Kayıt yazılamadı (depolama kapalı).');
-                }}
-                className="w-full py-2.5 px-4 rounded text-xs font-bold bg-[#166534] hover:bg-[#15803d] text-[#ecfdf5] border border-[#34d399]/50 transition-colors"
-              >
-                Seferi Kaydet
-              </button>
-              <div className="text-[10px] text-[#8b8072] leading-snug">
-                {saveInfo
-                  ? `Son kayıt: Gün ${saveInfo.day} · ${saveInfo.playerName} (otomatik: her oyun günü)`
-                  : 'Henüz kayıt yok — oyun günü geçince otomatik kaydedilir.'}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (window.confirm('Yeni sefer başlatılsın mı? Mevcut kayıt silinecek.')) startGame();
-                }}
-                className="w-full py-2.5 px-4 rounded text-xs font-semibold bg-[#241f18] hover:bg-[#332c22] text-[#e2d6c1] border border-[#c6a15b]/30 transition-colors"
-              >
-                Yeni Sefer (kayıt silinir)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  persist();
-                  setGameState('title');
-                }}
-                className="w-full py-2.5 px-4 rounded text-xs font-semibold bg-[#181510] hover:bg-[#26211a] text-[#a89b84] transition-colors"
-              >
-                Kaydet ve Ana Ekrana Dön
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* 5B. TITLE SCREEN LOAD GAME MODAL */}
+      {isTitleLoadOpen && (
+        <BannerlordPauseModal
+          campaign={campaign}
+          saveInput={{
+            campaign,
+            macroState,
+            metHeroIds,
+            backgroundChoice,
+          }}
+          initialView="load"
+          onResume={() => setIsTitleLoadOpen(false)}
+          onLoadSave={(loadedData) => {
+            setIsTitleLoadOpen(false);
+            handleLoadSaveData(loadedData);
+            showToast(`Kayıt yüklendi · ${loadedData.campaign.playerName} (Gün ${loadedData.campaign.day})`);
+          }}
+          onExitToTitle={() => setIsTitleLoadOpen(false)}
+          onShowToast={showToast}
+        />
       )}
 
       {/* 6. VICTORY / DEFEAT OUTCOME MODAL */}
@@ -1695,23 +2112,32 @@ export default function App() {
             setEncounterScenario(undefined);
             setBattleTargetLordId(l.id);
             setBattleTargetSettlementId(null);
-            setCampaign((prev) => {
-              const next = resolveBattleOutcome(prev, sim.victory, l.id, sim.losses, sim.enemiesDefeated, null);
-              const fiefsOwned = next.settlements.filter((s) => s.faction === 'player').length;
-              setOutcomeSnapshot({
-                victory: sim.victory,
-                title: sim.victory ? 'OTOMATİK MUHAREBE ZAFERİ' : 'BİRLİKLER GERİ ÇEKİLDİ',
-                subtitle: sim.victory
-                  ? `${l.name} kuvvetleri bozguna uğratıldı, ganimet ve esirler toplandı.`
-                  : 'Otomatik muharebede hatlarınız kırıldı; ağır kayıpla geri çekildiniz.',
+            if (sim.victory) {
+              const pending = prepareBattleLoot(campaign, {
+                enemyLordId: l.id,
                 enemiesDefeated: sim.enemiesDefeated,
-                renown: next.renown,
-                gold: next.gold,
-                fiefsOwned,
+                losses: sim.losses,
+                conqueredSettlementId: null,
+                isSiege: false,
               });
-              return next;
-            });
-            setGameState('gameover');
+              setPendingBattleLoot(pending);
+            } else {
+              setCampaign((prev) => {
+                const next = resolveBattleOutcome(prev, false, l.id, sim.losses, sim.enemiesDefeated, null);
+                const fiefsOwned = next.settlements.filter((s) => s.faction === 'player').length;
+                setOutcomeSnapshot({
+                  victory: false,
+                  title: 'BİRLİKLER GERİ ÇEKİLDİ',
+                  subtitle: 'Otomatik muharebede hatlarınız kırıldı; ağır kayıpla geri çekildiniz.',
+                  enemiesDefeated: sim.enemiesDefeated,
+                  renown: next.renown,
+                  gold: next.gold,
+                  fiefsOwned,
+                });
+                return next;
+              });
+              setGameState('gameover');
+            }
           }}
           onSacrificeEscape={(l) => {
             const res = applySacrificeEscape(campaign, l);
@@ -1801,6 +2227,48 @@ export default function App() {
         />
       )}
 
+      {isInventoryModalOpen && gameState === 'playing' && subMode === 'overworld' && (
+        <InventoryModal
+          campaign={campaign}
+          onClose={() => setIsInventoryModalOpen(false)}
+          onUpdateCampaign={(next) => setCampaign(next)}
+        />
+      )}
+
+      {isPartyModalOpen && gameState === 'playing' && subMode === 'overworld' && (
+        <PartyModal
+          campaign={campaign}
+          settlement={activeSettlementModal ?? undefined}
+          onClose={() => setIsPartyModalOpen(false)}
+          onUpdateCampaign={(next) => setCampaign(next)}
+        />
+      )}
+
+      {isCharacterModalOpen && gameState === 'playing' && subMode === 'overworld' && (
+        <CharacterModal
+          campaign={campaign}
+          onClose={() => setIsCharacterModalOpen(false)}
+          onUpdateCampaign={(next) => setCampaign(next)}
+          onShowToast={showToast}
+        />
+      )}
+
+      {pendingBattleLoot && (
+        <BattleLootModal
+          campaign={campaign}
+          pendingLoot={pendingBattleLoot}
+          onClose={() => {
+            setPendingBattleLoot(null);
+            setGameState('playing');
+          }}
+          onCommit={(result) => {
+            setCampaign(result.nextState);
+            setPendingBattleLoot(null);
+            setGameState('playing');
+          }}
+        />
+      )}
+
       {/* 7B. KINGDOM COUNCIL, DIPLOMACY & MACRO-SIMULATION ARCHITECTURE MODAL */}
       {isKingdomModalOpen && (
         <KingdomManagementModal
@@ -1849,17 +2317,28 @@ export default function App() {
         <CharacterCreatorModal
           initialDNA={campaign.playerMorphDNA}
           characterName={campaign.playerName}
+          confirmLabel={isNewGameCreatorFlow ? 'Seferi Başlat [Enter]' : 'Karakteri Onayla'}
           onSave={(newDNA, newName) => {
-            setCampaign((prev) => ({
-              ...prev,
-              playerMorphDNA: newDNA,
-              playerName: newName || prev.playerName,
-            }));
-            // Faz 10a: seçilen ad yeni seferde de korunur (eski sürümde 'Komutan Demirhan'a dönüyordu).
-            if (newName) setPlayerName(newName);
-            showToast('Karakter kaydedildi.');
+            if (isNewGameCreatorFlow) {
+              setIsNewGameCreatorFlow(false);
+              setIsCharacterCreatorOpen(false);
+              startGame(newDNA, newName);
+            } else {
+              setCampaign((prev) => ({
+                ...prev,
+                playerMorphDNA: newDNA,
+                playerName: newName || prev.playerName,
+              }));
+              // Faz 10a: seçilen ad yeni seferde de korunur (eski sürümde 'Komutan Demirhan'a dönüyordu).
+              if (newName) setPlayerName(newName);
+              showToast('Karakter kaydedildi.');
+              setIsCharacterCreatorOpen(false);
+            }
           }}
-          onClose={() => setIsCharacterCreatorOpen(false)}
+          onClose={() => {
+            setIsNewGameCreatorFlow(false);
+            setIsCharacterCreatorOpen(false);
+          }}
         />
       )}
     </main>

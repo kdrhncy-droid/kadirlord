@@ -12,6 +12,7 @@ import {
 } from './encounter.ts';
 import { computeLandPath, isNavigableLandAt, stepAlongLandOnly } from './navigation.ts';
 import type { LordAgent, Settlement, TroopRoster } from './rules.ts';
+import { getSiegeCampPoint } from './siegeMechanics.ts';
 
 export interface BannerlordSpeedBreakdown {
   baseSpeed: number;
@@ -39,12 +40,15 @@ export interface LordDetailedIntel {
   speedInfo: BannerlordSpeedBreakdown;
 }
 
+import { calculatePartyLogistics } from './logistics.ts';
+import type { InventoryItem, CampaignState } from './rules.ts';
+
 /**
- * DefaultPartySpeedCalculatingModel implementation based on Bannerlord's campaign math:
+ * DefaultPartySpeedCalculatingModel implementation delegating to the unified logistics model:
  * - Base Speed = 5.00
- * - Size Effect = 5.00 - (TotalTroops * 0.0075) (with additional army coordination drag for larger forces)
- * - Cavalry Bonus = 3.0 * (C / (I + C)) * D
- * - Herd & Cargo Penalty + Wounded/Prisoner drag + Morale + Terrain/Road/Biome multiplier
+ * - Size Effect = 5.00 - (TotalTroops * 0.018 + coordination drag)
+ * - Cavalry & Mounted Footmen Bonus
+ * - Herd & Overburden Penalty + Wounded/Prisoner drag + Morale + Terrain/Road/Biome multiplier
  */
 export function calculateBannerlordPartySpeed(params: {
   x: number;
@@ -56,102 +60,37 @@ export function calculateBannerlordPartySpeed(params: {
   foodUnits?: number;
   herdAnimals?: number;
   morale?: number;
+  inventoryItems?: InventoryItem[];
+  perks?: string[];
+  state?: Pick<CampaignState, 'customItemDefinitions'>;
 }): BannerlordSpeedBreakdown {
-  const {
-    x,
-    z,
-    totalHealthy,
-    cavalryCount,
-    woundedCount = 0,
-    prisonerCount = 0,
-    foodUnits = 24,
-    herdAnimals = 0,
-    morale = 80,
-  } = params;
-
-  const baseSpeed = 5.0;
-  const totalPeople = Math.max(1, totalHealthy + woundedCount);
-
-  // 1. Party size coordination penalty: Base 0.0075 per soldier + progressive army drag so 16-man patrols are much faster than 42-man armies
-  const sizePenalty = -(totalPeople * 0.018 + Math.max(0, totalPeople - 20) * 0.015);
-
-  // 2. Cavalry & Mounted Footmen bonus: 3 * (C / (I + C)) * D
-  const cavRatio = Math.max(0, Math.min(1, cavalryCount / Math.max(1, totalHealthy)));
-  const damping = 0.44 / (1 + totalPeople * 0.005);
-  const cavalryBonus = 3.0 * cavRatio * damping;
-
-  // 3. Wounded & Prisoner slowdown
-  const woundedPrisonerPenalty = -(woundedCount * 0.026 + prisonerCount * 0.02);
-
-  // 4. Herd & Cargo Penalty: (A - T * 1.05) / 10 * 1.05 * D
-  const maxManageableAnimals = totalHealthy * 1.05;
-  const excessHerd = Math.max(0, herdAnimals - maxManageableAnimals);
-  const herdPenalty = (excessHerd / 10) * 1.05 * 0.45;
-  const cargoLimit = totalHealthy * 3.5;
-  const excessCargo = Math.max(0, foodUnits - cargoLimit);
-  const cargoPenalty = Math.min(0.08, foodUnits * 0.001) + excessCargo * 0.018;
-  const herdAndCargoPenalty = -(herdPenalty + cargoPenalty);
-
-  // 5. Morale modifier
-  const moraleModifier = morale >= 80 ? 0.14 : morale < 45 ? -0.22 : 0;
-
-  // 6. Terrain, Biome & Imperial Road multiplier
-  const biome = getBiomeAt(x, z);
-  const info = getTerrainSlopeAndColorAt(x, z);
-  const forest = getForestMaskAt(x, z);
-  const roadDist = distanceToNearestRoad(x, z);
-  const onRoad = roadDist < 4.5 && info.height > 0.25;
-
-  let terrainMultiplier = 1.0;
-  let terrainLabel = 'Açık Ova';
-
-  if (onRoad) {
-    terrainMultiplier = 1.12;
-    terrainLabel = 'İmparatorluk Taş Yolu (+%12)';
-  } else if (biome === 'NORTH_SNOW_PEAKS' || info.height > 6.5) {
-    terrainMultiplier = 0.78;
-    terrainLabel = 'Karlı Dağ Geçidi (-%22)';
-  } else if (forest > 0.35) {
-    terrainMultiplier = 0.76;
-    terrainLabel = 'Sık Orman (-%24)';
-  } else if (biome === 'SOUTH_DESERT') {
-    terrainMultiplier = 0.88;
-    terrainLabel = 'Çöl Kumulları (-%12)';
-  } else if (info.slope > 0.32) {
-    terrainMultiplier = 0.82;
-    terrainLabel = 'Engebeli Yamaç (-%18)';
-  } else if (biome === 'EAST_STEPPE') {
-    terrainMultiplier = 1.04;
-    terrainLabel = 'Bozkır Düzlüğü (+%4)';
-  }
-
-  const rawPreTerrain =
-    baseSpeed +
-    sizePenalty +
-    cavalryBonus +
-    woundedPrisonerPenalty +
-    herdAndCargoPenalty +
-    moraleModifier;
-
-  const finalSpeed = Number(
-    Math.max(1.8, Math.min(6.6, rawPreTerrain * terrainMultiplier)).toFixed(1),
-  );
-
-  // Calibrated world units per second at 1x campaign speed
-  const worldUnitsPerSecAt1x = Number((finalSpeed * 1.28).toFixed(2));
+  const result = calculatePartyLogistics({
+    x: params.x,
+    z: params.z,
+    healthyTroops: params.totalHealthy,
+    cavalryCount: params.cavalryCount,
+    woundedCount: params.woundedCount,
+    prisonerCount: params.prisonerCount,
+    inventoryItems: params.inventoryItems,
+    morale: params.morale,
+    perks: params.perks,
+    state: params.state,
+    legacyFoodUnits: params.foodUnits,
+    legacyHerdAnimals: params.herdAnimals,
+  });
 
   return {
-    baseSpeed,
-    sizePenalty: Number(sizePenalty.toFixed(2)),
-    cavalryBonus: Number(cavalryBonus.toFixed(2)),
-    woundedPrisonerPenalty: Number(woundedPrisonerPenalty.toFixed(2)),
-    herdAndCargoPenalty: Number(herdAndCargoPenalty.toFixed(2)),
-    moraleModifier: Number(moraleModifier.toFixed(2)),
-    terrainMultiplier: Number(terrainMultiplier.toFixed(2)),
-    terrainLabel,
-    onRoad,
-    finalSpeed,
-    worldUnitsPerSecAt1x,
+    baseSpeed: result.baseSpeed,
+    sizePenalty: result.sizePenalty,
+    cavalryBonus: result.cavalryBonus,
+    woundedPrisonerPenalty: Number((result.woundedPenalty + result.prisonerPenalty).toFixed(2)),
+    herdAndCargoPenalty: Number((result.herdPenalty + result.overburdenPenalty).toFixed(2)),
+    moraleModifier: result.moraleModifier,
+    terrainMultiplier: result.terrainMultiplier,
+    terrainLabel: result.terrainLabel,
+    onRoad: result.onRoad,
+    finalSpeed: result.finalSpeed,
+    worldUnitsPerSecAt1x: result.worldUnitsPerSecAt1x,
   };
 }
 
@@ -426,8 +365,14 @@ export function applyLordOrderToRoute(
   } else if (order.targetSettlementId) {
     const target = settlements.find((s) => s.id === order.targetSettlementId);
     if (target) {
-      targetX = target.x + 4.5;
-      targetZ = target.z + 4.5;
+      if (order.kind === 'SIEGE') {
+        const campPoint = getSiegeCampPoint(target, route.x, route.z);
+        targetX = campPoint.x;
+        targetZ = campPoint.z;
+      } else {
+        targetX = target.x + 4.5;
+        targetZ = target.z + 4.5;
+      }
       key = `set:${target.id}`;
       action =
         order.kind === 'SIEGE'

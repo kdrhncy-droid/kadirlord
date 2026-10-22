@@ -120,7 +120,7 @@ export function evaluateHostileReaction(params: {
   const safePlayerStrength = Math.max(1, playerStrength);
   const strengthRatio = Number((effectiveEnemyStrength / safePlayerStrength).toFixed(2));
 
-  if (!isHostileToPlayer(lord)) {
+  if (!isHostileToPlayer(lord) || lord.order?.kind === 'SIEGE') {
     return {
       kind: 'PATROL',
       strengthRatio,

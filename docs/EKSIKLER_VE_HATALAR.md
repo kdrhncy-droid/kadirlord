@@ -1,5 +1,14 @@
 # 🔍 EKSİKLER VE HATALAR — TAM DENETİM (2026-10-21)
 
+> **🗄️ ARŞİV NOTU (2026-10-22 konsolidasyonu):** Bu belge 2026-10-21 denetim anının tarihî
+> kaydıdır; **güncel görev kaynağı değildir**. Açık maddeler, PR #2 ile `main`e giren Hız Paketi
+> ve P1 veri temeli sonrası durumla karşılaştırılarak
+> [`YAPILACAKLAR_LISTESI.md`](../YAPILACAKLAR_LISTESI.md) içine taşındı. Bu konsolidasyonda:
+> A2/B1 veri temeli, A8 ve B7 (save v4) **kapalı**; A1'in P2 UI kısmı ve A4'ün Party UI kısmı
+> **açık ve kanonik listede**; A3 **kısmen kapandı** (kayıt/yeni sefer çalışıyor; diyalog
+> tanışması ve probe-fog hâlâ açık). A5, A6, A7, A9, B2–B6 ve B9'un kalan işleri güncel
+> kanonik listededir. Bu gövde kanıt olarak korunur.
+>
 > Bu rapor **bulgu** raporudur: hiçbir üretim kodu değiştirilmedi, yalnız ölçüm yapıldı.
 > Her bulgu için **kanıt** (dosya:satır veya komut), **etki** ve **önerilen düzeltme** yazıldı.
 > Karar gerektiren üç başlık `⚖️ KARAR` olarak işaretlendi — bunlarda tek başıma karar vermiyorum.

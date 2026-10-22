@@ -4,6 +4,7 @@ import { playImpact, setArmorySoundEnabled, unlockArmorySound, armorySoundEnable
 class SoundManager {
   private ctx: AudioContext | null = null;
   public muted = false;
+  public masterVolume = 0.8;
 
   private getContext(): AudioContext | null {
     if (this.muted || typeof window === 'undefined') return null;
@@ -17,6 +18,16 @@ class SoundManager {
       this.ctx.resume().catch(() => {});
     }
     return this.ctx;
+  }
+
+  public setVolume(val: number): void {
+    this.masterVolume = Math.max(0, Math.min(1, val));
+    if (this.masterVolume === 0) {
+      this.muted = true;
+    } else if (this.muted) {
+      this.muted = false;
+    }
+    setArmorySoundEnabled(!this.muted && armorySoundEnabled());
   }
 
   public toggleMute(): boolean {

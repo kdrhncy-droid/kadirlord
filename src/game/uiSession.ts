@@ -27,6 +27,9 @@ export function speedAfterUi(saved: TimeScale): 1 | 2 | 4 {
 
 export type UiLayer =
   | 'creator'
+  | 'character'
+  | 'inventory'
+  | 'party'
   | 'market'
   | 'kingdom'
   | 'dialogue'
@@ -37,6 +40,9 @@ export type UiLayer =
 /** Üstten alta: Esc önce `creator`'ı, en son `pause`u kapatır. */
 export const UI_LAYER_ORDER: readonly UiLayer[] = [
   'creator',
+  'character',
+  'inventory',
+  'party',
   'market',
   'kingdom',
   'dialogue',

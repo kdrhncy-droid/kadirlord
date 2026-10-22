@@ -1,0 +1,79 @@
+# Kadirlord — Cursor Geliştirici Kuralları (.cursorrules)
+
+Bu dosya, projede çalışan Cursor AI asistanının **her işlemde uyması zorunlu** kurallarını tanımlar.
+Detaylı matematiksel formüller, 11 atölye türü, ordu uyum denklemleri ve kuşatma yuva kuralları için mutlaka `docs/CURSOR_ZOR_GOREVLER.md` dosyasını oku!
+
+---
+
+## 1. GÖRSEL OTORİTE VE BANNERLORD ÖZGÜNLÜK KURALI (EN KRİTİK KURAL)
+
+1. **ASLA KAFANDAN UYDURMA:** Bannerlord'da olan bir ekranı, paneli, butonu veya menüyü yaparken nasıl göründüğünü tam olarak bilmiyorsan **ASLA kafana göre uydurma veya sıradan bir web formu yapma.**
+2. **GÖRSELİ ÖNCE ARAŞTIR VE GÖR:** 
+   - Bannerlord UI ile ilgili görsel gerektiren bir iş yapıyorsan, Google Görsellerde veya Steam topluluk rehberlerinde `"Mount & Blade II: Bannerlord [özellik adı] UI screenshot"` araması yap.
+   - Örneğin:
+     - Kuşatma için: `Bannerlord siege camp UI map`, `Bannerlord siege engine slots`, `Bannerlord settlement under siege menu`.
+     - Ordu için: `Bannerlord army creation screen cohesion`, `Bannerlord kingdom policy voting`.
+     - Kervan için: `Bannerlord caravan creation companion`, `Bannerlord workshop manage`.
+   - Gerçek Bannerlord ekran görüntüsünü incele; renk paletini, buton yerleşimini, ikonları ve bilgi hiyerarşisini görsellerden teyit etmeden kod yazma.
+3. **BANNERLORD RENK VE TASARIM PALETİ:**
+   - Arka Planlar: Koyu bronz, eskitme demir ve parşömen siyahı (`#120f0c`, `#181510`, `#1a140d`, `#1c1914`).
+   - Çerçeveler / Vurgular: Pirinç ve altın işlemeler (`#c6a15b`, `#d4af37`, `#fbbf24`, `#fde68a`).
+   - Tipografi: Başlıklarda `Cinzel` / `font-display`, değerlerde `font-mono-tabular`, metinlerde `#f4ecd8` / `#e2d6c1`.
+   - Glif / İkon Standartları: Boş emoji yerine net SVG veya stilize semboller kullan.
+
+---
+
+## 2. ŞU ANKİ ÖNCELİKLİ GÖREVLER VE DURUM (2026-10-22)
+
+### ⚠️ DEMİRCİLİK SİSTEMİ GEÇİCİ OLARAK İPTAL / ERTELENDİ
+* **Not:** Oyuncunun demirci olması ve parça montaj demircilik stüdyosu şimdilik **iptal edilmiştir** ve en sonlara bırakılmıştır. Demircilik üzerine kod yazarak vakit kaybetme.
+
+### 🎯 YAPILMASI GEREKEN EN ZOR VE ÖNCELİKLİ 4 BÜYÜK GÖREV:
+
+#### GÖREV 1: CANLI KUŞATMA VE HARİTA KUŞATMA SEÇENEKLERİ (ÖNCELİK 1)
+* **Harita Görünümü:**
+  - Bir kale veya şehir kuşatıldığında dünya haritasında yerleşimin çevresinde **kuşatma kampı çemberi**, duman/ateş efektleri ve yerleşim etiketinde **"KUŞATMA ALTINDA"** durumu görünmelidir.
+* **Kuşatılan Yerleşim Etkileşimi (Eksik Olan Kısım):**
+  - Oyuncu bir kaleye/şehre tıkladığında veya yaklaştığında durum kuşatmaysa doğrudan normal şehir menüsü açılmamalıdır; Bannerlord'un gerçek kuşatma seçenekleri çıkmalıdır:
+    1. **Oyuncu Kuşatıyorsa:**
+       - "Kuşatma Kampı" ekranı.
+       - 4 Aktif Silah Yuvası + Rezerve Yuvaları (Trebuchet, Mangonel, Balista, Koçbaşı, Kuşatma Kulesi).
+       - Gerçek zamanlı makine inşaatı ve sur bombardımanı (Sur canı 0 olunca Sur Gediği / Breach açılır).
+       - Garnizon açlığı / erzak tükenmesi takibi.
+       - "Sur Gediklerinden Hücum Et", "Koçbaşıyla Kapıyı Zorla" veya "Kuşatmayı Kaldır".
+    2. **Düşman Bir Şehri Kuşatıyorsa (Oyuncu Dışarıdaysa):**
+       - "Kuşatan Orduya Taarruz Et (Kuşatmayı Kır)".
+       - "Kuşatmayı Yararak İçeri Gir ve Savunuculara Katıl (Break in to help defenders - asker kaybı riskiyle)".
+       - "Uzaktan Gözlemle / Bekle".
+    3. **Oyuncu Kuşatılan Şehrin İçindeyse:**
+       - "Sur Savunmasını Yönet / Taarruzu Karşıla".
+       - "Huruc Hareketi Yap (Sally Out - Kuşatma makinelerini yakıp geri çekilme)".
+       - "Teslim Şartlarını Konuş".
+
+#### GÖREV 2: NÜFUZLA ORDU TOPLAMA, KRALLIK POLİTİKALARI VE UYUM (COHESION)
+* Nüfuz (Influence) harcayarak aynı krallıktaki lordları kendi sancağı altında orduya çağırma.
+* Haritada birleşik ordu yürüyüşü ve **Uyum (Cohesion)** çubuğu (ordu içi erzak paylaşımı, uyum 0 olunca ordunun dağılması).
+* Divan Oylamaları: Fethedilen yeni tımarlar için 3 aday lordlu nüfuz oylaması ve krallık yasaları.
+
+#### GÖREV 3: CANLI ŞEHİR MAKRO-EKONOMİSİ, KERVAMLAR VE ATÖLYELER
+* Bağlı köyler şehre hammadde taşır; şehir atölyeleri işler, kıtlık/bolluk fiyatları belirler.
+* Oyuncunun bir yoldaşına para/asker verip **Ticaret Kervanı** kurması; haritada gezen kervanın otomatik ticaret yapıp günlük kar getirmesi.
+
+#### GÖREV 4: YOLDAŞ YAŞAM DÖNGÜSÜ, EVLİLİK VE HANEDAN (DYNASTY)
+* Meyhanelerde dinamik lakaplı yoldaşlar.
+* Karşı cins lordlarla flört/ikna ve evlilik, eşin partiye katılması, çocuklar ve klan soy ağacı.
+
+---
+
+## 3. BOZULMAMASI GEREKEN TEKNİK KANUNLAR
+
+1. **Asker Sayısının Tek Kaynağı `roster` ve `troopStacks`tir:**
+   - Asker sayısını elle artırıp azaltma; daima `roster` toplamı, `troopStacks` ve parti gücü senkron tutulmalıdır.
+2. **Canlı Lord Konumu Harita Rotasındadır:**
+   - `WorldCanvas` içindeki `lordLiveRoutes` ve `lordPositionsRef` otoritedir.
+3. **Zaman Katman Mantığı ile Durur:**
+   - Bir modal açıldığında hız `uiSession.ts` (`speedBeforeUi`) ile saklanır ve kapatıldığında eski hızına (`speedAfterUi`) döner.
+4. **Windows Terminal Kuralı:**
+   - Komutları ve testleri daima `cmd /c "npm run ..."` veya `cmd /c "npx ..."` ile çalıştır (PowerShell kısıtlamalarını aşmak için).
+5. **Hızlı Doğrulama Zinciri:**
+   - Kod yazdıktan sonra mutlaka `cmd /c "npm run verify:fast"` çalıştır. Hata varsa commit atma veya görevi bitirme.
