@@ -427,25 +427,42 @@ export default function App() {
         if (patch.x !== undefined || patch.z !== undefined) {
           const campaignLord = testStateRef.current.campaign.lords.find((lord) => lord.id === lordId)!;
           const live = lordPositionsRef.current.get(lordId);
-          lordPositionCommandsRef.current.set(lordId, {
+          const nextPos = {
             x: patch.x ?? live?.x ?? campaignLord.x,
             z: patch.z ?? live?.z ?? campaignLord.z,
-          });
+          };
+          lordPositionCommandsRef.current.set(lordId, nextPos);
+          lordPositionsRef.current.set(lordId, nextPos);
         }
-        const applyPatch = (lord: LordAgent): LordAgent => {
+        const applyPatch = (lord: LordAgent, day: number): LordAgent => {
           const roster = patch.roster ?? lord.roster;
+          const legacyTargetId = (patch as { targetSettlementId?: string }).targetSettlementId;
+          const nextOrder =
+            patch.order !== undefined
+              ? patch.order
+              : patch.currentAction === 'SIEGE' && legacyTargetId
+                ? {
+                    kind: 'SIEGE' as const,
+                    targetSettlementId: legacyTargetId,
+                    sinceDay: lord.order?.sinceDay ?? day,
+                    siegeProgress: lord.order?.siegeProgress ?? 68,
+                  }
+                : lord.order;
           return {
             ...lord,
             ...patch,
+            order: nextOrder,
             roster,
             armySize: patch.armySize ?? getTotalTroops(roster),
           };
         };
         setCampaign((prev) => ({
           ...prev,
-          lords: prev.lords.map((lord) => (lord.id === lordId ? applyPatch(lord) : lord)),
+          lords: prev.lords.map((lord) => (lord.id === lordId ? applyPatch(lord, prev.day) : lord)),
         }));
-        setDialogueLord((prev) => (prev?.id === lordId ? applyPatch(prev) : prev));
+        setDialogueLord((prev) =>
+          prev?.id === lordId ? applyPatch(prev, testStateRef.current.campaign.day) : prev,
+        );
         return true;
       },
       getLordPosition: (lordId) => {
@@ -475,16 +492,20 @@ export default function App() {
               lord.order.targetSettlementId === settlement.id,
           )
           .forEach((lord) => {
-            lordPositionCommandsRef.current.set(lord.id, { x: lord.x, z: lord.z });
+            const pos = { x: lord.x, z: lord.z };
+            lordPositionCommandsRef.current.set(lord.id, pos);
+            lordPositionsRef.current.set(lord.id, pos);
           });
-        if (role !== 'defender') {
-          playerPositionCommandRef.current = {
-            x: setup.campaign.playerX,
-            z: setup.campaign.playerZ,
-          };
-        }
+        playerPositionCommandRef.current = {
+          x: setup.campaign.playerX,
+          z: setup.campaign.playerZ,
+        };
+        testStateRef.current = {
+          ...testStateRef.current,
+          campaign: setup.campaign,
+        };
         const campAngle = Math.atan2(campZ - settlement.z, campX - settlement.x);
-        const focusOffset = options?.focusOnCamp ? 8 : 0;
+        const focusOffset = options?.focusOnCamp ? 11 : 10;
         setCampaign(setup.campaign);
         setActiveSettlementModal(null);
         setDialogueLord(null);
@@ -493,7 +514,7 @@ export default function App() {
         cameraActionsRef.current?.focusOnCoords(
           settlement.x + Math.cos(campAngle) * focusOffset,
           settlement.z + Math.sin(campAngle) * focusOffset,
-          34,
+          42,
         );
         return true;
       },
@@ -1816,7 +1837,11 @@ export default function App() {
               campaign={campaign}
               onClose={() => setActiveSiegeSettlementId(null)}
               onOpenSiegeCamp={() => {
-                setCampaign((prev) => startPlayerSiege(prev, liveSettlement.id));
+                setCampaign((prev) => {
+                  const next = startPlayerSiege(prev, liveSettlement.id);
+                  playerPositionCommandRef.current = { x: next.playerX, z: next.playerZ };
+                  return next;
+                });
                 setSettlementModalInitialTab('siege');
                 setActiveSiegeSettlementId(null);
                 setActiveSettlementModal(liveSettlement);

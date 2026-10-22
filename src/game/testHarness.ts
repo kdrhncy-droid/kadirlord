@@ -211,10 +211,12 @@ export function buildE2ESiegeScenario(
     ) ?? base.lords.find((lord) => lord.faction !== settlement.faction);
   if (!besieger) return null;
 
-  const campPoint = getSiegeCampPoint(settlement, besieger.x, besieger.z);
-  const approachDistance = Math.hypot(besieger.x - settlement.x, besieger.z - settlement.z);
-  const approachX = approachDistance > 0.001 ? (besieger.x - settlement.x) / approachDistance : 1;
-  const approachZ = approachDistance > 0.001 ? (besieger.z - settlement.z) / approachDistance : 0;
+  const siegeApproachX = settlement.x + 22;
+  const siegeApproachZ = settlement.z + 8;
+  const campPoint = getSiegeCampPoint(settlement, siegeApproachX, siegeApproachZ);
+  const approachDistance = Math.hypot(campPoint.x - settlement.x, campPoint.z - settlement.z);
+  const approachX = approachDistance > 0.001 ? (campPoint.x - settlement.x) / approachDistance : 1;
+  const approachZ = approachDistance > 0.001 ? (campPoint.z - settlement.z) / approachDistance : 0;
   const playerPoint =
     role === 'attacker'
       ? campPoint

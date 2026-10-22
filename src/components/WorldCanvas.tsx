@@ -14,7 +14,11 @@ import {
   getTotalTroops,
   getWallSections,
 } from '../game/rules';
-import { besiegedSettlementIdSet, getSiegeCampPoint } from '../game/siegeEncounter';
+import {
+  besiegedSettlementIdSet,
+  getSiegeCampPoint,
+  getSiegeCampSlotPoint,
+} from '../game/siegeEncounter';
 import { getPlayerArmy } from '../game/armySystem';
 import { getLordPartyStrength } from '../game/encounter';
 import {
@@ -2501,48 +2505,97 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
 
           const isThisLordTalking = activeTalkingLordId === l.id;
-          if (!isWorldEffectivelyPaused && !isThisLordTalking && timeScale > 0) {
-            const onCooldown = (encounterCooldowns.get(l.id) ?? 0) > elapsedTotal;
-            let siegeSlotIndex = 0;
-            let totalBesiegers = 1;
-            let siegeAnchorPos: { x: number; z: number } | undefined;
-            let siegeDefenderStrength = 0;
-            let totalBesiegerStrength: number | undefined;
+          let siegeSlotIndex = 0;
+          let totalBesiegers = 1;
+          let siegeAnchorPos: { x: number; z: number } | undefined;
+          let siegeDefenderStrength = 0;
+          let totalBesiegerStrength: number | undefined;
+          let siegeTargetSettlement: Settlement | undefined;
 
-            if (l.order?.kind === 'SIEGE' && l.order.targetSettlementId) {
-              const siegeTargetId = l.order.targetSettlementId;
-              const targetSettlement = camp.settlements.find((s) => s.id === siegeTargetId);
-              const coBesiegers = camp.lords.filter(
-                (other) =>
-                  other.order?.kind === 'SIEGE' &&
-                  other.order.targetSettlementId === siegeTargetId,
-              );
-              const playerAlsoBesieging =
-                camp.playerSiege?.settlementId === siegeTargetId && !camp.playerSiege.inside;
-              const idxInSiege = Math.max(
-                0,
-                coBesiegers.findIndex((other) => other.id === l.id),
-              );
-              siegeSlotIndex = idxInSiege + (playerAlsoBesieging ? 1 : 0);
-              totalBesiegers = coBesiegers.length + (playerAlsoBesieging ? 1 : 0);
-              const firstCo = coBesiegers[0];
-              const firstRoute = firstCo ? lordLiveRoutes.get(firstCo.id) : undefined;
+          if (
+            (l.order?.kind === 'SIEGE' || l.order?.kind === 'DEFEND') &&
+            l.order.targetSettlementId
+          ) {
+            const siegeTargetId = l.order.targetSettlementId;
+            siegeTargetSettlement = camp.settlements.find((s) => s.id === siegeTargetId);
+            const coBesiegers = camp.lords.filter(
+              (other) =>
+                other.order?.kind === 'SIEGE' &&
+                other.order.targetSettlementId === siegeTargetId,
+            );
+            const playerAlsoBesieging =
+              camp.playerSiege?.settlementId === siegeTargetId && !camp.playerSiege.inside;
+            const idxInSiege = Math.max(
+              0,
+              coBesiegers.findIndex((other) => other.id === l.id),
+            );
+            siegeSlotIndex = idxInSiege + (playerAlsoBesieging ? 1 : 0);
+            totalBesiegers = coBesiegers.length + (playerAlsoBesieging ? 1 : 0);
+            const firstCo = coBesiegers[0];
+            const firstRoute = firstCo ? lordLiveRoutes.get(firstCo.id) : undefined;
+            if (playerAlsoBesieging || coBesiegers.length > 0) {
               siegeAnchorPos = playerAlsoBesieging
                 ? { x: playerOverworldX, z: playerOverworldZ }
                 : firstRoute
                   ? { x: firstRoute.x, z: firstRoute.z }
-                  : { x: route.x, z: route.z };
-              if (targetSettlement) {
-                siegeDefenderStrength = Math.round(
-                  targetSettlement.garrison * 1.15 + (targetSettlement.militia ?? 0) * 0.55,
-                );
-              }
+                  : firstCo
+                    ? { x: firstCo.x, z: firstCo.z }
+                    : { x: route.x, z: route.z };
+            }
+            if (siegeTargetSettlement) {
+              siegeDefenderStrength = Math.round(
+                siegeTargetSettlement.garrison * 1.15 +
+                  (siegeTargetSettlement.militia ?? 0) * 0.55,
+              );
+            }
+            if (l.order.kind === 'SIEGE') {
               totalBesiegerStrength = coBesiegers.reduce(
                 (sum, other) => sum + getLordPartyStrength(other),
                 0,
               );
+              // Kuşatma kampında konuşlanmış lordlar (veya oyun duraklatılmışken kuşatmada olanlar)
+              // yarım-ay (half-moon arc) yuvasında kalenin tam dışında görünür durur!
+              if (
+                siegeTargetSettlement &&
+                siegeAnchorPos &&
+                ((l.order.siegeProgress ?? 0) > 0 ||
+                  Math.hypot(
+                    route.x - siegeTargetSettlement.x,
+                    route.z - siegeTargetSettlement.z,
+                  ) <= 36)
+              ) {
+                const slotPt =
+                  siegeSlotIndex > 0 || totalBesiegers > 1
+                    ? getSiegeCampSlotPoint(
+                        siegeTargetSettlement,
+                        siegeAnchorPos.x,
+                        siegeAnchorPos.z,
+                        siegeSlotIndex,
+                        totalBesiegers,
+                      )
+                    : getSiegeCampPoint(
+                        siegeTargetSettlement,
+                        siegeAnchorPos.x,
+                        siegeAnchorPos.z,
+                      );
+                if (
+                  isWorldEffectivelyPaused ||
+                  Math.hypot(route.x - slotPt.x, route.z - slotPt.z) <= 3.5
+                ) {
+                  route.x = slotPt.x;
+                  route.z = slotPt.z;
+                  route.rotY = Math.atan2(
+                    siegeTargetSettlement.x - route.x,
+                    siegeTargetSettlement.z - route.z,
+                  );
+                  route.cachedY = Math.max(0.25, groundHeightAt(route.x, route.z));
+                }
+              }
             }
+          }
 
+          if (!isWorldEffectivelyPaused && !isThisLordTalking && timeScale > 0) {
+            const onCooldown = (encounterCooldowns.get(l.id) ?? 0) > elapsedTotal;
             const escortIdx = playerArmyMemberIds.indexOf(l.id);
 
             // Gerçek zamanlı kovalama (güçlüyse) / kaçma (zayıfsa) / kuşatma tehdit AI veya stratejik emir
@@ -2579,13 +2632,26 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           const lx = route.x;
           const lz = route.z;
           const ly = route.cachedY ?? Math.max(0.25, groundHeightAt(lx, lz));
-          const inSight = isWithinSpottingRange(
-            playerOverworldX,
-            playerOverworldZ,
-            lx,
-            lz,
-            playerSpottingRange,
-          );
+          const siegeTargetInSight =
+            l.order?.kind === 'SIEGE' &&
+            siegeTargetSettlement !== undefined &&
+            (camp.playerSiege?.settlementId === siegeTargetSettlement.id ||
+              isWithinSpottingRange(
+                playerOverworldX,
+                playerOverworldZ,
+                siegeTargetSettlement.x,
+                siegeTargetSettlement.z,
+                playerSpottingRange * 1.15,
+              ));
+          const inSight =
+            siegeTargetInSight ||
+            isWithinSpottingRange(
+              playerOverworldX,
+              playerOverworldZ,
+              lx,
+              lz,
+              playerSpottingRange,
+            );
 
           const lMesh = lordMeshes.get(l.id);
           const lProxy = lordProxies.get(l.id);
@@ -3117,15 +3183,30 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           const route = lordLiveRoutes.get(l.id);
           const lx = route ? route.x : l.x;
           const lz = route ? route.z : l.z;
+          const siegeSettle =
+            l.order?.kind === 'SIEGE' && l.order.targetSettlementId
+              ? camp.settlements.find((s) => s.id === l.order?.targetSettlementId)
+              : undefined;
+          const siegeLabelInSight =
+            siegeSettle !== undefined &&
+            (camp.playerSiege?.settlementId === siegeSettle.id ||
+              isWithinSpottingRange(
+                playerOverworldX,
+                playerOverworldZ,
+                siegeSettle.x,
+                siegeSettle.z,
+                playerSpottingRange * 1.15,
+              ));
           const inSight =
             camZoomDist <= 260 &&
-            isWithinSpottingRange(
-              playerOverworldX,
-              playerOverworldZ,
-              lx,
-              lz,
-              playerSpottingRange,
-            );
+            (siegeLabelInSight ||
+              isWithinSpottingRange(
+                playerOverworldX,
+                playerOverworldZ,
+                lx,
+                lz,
+                playerSpottingRange,
+              ));
           if (!inSight) {
             if (rec.visible) {
               rec.visible = false;
