@@ -20,6 +20,7 @@ import {
   buyFoodAtSettlement,
   buyOrChangeWorkshop,
   buyTavernRound,
+  calculatePartyStrength,
   constructSiegeEngine,
   createInitialCampaignState,
   deployReservedSiegeEngines,
@@ -56,16 +57,23 @@ import { DiplomacyModal } from './components/DiplomacyModal';
 import { BannerlordMarketModal } from './components/BannerlordMarketModal';
 import { InventoryModal } from './components/InventoryModal';
 import { BattleLootModal } from './components/BattleLootModal';
+import { PartyModal } from './components/PartyModal';
+import { CharacterModal } from './components/CharacterModal';
 import {
   commitBattleLoot,
   prepareBattleLoot,
   type PendingBattleLoot,
 } from './game/lootTransaction';
 import { rollBattleLoot } from './game/loot';
-import { inventoryItemQuantity } from './game/bannerlordFoundation';
+import {
+  inventoryItemQuantity,
+  getTroopDefinition,
+  troopStackTotals,
+} from './game/bannerlordFoundation';
 import { KingdomManagementModal } from './components/KingdomManagementModal';
 import { CharacterArenaView } from './components/CharacterArenaView';
 import { CharacterCreatorModal } from './components/CharacterCreatorModal';
+import { BannerlordPauseModal } from './components/BannerlordPauseModal';
 import { BattlePrewarmModal } from './components/BattlePrewarmModal';
 import { EncyclopediaModal } from './components/encyclopedia/EncyclopediaModal';
 import { BattleMemoryPool, PrewarmStageReport } from './game/battleEnginePool';
@@ -91,8 +99,10 @@ import {
   readSaveSummary,
   writeSave,
   type BackgroundChoice,
+  type SaveData,
   type SaveSummary,
 } from './game/saveGame';
+import type { CharacterMorphDNA } from './game/characterMorph';
 import {
   countLayers,
   speedAfterUi,
@@ -158,6 +168,10 @@ export default function App() {
   );
   const [isMarketModalOpen, setIsMarketModalOpen] = useState(false);
   const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
+  const [isPartyModalOpen, setIsPartyModalOpen] = useState(
+    e2eRequest.enabled ? initialE2ESetup.partyOpen : false,
+  );
+  const [isCharacterModalOpen, setIsCharacterModalOpen] = useState(false);
   const [pendingBattleLoot, setPendingBattleLoot] = useState<PendingBattleLoot | null>(null);
   const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
   const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
@@ -236,6 +250,8 @@ export default function App() {
     activeSettlementModal,
     isMarketModalOpen,
     isInventoryModalOpen,
+    isPartyModalOpen,
+    isCharacterModalOpen,
     pendingBattleLoot,
   });
   testStateRef.current = {
@@ -250,6 +266,8 @@ export default function App() {
     activeSettlementModal,
     isMarketModalOpen,
     isInventoryModalOpen,
+    isPartyModalOpen,
+    isCharacterModalOpen,
     pendingBattleLoot,
   };
 
@@ -301,6 +319,8 @@ export default function App() {
             locked: Boolean(item.locked),
           })),
           inventoryOpen: state.isInventoryModalOpen,
+          partyOpen: state.isPartyModalOpen,
+          characterOpen: state.isCharacterModalOpen,
           heroes: (current.heroes ?? []).map((hero) => ({
             id: hero.id,
             name: hero.name,
@@ -414,6 +434,10 @@ export default function App() {
       },
       openEncyclopedia: () => setIsEncyclopediaOpen(true),
       closeEncyclopedia: () => setIsEncyclopediaOpen(false),
+      openParty: () => setIsPartyModalOpen(true),
+      closeParty: () => setIsPartyModalOpen(false),
+      openCharacter: () => setIsCharacterModalOpen(true),
+      closeCharacter: () => setIsCharacterModalOpen(false),
       openMarket: (settlementId) => {
         const current = testStateRef.current.campaign;
         const settlement = settlementId
@@ -478,12 +502,18 @@ export default function App() {
 
   /** Sefer başlatılırken kullanılan ad (karakter yaratıcıda değiştirilebilir). */
   const [playerName, setPlayerName] = useState('Komutan Demirhan');
+  const [isNewGameCreatorFlow, setIsNewGameCreatorFlow] = useState(false);
+  const [isTitleLoadOpen, setIsTitleLoadOpen] = useState(false);
 
-  const startGame = useCallback(() => {
+  const startGame = useCallback((customDna?: CharacterMorphDNA, customName?: string) => {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-    const fresh = createInitialCampaignState(playerName, backgroundChoice);
+    const finalName = customName || playerName;
+    const fresh = createInitialCampaignState(finalName, backgroundChoice);
+    if (customDna) {
+      fresh.playerMorphDNA = customDna;
+    }
     setCampaign(fresh);
     setMacroState(createInitialKingdomMacroState(fresh));
     setSubMode('overworld');
@@ -496,6 +526,8 @@ export default function App() {
     setEncounterScenario(undefined);
     setIsMarketModalOpen(false);
     setIsInventoryModalOpen(false);
+    setIsPartyModalOpen(false);
+    setIsCharacterModalOpen(false);
     setIsKingdomModalOpen(false);
     setIsEncyclopediaOpen(false);
     setOutcomeSnapshot(null);
@@ -513,7 +545,9 @@ export default function App() {
   /** O an açık olan UI katmanları (Esc sırası ve duraklatma bunlardan türetilir). */
   const uiLayers: UiLayerFlags = {
     creator: isCharacterCreatorOpen,
+    character: isCharacterModalOpen,
     inventory: isInventoryModalOpen,
+    party: isPartyModalOpen,
     market: isMarketModalOpen,
     kingdom: isKingdomModalOpen,
     dialogue: !!(dialogueLord || dialogueSettlement),
@@ -527,8 +561,14 @@ export default function App() {
       case 'creator':
         setIsCharacterCreatorOpen(false);
         break;
+      case 'character':
+        setIsCharacterModalOpen(false);
+        break;
       case 'inventory':
         setIsInventoryModalOpen(false);
+        break;
+      case 'party':
+        setIsPartyModalOpen(false);
         break;
       case 'market':
         setIsMarketModalOpen(false);
@@ -639,6 +679,8 @@ export default function App() {
     setDialogueSettlement(null);
     setIsMarketModalOpen(false);
     setIsInventoryModalOpen(false);
+    setIsPartyModalOpen(false);
+    setIsCharacterModalOpen(false);
     setIsKingdomModalOpen(false);
     setIsEncyclopediaOpen(false);
     setOutcomeSnapshot(null);
@@ -650,6 +692,36 @@ export default function App() {
     sound.playWarhorn();
     showToast(`Sefer yüklendi · Gün ${fresh.day}`);
   }, [showToast, startGame]);
+
+  /** BannerlordPauseModal veya kayıt ekranından gelen tam SaveData'yı yükler. */
+  const handleLoadSaveData = useCallback((data: SaveData) => {
+    const fresh = data.campaign;
+    setCampaign(fresh);
+    setMacroState(data.macroState);
+    setMetHeroIds(data.metHeroIds);
+    setBackgroundChoice(data.backgroundChoice);
+    setPlayerName(fresh.playerName);
+    setSubMode('overworld');
+    setViewMode('campaign');
+    setCampaignTimeScale(1);
+    setActiveSettlementModal(null);
+    setActiveDiplomacyLord(null);
+    setDialogueLord(null);
+    setDialogueSettlement(null);
+    setIsMarketModalOpen(false);
+    setIsInventoryModalOpen(false);
+    setIsPartyModalOpen(false);
+    setIsCharacterModalOpen(false);
+    setIsKingdomModalOpen(false);
+    setIsEncyclopediaOpen(false);
+    setOutcomeSnapshot(null);
+    setGameState('playing');
+    document.body.dataset.state = 'playing';
+    lastAutosaveDayRef.current = fresh.day;
+    cameraActionsRef.current?.focusOnCoords(fresh.playerX, fresh.playerZ, 52);
+    cameraActionsRef.current?.focusOnPlayer();
+    sound.playWarhorn();
+  }, []);
 
   /**
    * Dünya yalnız bir UI katmanı açıkken duraklatılır; kapanınca **önceki hıza**
@@ -697,14 +769,23 @@ export default function App() {
       if (gameState === 'title') {
         if (e.code === 'Enter' || e.code === 'Space') {
           e.preventDefault();
-          // Kayıt varsa Enter "devam et"tir; yeni sefer düğmeyle başlatılır.
+          // Kayıt varsa Enter "devam et"tir; yeni sefer karakter oluşturucuyla başlatılır.
           if (saveInfo) continueGame();
-          else startGame();
+          else {
+            setIsNewGameCreatorFlow(true);
+            setIsCharacterCreatorOpen(true);
+          }
         } else if (e.code === 'KeyB') {
           e.preventDefault();
+          setIsNewGameCreatorFlow(false);
           setIsCharacterCreatorOpen((prev) => !prev);
-        } else if (e.code === 'Escape' && isCharacterCreatorOpen) {
-          setIsCharacterCreatorOpen(false);
+        } else if (e.code === 'Escape') {
+          if (isCharacterCreatorOpen) {
+            setIsNewGameCreatorFlow(false);
+            setIsCharacterCreatorOpen(false);
+          } else if (isTitleLoadOpen) {
+            setIsTitleLoadOpen(false);
+          }
         }
         return;
       }
@@ -730,7 +811,21 @@ export default function App() {
         return;
       }
 
-      if (e.code === 'Escape' || e.code === 'KeyP') {
+      if (e.code === 'KeyC' && gameState === 'playing' && subMode === 'overworld') {
+        if (uiPausesWorld && !isCharacterModalOpen) return;
+        e.preventDefault();
+        setIsCharacterModalOpen((prev) => !prev);
+        return;
+      }
+
+      if (e.code === 'KeyP' && gameState === 'playing' && subMode === 'overworld') {
+        if (uiPausesWorld && !isPartyModalOpen) return;
+        e.preventDefault();
+        setIsPartyModalOpen((prev) => !prev);
+        return;
+      }
+
+      if (e.code === 'Escape') {
         if (uiPausesWorld) return;
         if (gameState === 'playing') {
           setGameState('paused');
@@ -775,6 +870,8 @@ export default function App() {
     isEncyclopediaOpen,
     isMarketModalOpen,
     isInventoryModalOpen,
+    isPartyModalOpen,
+    isCharacterModalOpen,
     isKingdomModalOpen,
     isCharacterCreatorOpen,
     dialogueLord,
@@ -885,6 +982,57 @@ export default function App() {
           res.nextState.settlements.find((s) => s.id === settlementId) || null,
         );
         return res.nextState;
+      });
+      return errorMsg;
+    },
+    [],
+  );
+
+  const handleRecruitBatch = useCallback(
+    (settlementId: string, recruits: Array<{ troopId: string; cost: number }>): string | null => {
+      let errorMsg: string | null = null;
+      setCampaign((prev) => {
+        const totalCost = recruits.reduce((s, r) => s + r.cost, 0);
+        if (prev.gold < totalCost) {
+          errorMsg = 'Yetersiz dinar.';
+          return prev;
+        }
+
+        const nextStacks = [...(prev.troopStacks ?? [])];
+        for (const recruit of recruits) {
+          const existingIdx = nextStacks.findIndex(
+            (st) => st.troopId === recruit.troopId,
+          );
+          if (existingIdx >= 0) {
+            nextStacks[existingIdx] = {
+              ...nextStacks[existingIdx],
+              count: nextStacks[existingIdx].count + 1,
+            };
+          } else {
+            nextStacks.push({
+              troopId: recruit.troopId,
+              count: 1,
+              wounded: 0,
+              xp: 0,
+            });
+          }
+        }
+
+        const nextRoster = troopStackTotals(nextStacks);
+        const nextArmySize = getTotalTroops(nextRoster);
+        const nextStrength = calculatePartyStrength(nextRoster);
+
+        showToast(`${recruits.length} yeni asker sancağınıza katıldı! (-${totalCost} Dinar)`);
+        sound.playCoinChime();
+
+        return {
+          ...prev,
+          gold: Math.max(0, prev.gold - totalCost),
+          troopStacks: nextStacks,
+          roster: nextRoster,
+          armySize: nextArmySize,
+          strength: nextStrength,
+        };
       });
       return errorMsg;
     },
@@ -1409,7 +1557,9 @@ export default function App() {
                 data-start="true"
                 onClick={() => {
                   if (saveInfo && !window.confirm('Yeni sefer başlatılsın mı? Mevcut kayıt silinecek.')) return;
-                  startGame();
+                  setIsNewGameCreatorFlow(true);
+                  setIsCharacterCreatorOpen(true);
+                  sound.playCoin();
                 }}
                 className="px-7 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fbbf24]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
@@ -1417,7 +1567,20 @@ export default function App() {
               </button>
               <button
                 type="button"
+                data-testid="title-load-saves-btn"
                 onClick={() => {
+                  sound.playCoin();
+                  setIsTitleLoadOpen(true);
+                }}
+                className="px-5 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#261f17] hover:bg-[#382d22] text-[#fde68a] border border-[#c6a15b]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-2"
+              >
+                <span>📂</span>
+                <span>KAYIT YÜKLE (LOAD GAME)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsNewGameCreatorFlow(false);
                   setIsCharacterCreatorOpen(true);
                   sound.playCoin();
                 }}
@@ -1498,6 +1661,12 @@ export default function App() {
             // üstüne ikinci bir taslak açmaz; diğer durumlarda I aç/kapatır.
             if (!isMarketModalOpen) setIsInventoryModalOpen((prev) => !prev);
           }}
+          onOpenPartyModal={() => {
+            setIsPartyModalOpen((prev) => !prev);
+          }}
+          onOpenCharacterModal={() => {
+            setIsCharacterModalOpen((prev) => !prev);
+          }}
           onUpgradeTroop={(fromTier, toTier) => {
             const res = upgradeTroopTier(campaign, fromTier, toTier, 1);
             if (res.success) setCampaign(res.nextState);
@@ -1538,6 +1707,7 @@ export default function App() {
           }}
           onOpenCharacterArena={() => setViewMode('character_arena')}
           onRecruit={handleRecruit}
+          onRecruitBatch={handleRecruitBatch}
           onBuyFood={handleBuyFood}
           onStartSiegeBattle={handleStartSiegeBattle}
           onHireMercenaries={handleHireMercenaries}
@@ -1622,92 +1792,48 @@ export default function App() {
         />
       )}
 
-      {/* 5. PAUSE MODAL */}
+      {/* 5. PAUSE MODAL (BANNERLORD AUTHENTIC ESC MENÜSÜ) */}
       {gameState === 'paused' && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center p-4 pointer-events-auto"
-          style={{ backgroundColor: 'rgba(8, 7, 5, 0.82)' }}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="pause-modal-title"
-        >
-          <div className="hud-panel rounded-lg p-6 w-full max-w-md text-center">
-            <h2
-              id="pause-modal-title"
-              className="text-2xl font-display font-bold text-[#f8f0df]"
-            >
-              SEFER DURAKLATILDI
-            </h2>
-            <p className="text-xs text-[#b5a890] mt-1">
-              {campaign.playerName} · Gün {campaign.day} ({campaign.season})
-            </p>
+        <BannerlordPauseModal
+          campaign={campaign}
+          saveInput={{
+            campaign,
+            macroState,
+            metHeroIds,
+            backgroundChoice,
+          }}
+          onResume={() => setGameState('playing')}
+          onLoadSave={(loadedData) => {
+            handleLoadSaveData(loadedData);
+            showToast(`Kayıt yüklendi · ${loadedData.campaign.playerName} (Gün ${loadedData.campaign.day})`);
+          }}
+          onExitToTitle={() => {
+            setGameState('title');
+          }}
+          onShowToast={showToast}
+        />
+      )}
 
-            <div className="grid grid-cols-3 gap-2 my-5 p-3 rounded bg-[#16130e] border border-[#c6a15b]/20 font-mono-tabular">
-              <div>
-                <span className="text-[10px] text-[#a89b84] block">Asker</span>
-                <span className="text-base font-bold text-[#f3ead8]">
-                  {getTotalTroops(campaign.roster)}
-                </span>
-              </div>
-              <div>
-                <span className="text-[10px] text-[#a89b84] block">Hazine</span>
-                <span className="text-base font-bold text-[#fbbf24]">
-                  {campaign.gold}
-                </span>
-              </div>
-              <div>
-                <span className="text-[10px] text-[#a89b84] block">Nam</span>
-                <span className="text-base font-bold text-[#34d399]">
-                  {campaign.renown}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2.5">
-              <button
-                type="button"
-                onClick={() => setGameState('playing')}
-                className="w-full py-2.5 px-4 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white transition-colors"
-              >
-                Sefere Devam Et [Esc]
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const ok = persist();
-                  showToast(ok ? `Sefer kaydedildi · Gün ${campaign.day}` : 'Kayıt yazılamadı (depolama kapalı).');
-                }}
-                className="w-full py-2.5 px-4 rounded text-xs font-bold bg-[#166534] hover:bg-[#15803d] text-[#ecfdf5] border border-[#34d399]/50 transition-colors"
-              >
-                Seferi Kaydet
-              </button>
-              <div className="text-[10px] text-[#8b8072] leading-snug">
-                {saveInfo
-                  ? `Son kayıt: Gün ${saveInfo.day} · ${saveInfo.playerName} (otomatik: her oyun günü)`
-                  : 'Henüz kayıt yok — oyun günü geçince otomatik kaydedilir.'}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (window.confirm('Yeni sefer başlatılsın mı? Mevcut kayıt silinecek.')) startGame();
-                }}
-                className="w-full py-2.5 px-4 rounded text-xs font-semibold bg-[#241f18] hover:bg-[#332c22] text-[#e2d6c1] border border-[#c6a15b]/30 transition-colors"
-              >
-                Yeni Sefer (kayıt silinir)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  persist();
-                  setGameState('title');
-                }}
-                className="w-full py-2.5 px-4 rounded text-xs font-semibold bg-[#181510] hover:bg-[#26211a] text-[#a89b84] transition-colors"
-              >
-                Kaydet ve Ana Ekrana Dön
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* 5B. TITLE SCREEN LOAD GAME MODAL */}
+      {isTitleLoadOpen && (
+        <BannerlordPauseModal
+          campaign={campaign}
+          saveInput={{
+            campaign,
+            macroState,
+            metHeroIds,
+            backgroundChoice,
+          }}
+          initialView="load"
+          onResume={() => setIsTitleLoadOpen(false)}
+          onLoadSave={(loadedData) => {
+            setIsTitleLoadOpen(false);
+            handleLoadSaveData(loadedData);
+            showToast(`Kayıt yüklendi · ${loadedData.campaign.playerName} (Gün ${loadedData.campaign.day})`);
+          }}
+          onExitToTitle={() => setIsTitleLoadOpen(false)}
+          onShowToast={showToast}
+        />
       )}
 
       {/* 6. VICTORY / DEFEAT OUTCOME MODAL */}
@@ -1956,6 +2082,24 @@ export default function App() {
         />
       )}
 
+      {isPartyModalOpen && gameState === 'playing' && subMode === 'overworld' && (
+        <PartyModal
+          campaign={campaign}
+          settlement={activeSettlementModal ?? undefined}
+          onClose={() => setIsPartyModalOpen(false)}
+          onUpdateCampaign={(next) => setCampaign(next)}
+        />
+      )}
+
+      {isCharacterModalOpen && gameState === 'playing' && subMode === 'overworld' && (
+        <CharacterModal
+          campaign={campaign}
+          onClose={() => setIsCharacterModalOpen(false)}
+          onUpdateCampaign={(next) => setCampaign(next)}
+          onShowToast={showToast}
+        />
+      )}
+
       {pendingBattleLoot && (
         <BattleLootModal
           campaign={campaign}
@@ -2020,17 +2164,28 @@ export default function App() {
         <CharacterCreatorModal
           initialDNA={campaign.playerMorphDNA}
           characterName={campaign.playerName}
+          confirmLabel={isNewGameCreatorFlow ? 'Seferi Başlat [Enter]' : 'Karakteri Onayla'}
           onSave={(newDNA, newName) => {
-            setCampaign((prev) => ({
-              ...prev,
-              playerMorphDNA: newDNA,
-              playerName: newName || prev.playerName,
-            }));
-            // Faz 10a: seçilen ad yeni seferde de korunur (eski sürümde 'Komutan Demirhan'a dönüyordu).
-            if (newName) setPlayerName(newName);
-            showToast('Karakter kaydedildi.');
+            if (isNewGameCreatorFlow) {
+              setIsNewGameCreatorFlow(false);
+              setIsCharacterCreatorOpen(false);
+              startGame(newDNA, newName);
+            } else {
+              setCampaign((prev) => ({
+                ...prev,
+                playerMorphDNA: newDNA,
+                playerName: newName || prev.playerName,
+              }));
+              // Faz 10a: seçilen ad yeni seferde de korunur (eski sürümde 'Komutan Demirhan'a dönüyordu).
+              if (newName) setPlayerName(newName);
+              showToast('Karakter kaydedildi.');
+              setIsCharacterCreatorOpen(false);
+            }
           }}
-          onClose={() => setIsCharacterCreatorOpen(false)}
+          onClose={() => {
+            setIsNewGameCreatorFlow(false);
+            setIsCharacterCreatorOpen(false);
+          }}
         />
       )}
     </main>

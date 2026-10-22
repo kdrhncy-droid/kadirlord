@@ -100,44 +100,44 @@
 
 ### P3 — Party (`P`), birlikler ve tutsaklar
 
-- [ ] **Party ekranını ve `P` kısayolunu kur:** Sol Dismiss/garnizon/kurtarılan-tutsak bağlamı,
+- [x] **Party ekranını ve `P` kısayolunu kur:** Sol Dismiss/garnizon/kurtarılan-tutsak bağlamı,
       orta seçili kahraman/birlik 3B modeli, sağ kahramanlar + birlikler + tutsaklar. `P`'nin
       mevcut pause işleviyle çakışmasını kaldır; duraklatma için ayrı erişimi koru.
-- [ ] **`troopStacks`i tek kaynak yap:** Asker toplama, ücret, savaş zayiatı/yaralı, garnizon ve
+- [x] **`troopStacks`i tek kaynak yap:** Asker toplama, ücret, savaş zayiatı/yaralı, garnizon ve
       parti gücü yığınlardan türetilsin; eski dört sınıflı `roster` yalnız türetilmiş özet/göç
       uyumluluğu olarak kalsın.
-- [ ] **Birlik XP ve dallanan terfiyi tamamla:** Savaş/eğitim/Discard XP'si yığına yazılsın;
+- [x] **Birlik XP ve dallanan terfiyi tamamla:** Savaş/eğitim/Discard XP'si yığına yazılsın;
       hazır asker sayısı, hedef dal seçimi, altın ve normal/savaş atı şartı, bekleyen toplam ödeme,
       `Done/Cancel` ile çalışsın.
-- [ ] **Yaralı sistemini işlet:** Savaş sonuçları sağlıklı/yaralı ayrımını yazsın; Cerrah/Hekimlik,
+- [x] **Yaralı sistemini işlet:** Savaş sonuçları sağlıklı/yaralı ayrımını yazsın; Cerrah/Hekimlik,
       yerleşimde bekleme ve kahraman yaralanması iyileşme hızlarını etkilesin.
-- [ ] **Tür bazlı tutsakları tamamla:** Kapasite, zamanla hazır olma, devşirme, fidye/satış,
+- [x] **Tür bazlı tutsakları tamamla:** Kapasite, zamanla hazır olma, devşirme, fidye/satış,
       serbest bırakma, kaçış ve lord tutsaklarının ayrı kaydı/akışı olsun.
-- [ ] **Garnizon değişimini yığın modeline taşı:** Yerleşim garnizonu tek sayı yerine
+- [x] **Garnizon değişimini yığın modeline taşı:** Yerleşim garnizonu tek sayı yerine
       `garrisonRoster`/birlik yığınları kullansın; Party ekranından iki yönlü bekleyen transfer yapılsın.
-- [ ] **Parti sınırını Bannerlord bileşenleriyle hesapla:** Klan kademesi, İaşeci'nin İdare
+- [x] **Parti sınırını Bannerlord bileşenleriyle hesapla:** Klan kademesi, İaşeci'nin İdare
       becerisi/perkleri, politikalar ve diğer bonuslar ayrı satırlar hâlinde gösterilsin.
-- [ ] **P3 kabul kapısı:** Toplamların roster/armySize/güç ile senkronu, terfi/at tüketimi,
+- [x] **P3 kabul kapısı:** Toplamların roster/armySize/güç ile senkronu, terfi/at tüketimi,
       yaralı iyileşmesi, tutsak hazır olma ve garnizon transfer testleri + Party E2E.
 
 ### P4 — Karakter gelişimi, perkler ve klan rolleri
 
-- [ ] **Kullanım bazlı beceri XP motoru kur:** 18 becerinin oyun eylemlerinden XP kazanımı,
+- [x] **Kullanım bazlı beceri XP motoru kur:** 18 becerinin oyun eylemlerinden XP kazanımı,
       öğrenme hızı, yumuşak sınır ve sert tavan; beceri artışlarının karakter seviyesini ilerletmesi.
-- [ ] **Seviye ödüllerini düzelt:** Her seviyede 1 odak, her 4 seviyede 1 nitelik. Odağın beceriye
+- [x] **Seviye ödüllerini düzelt:** Her seviyede 1 odak, her 4 seviyede 1 nitelik. Odağın beceriye
       anında +10 seviye vermesi ve niteliğin doğrudan HP vermesi gibi eski yan etkileri kaldır.
-- [ ] **`CampaignHero`yu tek gelişim kaynağı yap:** Oyuncu için eski `attributes/skills/perks`
+- [x] **`CampaignHero`yu tek gelişim kaynağı yap:** Oyuncu için eski `attributes/skills/perks`
       alanlarıyla çift yönlü senkron yerine kahraman kaydı esas alınsın; kayıt göçü korunarak
       eski alanlar aşamalı kaldırılsın.
-- [ ] **Karakter ekranını yenile:** Oyuncu/eş/aile/yoldaş okları; XP çubukları, öğrenme hızı,
+- [x] **Karakter ekranını yenile:** Oyuncu/eş/aile/yoldaş okları; XP çubukları, öğrenme hızı,
       yumuşak/sert sınır ve seviye ilerlemesi seçili kahramana göre gösterilsin.
-- [ ] **Tam perk kataloğu ve etkilerini uygula:** 25'li eşiklerde çift seçenekler; kişisel,
+- [x] **Tam perk kataloğu ve etkilerini uygula:** 25'li eşiklerde çift seçenekler; kişisel,
       kaptan, parti lideri, klan rolü ve vali kapsamları gerçek hesaplara bağlansın. Eski serbest
       metin perkleri katalog kimliklerine göç ettirilsin.
-- [ ] **Klan rollerini gerçek hesaplara bağla:** İaşeci/Cerrah/İzci/Mühendis etkileri atanan
+- [x] **Klan rollerini gerçek hesaplara bağla:** İaşeci/Cerrah/İzci/Mühendis etkileri atanan
       kahramanın beceri/perklerinden gelsin; rol boşsa parti lideri kullanılsın. Rol atama arayüzü
       kahraman kimliğiyle çalışsın.
-- [ ] **P4 kabul kapısı:** XP eğrileri, sınır/hız, seviye ödülleri, bütün perk etkilerinin en az
+- [x] **P4 kabul kapısı:** XP eğrileri, sınır/hız, seviye ödülleri, bütün perk etkilerinin en az
       birer invariant testi ve rol değiştirme sonuçları.
 
 ### P5 — Harita HUD'ı ve gün içi zaman

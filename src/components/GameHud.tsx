@@ -68,6 +68,8 @@ interface GameHudProps {
   onOpenKingdomModal?: () => void;
   onOpenCharacterCreator?: () => void;
   onOpenEncyclopedia?: () => void;
+  onOpenPartyModal?: () => void;
+  onOpenCharacterModal?: () => void;
 }
 
 type WorldPane = 'atlas' | 'chronicle' | 'quests';
@@ -134,6 +136,8 @@ export const GameHud: React.FC<GameHudProps> = ({
   onOpenKingdomModal,
   onOpenCharacterCreator,
   onOpenEncyclopedia,
+  onOpenPartyModal,
+  onOpenCharacterModal,
 }) => {
   const [dockCollapsed, setDockCollapsed] = useState(false);
   /** Faz 4: Atlas ve Vakanüvis tek "Harita & Günlük" panelinde birleşti. */
@@ -155,7 +159,12 @@ export const GameHud: React.FC<GameHudProps> = ({
       if (e.code === 'KeyH') {
         setDockCollapsed((prev) => !prev);
       } else if (e.code === 'KeyC') {
-        setActiveTab((prev) => (prev === 'character' ? 'none' : 'character'));
+        if (onOpenCharacterModal) {
+          e.preventDefault();
+          onOpenCharacterModal();
+        } else {
+          setActiveTab((prev) => (prev === 'character' ? 'none' : 'character'));
+        }
       } else if (e.code === 'KeyB') {
         if (onOpenCharacterCreator) {
           onOpenCharacterCreator();
@@ -164,6 +173,10 @@ export const GameHud: React.FC<GameHudProps> = ({
         // Bannerlord'da I tam ekran saha envanterini açar/kapatır.
         e.preventDefault();
         onOpenInventoryModal?.();
+      } else if (e.code === 'KeyP') {
+        // Bannerlord'da P tam ekran parti/asker ekranını açar/kapatır.
+        e.preventDefault();
+        onOpenPartyModal?.();
       } else if (e.code === 'F9') {
         // Faz 4: Arena düğmesi HUD'dan kalktı; test için F9 (ana menüde de var).
         if (onOpenCharacterArena) onOpenCharacterArena();
@@ -181,6 +194,8 @@ export const GameHud: React.FC<GameHudProps> = ({
     return () => window.removeEventListener('keydown', onKeyH);
   }, [
     onOpenInventoryModal,
+    onOpenPartyModal,
+    onOpenCharacterModal,
     onOpenKingdomModal,
     onOpenCharacterCreator,
     onOpenCharacterArena,
@@ -625,59 +640,6 @@ export const GameHud: React.FC<GameHudProps> = ({
 
       {/* BOTTOM DOCK & BANNERLORD CAMPAIGN TIME CONTROLS */}
       <div className="relative z-20 flex flex-col items-center gap-2.5">
-        {/* Proximity Action Prompt when near a Castle/Town or Lord on the Overworld */}
-        {subMode === 'overworld' && (nearSettlement || nearLord) && (
-          <div className="hud-panel rounded-lg px-4 py-2 pointer-events-auto flex items-center gap-4">
-            {nearSettlement && (
-              <>
-                <div className="text-xs">
-                  <span className="text-[#c6a15b] font-semibold block">
-                    Kapıdasınız: {nearSettlement.name}
-                  </span>
-                  <span className="text-[#d1c5b0]">
-                    {FACTION_INFO[nearSettlement.faction].name} · Garnizon {nearSettlement.garrison}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onOpenSettlement(nearSettlement)}
-                  className="px-3 py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white whitespace-nowrap shrink-0"
-                >
-                  Yerleşime Gir
-                </button>
-              </>
-            )}
-
-            {nearLord && (
-              <>
-                <div className="text-xs">
-                  <span className="text-[#c6a15b] font-semibold block">
-                    Karşılaşılan Sancak: {nearLord.title} {nearLord.name}
-                  </span>
-                  <span className="text-[#d1c5b0]">
-                    {FACTION_INFO[nearLord.faction].name} · {nearLord.armySize} Asker
-                  </span>
-                </div>
-                {onTalkToLord && (
-                  <button
-                    type="button"
-                    onClick={() => onTalkToLord(nearLord)}
-                    className="px-3 py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white whitespace-nowrap shrink-0"
-                  >
-                    Konuş [E]
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => onOpenDiplomacy(nearLord)}
-                  className="px-3 py-1.5 rounded text-xs font-bold bg-[#241c12] hover:bg-[#362a1c] text-[#fde68a] border border-[#c6a15b]/40 whitespace-nowrap shrink-0"
-                >
-                  Elçi Gönder
-                </button>
-              </>
-            )}
-          </div>
-        )}
 
         {/* Continental Map Atlas & Camera Jump Drawer */}
         {subMode === 'overworld' && activeTab === 'world' && worldPane === 'atlas' && !dockCollapsed && (
@@ -1277,25 +1239,31 @@ export const GameHud: React.FC<GameHudProps> = ({
                     data-testid="hud-dock"
                     className="hud-panel rounded-t-xl rounded-bl-lg px-3 py-2 flex items-center gap-1.5 border-t-2 border-t-[#c6a15b]"
                   >
-                    {(
-                      [
-                        { id: 'character' as const, label: 'Karakter [C]' },
-                        { id: 'army' as const, label: `Ordum (${getTotalTroops(campaign.roster)})` },
-                      ] as const
-                    ).map((b) => (
-                      <button
-                        key={b.id}
-                        type="button"
-                        onClick={() => setActiveTab(activeTab === b.id ? 'none' : b.id)}
-                        className={`px-2.5 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap ${
-                          activeTab === b.id
-                            ? 'bg-[#b45309] text-white'
-                            : 'bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]'
-                        }`}
-                      >
-                        {b.label}
-                      </button>
-                    ))}
+                    <button
+                      type="button"
+                      data-testid="hud-open-character"
+                      onClick={() => {
+                        if (onOpenCharacterModal) {
+                          onOpenCharacterModal();
+                        } else {
+                          setActiveTab(activeTab === 'character' ? 'none' : 'character');
+                        }
+                      }}
+                      className="px-2.5 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]"
+                    >
+                      Karakter [C]
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab(activeTab === 'army' ? 'none' : 'army')}
+                      className={`px-2.5 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap ${
+                        activeTab === 'army'
+                          ? 'bg-[#b45309] text-white'
+                          : 'bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]'
+                      }`}
+                    >
+                      Ordum ({getTotalTroops(campaign.roster)})
+                    </button>
                     <button
                       type="button"
                       onClick={onOpenInventoryModal}
@@ -1304,6 +1272,16 @@ export const GameHud: React.FC<GameHudProps> = ({
                     >
                       Envanter [I]
                     </button>
+                    {onOpenPartyModal && (
+                      <button
+                        type="button"
+                        onClick={onOpenPartyModal}
+                        data-testid="hud-open-party"
+                        className="px-2.5 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap bg-[#1c1914] text-[#e2d6c1] hover:bg-[#2b261e]"
+                      >
+                        Parti [P]
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setActiveTab(activeTab === 'world' ? 'none' : 'world')}
@@ -1384,7 +1362,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                         <strong className="text-[#fbbf24]">{Math.round(campaign.gold)}</strong> Dinar
                       </span>
                       <span>
-                        <strong className="text-[#fde68a]">{campaign.renown}</strong> Nam
+                        <strong className="text-[#fde68a]">{campaign.renown}</strong> Şöhret
                       </span>
                       <span>
                         <strong className="text-[#f87171]">{hpPercent}%</strong> HP

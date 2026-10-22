@@ -38,6 +38,7 @@ import { sound } from '../game/sound.ts';
 interface CharacterCreatorModalProps {
   initialDNA?: CharacterMorphDNA;
   characterName?: string;
+  confirmLabel?: string;
   onSave: (dna: CharacterMorphDNA, name?: string) => void;
   onClose: () => void;
 }
@@ -49,6 +50,7 @@ type CameraViewPreset = 'face' | 'torso' | 'full';
 export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   initialDNA,
   characterName: defaultName = 'Komutan Demirhan',
+  confirmLabel,
   onSave,
   onClose,
 }) => {
@@ -57,7 +59,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   );
   const [name, setName] = useState<string>(defaultName);
   const [activeTab, setActiveTab] = useState<TabCategory>('body');
-  const [outfit, setOutfit] = useState<OutfitPreset>('chainmail');
+  const [outfit, setOutfit] = useState<OutfitPreset>('civilian');
   const [cameraView, setCameraView] = useState<CameraViewPreset>('full');
   const [isRotating, setIsRotating] = useState<boolean>(true);
 
@@ -152,10 +154,10 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
       beardColor: dna.beardColor,
       factionColor: FACTION_INFO[dna.culture]?.color || '#991b1b',
       hasBeard: dna.beardStyle !== 'clean_shaven' && dna.gender === 'male',
-      weaponType: 'ONE_HANDED_SWORD',
-      shieldType: 'ROUND_SHIELD',
+      weaponType: 'UNARMED',
+      shieldType: 'NONE',
       helmetType: 'NONE',
-      armorTier: 'CHAINMAIL',
+      armorTier: 'CIVILIAN',
     };
 
     const rig = createCharacterRig(initialVisuals);
@@ -1120,7 +1122,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                 className="px-4 py-2 rounded bg-[#c6a15b] hover:bg-[#d4af37] text-[#14100c] font-serif font-bold text-xs md:text-sm tracking-wide shadow-lg hover:shadow-[#c6a15b]/20 transition flex items-center gap-1.5"
               >
                 <span>⚔️</span>
-                <span>Karakteri Onayla</span>
+                <span>{confirmLabel || 'Karakteri Onayla'}</span>
               </button>
             </div>
           </div>

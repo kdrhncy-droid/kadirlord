@@ -43,6 +43,7 @@ import {
   unequipEquipmentSlot,
   type CampaignState,
   type InventoryItem,
+  type TroopStack,
 } from './rules.ts';
 import {
   CONTINENTAL_BRIDGES,
@@ -138,6 +139,24 @@ import {
   getPartyFoodUnits,
   isEdibleFoodItem,
 } from './foodSystem.ts';
+import {
+  advanceDailyPartyHealthAndPrisoners,
+  calculatePartyLimitBreakdown,
+  calculatePrisonerLimitBreakdown,
+  dismissTroopStack,
+  getPartyLimit,
+  getPrisonerLimit,
+  getTroopUpgradeOptions,
+  ransomPrisonerStack,
+  recruitPrisonerStack,
+  transferTroopFromGarrison,
+  transferTroopToGarrison,
+  upgradeTroop,
+} from './partySystem.ts';
+import {
+  troopStackTotal,
+  troopStackWoundedTotal,
+} from './bannerlordFoundation.ts';
 
 test('initial campaign state creates balanced troops, 211 authentic continental settlements (51 Towns with 2 villages each, 29 Castles with 1 village each) on flat dry plateaus, and 9 lords', () => {
   const state = createInitialCampaignState('Komutan Alparslan', 'noble');
@@ -2099,6 +2118,151 @@ test('P2 erzak: envanter gıda yığınları, çeşitlilik morali, canlı tüket
     'Vakayinameye açlık kaydı düşmeli',
   );
 });
+
+test('P3 party system: capacity breakdown, troopStacks single source of truth, branching upgrades, horse consumption, garrison transfers, prisoner recruitment/ransom, and health progression', () => {
+  const base = createInitialCampaignState('Komutan Test', 'noble');
+  const state = ensureBannerlordFoundation(base);
+
+  // 1. Parti ve Tutsak kapasitesi dökümü
+  const partyCap = calculatePartyLimitBreakdown(state);
+  assert.equal(partyCap.base, 20);
+  assert.equal(partyCap.total >= 20, true);
+  assert.equal(partyCap.total, getPartyLimit(state));
+
+  const prisonerCap = calculatePrisonerLimitBreakdown(state);
+  assert.equal(prisonerCap.base, 10);
+  assert.equal(prisonerCap.total >= 10, true);
+  assert.equal(prisonerCap.total, getPrisonerLimit(state));
+
+  // 2. troopStacks tek kaynak yapısı ve roster senkronu
+  const initialRosterTotal = getTotalTroops(state.roster);
+  const initialStacksTotal = troopStackTotal(state.troopStacks);
+  assert.equal(initialStacksTotal, initialRosterTotal);
+  assert.deepEqual(troopStackTotals(state.troopStacks), state.roster);
+
+  // 3. Dallanan terfi ve tecrübe şartı
+  const testStacksState: CampaignState = {
+    ...state,
+    gold: 500,
+    roster: { militia: 4, archer: 0, cavalry: 0, guard: 0 },
+    troopStacks: [
+      { troopId: 'empire_recruit', count: 4, wounded: 0, xp: 200 }, // upgradeXp: 50 -> 4 tanesi terfiye hazır
+    ],
+    inventoryItems: [],
+  };
+  const syncedState = ensureBannerlordFoundation(testStacksState);
+  assert.equal(syncedState.roster.militia, 4);
+
+  const upgradeOpts = getTroopUpgradeOptions(syncedState, syncedState.troopStacks![0]);
+  assert.ok(upgradeOpts.length >= 1, 'En az 1 terfi dalı olmalı');
+  const infantryUpgrade = upgradeOpts.find((o) => o.targetDefinition.battleClass === 'militia' || o.targetDefinition.battleClass === 'guard') ?? upgradeOpts[0];
+  assert.equal(infantryUpgrade.readyCount, 4);
+  assert.equal(infantryUpgrade.canUpgrade, true);
+
+  // At şartı olan bir birliğe terfi denemesi (at yokken engellenmeli)
+  const cavalryOpt = upgradeOpts.find((o) => o.horseRequirement !== 'NONE');
+  if (cavalryOpt) {
+    assert.equal(cavalryOpt.hasHorse, false);
+    assert.equal(cavalryOpt.canUpgrade, false);
+    const failUpgrade = upgradeTroop(syncedState, 'empire_recruit', cavalryOpt.targetDefinition.id, 1);
+    assert.equal(failUpgrade.success, false);
+    assert.ok(failUpgrade.reason?.includes('at'), 'At eksikliği nedeniyle reddedilmeli');
+  }
+
+  // Yaya terfisi yapalım (altın ve XP düşer, hedef yığına geçer)
+  const upRes = upgradeTroop(syncedState, 'empire_recruit', infantryUpgrade.targetDefinition.id, 2);
+  assert.equal(upRes.success, true);
+  assert.equal(upRes.nextState.gold, syncedState.gold - infantryUpgrade.goldCost * 2);
+  const remainingSource = upRes.nextState.troopStacks!.find((s) => s.troopId === 'empire_recruit');
+  const targetStack = upRes.nextState.troopStacks!.find((s) => s.troopId === infantryUpgrade.targetDefinition.id);
+  assert.equal(remainingSource?.count, 2);
+  assert.equal(targetStack?.count, 2);
+  assert.equal(troopStackTotal(upRes.nextState.troopStacks), 4);
+  assert.equal(getTotalTroops(upRes.nextState.roster), 4);
+
+  // At ekleyelim ve süvari terfisi yapalım
+  const horseItem: InventoryItem = {
+    id: 'test_horse_1',
+    definitionId: 'horse_steppe',
+    name: 'Bozkır Binek Atı',
+    category: 'HORSE',
+    slot: 'MOUNT',
+    tier: 2,
+    weight: 200,
+    value: 120,
+    quantity: 2,
+    civilianLegal: true,
+    statBonus: 'Hız +42 · Manevra +38',
+  };
+  const stateWithHorse: CampaignState = {
+    ...syncedState,
+    inventoryItems: [horseItem],
+  };
+  const cavTarget = cavalryOpt?.targetDefinition.id;
+  if (cavTarget) {
+    const cavUpgrade = upgradeTroop(stateWithHorse, 'empire_recruit', cavTarget, 1);
+    assert.equal(cavUpgrade.success, true);
+    assert.equal(cavUpgrade.nextState.inventoryItems![0].quantity, 1, '1 binek atı tüketilmeli');
+    assert.ok(cavUpgrade.nextState.troopStacks!.some((s) => s.troopId === cavTarget));
+  }
+
+  // 4. Tutsak devşirme ve fidye
+  const stateWithPrisoners: CampaignState = {
+    ...state,
+    prisoners: 3,
+    prisonerStacks: [
+      { troopId: 'empire_recruit', count: 3, ready: 2, readinessProgress: 0 },
+    ],
+  };
+  const syncedPrisoners = ensureBannerlordFoundation(stateWithPrisoners);
+  assert.equal(syncedPrisoners.prisoners, 3);
+
+  // Devşir (recruit)
+  const recruitP = recruitPrisonerStack(syncedPrisoners, 'empire_recruit', 1);
+  assert.equal(recruitP.success, true);
+  assert.equal(recruitP.nextState.prisoners, 2);
+  assert.equal(troopStackTotal(recruitP.nextState.troopStacks), troopStackTotal(syncedPrisoners.troopStacks) + 1);
+  assert.equal(getTotalTroops(recruitP.nextState.roster), troopStackTotal(recruitP.nextState.troopStacks));
+
+  // Fidye (ransom)
+  const initialGold = recruitP.nextState.gold;
+  const ransomP = ransomPrisonerStack(recruitP.nextState, 'empire_recruit', 2);
+  assert.equal(ransomP.success, true);
+  assert.equal(ransomP.nextState.prisoners, 0);
+  assert.ok(ransomP.nextState.gold > initialGold, 'Fidye altın kazandırmalı');
+
+  // 5. Garnizon transferleri
+  const partyTroops: TroopStack[] = [
+    { troopId: 'empire_recruit', count: 10, wounded: 0, xp: 0 },
+  ];
+  const garrisonTroops: TroopStack[] = [];
+  const toGarrison = transferTroopToGarrison(partyTroops, garrisonTroops, 'empire_recruit', 4);
+  assert.equal(toGarrison.moved, 4);
+  assert.equal(toGarrison.partyStacks[0].count, 6);
+  assert.equal(toGarrison.garrisonStacks[0].count, 4);
+
+  const fromGarrison = transferTroopFromGarrison(toGarrison.partyStacks, toGarrison.garrisonStacks, 'empire_recruit', 2);
+  assert.equal(fromGarrison.moved, 2);
+  assert.equal(fromGarrison.partyStacks[0].count, 8);
+  assert.equal(fromGarrison.garrisonStacks[0].count, 2);
+
+  // 6. Günlük yaralı iyileşmesi ve tutsak hazırlığı
+  const stateWithWounded: CampaignState = {
+    ...state,
+    troopStacks: [
+      { troopId: 'empire_recruit', count: 5, wounded: 3, xp: 0 },
+    ],
+    prisonerStacks: [
+      { troopId: 'empire_archer_2', count: 4, ready: 0, readinessProgress: 0 },
+    ],
+  };
+  const healthTick = advanceDailyPartyHealthAndPrisoners(stateWithWounded, { isInSettlement: true });
+  assert.ok(healthTick.healedTroops >= 2, 'Yerleşimde en az 2 yaralı iyileşmeli');
+  assert.ok(healthTick.nextState.troopStacks![0].wounded < 3);
+  assert.ok(healthTick.prisonersBecameReady >= 1, 'En az 1 tutsak devşirilmeye hazır hale gelmeli');
+  assert.ok((healthTick.nextState.prisonerStacks![0].ready ?? 0) >= 1);
+});
+
 
 
 

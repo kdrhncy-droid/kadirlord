@@ -781,6 +781,52 @@ try {
     assertNoPageProblems(problems, 'battle-loot-screen');
   });
 
+  await runTest('party-screen', async () => {
+    const { page, problems } = await openPage(browser, {
+      scenario: 'boot',
+      timeScale: '0',
+    });
+    activePage = page;
+
+    const initial = await getTestState(page);
+    assert(!initial.partyOpen, 'Başlangıçta parti ekranı kapalı olmalı');
+
+    // 1. HUD üzerindeki Parti [P] düğmesine tıkla
+    await page.waitForSelector('[data-testid="hud-open-party"]', { timeout: TIMEOUT_MS });
+    await page.click('[data-testid="hud-open-party"]');
+
+    await page.waitForSelector('[data-testid="party-screen-modal"]', { timeout: TIMEOUT_MS });
+    await page.waitForSelector('[data-testid="party-done-btn"]', { timeout: TIMEOUT_MS });
+    await page.waitForSelector('[data-testid="party-cancel-btn"]', { timeout: TIMEOUT_MS });
+    await page.waitForSelector('[data-testid="party-troops-list"]', { timeout: TIMEOUT_MS });
+
+    await screenshot(page, 'party-screen-initial.png');
+
+    // 2. Kanca üzerinden partyOpen true olduğunu doğrula
+    const stateWhileOpen = await getTestState(page);
+    assert(stateWhileOpen.partyOpen, 'Kanca üzerinden partyOpen true olmalı');
+
+    // 3. Bir birlik yığınına tıkla ve seçildiğini doğrula
+    const troopRow = await page.waitForSelector('[data-testid^="party-troop-row-"]', { timeout: TIMEOUT_MS });
+    await troopRow.click();
+    await wait(200);
+
+    await screenshot(page, 'party-screen-troop-selected.png');
+
+    // 4. Vazgeç (Esc) ile kapat
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('[data-testid="party-screen-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+
+    const stateAfterClose = await getTestState(page);
+    assert(!stateAfterClose.partyOpen, 'Escape sonrası partyOpen false olmalı');
+
+    await screenshot(page, 'party-screen-closed.png');
+    assertNoPageProblems(problems, 'party-screen');
+  });
+
   const failed = results.filter((result) => !result.ok);
   console.log(`\n${failed.length === 0 ? '✅' : '❌'} E2E: ${results.length - failed.length}/${results.length} başarılı`);
   console.log(`📸 Çıktılar: ${ARTIFACT_DIR}`);

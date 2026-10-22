@@ -3218,8 +3218,6 @@ export function allocateAttributePoint(
         ...currentAttrs,
         [attrId]: currentAttrs[attrId] + 1,
       },
-      playerMaxHp: attrId === 'ENDURANCE' || attrId === 'VIGOR' ? state.playerMaxHp + 5 : state.playerMaxHp,
-      playerHp: attrId === 'ENDURANCE' || attrId === 'VIGOR' ? state.playerHp + 5 : state.playerHp,
     },
   };
 }
@@ -3245,7 +3243,7 @@ export function allocateFocusPoint(
       skills: {
         ...baseSkills,
         [skillId]: {
-          level: currentSkill.level + 10,
+          level: currentSkill.level,
           focus: currentSkill.focus + 1,
         },
       },

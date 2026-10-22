@@ -50,6 +50,10 @@ import {
 export interface PartyAnimalInventory {
   /** Katırlar ve yük hayvanları (horseKind === 'PACK'). */
   packAnimals: number;
+  /** Envanterde boşta bekleyen binek atları (horseKind === 'RIDING'). */
+  ridingHorses: number;
+  /** Envanterde boşta bekleyen savaş atları (horseKind === 'WAR'). */
+  warHorses: number;
   /** Envanterde boşta bekleyen binek ve savaş atları (RIDING veya WAR). */
   spareMounts: number;
   /** Envanterdeki toplam hayvan sayısı. */
@@ -114,6 +118,8 @@ export function countPartyAnimals(
   state?: Pick<CampaignState, 'customItemDefinitions'>,
 ): PartyAnimalInventory {
   let packAnimals = 0;
+  let ridingHorses = 0;
+  let warHorses = 0;
   let spareMounts = 0;
   let totalHorses = 0;
 
@@ -140,16 +146,28 @@ export function countPartyAnimals(
         lowerName.includes('küheylan') ||
         lowerName.includes('at '));
 
+    const isWar =
+      isMount &&
+      (horseKind === 'WAR' ||
+        lowerName.includes('savaş') ||
+        lowerName.includes('küheylan') ||
+        (def?.tier ?? item.tier ?? 0) >= 5);
+
     if (isPack) {
       packAnimals += qty;
       totalHorses += qty;
     } else if (isMount) {
+      if (isWar) {
+        warHorses += qty;
+      } else {
+        ridingHorses += qty;
+      }
       spareMounts += qty;
       totalHorses += qty;
     }
   }
 
-  return { packAnimals, spareMounts, totalHorses };
+  return { packAnimals, ridingHorses, warHorses, spareMounts, totalHorses };
 }
 
 /**
@@ -227,6 +245,8 @@ export function calculatePartyLogistics(params: PartyLogisticsParams): PartyLogi
     ? countPartyAnimals(inventoryItems, state)
     : {
         packAnimals: Math.max(0, Math.floor(legacyHerdAnimals * 0.5)),
+        ridingHorses: Math.max(0, Math.ceil(legacyHerdAnimals * 0.5)),
+        warHorses: 0,
         spareMounts: Math.max(0, Math.ceil(legacyHerdAnimals * 0.5)),
         totalHorses: legacyHerdAnimals,
       };

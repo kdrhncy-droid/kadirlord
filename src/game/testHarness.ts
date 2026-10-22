@@ -25,6 +25,7 @@ import {
 export const E2E_SCENARIOS = [
   'boot',
   'encyclopedia',
+  'party',
   'bandit-caught-player',
   'player-caught-bandit',
   'lord-caught-player',
@@ -46,6 +47,7 @@ export interface E2EScenarioSetup {
   forcedEncounter: boolean;
   encounterScenario?: EncounterScenario;
   encyclopediaOpen: boolean;
+  partyOpen: boolean;
 }
 
 export interface KadirlordPlayerPatch {
@@ -98,6 +100,8 @@ export interface KadirlordTestSnapshot {
     scenario: EncounterScenario | null;
   };
   encyclopediaOpen: boolean;
+  partyOpen: boolean;
+  characterOpen: boolean;
   inventory: Array<{
     id: string;
     definitionId: string;
@@ -159,6 +163,10 @@ export interface KadirlordTestApi {
   closeDialogue: () => void;
   openEncyclopedia: () => void;
   closeEncyclopedia: () => void;
+  openParty: () => void;
+  closeParty: () => void;
+  openCharacter: () => void;
+  closeCharacter: () => void;
   openMarket: (settlementId?: string) => boolean;
   closeMarket: () => void;
   openInventory: () => void;
@@ -286,6 +294,7 @@ function dialogueSetup(campaign: CampaignState, lord: LordAgent | null): E2EScen
       forcedEncounter: false,
       encounterScenario: undefined,
       encyclopediaOpen: false,
+      partyOpen: false,
     };
   }
 
@@ -296,6 +305,7 @@ function dialogueSetup(campaign: CampaignState, lord: LordAgent | null): E2EScen
     forcedEncounter: true,
     encounterScenario: info.scenario,
     encyclopediaOpen: false,
+    partyOpen: false,
   };
 }
 
@@ -328,6 +338,7 @@ export function buildE2EScenario(
         forcedEncounter: false,
         encounterScenario: undefined,
         encyclopediaOpen: false,
+        partyOpen: false,
       };
 
     case 'encyclopedia':
@@ -337,6 +348,17 @@ export function buildE2EScenario(
         forcedEncounter: false,
         encounterScenario: undefined,
         encyclopediaOpen: true,
+        partyOpen: false,
+      };
+
+    case 'party':
+      return {
+        campaign: base,
+        dialogueLord: null,
+        forcedEncounter: false,
+        encounterScenario: undefined,
+        encyclopediaOpen: false,
+        partyOpen: true,
       };
 
     case 'bandit-caught-player': {
