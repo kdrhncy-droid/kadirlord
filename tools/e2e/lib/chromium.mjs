@@ -78,6 +78,30 @@ export async function launchChromium({ headless = true } = {}) {
     });
   }
 
+  if (process.platform === 'win32') {
+    const winCandidates = [
+      'K:\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    ];
+    const found = winCandidates.find((p) => existsSync(p));
+    if (found) {
+      return puppeteer.launch({
+        executablePath: found,
+        headless,
+        args: [
+          '--no-sandbox',
+          '--disable-dev-shm-usage',
+          '--ignore-gpu-blocklist',
+          '--enable-webgl',
+          '--window-size=1440,900',
+        ],
+      });
+    }
+  }
+
   if (process.platform !== 'linux') {
     throw new Error(
       'Paketli @sparticuz/chromium yalnız Linux içindir. Bu platformda E2E_CHROME_PATH ile sistem Chrome/Chromium yolunu verin.',

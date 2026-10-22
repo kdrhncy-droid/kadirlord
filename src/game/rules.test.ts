@@ -41,6 +41,7 @@ import {
   buyMarketplaceItem,
   sellMarketplaceItem,
   unequipEquipmentSlot,
+  type CampaignState,
 } from './rules.ts';
 import {
   CONTINENTAL_BRIDGES,
@@ -112,6 +113,15 @@ import {
   sellAllSurplusToMarket,
   sellToMarket,
 } from './marketTransaction.ts';
+import {
+  commitBattleLoot,
+  leaveAllUnlockedToLoot,
+  prepareBattleLoot,
+  previewLootDiscard,
+  takeAllLoot,
+  transferInventoryToLoot,
+  transferLootToInventory,
+} from './lootTransaction.ts';
 
 test('initial campaign state creates balanced troops, 211 authentic continental settlements (51 Towns with 2 villages each, 29 Castles with 1 village each) on flat dry plateaus, and 9 lords', () => {
   const state = createInitialCampaignState('Komutan Alparslan', 'noble');
@@ -1759,6 +1769,79 @@ test('P2 hero equipment: companions, civilian legality and exact stack returns s
     1,
   );
   assert.ok(playerEquipped.nextState.equipment?.WEAPON1.includes(sword.name));
+});
+
+test('P2 battle loot: pending loot preparation, selection, take all, discard XP and atomic commit', () => {
+  const initial = createInitialCampaignState('Komutan Baybars', 'noble');
+  // 1. Prepare pending battle loot
+  const pending = prepareBattleLoot(initial, {
+    enemyLordId: 'lord-kargi',
+    enemiesDefeated: 24,
+    losses: { militia: 2 },
+    isSiege: false,
+    seedKey: 'test-loot-seed-1',
+  });
+
+  assert.equal(pending.enemyLordId, 'lord-kargi');
+  assert.equal(pending.enemiesDefeatedCount, 24);
+  assert.ok(pending.goldLoot > 0);
+  assert.ok(pending.renownGain > 0);
+  assert.ok(pending.prisonersGain > 0);
+  assert.ok(pending.lootItems.length > 0);
+
+  // 2. Transfer item from loot to inventory
+  const firstLoot = pending.lootItems[0];
+  const initialInvCount = initial.inventoryItems?.length ?? 0;
+  const transferRes = transferLootToInventory(
+    pending.lootItems,
+    initial.inventoryItems ?? [],
+    firstLoot.id,
+    1,
+  );
+  assert.equal(transferRes.success, true);
+  assert.equal(transferRes.movedQuantity, 1);
+  assert.equal(
+    transferRes.destinationItems.some(
+      (item) => (item.definitionId ?? item.id) === (firstLoot.definitionId ?? firstLoot.id),
+    ),
+    true,
+  );
+
+  // 3. Take all loot
+  const takeAllRes = takeAllLoot(pending.lootItems, initial.inventoryItems ?? []);
+  assert.equal(takeAllRes.nextLoot.length, 0);
+  assert.ok(takeAllRes.movedCount >= pending.lootItems.length);
+  assert.ok(takeAllRes.nextInventory.length >= initialInvCount);
+
+  // 4. Leave all unlocked to loot
+  const leaveRes = leaveAllUnlockedToLoot(takeAllRes.nextInventory, []);
+  assert.ok(leaveRes.nextLoot.length > 0);
+  assert.equal(leaveRes.nextLoot.every((item) => !item.locked), true);
+
+  // 5. Discard XP preview on leftover loot
+  const preview = previewLootDiscard(initial, pending.lootItems);
+  assert.equal(typeof preview.grossXp, 'number');
+  assert.equal(typeof preview.acceptedXp, 'number');
+
+  // 6. Commit battle loot with discard XP
+  const stateWithPerks: CampaignState = {
+    ...initial,
+    heroes: (initial.heroes ?? []).map((h) =>
+      h.id === PLAYER_HERO_ID ? { ...h, perks: ['paid_in_promise', 'giving_hands'] } : h,
+    ),
+  };
+  const commitRes = commitBattleLoot(stateWithPerks, pending, {
+    finalInventoryItems: transferRes.destinationItems,
+    leftoverLootItems: transferRes.sourceItems,
+    applyDiscard: true,
+  });
+
+  assert.equal(commitRes.goldGained, pending.goldLoot);
+  assert.equal(commitRes.nextState.gold, initial.gold + pending.goldLoot);
+  assert.equal(commitRes.nextState.renown, initial.renown + pending.renownGain);
+  assert.equal(commitRes.nextState.battlesWon, initial.battlesWon + 1);
+  assert.equal(commitRes.nextState.roster.militia, Math.max(0, initial.roster.militia - 2));
+  assert.ok(commitRes.nextState.inventoryItems?.length);
 });
 
 

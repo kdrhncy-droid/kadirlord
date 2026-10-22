@@ -55,9 +55,11 @@ async function ensureServer() {
   }
 
   console.log(`ℹ️  Geliştirme sunucusu başlatılıyor: ${BASE_URL}`);
-  serverProcess = spawn('npm', ['run', 'dev'], {
+  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  serverProcess = spawn(npmCmd, ['run', 'dev'], {
     cwd: REPO_ROOT,
     detached: process.platform !== 'win32',
+    shell: process.platform === 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
@@ -633,6 +635,150 @@ try {
 
     await screenshot(page, 'inventory-after-done.png');
     assertNoPageProblems(problems, 'field-inventory-discard');
+  });
+
+  await runTest('battle-loot-screen', async () => {
+    const { page, problems } = await openPage(browser, {
+      scenario: 'boot',
+      timeScale: '0',
+    });
+    activePage = page;
+
+    const stackByDefinition = (state, definitionId) =>
+      state.inventory.find((item) => item.definitionId === definitionId);
+    const totalQuantity = (state) =>
+      state.inventory.reduce((sum, item) => sum + item.quantity, 0);
+
+    const initial = await getTestState(page);
+    const initialGold = initial.player.gold;
+    const initialItemCount = totalQuantity(initial);
+
+    await page.evaluate(() => {
+      window.__kadirlordTest.openLoot(
+        [
+          {
+            id: 'mkt_vlandian_arming_sword',
+            definitionId: 'mkt_vlandian_arming_sword',
+            name: 'Vlandiya Süvari Kılıcı',
+            slot: 'WEAPON1',
+            category: 'WEAPON',
+            quantity: 2,
+            locked: false,
+            value: 390,
+            weight: 1.4,
+            statBonus: '+76 Kesici · +42 Saplama (Hız: 92)',
+            civilianLegal: true,
+            icon: 'sword',
+            tier: 4,
+          },
+          {
+            id: 'mkt_heavy_cataphract_cuirass',
+            definitionId: 'mkt_heavy_cataphract_cuirass',
+            name: 'Ağır İmparatorluk Katafrakt Pullu Zırhı',
+            slot: 'BODY',
+            category: 'ARMOR',
+            quantity: 1,
+            locked: false,
+            value: 1350,
+            weight: 12.5,
+            statBonus: '+66 Gövde Zırhı · +24 Bacak Zırhı',
+            civilianLegal: false,
+            icon: 'armor',
+            tier: 6,
+          },
+        ],
+        { goldLoot: 250, enemiesDefeated: 16 },
+      );
+    });
+
+    await page.waitForSelector('[data-testid="battle-loot-modal"]', { timeout: TIMEOUT_MS });
+    await page.waitForSelector('[data-testid="loot-take-all"]', { timeout: TIMEOUT_MS });
+    await page.waitForSelector('[data-testid="loot-leave-all"]', { timeout: TIMEOUT_MS });
+    await page.waitForSelector('[data-testid="loot-done"]', { timeout: TIMEOUT_MS });
+    await page.waitForSelector('[data-testid="loot-cancel"]', { timeout: TIMEOUT_MS });
+
+    await screenshot(page, 'battle-loot-initial.png');
+
+    // 1. Ganimetten tek bir kılıcı envantere aktar
+    await page.click('[data-testid="loot-transfer-mkt_vlandian_arming_sword"]');
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-testid="loot-inventory-list"]')
+          ?.textContent?.includes('Vlandiya Süvari Kılıcı'),
+      { timeout: TIMEOUT_MS },
+    );
+
+    // 2. Vazgeç/Ganimeti Terk Et: taslak eşyalar iptal edilir, envanter korunur
+    await page.click('[data-testid="loot-cancel"]');
+    await page.waitForSelector('[data-testid="battle-loot-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+    const afterCancel = await getTestState(page);
+    assert(
+      !stackByDefinition(afterCancel, 'mkt_vlandian_arming_sword'),
+      'Ganimeti Terk Et taslak kılıcı envantere kaydetti',
+    );
+    assert(
+      totalQuantity(afterCancel) === initialItemCount,
+      'Ganimeti Terk Et envanter miktarını değiştirdi',
+    );
+
+    // 3. Tekrar aç, Tümünü Al ve Bitti ile onayla
+    await page.evaluate(() => {
+      window.__kadirlordTest.openLoot(
+        [
+          {
+            id: 'mkt_vlandian_arming_sword',
+            definitionId: 'mkt_vlandian_arming_sword',
+            name: 'Vlandiya Süvari Kılıcı',
+            slot: 'WEAPON1',
+            category: 'WEAPON',
+            quantity: 1,
+            locked: false,
+            value: 390,
+            weight: 1.4,
+            statBonus: '+76 Kesici · +42 Saplama (Hız: 92)',
+            civilianLegal: true,
+            icon: 'sword',
+            tier: 4,
+          },
+        ],
+        { goldLoot: 250, enemiesDefeated: 16 },
+      );
+    });
+    await page.waitForSelector('[data-testid="battle-loot-modal"]', { timeout: TIMEOUT_MS });
+
+    await page.click('[data-testid="loot-take-all"]');
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-testid="loot-items-list"]')
+          ?.textContent?.includes('alındı'),
+      { timeout: TIMEOUT_MS },
+    );
+
+    await screenshot(page, 'battle-loot-after-take-all.png');
+
+    await page.click('[data-testid="loot-done"]');
+    await page.waitForSelector('[data-testid="battle-loot-modal"]', {
+      hidden: true,
+      timeout: TIMEOUT_MS,
+    });
+
+    const afterDone = await getTestState(page);
+    assert(
+      afterDone.player.gold === initialGold + 250,
+      `Bitti zafer altınını eklemedi: beklenen ${initialGold + 250}, gelen ${afterDone.player.gold}`,
+    );
+    assert(
+      stackByDefinition(afterDone, 'mkt_vlandian_arming_sword'),
+      'Bitti ganimetten alınan kılıcı envantere eklemedi',
+    );
+
+    await screenshot(page, 'battle-loot-committed.png');
+    assertNoPageProblems(problems, 'battle-loot-screen');
   });
 
   const failed = results.filter((result) => !result.ok);

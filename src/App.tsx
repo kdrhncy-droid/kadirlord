@@ -55,6 +55,14 @@ import { DialogueModal } from './components/DialogueModal';
 import { DiplomacyModal } from './components/DiplomacyModal';
 import { BannerlordMarketModal } from './components/BannerlordMarketModal';
 import { InventoryModal } from './components/InventoryModal';
+import { BattleLootModal } from './components/BattleLootModal';
+import {
+  commitBattleLoot,
+  prepareBattleLoot,
+  type PendingBattleLoot,
+} from './game/lootTransaction';
+import { rollBattleLoot } from './game/loot';
+import { inventoryItemQuantity } from './game/bannerlordFoundation';
 import { KingdomManagementModal } from './components/KingdomManagementModal';
 import { CharacterArenaView } from './components/CharacterArenaView';
 import { CharacterCreatorModal } from './components/CharacterCreatorModal';
@@ -150,6 +158,7 @@ export default function App() {
   );
   const [isMarketModalOpen, setIsMarketModalOpen] = useState(false);
   const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
+  const [pendingBattleLoot, setPendingBattleLoot] = useState<PendingBattleLoot | null>(null);
   const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
   const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'campaign' | 'character_arena'>('campaign');
@@ -227,6 +236,7 @@ export default function App() {
     activeSettlementModal,
     isMarketModalOpen,
     isInventoryModalOpen,
+    pendingBattleLoot,
   });
   testStateRef.current = {
     campaign,
@@ -240,6 +250,7 @@ export default function App() {
     activeSettlementModal,
     isMarketModalOpen,
     isInventoryModalOpen,
+    pendingBattleLoot,
   };
 
   useEffect(() => {
@@ -317,6 +328,16 @@ export default function App() {
                 (settlement) => settlement.id === state.activeSettlementModal?.id,
               )?.marketStock ?? {}),
             },
+          },
+          loot: {
+            open: Boolean(state.pendingBattleLoot),
+            itemCount: state.pendingBattleLoot?.lootItems.length ?? 0,
+            gold: state.pendingBattleLoot?.goldLoot ?? 0,
+            items: (state.pendingBattleLoot?.lootItems ?? []).map((item) => ({
+              id: item.id,
+              definitionId: item.definitionId ?? item.id,
+              quantity: inventoryItemQuantity(item),
+            })),
           },
           counts: {
             lords: current.lords.length,
@@ -412,6 +433,32 @@ export default function App() {
       closeMarket: () => setIsMarketModalOpen(false),
       openInventory: () => setIsInventoryModalOpen(true),
       closeInventory: () => setIsInventoryModalOpen(false),
+      openLoot: (lootItems, options) => {
+        const current = testStateRef.current.campaign;
+        const items =
+          lootItems && lootItems.length > 0
+            ? lootItems
+            : rollBattleLoot(current, {
+                enemyFaction: 'bandits',
+                defeated: options?.enemiesDefeated ?? 20,
+                siege: false,
+                seedKey: 'test-open-loot',
+              });
+        setPendingBattleLoot({
+          enemyLordId: null,
+          conqueredSettlementId: null,
+          enemiesDefeatedCount: options?.enemiesDefeated ?? 20,
+          playerTroopLosses: {},
+          goldLoot: options?.goldLoot ?? 180,
+          renownGain: 15,
+          prisonersGain: 4,
+          lootItems: items,
+          isSiegeVictory: false,
+          defeatedFaction: 'bandits',
+        });
+        return true;
+      },
+      closeLoot: () => setPendingBattleLoot(null),
     };
 
     window.__kadirlordTest = api;
@@ -1118,34 +1165,44 @@ export default function App() {
       losses: Partial<TroopRoster>,
       enemiesDefeated: number,
     ) => {
-      setCampaign((prev) => {
-        const next = resolveBattleOutcome(
-          prev,
-          victory,
-          battleTargetLordId,
+      if (victory) {
+        const pending = prepareBattleLoot(campaign, {
+          enemyLordId: battleTargetLordId,
+          enemiesDefeated,
           losses,
-          enemiesDefeated,
-          battleTargetSettlementId,
-        );
-        const fiefsOwned = next.settlements.filter((s) => s.faction === 'player').length;
-
-        setOutcomeSnapshot({
-          victory,
-          title: victory ? 'MEYDAN ZAFERİ KAZANILDI' : 'SANCAK GERİ ÇEKİLDİ',
-          subtitle: victory
-            ? 'Düşman hatları yarıldı, ganimet ve esirler ordugaha taşındı.'
-            : 'Komutan yaralandı; muhafızlarınız sizi savaş meydanından çıkardı.',
-          enemiesDefeated,
-          renown: next.renown,
-          gold: next.gold,
-          fiefsOwned,
+          conqueredSettlementId: battleTargetSettlementId,
+          isSiege: Boolean(battleTargetSettlementId),
         });
-        return next;
-      });
-      setSubMode('overworld');
-      setGameState('gameover');
+        setPendingBattleLoot(pending);
+        setSubMode('overworld');
+      } else {
+        setCampaign((prev) => {
+          const next = resolveBattleOutcome(
+            prev,
+            false,
+            battleTargetLordId,
+            losses,
+            enemiesDefeated,
+            battleTargetSettlementId,
+          );
+          const fiefsOwned = next.settlements.filter((s) => s.faction === 'player').length;
+
+          setOutcomeSnapshot({
+            victory: false,
+            title: 'SANCAK GERİ ÇEKİLDİ',
+            subtitle: 'Komutan yaralandı; muhafızlarınız sizi savaş meydanından çıkardı.',
+            enemiesDefeated,
+            renown: next.renown,
+            gold: next.gold,
+            fiefsOwned,
+          });
+          return next;
+        });
+        setSubMode('overworld');
+        setGameState('gameover');
+      }
     },
-    [battleTargetLordId, battleTargetSettlementId],
+    [battleTargetLordId, battleTargetSettlementId, campaign],
   );
 
   return (
@@ -1776,23 +1833,32 @@ export default function App() {
             setEncounterScenario(undefined);
             setBattleTargetLordId(l.id);
             setBattleTargetSettlementId(null);
-            setCampaign((prev) => {
-              const next = resolveBattleOutcome(prev, sim.victory, l.id, sim.losses, sim.enemiesDefeated, null);
-              const fiefsOwned = next.settlements.filter((s) => s.faction === 'player').length;
-              setOutcomeSnapshot({
-                victory: sim.victory,
-                title: sim.victory ? 'OTOMATİK MUHAREBE ZAFERİ' : 'BİRLİKLER GERİ ÇEKİLDİ',
-                subtitle: sim.victory
-                  ? `${l.name} kuvvetleri bozguna uğratıldı, ganimet ve esirler toplandı.`
-                  : 'Otomatik muharebede hatlarınız kırıldı; ağır kayıpla geri çekildiniz.',
+            if (sim.victory) {
+              const pending = prepareBattleLoot(campaign, {
+                enemyLordId: l.id,
                 enemiesDefeated: sim.enemiesDefeated,
-                renown: next.renown,
-                gold: next.gold,
-                fiefsOwned,
+                losses: sim.losses,
+                conqueredSettlementId: null,
+                isSiege: false,
               });
-              return next;
-            });
-            setGameState('gameover');
+              setPendingBattleLoot(pending);
+            } else {
+              setCampaign((prev) => {
+                const next = resolveBattleOutcome(prev, false, l.id, sim.losses, sim.enemiesDefeated, null);
+                const fiefsOwned = next.settlements.filter((s) => s.faction === 'player').length;
+                setOutcomeSnapshot({
+                  victory: false,
+                  title: 'BİRLİKLER GERİ ÇEKİLDİ',
+                  subtitle: 'Otomatik muharebede hatlarınız kırıldı; ağır kayıpla geri çekildiniz.',
+                  enemiesDefeated: sim.enemiesDefeated,
+                  renown: next.renown,
+                  gold: next.gold,
+                  fiefsOwned,
+                });
+                return next;
+              });
+              setGameState('gameover');
+            }
           }}
           onSacrificeEscape={(l) => {
             const res = applySacrificeEscape(campaign, l);
@@ -1887,6 +1953,22 @@ export default function App() {
           campaign={campaign}
           onClose={() => setIsInventoryModalOpen(false)}
           onUpdateCampaign={(next) => setCampaign(next)}
+        />
+      )}
+
+      {pendingBattleLoot && (
+        <BattleLootModal
+          campaign={campaign}
+          pendingLoot={pendingBattleLoot}
+          onClose={() => {
+            setPendingBattleLoot(null);
+            setGameState('playing');
+          }}
+          onCommit={(result) => {
+            setCampaign(result.nextState);
+            setPendingBattleLoot(null);
+            setGameState('playing');
+          }}
         />
       )}
 

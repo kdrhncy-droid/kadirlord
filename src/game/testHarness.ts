@@ -17,6 +17,7 @@ import {
 import {
   getTotalTroops,
   type CampaignState,
+  type InventoryItem,
   type LordAgent,
   type TroopRoster,
 } from './rules.ts';
@@ -125,6 +126,16 @@ export interface KadirlordTestSnapshot {
     merchantGold: number | null;
     stock: Record<string, number>;
   };
+  loot: {
+    open: boolean;
+    itemCount: number;
+    gold: number;
+    items: Array<{
+      id: string;
+      definitionId: string;
+      quantity: number;
+    }>;
+  };
   counts: {
     lords: number;
     settlements: number;
@@ -152,6 +163,11 @@ export interface KadirlordTestApi {
   closeMarket: () => void;
   openInventory: () => void;
   closeInventory: () => void;
+  openLoot: (
+    lootItems?: InventoryItem[],
+    options?: { goldLoot?: number; enemiesDefeated?: number },
+  ) => boolean;
+  closeLoot: () => void;
 }
 
 declare global {

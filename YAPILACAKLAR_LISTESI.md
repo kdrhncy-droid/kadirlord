@@ -58,10 +58,11 @@
 - [x] **Pazar liste işlevlerini tamamla:** Kategori, arama ve kademe/ad/adet/fiyat/ağırlık/
       hasar/zırh sıralaması; ortalama fiyat renkleri; yalnız ziyaret edilmiş şehir söylentileri;
       kalıcı kilidin satış, toplu satış ve Discard'ı engellemesi bağlı.
-- [ ] **Savaş sonrası ganimet ekranını ekle:** Sıradaki P2 dilimi budur. Sol ganimet, sağ parti
-      envanteri; kapasiteye göre seçim, yığın birleştirme ve Discard XP önizlemesi. Bugün
-      `resolveBattleOutcome` ganimeti ve altını doğrudan kampanyaya yazıyor; bekleyen ganimet
-      akışına ayrılmalı, tutsak/kurtarılan akışı P3 ekranına bağlansın.
+- [x] **Savaş sonrası ganimet ekranını ekle:** Sol ganimet, orta 3B manken + Discard/kapasite
+      özeti, sağ parti envanteri; bekleyen transfer, Shift (5) / Ctrl (tümü) / tekil aktarım,
+      `Tümünü Al` / `Tümünü Bırak`, sol teçhizatı Discard XP'sine bağışlama ve atomik `Bitti` ile
+      kampanyaya işleme bağlandı. Vazgeç durumunda taslak temizlenir. Gerçek Chromium E2E
+      `battle-loot-screen` ve kural testleri (33/33) yeşil.
 - [ ] **Tek lojistik modeli kur:** Toplam ağırlık birim ağırlık × adet hesabı ekranlarda doğru
       gösteriliyor, ancak kapasite formülleri ve üretim hızı hâlâ tekilleşmedi. Kapasite askerler,
       yedek binekler ve yük hayvanlarından; bindirilmiş yaya hız bonusu, sürü cezası, aşırı yük,
@@ -69,10 +70,10 @@
 - [ ] **Erzak yığınlarını canlı tüketime bağla:** Dört özel yiyecek pazar geçiş katmanında hâlâ
       soyut `food`/moral üretiyor. Bütün yiyecekler envanter yığınlarından tüketilecek,
       çeşitlilik morali ve açlık etkileri işleyecek.
-- [ ] **P2 kabul kapısı:** Tamamlanan dilimlerde kural testleri **32/32**, `npm run verify:fast`
-      ve gerçek Chromium E2E **5/5** geçti (`market-pending-transfer`,
-      `field-inventory-discard` dahil). Ganimet, kapasite/hız ve erzak testleri bitmeden P2
-      kapısı kapanmayacak.
+- [ ] **P2 kabul kapısı:** Tamamlanan dilimlerde kural testleri **33/33**, `npm run verify:fast`
+      ve gerçek Chromium E2E **6/6** geçti (`market-pending-transfer`,
+      `field-inventory-discard`, `battle-loot-screen` dahil). Kapasite/hız ve erzak testleri
+      bitmeden P2 kapısı kapanmayacak.
 
 #### P2 ilerleme kaydı — 2026-10-22
 
@@ -83,11 +84,10 @@
   `equipInventoryItemForHero` / `unequipHeroEquipmentSlot` / `setHeroActiveEquipmentSet`, Discard UI
   ve saha-envanteri E2E. Eski HUD kompakt envanter çekmecesi kaldırıldı; `I` ve HUD düğmesi artık
   tam ekranı açar.
-- Test kancası pazar + envanter içindir: `openMarket/closeMarket`, `openInventory/closeInventory`,
-  envanter/kahraman ekipmanı/birlik XP snapshot alanları. Tarayıcı Discard akışı kilitsiz katır
-  adedini doğrular; Discard XP dağıtımının kendisi saf kural testinde perkli zırh senaryosuyla
-  doğrulanır.
-- **Devam noktası:** Önce ganimet ekranı, sonra tek lojistik modeli, en son erzak yığınları.
+- Ganimet Ekranı Dilimi: `src/game/lootTransaction.ts`, `src/components/BattleLootModal.tsx`, test kancasında
+  `openLoot/closeLoot`, saf kural testi (33/33) ve Chromium E2E `battle-loot-screen` (6/6).
+- **Devam noktası:** Sırada tek lojistik modeli (kapasite ve harita hız formüllerinin tekilleşmesi),
+  ardından erzak yığınlarının canlı tüketimi.
   Performans (P7) ve kayıt sistemi (P8) kullanıcı kararıyla hâlâ en sonda.
 
 ### P3 — Party (`P`), birlikler ve tutsaklar
