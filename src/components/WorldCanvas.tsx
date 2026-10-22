@@ -12,6 +12,7 @@ import {
   getSettlementArrivalRadius,
   getTotalTroops,
 } from '../game/rules';
+import { besiegedSettlementIdSet } from '../game/siegeEncounter';
 import {
   CONTINENTAL_LANDMARKS,
   MAP_HEIGHT,
@@ -342,6 +343,21 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     scene.add(battleGroup);
 
     const settlementMeshes = new Map<string, THREE.Group>();
+    const siegeCampRings = new Map<string, THREE.Group>();
+    const siegeRingMat = new THREE.MeshBasicMaterial({
+      color: 0x7f1d1d,
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.DoubleSide,
+    });
+    const siegeSmokeMat = new THREE.MeshBasicMaterial({
+      color: 0x1c1914,
+      transparent: true,
+      opacity: 0.35,
+    });
+    const siegeRingGeo = new THREE.RingGeometry(7.2, 8.4, 28);
+    siegeRingGeo.rotateX(-Math.PI / 2);
+    const siegeSmokeGeo = new THREE.SphereGeometry(0.55, 6, 6);
     const settlementFlagHandles = new Map<
       string,
       { flag: THREE.Mesh; lastFaction: string }
@@ -360,6 +376,23 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       model.matrixAutoUpdate = false;
       overworldGroup.add(model);
       settlementMeshes.set(s.id, model);
+
+      if (s.type !== 'VILLAGE') {
+        const camp = new THREE.Group();
+        const ring = new THREE.Mesh(siegeRingGeo, siegeRingMat);
+        camp.add(ring);
+        for (let i = 0; i < 3; i++) {
+          const smoke = new THREE.Mesh(siegeSmokeGeo, siegeSmokeMat);
+          const a = (i / 3) * Math.PI * 2;
+          smoke.position.set(Math.cos(a) * 6.2, 1.6, Math.sin(a) * 6.2);
+          smoke.userData.baseY = 1.6;
+          camp.add(smoke);
+        }
+        camp.position.set(s.x, sy + 0.12, s.z);
+        camp.visible = false;
+        overworldGroup.add(camp);
+        siegeCampRings.set(s.id, camp);
+      }
 
       const flag = model.getObjectByName('bannerFlag') as THREE.Mesh | undefined;
       if (flag) {
@@ -710,7 +743,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       lastSy: number;
       lastText: string;
       bannerEl: HTMLElement | null;
+      siegeBadgeEl: HTMLElement | null;
       lastFaction: string;
+      lastBesieged: boolean;
     }
 
     const settlementLabelRecords: SettlementLabelRecord[] = [];
@@ -749,6 +784,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           <span data-role="garrison-count" class="text-[9px] text-[#c6a15b] font-mono">
             ${s.garrison}
           </span>
+          <span data-role="siege-badge" style="display:none;color:#fecaca;font-size:8px;font-weight:800;letter-spacing:.06em">KUŞATMA ALTINDA</span>
         </div>
       `;
 
@@ -860,7 +896,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         lastSy: -9999,
         lastText: String(s.garrison),
         bannerEl: el.querySelector('[data-role="banner-shield"]'),
+        siegeBadgeEl: el.querySelector('[data-role="siege-badge"]'),
         lastFaction: s.faction,
+        lastBesieged: false,
       });
     });
 
@@ -2075,6 +2113,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         const cw = cachedCanvasWidth;
         const ch = cachedCanvasHeight;
         const scoutRadius = playerSpottingRange * 1.15;
+        const besiegedIds = besiegedSettlementIdSet(camp);
 
         for (let i = 0; i < settlementLabelRecords.length; i++) {
           const rec = settlementLabelRecords[i];
@@ -2130,6 +2169,27 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             if (rec.bannerEl) {
               rec.bannerEl.style.backgroundColor = FACTION_INFO[s.faction].color;
               rec.bannerEl.setAttribute('data-faction', s.faction);
+            }
+          }
+
+          const isBesieged = besiegedIds.has(s.id);
+          if (rec.lastBesieged !== isBesieged) {
+            rec.lastBesieged = isBesieged;
+            if (rec.siegeBadgeEl) {
+              rec.siegeBadgeEl.style.display = isBesieged ? 'inline' : 'none';
+            }
+            const campRing = siegeCampRings.get(s.id);
+            if (campRing) campRing.visible = isBesieged;
+          }
+          if (isBesieged) {
+            const campRing = siegeCampRings.get(s.id);
+            if (campRing) {
+              const t = performance.now() * 0.0015;
+              campRing.children.forEach((child, idx) => {
+                if (idx === 0) return;
+                const baseY = (child.userData.baseY as number) ?? 1.6;
+                child.position.y = baseY + Math.sin(t + idx) * 0.45;
+              });
             }
           }
 

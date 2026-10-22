@@ -52,6 +52,7 @@ import type {
 import { WorldCanvas } from './components/WorldCanvas';
 import { GameHud } from './components/GameHud';
 import { SettlementModal } from './components/SettlementModal';
+import { SiegeEncounterModal } from './components/SiegeEncounterModal';
 import { DialogueModal } from './components/DialogueModal';
 import { DiplomacyModal } from './components/DiplomacyModal';
 import { BannerlordMarketModal } from './components/BannerlordMarketModal';
@@ -82,6 +83,14 @@ import {
   createInitialKingdomMacroState,
 } from './game/kingdomSystem';
 import { advanceWorldDay } from './game/worldSim';
+import {
+  applyBreakInCasualties,
+  buildSiegeEncounterView,
+  enterBesiegedSettlement,
+  liftPlayerSiege,
+  resolveSiegeRole,
+  startPlayerSiege,
+} from './game/siegeEncounter';
 import {
   type EncounterScenario,
   applyPlayerSurrender,
@@ -154,6 +163,10 @@ export default function App() {
   const [nearSettlement, setNearSettlement] = useState<Settlement | null>(null);
   const [nearLord, setNearLord] = useState<LordAgent | null>(null);
   const [activeSettlementModal, setActiveSettlementModal] = useState<Settlement | null>(null);
+  const [activeSiegeSettlementId, setActiveSiegeSettlementId] = useState<string | null>(null);
+  const [settlementModalInitialTab, setSettlementModalInitialTab] = useState<'overview' | 'siege'>(
+    'overview',
+  );
   const [activeDiplomacyLord, setActiveDiplomacyLord] = useState<LordAgent | null>(null);
   // Faz 6: yüz yüze diyalog ekranı (lord veya yerleşim reisi)
   const [dialogueLord, setDialogueLord] = useState<LordAgent | null>(
@@ -551,7 +564,7 @@ export default function App() {
     market: isMarketModalOpen,
     kingdom: isKingdomModalOpen,
     dialogue: !!(dialogueLord || dialogueSettlement),
-    settlement: !!activeSettlementModal,
+    settlement: !!activeSettlementModal || !!activeSiegeSettlementId,
     diplomacy: !!activeDiplomacyLord,
     pause: gameState === 'paused',
   };
@@ -585,6 +598,7 @@ export default function App() {
         break;
       case 'settlement':
         setActiveSettlementModal(null);
+        setActiveSiegeSettlementId(null);
         break;
       case 'diplomacy':
         setActiveDiplomacyLord(null);
@@ -907,17 +921,28 @@ export default function App() {
   const handleOpenSettlement = useCallback((settlement: Settlement) => {
     setCampaign((prev) => {
       const current = prev.settlements.find((candidate) => candidate.id === settlement.id) ?? settlement;
-      if (current.visited) {
-        setActiveSettlementModal(current);
-        return prev;
+      const nextState =
+        current.visited
+          ? prev
+          : {
+              ...prev,
+              settlements: prev.settlements.map((candidate) =>
+                candidate.id === settlement.id ? { ...candidate, visited: true } : candidate,
+              ),
+            };
+      const live =
+        nextState.settlements.find((candidate) => candidate.id === settlement.id) ?? current;
+      const role = resolveSiegeRole(nextState, live.id);
+      if (role) {
+        setSettlementModalInitialTab('overview');
+        setActiveSettlementModal(null);
+        setActiveSiegeSettlementId(live.id);
+      } else {
+        setSettlementModalInitialTab('overview');
+        setActiveSiegeSettlementId(null);
+        setActiveSettlementModal(live);
       }
-      const settlements = prev.settlements.map((candidate) =>
-        candidate.id === settlement.id ? { ...candidate, visited: true } : candidate,
-      );
-      setActiveSettlementModal(
-        settlements.find((candidate) => candidate.id === settlement.id) ?? current,
-      );
-      return { ...prev, settlements };
+      return nextState;
     });
   }, []);
 
@@ -1276,6 +1301,7 @@ export default function App() {
 
   const handleStartFieldBattle = useCallback((lord: LordAgent) => {
     setActiveDiplomacyLord(null);
+    setActiveSiegeSettlementId(null);
     setActiveSettlementModal(null);
     setBattleTargetLordId(lord.id);
     setBattleTargetSettlementId(null);
@@ -1286,6 +1312,7 @@ export default function App() {
   }, []);
 
   const handleStartSiegeBattle = useCallback((settlement: Settlement) => {
+    setActiveSiegeSettlementId(null);
     setActiveSettlementModal(null);
     setActiveDiplomacyLord(null);
     setBattleTargetSettlementId(settlement.id);
@@ -1692,9 +1719,66 @@ export default function App() {
         />
       )}
 
+      {gameState === 'playing' &&
+        activeSiegeSettlementId &&
+        (() => {
+          const siegeView = buildSiegeEncounterView(campaign, activeSiegeSettlementId);
+          if (!siegeView) return null;
+          const liveSettlement =
+            campaign.settlements.find((s) => s.id === activeSiegeSettlementId) ?? siegeView.settlement;
+          return (
+            <SiegeEncounterModal
+              view={siegeView}
+              campaign={campaign}
+              onClose={() => setActiveSiegeSettlementId(null)}
+              onOpenSiegeCamp={() => {
+                setCampaign((prev) => startPlayerSiege(prev, liveSettlement.id));
+                setSettlementModalInitialTab('siege');
+                setActiveSiegeSettlementId(null);
+                setActiveSettlementModal(liveSettlement);
+              }}
+              onAssaultBreach={() => handleStartSiegeBattle(liveSettlement)}
+              onAssaultRam={() => handleStartSiegeBattle(liveSettlement)}
+              onLiftSiege={() => {
+                setCampaign((prev) => liftPlayerSiege(prev, liveSettlement.id));
+                setActiveSiegeSettlementId(null);
+              }}
+              onAttackBesiegers={(lord) => handleStartFieldBattle(lord)}
+              onBreakIn={() => {
+                setCampaign((prev) =>
+                  enterBesiegedSettlement(applyBreakInCasualties(prev), liveSettlement.id),
+                );
+              }}
+              onObserve={() => setActiveSiegeSettlementId(null)}
+              onDefendWalls={() => handleStartSiegeBattle(liveSettlement)}
+              onSallyOut={(lord) => {
+                if (lord) handleStartFieldBattle(lord);
+                else handleStartSiegeBattle(liveSettlement);
+              }}
+              onTalkSurrender={() => {
+                setCampaign((prev) => ({
+                  ...prev,
+                  chronicle: [
+                    {
+                      id: `siege-surrender-talk-${prev.day}-${liveSettlement.id}`,
+                      day: prev.day,
+                      category: 'DIPLOMACY' as const,
+                      text: `${liveSettlement.name} teslim şartları konuşuldu; kuşatma sürüyor.`,
+                    },
+                    ...prev.chronicle,
+                  ].slice(0, 20),
+                }));
+                setActiveSiegeSettlementId(null);
+              }}
+            />
+          );
+        })()}
+
       {/* 3. SETTLEMENT & RECRUITMENT MODAL */}
       {gameState === 'playing' && activeSettlementModal && (
         <SettlementModal
+          key={`${activeSettlementModal.id}-${settlementModalInitialTab}`}
+          initialTab={settlementModalInitialTab}
           settlement={
             campaign.settlements.find((s) => s.id === activeSettlementModal.id) ??
             activeSettlementModal

@@ -440,6 +440,16 @@ export interface CampaignState {
   playerMorphDNA?: CharacterMorphDNA;
   /** Faz 11: savaşlar + sayaçlar (kayda yazılır). */
   world?: WorldState;
+  /** Oyuncunun yürüttüğü kuşatma (Görev 1). Yoksa lord kuşatmaları tek kaynaktır. */
+  playerSiege?: PlayerSiegeState | null;
+}
+
+export interface PlayerSiegeState {
+  settlementId: string;
+  /** Kamp kurulumu 0..100; 100 olmadan silah inşa edilmez. */
+  campProgress: number;
+  /** Oyuncu kuşatma hattını yararak garnizona katıldı. */
+  inside: boolean;
 }
 
 export const FACTION_INFO: Record<

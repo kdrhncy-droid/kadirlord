@@ -1,6 +1,7 @@
 # Kadirlord — Cursor Geliştirici Kuralları (.cursorrules)
 
 Bu dosya, projede çalışan Cursor AI asistanının **her işlemde uyması zorunlu** kurallarını tanımlar.
+Detaylı matematiksel formüller, 11 atölye türü, ordu uyum denklemleri ve kuşatma yuva kuralları için mutlaka `docs/CURSOR_ZOR_GOREVLER.md` dosyasını oku!
 
 ---
 
