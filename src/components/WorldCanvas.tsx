@@ -952,6 +952,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     const renderer = new THREE.WebGLRenderer({
       antialias: !isHeadless,
+      preserveDrawingBuffer: isHeadless,
       powerPreference: 'high-performance',
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -2255,16 +2256,42 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     // Main 60Hz Loop
     let rafId = 0;
+    let headlessIdleTimer = 0;
     let lastTime = performance.now();
     let elapsedTotal = 0;
     let headlessFrameSkip = 0;
+    let headlessRenderedFrames = 0;
+    let lastHeadlessCampRef: CampaignState | null = null;
+    let lastHeadlessSubMode: string | null = null;
 
     const tick = (now: number) => {
-      rafId = requestAnimationFrame(tick);
-
       if (isHeadless) {
-        headlessFrameSkip = (headlessFrameSkip + 1) % 4;
+        const campChanged =
+          lastHeadlessCampRef !== stateRef.current.campaign ||
+          lastHeadlessSubMode !== stateRef.current.subMode;
+        if (campChanged) {
+          lastHeadlessCampRef = stateRef.current.campaign;
+          lastHeadlessSubMode = stateRef.current.subMode;
+          headlessRenderedFrames = 0;
+        }
+        const camSettled =
+          headlessRenderedFrames >= 2 &&
+          stateRef.current.campaignTimeScale === 0 &&
+          Math.abs(camFocusX - targetCamFocusX) < 0.05 &&
+          Math.abs(camFocusZ - targetCamFocusZ) < 0.05 &&
+          Math.abs(camZoomDist - targetCamZoomDist) < 0.05;
+        if (camSettled) {
+          headlessIdleTimer = window.setTimeout(() => {
+            rafId = requestAnimationFrame(tick);
+          }, 250);
+          return;
+        }
+        rafId = requestAnimationFrame(tick);
+        headlessFrameSkip = (headlessFrameSkip + 1) % 3;
         if (headlessFrameSkip !== 0) return;
+        headlessRenderedFrames++;
+      } else {
+        rafId = requestAnimationFrame(tick);
       }
 
       const rawDt = (now - lastTime) / 1000;
@@ -2825,7 +2852,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         }
 
         // Smooth Exponential Damping for Bannerlord Strategic Map Camera (Focus XZ, Focus Y, Yaw, Zoom)
-        const camDamp = 1 - Math.exp(-11.0 * dt);
+        const camDamp = isHeadless ? 1 : 1 - Math.exp(-11.0 * dt);
         camFocusX = THREE.MathUtils.lerp(camFocusX, targetCamFocusX, camDamp);
         camFocusZ = THREE.MathUtils.lerp(camFocusZ, targetCamFocusZ, camDamp);
         camYaw = THREE.MathUtils.lerp(camYaw, targetCamYaw, camDamp);
@@ -3683,6 +3710,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     return () => {
       cancelAnimationFrame(rafId);
+      if (headlessIdleTimer) window.clearTimeout(headlessIdleTimer);
       resizeObserver.disconnect();
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
