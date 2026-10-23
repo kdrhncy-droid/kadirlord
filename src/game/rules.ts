@@ -314,6 +314,10 @@ export interface Settlement {
   merchantGold?: number;
   /** P2: ticaret söylentileri yalnız ziyaret edilmiş yerleşimler için görünür. */
   visited?: boolean;
+  /** Yerleşimden en son gönüllü asker toplanan sefer günü (1 gün bekleme kuralı). */
+  lastRecruitDay?: number;
+  /** Bannerlord 6-slot asker toplama ekranında bu yerleşimden toplanmış (boşaltılmış) slot anahtarları. */
+  recruitedSlotKeys?: string[];
 }
 
 export function getSettlementArrivalRadius(type: 'TOWN' | 'CASTLE' | 'VILLAGE'): number {
@@ -973,6 +977,9 @@ export function manageGarrisonTransfer(
   const sIdx = state.settlements.findIndex((item) => item.id === settlementId);
   if (sIdx === -1) return { nextState: state, success: false, reason: 'Yerleşim bulunamadı.' };
   const s = state.settlements[sIdx];
+  if (s.type === 'VILLAGE') {
+    return { nextState: state, success: false, reason: 'Köylerde garnizon bulunmaz.' };
+  }
 
   if (direction === 'deposit') {
     if (state.roster[unitId] < amount) {
@@ -1236,6 +1243,7 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
     }
     return {
       ...s,
+      garrison: s.type === 'VILLAGE' ? 0 : s.garrison,
       prosperity: Math.min(999, s.prosperity + 2),
       foodStock: besieged
         ? Math.max(0, s.foodStock - SIEGE_GARRISON_FOOD_PER_DAY)
@@ -1246,6 +1254,10 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
         cavalry: Math.min(5, s.recruitPool.cavalry + 1),
         guard: Math.min(4, s.recruitPool.guard + (s.type !== 'VILLAGE' ? 1 : 0)),
       },
+      recruitedSlotKeys:
+        s.recruitedSlotKeys && s.recruitedSlotKeys.length > 0
+          ? s.recruitedSlotKeys.slice(2)
+          : undefined,
     };
   });
 
@@ -2800,7 +2812,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
         x: spot.x,
         z: spot.z,
         prosperity: 270 + ((pIdx * 17 + v * 13) % 55),
-        garrison: 18 + ((pIdx + v) % 7),
+        garrison: 0,
         recruitPool: {
           militia: Math.max(5, basePool.militia - 1),
           archer: Math.max(4, basePool.archer - 1),
@@ -2833,19 +2845,8 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     const radius = s.type === 'TOWN' ? 14.5 : s.type === 'CASTLE' ? 11.2 : 8.0;
     registerSettlementTerrace(s.x, s.z, radius);
 
-    // Bannerlord ölçekli gerçekçi garnizon ve milis sayıları (Şehirler: 280-420, Kaleler: 160-260, Köyler: 45-80)
-    if (s.type === 'TOWN' && s.garrison < 120) {
-      s.garrison = Math.round(s.garrison * 5.2);
-      if (s.militia === undefined) s.militia = Math.round(s.prosperity * 0.35);
-    } else if (s.type === 'CASTLE' && s.garrison < 100) {
-      s.garrison = Math.round(s.garrison * 4.5);
-      if (s.militia === undefined) s.militia = Math.round(s.prosperity * 0.28);
-    } else if (s.type === 'VILLAGE' && s.garrison < 35) {
-      s.garrison = Math.round(s.garrison * 2.8);
-      if (s.militia === undefined) s.militia = Math.round(s.prosperity * 0.22);
-    }
-
     if (s.type === 'VILLAGE') {
+      s.garrison = 0;
       const pool = VILLAGE_PRODUCTION_POOL[s.faction] || VILLAGE_PRODUCTION_POOL.empire;
       const hash = s.id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
       if (!s.primaryProduction) {
@@ -2953,14 +2954,16 @@ export function calculateSettlementDailyStats(
   const loyaltyDrift = curLoyalty > 75 ? -1 : 0;
   const loyaltyDelta = fairgroundsBonus + festivalBonus + securityLoyalty + loyaltyDrift;
 
-  // Garrison
-  const barracksCap = 120 + (bld.BARRACKS ?? 1) * 60;
-  const garrisonDelta = besieged && settlement.foodStock <= 0 ? -4 : 0;
+  // Garrison (Villages never have a garrison in Bannerlord)
+  const isVillage = settlement.type === 'VILLAGE';
+  const effectiveGarrison = isVillage ? 0 : settlement.garrison;
+  const barracksCap = isVillage ? 0 : 120 + (bld.BARRACKS ?? 1) * 60;
+  const garrisonDelta = !isVillage && besieged && settlement.foodStock <= 0 ? -4 : 0;
 
   // Food
   const villageFood = Math.max(2, activeVillages * 4);
   const granaryBonus = (bld.GRANARY ?? 1) * 2;
-  const garrisonConsumption = -Math.max(1, Math.round(settlement.garrison / 20));
+  const garrisonConsumption = isVillage ? 0 : -Math.max(1, Math.round(effectiveGarrison / 20));
   const foodDelta = besieged
     ? -SIEGE_GARRISON_FOOD_PER_DAY
     : villageFood + granaryBonus + garrisonConsumption;
@@ -3020,15 +3023,17 @@ export function calculateSettlementDailyStats(
       ],
     },
     garrison: {
-      value: settlement.garrison,
+      value: effectiveGarrison,
       delta: garrisonDelta,
-      lines: [
-        { label: 'Mevcut Garnizon', value: `${settlement.garrison}`, positive: true },
-        { label: 'Kışla Kapasitesi', value: `${barracksCap}`, positive: true },
-        ...(garrisonDelta < 0
-          ? [{ label: 'Açlık Kaybı', value: `${garrisonDelta}`, positive: false }]
-          : []),
-      ],
+      lines: isVillage
+        ? [{ label: 'Köy Yerleşimi (Garnizon Yok)', value: '0', positive: true }]
+        : [
+            { label: 'Mevcut Garnizon', value: `${effectiveGarrison}`, positive: true },
+            { label: 'Kışla Kapasitesi', value: `${barracksCap}`, positive: true },
+            ...(garrisonDelta < 0
+              ? [{ label: 'Açlık Kaybı', value: `${garrisonDelta}`, positive: false }]
+              : []),
+          ],
     },
     food: {
       value: settlement.foodStock,
@@ -3065,7 +3070,6 @@ export interface NewGameStartOptions {
   storySummary?: string;
   storySkillBonuses?: Partial<Record<BannerlordSkillId, number>>;
   storyAttrBonuses?: Partial<Record<AttributeId, number>>;
-  startingSettlementId?: string;
 }
 
 export function createInitialCampaignState(
@@ -3102,7 +3106,7 @@ export function createInitialCampaignState(
       title: 'İmparatoriçe',
       faction: 'empire',
       personality: 'Diplomatik, stratejik vizyonu derin, ticaret ve meşruiyeti önemseyen imparatoriçe',
-      relation: 18,
+      relation: 0,
       x: 28,
       z: 92,
       targetX: 24,
@@ -3125,10 +3129,10 @@ export function createInitialCampaignState(
       faction: 'bandits',
       personality: 'Acımasız, yağma ve ganimet peşinde koşan, yalnızca kılıçtan anlayan asi komutan',
       relation: -45,
-      x: -312,
-      z: 178,
-      targetX: -295,
-      targetZ: 165,
+      x: -58,
+      z: 104,
+      targetX: -38,
+      targetZ: 112,
       armySize: 16,
       roster: { militia: 7, archer: 4, cavalry: 4, guard: 1 },
       wounded: 1,
@@ -3137,7 +3141,7 @@ export function createInitialCampaignState(
       foodDays: 9,
       isAtWarWithPlayer: true,
       isAlliedWithPlayer: false,
-      currentAction: 'Kara Dağ Geçitlerinde devriye geziyor',
+      currentAction: 'Karageçit geçidinde pusu kuruyor',
       bannerColor: '#44403c',
     },
     {
@@ -3146,7 +3150,7 @@ export function createInitialCampaignState(
       title: 'General',
       faction: 'empire',
       personality: 'Askeri disipline bağlı, lejyonların gücüyle İmparatorluğu birleştirmek isteyen komutan',
-      relation: 10,
+      relation: 0,
       x: -95,
       z: 112,
       targetX: -105,
@@ -3168,7 +3172,7 @@ export function createInitialCampaignState(
       title: 'Arkon',
       faction: 'empire',
       personality: 'Senato yasalarına ve kadim İmparatorluk geleneklerine sadık devlet adamı',
-      relation: 14,
+      relation: 0,
       x: 42,
       z: -55,
       targetX: 18,
@@ -3190,7 +3194,7 @@ export function createInitialCampaignState(
       title: 'Kral',
       faction: 'vlandia',
       personality: 'Gururlu, feodal geleneklere bağlı, güçlü ordulara saygı duyan pragmatist hükümdar',
-      relation: 12,
+      relation: 0,
       x: -412,
       z: -115,
       targetX: -438,
@@ -3212,7 +3216,7 @@ export function createInitialCampaignState(
       title: 'Yüksek Kral',
       faction: 'battania',
       personality: 'Atılgan, orman pusularında usta, bağımsızlığına düşkün yayla savaşçısı',
-      relation: 10,
+      relation: 0,
       x: -252,
       z: -82,
       targetX: -258,
@@ -3234,7 +3238,7 @@ export function createInitialCampaignState(
       title: 'Büyük Prens',
       faction: 'sturgia',
       personality: 'Sert mizaçlı, kuzey disiplinini ve kalkan duvarını her şeyin üstünde tutan prens',
-      relation: 5,
+      relation: 0,
       x: 62,
       z: -255,
       targetX: 68,
@@ -3256,7 +3260,7 @@ export function createInitialCampaignState(
       title: 'Kağan',
       faction: 'khuzait',
       personality: 'Cesur, doğrudan konuşan, savaş meydanındaki atlı hücumlara değer veren bozkır hanı',
-      relation: 8,
+      relation: 0,
       x: 262,
       z: -62,
       targetX: 252,
@@ -3278,7 +3282,7 @@ export function createInitialCampaignState(
       title: 'Sultan',
       faction: 'aserai',
       personality: 'Bilge, kervan yollarını ve çöl kabileleri arasındaki dengeyi gözeten sultan',
-      relation: 15,
+      relation: 0,
       x: -55,
       z: 258,
       targetX: -108,
@@ -3495,27 +3499,6 @@ export function createInitialCampaignState(
         },
       ];
 
-  const cultureCapitalMap: Record<FactionId, string> = {
-    vlandia: 'pravend',
-    battania: 'marunath',
-    sturgia: 'omor',
-    empire: 'poros',
-    khuzait: 'chaikand',
-    aserai: 'sanala',
-    player: 'poros',
-    bandits: 'poros',
-  };
-  const targetStartId =
-    options?.startingSettlementId ||
-    (options?.culture ? cultureCapitalMap[options.culture] : 'poros');
-  const startSettlement =
-    settlements.find((s) => s.id === targetStartId) ||
-    settlements.find((s) => s.id === 'poros') ||
-    settlements[0];
-  const candidateX = startSettlement ? startSettlement.x + 3.8 : 14;
-  const candidateZ = startSettlement ? startSettlement.z + 3.8 : 88;
-  const safeStart = snapToNearestLand(candidateX, candidateZ);
-
   const founded = ensureBannerlordFoundation({
     playerName,
     backgroundId,
@@ -3528,8 +3511,8 @@ export function createInitialCampaignState(
     morale: isRealistic ? 75 : 86,
     playerHp: 120,
     playerMaxHp: 120,
-    playerX: safeStart.x,
-    playerZ: safeStart.z,
+    playerX: 14,
+    playerZ: 88,
     roster: initialRoster,
     prisoners: isRealistic ? 0 : 2,
     battlesWon: 0,
@@ -3613,8 +3596,18 @@ export function createInitialCampaignState(
     };
 
     const existingHeroes = (founded.heroes ?? []).filter((h) => h.id !== 'hero_family_brother');
+    const realisticLords = founded.lords.map((l) => {
+      if (l.faction !== 'bandits') return l;
+      const smallRoster: TroopRoster = { militia: 5, archer: 2, cavalry: 1, guard: 0 };
+      return {
+        ...l,
+        roster: smallRoster,
+        armySize: getTotalTroops(smallRoster),
+      };
+    });
     return {
       ...founded,
+      lords: realisticLords,
       roster: { militia: 0, archer: 0, cavalry: 0, guard: 0 },
       troopStacks: [],
       prisoners: 0,

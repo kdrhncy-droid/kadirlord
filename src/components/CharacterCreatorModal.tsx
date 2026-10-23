@@ -39,6 +39,10 @@ import {
   BannerlordSkillId,
   AttributeId,
 } from '../game/rules.ts';
+import {
+  SKILL_LABELS,
+  ATTRIBUTE_LABELS,
+} from '../game/characterDevelopment.ts';
 import { sound } from '../game/sound.ts';
 
 interface CharacterCreatorModalProps {
@@ -359,10 +363,8 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   const [activeTab, setActiveTab] = useState<TabCategory>('story');
   const [outfit, setOutfit] = useState<OutfitPreset>('civilian');
   const [cameraView, setCameraView] = useState<CameraViewPreset>('full');
-  // Bannerlord'da manken kendi kendine dönmez; kullanıcı fareyle sürükleyebilir
-  const [isRotating, setIsRotating] = useState<boolean>(false);
+  const [isRotating, setIsRotating] = useState<boolean>(true);
   const [brotherName, setBrotherName] = useState<string>('Niasen');
-  const [startingSettlementId, setStartingSettlementId] = useState<string>('poros');
   const [storySelections, setStorySelections] = useState<Record<string, string>>({
     family: 'retainers',
     childhood: 'leadership_kid',
@@ -753,7 +755,6 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
       storySummary: computedStoryBonuses.summary,
       storyAttrBonuses: computedStoryBonuses.attrBonuses,
       storySkillBonuses: computedStoryBonuses.skillBonuses,
-      startingSettlementId,
     });
     onClose();
   };
@@ -1001,10 +1002,10 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                                     : 'border-stone-800 bg-[#120f0b]/80 text-stone-300 hover:border-stone-600'
                                 }`}
                               >
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between gap-2">
                                   <span className="text-xs font-bold">{opt.title}</span>
-                                  <span className="text-[10px] font-mono text-[#c6a15b]">
-                                    +1 {opt.attr} · +10 {opt.skills[0]}/{opt.skills[1]}
+                                  <span className="text-[10px] font-mono text-[#c6a15b] text-right">
+                                    +1 {ATTRIBUTE_LABELS[opt.attr].name} · +10 {SKILL_LABELS[opt.skills[0]]} / {SKILL_LABELS[opt.skills[1]]}
                                   </span>
                                 </div>
                                 <p className="text-[10px] text-stone-400 mt-0.5 leading-snug">
@@ -1017,6 +1018,37 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                       </div>
                     );
                   })}
+                </div>
+
+                {/* Toplam Hikaye Nitelik ve Beceri Kazancı Özeti (Türkçe) */}
+                <div className="p-3 rounded border border-[#c6a15b]/40 bg-[#120f0b] space-y-2">
+                  <div className="text-xs font-serif font-bold text-[#c6a15b] uppercase tracking-wider">
+                    Seçilen Geçmişten Kazanılan Nitelik &amp; Beceri Bonusları
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(Object.entries(computedStoryBonuses.attrBonuses) as Array<[AttributeId, number]>).map(
+                      ([attrId, bonus]) => (
+                        <span
+                          key={attrId}
+                          className="px-2 py-0.5 rounded bg-[#282015] border border-[#c6a15b]/40 text-[10px] font-bold text-[#fde68a]"
+                        >
+                          +{bonus} {ATTRIBUTE_LABELS[attrId]?.name ?? attrId}
+                        </span>
+                      ),
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-1 border-t border-stone-800">
+                    {(Object.entries(computedStoryBonuses.skillBonuses) as Array<[BannerlordSkillId, number]>).map(
+                      ([skId, bonus]) => (
+                        <span
+                          key={skId}
+                          className="px-2 py-0.5 rounded bg-stone-900 border border-stone-700 text-[10px] text-[#86efac]"
+                        >
+                          +{bonus} {SKILL_LABELS[skId] ?? skId} (+1 Odak)
+                        </span>
+                      ),
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -1612,42 +1644,6 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                           }`}
                         >
                           {HERALDIC_SVG_EMBLEMS[emb]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Başlangıç Doğum Yeri & Bölgesi */}
-                  <div className="space-y-1.5 pt-2 border-t border-stone-800">
-                    <span className="text-xs font-serif font-bold text-[#c6a15b] uppercase tracking-wider block">
-                      Başlangıç Doğum Yeri &amp; Bölgesi
-                    </span>
-                    <p className="text-[10px] text-stone-400">
-                      Sefer başladığında maceranıza adım atacağınız başlangıç şehrini seçin:
-                    </p>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {[
-                        { id: 'poros', name: 'Poros (İmparatorluk)', desc: 'Verimli güney ovaları' },
-                        { id: 'pravend', name: 'Pravend (Vlandiya)', desc: 'Batı okyanus vadisi' },
-                        { id: 'marunath', name: 'Marunath (Batanya)', desc: 'Sisli ulu ormanlar' },
-                        { id: 'omor', name: 'Omor (Sturgiya)', desc: 'Kuzey karlı geçitleri' },
-                        { id: 'chaikand', name: 'Chaikand (Kuzait)', desc: 'Geniş bozkır obaları' },
-                        { id: 'sanala', name: 'Sanala (Aseray)', desc: 'Güneşli vahalar & kervanlar' },
-                        { id: 'zeonica', name: 'Zeonica (İmparatorluk)', desc: 'Batı iç deniz limanı' },
-                        { id: 'lycaron', name: 'Lycaron (İmparatorluk)', desc: 'Doğu dağ geçitleri' },
-                      ].map((sp) => (
-                        <button
-                          key={sp.id}
-                          type="button"
-                          onClick={() => setStartingSettlementId(sp.id)}
-                          className={`p-2 rounded border text-left transition ${
-                            startingSettlementId === sp.id
-                              ? 'border-[#f59e0b] bg-[#f59e0b]/20 text-[#fde68a] shadow'
-                              : 'border-stone-800 bg-stone-900/60 text-stone-300 hover:border-stone-700'
-                          }`}
-                        >
-                          <div className="text-xs font-bold">{sp.name}</div>
-                          <div className="text-[9px] text-stone-400">{sp.desc}</div>
                         </button>
                       ))}
                     </div>

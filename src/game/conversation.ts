@@ -20,8 +20,8 @@ import * as THREE from 'three';
 import { createCharacterRig, type CharacterRig } from './characterRig.ts';
 import { applyMorphDNAToRig, getHeroDNA } from './characterMorph.ts';
 import { createHeroPortraitRig, disposeRig } from './portraitRenderer.ts';
-import type { HeroRecord, Occupation } from './heroes.ts';
-import type { FactionId } from './rules.ts';
+import { deriveOccupation, type HeroRecord, type Occupation } from './heroes.ts';
+import type { FactionId, LordAgent } from './rules.ts';
 
 /**
  * Sahne için gereken asgari kahraman bilgisi. `HeroRecord` bunu yapısal olarak
@@ -39,15 +39,24 @@ export interface ConversationHero {
 export function heroFromLord(lord: {
   id: string;
   name: string;
+  title?: string;
   faction: FactionId;
+  bannerColor?: string;
   isRuler?: boolean;
 }): ConversationHero {
+  const occupation: Occupation = lord.isRuler
+    ? 'RULER'
+    : lord.title
+      ? deriveOccupation(lord as LordAgent)
+      : lord.faction === 'bandits'
+        ? 'GANG_LEADER'
+        : 'LORD';
   return {
     id: lord.id,
     name: lord.name,
-    occupation: lord.isRuler ? 'RULER' : 'LORD',
+    occupation,
     culture: lord.faction,
-    bannerColor: '#7f1d1d',
+    bannerColor: lord.bannerColor ?? '#7f1d1d',
   };
 }
 

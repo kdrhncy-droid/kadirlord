@@ -123,7 +123,7 @@ export function buildQuestLog(campaign: CampaignState, nowDay = campaign.day): Q
   const lords = campaign.lords.filter((l) => l.faction !== 'bandits');
   const seed = hash32(`${campaign.playerName}:${campaign.backgroundId}`);
 
-  const allAvailableQuests: Quest[] = [];
+  const quests: Quest[] = [];
   const day = campaign.day;
 
   // 1) Haydut avı — savaş kazanma sayacına bağlı.
@@ -131,7 +131,7 @@ export function buildQuestLog(campaign: CampaignState, nowDay = campaign.day): Q
   if (bountyGiver) {
     const target = 3 + (seed % 3);
     const killed = Math.min(target, campaign.battlesWon);
-    allAvailableQuests.push({
+    quests.push({
       id: 'quest-bounty',
       kind: 'BOUNTY',
       title: `${bountyGiver.name} için haydut avı`,
@@ -169,7 +169,7 @@ export function buildQuestLog(campaign: CampaignState, nowDay = campaign.day): Q
       Math.hypot(deliverTarget.x - campaign.playerX, deliverTarget.z - campaign.playerZ),
     );
     const arrived = distance <= ARRIVAL_RADIUS;
-    allAvailableQuests.push({
+    quests.push({
       id: 'quest-deliver',
       kind: 'DELIVER',
       title: `${deliverTarget.name}'a mühürlü kargo`,
@@ -202,7 +202,7 @@ export function buildQuestLog(campaign: CampaignState, nowDay = campaign.day): Q
   if (escortFrom && escortTo && escortTo.id !== escortFrom.id) {
     const escortArrived =
       Math.hypot(escortTo.x - campaign.playerX, escortTo.z - campaign.playerZ) <= ARRIVAL_RADIUS;
-    allAvailableQuests.push({
+    quests.push({
       id: 'quest-escort',
       kind: 'ESCORT',
       title: `${escortFrom.name} kervanını koru`,
@@ -243,7 +243,7 @@ export function buildQuestLog(campaign: CampaignState, nowDay = campaign.day): Q
       Math.hypot(patrolTarget.x - campaign.playerX, patrolTarget.z - campaign.playerZ) <=
       ARRIVAL_RADIUS;
     const need = 12;
-    allAvailableQuests.push({
+    quests.push({
       id: 'quest-patrol',
       kind: 'PATROL',
       title: `${patrolTarget.name} çevresinde devriye`,
@@ -280,7 +280,7 @@ export function buildQuestLog(campaign: CampaignState, nowDay = campaign.day): Q
   const recruitTarget = pick(villages, seed, 'recruit');
   if (recruitTarget) {
     const troops = Object.values(campaign.roster).reduce((a, b) => a + b, 0);
-    allAvailableQuests.push({
+    quests.push({
       id: 'quest-recruit',
       kind: 'RECRUIT',
       title: `${recruitTarget.name}'dan gönüllü topla`,
@@ -305,10 +305,6 @@ export function buildQuestLog(campaign: CampaignState, nowDay = campaign.day): Q
       hint: 'Köy muhtarıyla konuş (diyalog ekranı, Faz 6).',
     });
   }
-
-  // Bannerlord kuralı: oyuncu bir lorddan veya köy eşrafından görev almadığı sürece günlüğe görev yağmaz
-  const acceptedIds = new Set((campaign as any).activeQuests ?? []);
-  const quests = allAvailableQuests.filter((q) => acceptedIds.has(q.id));
 
   return summarize(quests, nowDay);
 }

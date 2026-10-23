@@ -162,7 +162,7 @@ const RULER_TITLES = new Set([
   'İmparatoriçe', 'İmparator', 'Kral', 'Kraliçe', 'Yüksek Kral',
   'Kağan', 'Sultan', 'Büyük Prens', 'Prens',
 ]);
-const LADY_TITLES = new Set(['Leydi', 'Hatun', 'Prenses', 'Kontes', 'Senatris', 'Kâhin', 'Boyarina']);
+const LADY_TITLES = new Set(['Leydi', 'Hatun', 'Prenses', 'Kontes', 'Senatris', 'Kâhin', 'Boyarina', 'Emire']);
 
 export function deriveOccupation(lord: LordAgent): Occupation {
   if (lord.faction === 'bandits') return 'GANG_LEADER';

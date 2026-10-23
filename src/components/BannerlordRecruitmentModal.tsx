@@ -10,6 +10,7 @@ import {
   type SettlementNotable,
   generateNotables,
 } from '../game/notables';
+import { hash32 } from '../game/heroes';
 import {
   getTroopDefinition,
   TROOP_DEFINITIONS,
@@ -35,7 +36,7 @@ export interface NotableRecruiterRow {
 interface BannerlordRecruitmentModalProps {
   settlement: Settlement;
   campaign: CampaignState;
-  onCommitRecruits: (recruits: Array<{ troopId: string; cost: number }>) => void;
+  onCommitRecruits: (recruits: Array<{ troopId: string; cost: number; slotKey?: string }>) => void;
   onClose: () => void;
 }
 
@@ -67,14 +68,30 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
   const tier2Troops = cultureTroops.filter((t) => t.tier === 2);
   const tier3Troops = cultureTroops.filter((t) => t.tier === 3);
 
-  // 3. Build initial 6 slots for each notable deterministically
+  // 3. Build initial 6 slots for each notable deterministically (emptying already-recruited slots & varying count per village)
   const initialRows = useMemo<NotableRecruiterRow[]>(() => {
+    const takenSet = new Set(settlement.recruitedSlotKeys ?? []);
+    const isVillage = settlement.type === 'VILLAGE';
+
     return notables.map((notable, nIdx) => {
       const slots: (RecruitmentSlotData | null)[] = [];
       const isLandowner = notable.role === 'headman' || notable.role === 'elder';
       const isPowerful = notable.power >= 70;
 
+      // Her köy ve eşraf farklı/rastgele sayıda gönüllü asker çıkarır (köylerde eşraf başına 1..4, şehirlerde 2..5)
+      const notableSeed = hash32(`${settlement.id}:${notable.id}:${nIdx}`);
+      const filledSlotCount = isVillage
+        ? 1 + (notableSeed % 4)
+        : 2 + (notableSeed % 4);
+
       for (let sIdx = 0; sIdx < 6; sIdx++) {
+        const slotKey = `${notable.id}_${sIdx}`;
+        // Eğer bu slot daha önce toplandıysa veya bu eşrafın mevcut gönüllü sayısını aşıyorsa slot BOŞ görünür
+        if (takenSet.has(slotKey) || sIdx >= filledSlotCount) {
+          slots.push(null);
+          continue;
+        }
+
         const requiredRelation = REQUIRED_RELATIONS[sIdx];
         const isLocked = notable.relation < requiredRelation;
 
@@ -87,7 +104,7 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
           baseCost = 20;
         } else if (sIdx === 2 || sIdx === 3) {
           if (tier2Troops.length > 0) {
-            targetTroop = tier2Troops[(nIdx + sIdx) % tier2Troops.length];
+            targetTroop = tier2Troops[(nIdx + sIdx + (notableSeed % 3)) % tier2Troops.length];
             baseCost = 50;
           } else {
             targetTroop = recruitTroop;
@@ -107,11 +124,7 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
           }
         }
 
-        // Some slots might be empty naturally
-        const settHash = settlement.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-        const hasSlotTroop = (nIdx * 6 + sIdx + settHash) % 7 !== 0;
-
-        if (!hasSlotTroop || !targetTroop) {
+        if (!targetTroop) {
           slots.push(null);
         } else {
           slots.push({
@@ -130,7 +143,7 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
         slots,
       };
     });
-  }, [notables, recruitTroop, tier2Troops, tier3Troops, settlement.id]);
+  }, [notables, recruitTroop, tier2Troops, tier3Troops, settlement.id, settlement.type, settlement.recruitedSlotKeys]);
 
   // 4. Session State: which slot recruits have been picked into pending basket
   // Key: `${notableId}_${slotIndex}`
@@ -169,6 +182,16 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
 
   const roomLeft = Math.max(0, maxPartyLimit - currentPartyCount);
 
+  const availableUnlockedSlots = useMemo(() => {
+    let count = 0;
+    for (const row of initialRows) {
+      for (const slot of row.slots) {
+        if (slot && !slot.isLocked) count++;
+      }
+    }
+    return count;
+  }, [initialRows]);
+
   // Handlers
   const togglePickSlot = (notableId: string, slot: RecruitmentSlotData) => {
     if (slot.isLocked) return;
@@ -193,6 +216,7 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
   };
 
   const handleRecruitAll = () => {
+    if (availableUnlockedSlots <= 0) return;
     setPickedKeys((prev) => {
       const next = new Set(prev);
       let runningCost = totalCost;
@@ -228,6 +252,7 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
     const payload = pendingRecruits.map((p) => ({
       troopId: p.slot.troopId,
       cost: p.slot.cost,
+      slotKey: p.key,
     }));
     sound.playWarhorn();
     onCommitRecruits(payload);
@@ -275,12 +300,22 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
               <button
                 type="button"
                 data-testid="recruitment-all-btn"
+                disabled={availableUnlockedSlots <= 0}
                 onClick={handleRecruitAll}
-                className="flex items-center gap-1.5 px-3 py-1 rounded bg-[#b45309] hover:bg-[#d97706] text-white font-bold transition shadow"
+                className="flex items-center gap-1.5 px-3 py-1 rounded bg-[#b45309] hover:bg-[#d97706] disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold transition shadow"
               >
                 <span>Hepsini Al ⚑</span>
               </button>
             </div>
+
+            {availableUnlockedSlots <= 0 && (
+              <div
+                data-testid="recruitment-cooldown-banner"
+                className="p-2.5 rounded border border-[#f59e0b]/50 bg-[#292014] text-xs text-[#fde68a]"
+              >
+                Bu yerleşimdeki alınabilir gönüllü askerlerin tamamı toplandı (slotlar boş). Yeni gönüllüler için birkaç gün bekleyin.
+              </div>
+            )}
 
             {initialRows.map((row) => (
               <div

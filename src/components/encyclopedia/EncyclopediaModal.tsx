@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FACTION_INFO, type CampaignState } from '../../game/rules';
+import { FACTION_INFO, type BannerlordSkillId, type CampaignState } from '../../game/rules';
+import { SKILL_LABELS } from '../../game/characterDevelopment';
 import {
   HERO_SORTS,
   OCCUPATION_FILTERS,
@@ -504,7 +505,9 @@ export const EncyclopediaModal: React.FC<EncyclopediaModalProps> = ({
               <div className="grid grid-cols-3 gap-1.5">
                 {Object.entries(info.skills).map(([key, val]) => (
                   <div key={key} className="flex items-center justify-between bg-[#0d0b08] rounded px-2 py-0.5">
-                    <span className="text-[9px] text-[#a2957f] capitalize">{key}</span>
+                    <span className="text-[9px] text-[#a2957f]">
+                      {SKILL_LABELS[key as BannerlordSkillId] ?? key}
+                    </span>
                     <span className="text-[10px] text-[#e2d6c1]">{val?.level ?? 0}</span>
                   </div>
                 ))}

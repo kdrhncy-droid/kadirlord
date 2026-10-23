@@ -724,7 +724,6 @@ export default function App() {
       setMetHeroIds([]);
       setGameState('playing');
       document.body.dataset.state = 'playing';
-      playerPositionCommandRef.current = { x: fresh.playerX, z: fresh.playerZ };
       cameraActionsRef.current?.focusOnCoords(fresh.playerX, fresh.playerZ, 52);
       cameraActionsRef.current?.focusOnPlayer();
       sound.playSettlementEnter();
@@ -1089,14 +1088,6 @@ export default function App() {
     saveInfo,
   ]);
 
-  useEffect(() => {
-    const handleGlobalContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener('contextmenu', handleGlobalContextMenu);
-    return () => window.removeEventListener('contextmenu', handleGlobalContextMenu);
-  }, []);
-
   // Living World Periodic Tick scaled by campaignTimeScale (Faz 11: canlı dünya)
   useEffect(() => {
     if (gameState !== 'playing' || subMode !== 'overworld' || campaignTimeScale === 0) return;
@@ -1214,17 +1205,30 @@ export default function App() {
   );
 
   const handleRecruitBatch = useCallback(
-    (settlementId: string, recruits: Array<{ troopId: string; cost: number }>): string | null => {
+    (
+      settlementId: string,
+      recruits: Array<{ troopId: string; cost: number; slotKey?: string }>,
+    ): string | null => {
       let errorMsg: string | null = null;
       setCampaign((prev) => {
-        const totalCost = recruits.reduce((s, r) => s + r.cost, 0);
+        const targetSettlement = prev.settlements.find((s) => s.id === settlementId);
+        const alreadyTaken = new Set(targetSettlement?.recruitedSlotKeys ?? []);
+        const validRecruits = recruits.filter((r) => !r.slotKey || !alreadyTaken.has(r.slotKey));
+
+        if (validRecruits.length === 0) {
+          errorMsg = 'Bu yerleşimdeki seçili gönüllü slotları zaten toplandı.';
+          showToast(errorMsg);
+          return prev;
+        }
+
+        const totalCost = validRecruits.reduce((s, r) => s + r.cost, 0);
         if (prev.gold < totalCost) {
           errorMsg = 'Yetersiz dinar.';
           return prev;
         }
 
         const nextStacks = [...(prev.troopStacks ?? [])];
-        for (const recruit of recruits) {
+        for (const recruit of validRecruits) {
           const existingIdx = nextStacks.findIndex(
             (st) => st.troopId === recruit.troopId,
           );
@@ -1243,11 +1247,36 @@ export default function App() {
           }
         }
 
+        const newSlotKeys = validRecruits
+          .map((r) => r.slotKey)
+          .filter((k): k is string => Boolean(k));
+
         const nextRoster = troopStackTotals(nextStacks);
         const nextArmySize = getTotalTroops(nextRoster);
         const nextStrength = calculatePartyStrength(nextRoster);
+        const nextSettlements = prev.settlements.map((s) => {
+          if (s.id !== settlementId) return s;
+          const mergedKeys = Array.from(new Set([...(s.recruitedSlotKeys ?? []), ...newSlotKeys]));
+          const nextPool = { ...s.recruitPool };
+          for (let i = 0; i < validRecruits.length; i++) {
+            if (nextPool.militia > 0) nextPool.militia -= 1;
+            else if (nextPool.archer > 0) nextPool.archer -= 1;
+            else if (nextPool.cavalry > 0) nextPool.cavalry -= 1;
+            else if (nextPool.guard > 0) nextPool.guard -= 1;
+          }
+          return {
+            ...s,
+            lastRecruitDay: prev.day,
+            recruitedSlotKeys: mergedKeys,
+            recruitPool: nextPool,
+          };
+        });
+        const updatedSettlement = nextSettlements.find((s) => s.id === settlementId) ?? null;
+        if (updatedSettlement) {
+          setActiveSettlementModal(updatedSettlement);
+        }
 
-        showToast(`${recruits.length} yeni asker sancağınıza katıldı! (-${totalCost} Dinar)`);
+        showToast(`${validRecruits.length} yeni asker sancağınıza katıldı! (-${totalCost} Dinar)`);
         sound.playCoinChime();
 
         return {
@@ -1257,6 +1286,7 @@ export default function App() {
           roster: nextRoster,
           armySize: nextArmySize,
           strength: nextStrength,
+          settlements: nextSettlements,
         };
       });
       return errorMsg;
@@ -2264,6 +2294,7 @@ export default function App() {
           canTrade={!!dialogueSettlement}
           forcedEncounter={isForcedEncounter}
           encounterScenario={encounterScenario}
+          hasMet={dialogueLord ? metHeroIds.includes(dialogueLord.id) : true}
           onClose={() => {
             setDialogueLord(null);
             setDialogueSettlement(null);
@@ -2273,6 +2304,21 @@ export default function App() {
           onMeetHero={(heroId) =>
             setMetHeroIds((prev) => (prev.includes(heroId) ? prev : [...prev, heroId]))
           }
+          onAcceptQuest={(questId) => {
+            showToast('Soylu görevi kabul edildi ve Sefer Günlüğüne [J] kaydedildi.');
+            setCampaign((prev) => ({
+              ...prev,
+              chronicle: [
+                {
+                  id: `noble-quest-${prev.day}-${questId}`,
+                  day: prev.day,
+                  category: 'DIPLOMACY',
+                  text: `${dialogueLord?.name ?? dialogueSettlement?.name ?? 'Soylu'} tarafından verilen görev üstlenildi.`,
+                },
+                ...prev.chronicle,
+              ].slice(0, 20),
+            }));
+          }}
           onCompleteBarter={({ lordId, goldDelta, relationDelta, peaceSigned }) => {
             setCampaign((prev) => ({
               ...prev,

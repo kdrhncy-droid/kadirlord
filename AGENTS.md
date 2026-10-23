@@ -96,10 +96,16 @@ Detaylar: `tools/e2e/README.md`. E2E ekran görüntüleri
 8. **Üretimde kullanılan yolu test edin.** Bir helper yalnız probe'da
    çağrılıyorsa, üretimde kopyalanmış ikinci bir uygulama varsa test yeşil
    olsa bile özellik kanıtlanmış sayılmaz.
+9. **Bannerlord Web Araştırması ve Doğrulama Kuralı (Kullanıcı Talimatı):**
+   Herhangi bir oyun mekaniği, diyalog ağacı, ekonomi veya savaş sistemi
+   tasarlarken/değiştirirken *Mount & Blade II: Bannerlord* ile birebir aynı
+   olduğundan emin olmak için kod yazmadan önce mutlaka web aramasıyla
+   (`search_web` / Chrome araştırması) gerçek Bannerlord mekaniğini araştırıp
+   teyit edin; ezbere veya tahmine dayalı sistem kurmayın.
 
 ## Değişiklik iş akışı
 
-1. Önce sorunu saf fonksiyon/probe ile tekrar üretin; iddiayı ölçün.
+1. Önce gerçek Bannerlord karşılığını web aramasıyla teyit edin; sorunu saf fonksiyon/probe ile tekrar üretin; iddiayı ölçün.
 2. Değişiklikten sonra önce ilgili dar probe'u, sonra `verify:fast`i çalıştırın.
 3. UI/WebGL/akış değiştiyse `npm run test:e2e` ile gerçek Chromium kanıtı alın.
 4. Geniş sistem değişikliklerinde `verify:all` ve `npm run build` çalıştırın.
@@ -113,17 +119,10 @@ Detaylar: `tools/e2e/README.md`. E2E ekran görüntüleri
 Bu araç paketi aşağıdaki oyun hatalarını düzeltmez; onları güvenilir biçimde
 tekrar üretmeyi kolaylaştırır:
 
-- Haydut teslimiyeti esir/altın verirken haydut `roster`ını ve gücünü
-  değiştirmiyor; tekrar ödül açığı var.
-- Diyalog sahnesindeki `conversation.ts#heroFromLord`, meslek/cinsiyet ve
-  sancak rengini birçok lord için yanlış türetiyor.
-- Oyuncu teslimiyetinde erzak tabanı, erzak 4'ün altındayken net erzak
-  kazancı üretebiliyor.
+- *(Çözüldü - 8.16)* Diyalog sahnesindeki `conversation.ts#heroFromLord` meslek/cinsiyet (`LADY`, `RULER`, `LORD`, `BANDIT`) ve `lord.bannerColor` türetimi düzeltildi.
 - Karşılaşma senaryosu, teması gerçekten kimin başlattığını değil yalnız
   güç oranını kullanıyor; eşikler kovalama/kaçma eşikleriyle tam aynı değil.
 - `checkHostileMapInterception` probe'da test ediliyor ancak üretimde
   `WorldCanvas` kendi yakalama döngüsünü kullanıyor.
-- `server.ts` içindeki Gemini model kimliği ayrıca doğrulanmalıdır; anahtar
-  olsa bile yanlış model adı sessizce yerel yedeğe düşürebilir.
 
 Yeni bir açık kapatıldığında bu listeyi ve ilgili denetim belgesini güncelleyin.

@@ -40,10 +40,10 @@ import {
 } from 'lucide-react';
 
 const CLAN_ROLE_LABELS: Record<ClanRoleId, string> = {
-  QUARTERMASTER: '📦 İaşeci (Steward)',
-  SCOUT: '🧭 İzci (Scout)',
-  SURGEON: '⚕️ Cerrah (Surgeon)',
-  ENGINEER: '⚙️ Mühendis (Engineer)',
+  QUARTERMASTER: 'İaşeci',
+  SCOUT: 'İzci',
+  SURGEON: 'Cerrah',
+  ENGINEER: 'Mühendis',
 };
 
 interface CharacterModalProps {
@@ -216,7 +216,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                   {currentHero.name}
                 </span>
                 <span className="text-[11px] px-2 py-0.5 rounded bg-[#241c14] border border-[#c6a15b]/30 text-[#d4af37] font-semibold">
-                  {currentHero.kind === 'PLAYER' ? '👑 Klan Lideri' : '⚔️ Yoldaş'}
+                  {currentHero.kind === 'PLAYER' ? 'Klan Lideri' : currentHero.kind === 'FAMILY' ? 'Aile Üyesi' : 'Yoldaş'}
                 </span>
                 <select
                   data-testid="char-clan-role-select"
@@ -227,10 +227,10 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                   title="Klan Rolü Ata"
                 >
                   <option value="NONE">Rol: Yok</option>
-                  <option value="QUARTERMASTER">📦 İaşeci (Steward)</option>
-                  <option value="SCOUT">🧭 İzci (Scout)</option>
-                  <option value="SURGEON">⚕️ Cerrah (Surgeon)</option>
-                  <option value="ENGINEER">⚙️ Mühendis (Engineer)</option>
+                  <option value="QUARTERMASTER">İaşeci (İdarecilik)</option>
+                  <option value="SCOUT">İzci (İzcilik)</option>
+                  <option value="SURGEON">Cerrah (Hekimlik)</option>
+                  <option value="ENGINEER">Mühendis (Mühendislik)</option>
                 </select>
               </div>
               <div className="text-xs text-[#a89b84]">
@@ -274,7 +274,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                 }`}
                 title="Her 4 karakter seviyesinde 1 Nitelik puanı kazanılır"
               >
-                <span>🔴 Nitelik:</span>
+                <span>Nitelik Puanı:</span>
                 <span className="text-sm">{freeAttrs}</span>
               </div>
 
@@ -286,7 +286,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                 }`}
                 title="Her karakter seviyesinde 1 Odak puanı kazanılır"
               >
-                <span>🟡 Odak:</span>
+                <span>Odak Puanı:</span>
                 <span className="text-sm">{freeFocus}</span>
               </div>
             </div>
@@ -443,7 +443,6 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-lg font-display font-bold text-[#fef08a] flex items-center gap-2">
-                    <span>⚔️</span>
                     <span>{SKILL_LABELS[selectedSkillId]}</span>
                   </h3>
                   <p className="text-xs text-[#b5a890] mt-0.5">
@@ -466,12 +465,12 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
             {/* Perk Milestone Branches */}
             <div className="flex-1 space-y-4">
               <h4 className="text-xs font-bold text-[#c6a15b] tracking-wider uppercase mb-2">
-                Açılabilir Beceri Perkleri (Her kademede 1 seçim)
+                Açılabilir Beceri Yetenekleri (Her kademede 1 seçim)
               </h4>
 
               {Object.keys(perkPairs).length === 0 ? (
                 <div className="text-xs text-[#8b8072] italic p-4 text-center">
-                  Bu beceri için henüz perk düğümü tanımlanmadı.
+                  Bu beceri için henüz yetenek düğümü tanımlanmadı.
                 </div>
               ) : (
                 Object.entries(perkPairs).map(([reqLevelStr, [perkA, perkB]]) => {
@@ -530,7 +529,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                               onClick={() => handleUnlockPerk(perkA.id)}
                               className="w-full py-1 rounded bg-[#b45309] hover:bg-[#d97706] text-white text-[11px] font-bold shadow transition"
                             >
-                              {isBActive ? 'Buna Değiştir' : 'Perk Seç'}
+                              {isBActive ? 'Buna Değiştir' : 'Yetenek Seç'}
                             </button>
                           )}
                         </div>
@@ -561,7 +560,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                               onClick={() => handleUnlockPerk(perkB.id)}
                               className="w-full py-1 rounded bg-[#b45309] hover:bg-[#d97706] text-white text-[11px] font-bold shadow transition"
                             >
-                              {isAActive ? 'Buna Değiştir' : 'Perk Seç'}
+                              {isAActive ? 'Buna Değiştir' : 'Yetenek Seç'}
                             </button>
                           )}
                         </div>

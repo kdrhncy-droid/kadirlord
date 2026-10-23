@@ -1432,7 +1432,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           Klan: <span class="font-semibold text-[#f8f0df]">${clanName}</span> · Krallık: <span class="font-semibold text-[#fde68a]">${fac.name}</span>
         </div>
         <div class="text-[9px] text-[#86efac] mt-0.5 italic">
-          Emir: ${intel.currentAction}
+          ${intel.currentAction}
         </div>
         <div class="my-1.5 border-t border-[#c6a15b]/25 pt-1 text-[10px] text-[#c6a15b] font-semibold">
           Birlik: <span class="text-[#86efac] font-mono">${intel.totalHealthy}${intel.wounded > 0 ? ` + ${intel.wounded}y` : ''}</span> <span class="text-[#a89b84] text-[9px]">(${intel.totalHealthy} Sağlam${
@@ -2116,6 +2116,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     let playerCombo = 0;
     let hudSyncTimer = 0;
 
+    let battleArenaCenterX = -18;
+    let battleArenaCenterZ = 0;
+
     function initBattleArena() {
       while (battleGroup.children.length > 0) {
         battleGroup.remove(battleGroup.children[0]);
@@ -2127,6 +2130,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       cameraTrauma = 0;
       playerStamina = 100;
       playerCombo = 0;
+
+      battleArenaCenterX = THREE.MathUtils.clamp(playerOverworldX, -220, 220);
+      battleArenaCenterZ = THREE.MathUtils.clamp(playerOverworldZ, -180, 180);
 
       const camp = stateRef.current.campaign;
       const targetLord = camp.lords.find((l) => l.id === stateRef.current.battleTargetLordId);
@@ -2159,8 +2165,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         team: 'ally',
         unitType: 'commander',
         archetype: 'CHARGER',
-        x: -18,
-        z: 14,
+        x: battleArenaCenterX,
+        z: battleArenaCenterZ + 14,
         vx: 0,
         vz: 0,
         facing: Math.PI,
@@ -2182,11 +2188,14 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       };
       battleActors.push(playerBattleActor);
 
+      // Scale player battle actors proportionally from real campaign roster (up to 28 allies)
+      const totalPlayerTroops = Math.max(1, getTotalTroops(camp.roster));
+      const allyScale = totalPlayerTroops > 28 ? 28 / totalPlayerTroops : 1;
       const allyTypes: Array<{ type: 'militia' | 'archer' | 'cavalry' | 'guard'; count: number }> = [
-        { type: 'militia', count: Math.min(4, Math.ceil(camp.roster.militia / 2)) },
-        { type: 'archer', count: Math.min(4, Math.ceil(camp.roster.archer / 2)) },
-        { type: 'cavalry', count: Math.min(3, Math.ceil(camp.roster.cavalry / 2)) },
-        { type: 'guard', count: Math.min(3, Math.ceil(camp.roster.guard / 2)) },
+        { type: 'militia', count: camp.roster.militia > 0 ? Math.max(1, Math.round(camp.roster.militia * allyScale)) : 0 },
+        { type: 'archer', count: camp.roster.archer > 0 ? Math.max(1, Math.round(camp.roster.archer * allyScale)) : 0 },
+        { type: 'cavalry', count: camp.roster.cavalry > 0 ? Math.max(1, Math.round(camp.roster.cavalry * allyScale)) : 0 },
+        { type: 'guard', count: camp.roster.guard > 0 ? Math.max(1, Math.round(camp.roster.guard * allyScale)) : 0 },
       ];
 
       let allyIdx = 0;
@@ -2202,15 +2211,15 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             isHeavy,
           });
           battleGroup.add(h.root);
-          const col = (allyIdx % 5) - 2;
-          const row = Math.floor(allyIdx / 5);
+          const col = (allyIdx % 7) - 3;
+          const row = Math.floor(allyIdx / 7);
           battleActors.push({
             id: `ally-${allyIdx}`,
             team: 'ally',
             unitType: type,
             archetype: isRanged ? 'KITER' : isMounted ? 'CHARGER' : isHeavy ? 'SHIELDED' : 'CHASER',
-            x: -18 + col * 3.0,
-            z: 17 + row * 2.8,
+            x: battleArenaCenterX + col * 2.8,
+            z: battleArenaCenterZ + 17 + row * 2.6,
             vx: 0,
             vz: 0,
             facing: Math.PI,
@@ -2235,22 +2244,42 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       });
       battleInitialAllies = allyIdx + 1;
 
+      // Build enemy roster dynamically from targetLord.roster or targetSettlement garrison/militia
+      const rawEnemyRoster = targetLord
+        ? targetLord.roster
+        : targetSettlement
+          ? {
+              militia: Math.max(4, Math.round((targetSettlement.militia || 20) * 0.4)),
+              archer: Math.max(3, Math.round(((targetSettlement.garrison || 0) + (targetSettlement.militia || 10)) * 0.25)),
+              cavalry: Math.max(1, Math.round((targetSettlement.garrison || 0) * 0.15)),
+              guard: Math.max(2, Math.round((targetSettlement.garrison || 0) * 0.25)),
+            }
+          : { militia: 5, archer: 3, cavalry: 2, guard: 1 };
+
+      const totalEnemyTroops = Math.max(1, getTotalTroops(rawEnemyRoster));
+      const enemyScale = totalEnemyTroops > 28 ? 28 / totalEnemyTroops : 1;
       const enemyArchetypes: Array<{
         unitType: 'militia' | 'archer' | 'cavalry' | 'guard';
         archetype: 'CHASER' | 'KITER' | 'SHIELDED' | 'CHARGER';
-      }> = [
-        { unitType: 'militia', archetype: 'CHASER' },
-        { unitType: 'militia', archetype: 'CHASER' },
-        { unitType: 'militia', archetype: 'CHASER' },
-        { unitType: 'guard', archetype: 'SHIELDED' },
-        { unitType: 'guard', archetype: 'SHIELDED' },
-        { unitType: 'archer', archetype: 'KITER' },
-        { unitType: 'archer', archetype: 'KITER' },
-        { unitType: 'archer', archetype: 'KITER' },
-        { unitType: 'cavalry', archetype: 'CHARGER' },
-        { unitType: 'cavalry', archetype: 'CHARGER' },
-        { unitType: 'guard', archetype: 'CHARGER' },
-      ];
+      }> = [];
+
+      const pushEnemySpec = (
+        unitType: 'militia' | 'archer' | 'cavalry' | 'guard',
+        archetype: 'CHASER' | 'KITER' | 'SHIELDED' | 'CHARGER',
+        rawCount: number,
+      ) => {
+        const scaled = rawCount > 0 ? Math.max(1, Math.round(rawCount * enemyScale)) : 0;
+        for (let i = 0; i < scaled; i++) {
+          enemyArchetypes.push({ unitType, archetype });
+        }
+      };
+
+      pushEnemySpec('militia', 'CHASER', rawEnemyRoster.militia);
+      pushEnemySpec('guard', 'SHIELDED', rawEnemyRoster.guard);
+      pushEnemySpec('archer', 'KITER', rawEnemyRoster.archer);
+      pushEnemySpec('cavalry', 'CHARGER', rawEnemyRoster.cavalry);
+      // Always include enemy commander at the end
+      enemyArchetypes.push({ unitType: 'guard', archetype: 'CHARGER' });
 
       enemyArchetypes.forEach((spec, idx) => {
         const isMounted = spec.unitType === 'cavalry';
@@ -2264,15 +2293,15 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           isCommander: idx === enemyArchetypes.length - 1,
         });
         battleGroup.add(h.root);
-        const col = (idx % 5) - 2;
-        const row = Math.floor(idx / 5);
+        const col = (idx % 7) - 3;
+        const row = Math.floor(idx / 7);
         battleActors.push({
           id: `enemy-${idx}`,
           team: 'enemy',
           unitType: spec.unitType,
           archetype: spec.archetype,
-          x: -18 + col * 3.4,
-          z: -18 - row * 3.0,
+          x: battleArenaCenterX + col * 3.0,
+          z: battleArenaCenterZ - 18 - row * 2.8,
           vx: 0,
           vz: 0,
           facing: 0,
@@ -2286,7 +2315,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           isBlocking: spec.archetype === 'SHIELDED',
           attackPhase: 'IDLE',
           attackTimer: 0,
-          cooldownTimer: 0.4 + idx * 0.15,
+          cooldownTimer: 0.4 + idx * 0.12,
           hitFlashTimer: 0,
           koTimer: 0,
           spliced: false,
@@ -2294,7 +2323,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         });
       });
       battleInitialEnemies = enemyArchetypes.length;
-      sound.playWarhorn();
     }
 
     // Main 60Hz Loop
@@ -3515,8 +3543,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
                     }
                   } else if (order === 'SHIELD_WALL') {
                     actor.isBlocking = !actor.isRanged;
-                    const formX = -18 + ((i % 6) - 2.5) * 2.1;
-                    const formZ = 6;
+                    const formX = battleArenaCenterX + ((i % 6) - 2.5) * 2.1;
+                    const formZ = battleArenaCenterZ + 6;
                     const fdx = formX - actor.x;
                     const fdz = formZ - actor.z;
                     const fDist = Math.hypot(fdx, fdz);
@@ -3724,8 +3752,16 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
             actor.handles.leftArm.rotation.y = actor.isBlocking ? 0.55 : 0;
 
-            actor.x = THREE.MathUtils.clamp(actor.x + actor.vx * simDt, -65, 35);
-            actor.z = THREE.MathUtils.clamp(actor.z + actor.vz * simDt, -55, 55);
+            actor.x = THREE.MathUtils.clamp(
+              actor.x + actor.vx * simDt,
+              battleArenaCenterX - 55,
+              battleArenaCenterX + 55,
+            );
+            actor.z = THREE.MathUtils.clamp(
+              actor.z + actor.vz * simDt,
+              battleArenaCenterZ - 55,
+              battleArenaCenterZ + 55,
+            );
 
             for (let j = i + 1; j < battleActors.length; j++) {
               const b = battleActors[j];
@@ -3789,12 +3825,18 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             battleEnded = false;
             const enemiesAlive = battleActors.filter((a) => a.team === 'enemy' && a.hp > 0).length;
             const victory = enemiesAlive === 0;
-            const alliesLost = battleActors.filter(
+            const fallenAllies = battleActors.filter(
               (a) => a.team === 'ally' && a.id !== 'player-commander' && a.hp <= 0,
-            ).length;
+            );
+            const lostByType = {
+              militia: fallenAllies.filter((a) => a.unitType === 'militia').length,
+              archer: fallenAllies.filter((a) => a.unitType === 'archer').length,
+              cavalry: fallenAllies.filter((a) => a.unitType === 'cavalry').length,
+              guard: fallenAllies.filter((a) => a.unitType === 'guard').length,
+            };
             stateRef.current.onBattleComplete(
               victory,
-              { militia: Math.ceil(alliesLost * 0.5), archer: Math.floor(alliesLost * 0.5) },
+              lostByType,
               battleInitialEnemies - enemiesAlive,
             );
           }

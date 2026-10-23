@@ -88,6 +88,8 @@ export function recruitQuote(
 
   let blockedReason: string | null = null;
   if (!gate.allowed) blockedReason = gate.reason ?? null;
+  else if (settlement.lastRecruitDay !== undefined && settlement.lastRecruitDay === campaign.day)
+    blockedReason = 'Bu yerleşimden bugün zaten asker topladınız. Yeni gönüllüler için 1 gün bekleyin.';
   else if (available <= 0) blockedReason = 'Yerleşkede bu birlikten gönüllü kalmadı.';
   else if (room <= 0) blockedReason = 'Parti kapasitesi dolu — önce asker terhis et veya klan kademeni yükselt.';
   else if (campaign.gold < unitCost) blockedReason = 'Yetersiz dinar.';
@@ -169,7 +171,13 @@ export function recruitBatch(
 
   // Altın: `recruitUnit` her asker için **taban** ücreti düşürür; ilişki
   // indirimi/zammı uygulanmış gerçek tutarı yazıyoruz (tek kaynak: totalCost).
-  state = { ...state, gold: Math.max(0, campaign.gold - totalCost) };
+  state = {
+    ...state,
+    gold: Math.max(0, campaign.gold - totalCost),
+    settlements: state.settlements.map((s) =>
+      s.id === settlementId ? { ...s, lastRecruitDay: state.day } : s,
+    ),
+  };
 
   return { success: true, nextState: state, recruited, totalCost };
 }
@@ -196,7 +204,7 @@ export function refreshRecruitPools(settlements: Settlement[], day: number): Set
       const ceiling = Math.max(cap, current);
       nextPool[unitId] = Math.min(ceiling, current + step);
     }
-    return { ...s, recruitPool: nextPool };
+    return { ...s, recruitPool: nextPool, recruitedSlotKeys: undefined };
   });
 }
 

@@ -383,7 +383,10 @@ interface SettlementModalProps {
   campaign: CampaignState;
   onClose: () => void;
   onRecruit: (settlementId: string, unitId: UnitTierId, amount: number) => string | null;
-  onRecruitBatch?: (settlementId: string, recruits: Array<{ troopId: string; cost: number }>) => string | null;
+  onRecruitBatch?: (
+    settlementId: string,
+    recruits: Array<{ troopId: string; cost: number; slotKey?: string }>,
+  ) => string | null;
   onBuyFood: (settlementId: string, packs: number) => string | null;
   onStartSiegeBattle: (settlement: Settlement) => void;
   onHireMercenaries?: (settlementId: string) => string | null;
@@ -1171,8 +1174,9 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
               <p className="text-xs text-[#dfd3bc] leading-relaxed">
                 {settlement.description}{' '}
                 <span className="text-[#a89b84]">
-                  ({factionInfo.name} sancağı altında; garnizonda {settlement.garrison} muhafız,
-                  ambarda {settlement.foodStock} sandık erzak bulunuyor.)
+                  {isVillage
+                    ? `(${factionInfo.name} sancağı altında; milis kıtasında ${dailyStats.militia.value} köylü muhafız, ambarda ${settlement.foodStock} sandık erzak bulunuyor.)`
+                    : `(${factionInfo.name} sancağı altında; garnizonda ${settlement.garrison} muhafız, ambarda ${settlement.foodStock} sandık erzak bulunuyor.)`}
                 </span>
               </p>
 
@@ -1385,7 +1389,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   </svg>
                   <span className="font-semibold">Asker topla</span>
                 </span>
-                <span className="text-[10px] font-mono text-[#34d399]">6 Slot</span>
+                <span className="text-[10px] font-mono text-[#34d399]">Gönüllüler</span>
               </button>
 
               {/* TİCARET / ÜRÜN SATIN AL */}
@@ -1878,7 +1882,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
               )}
 
               {/* GARRISON TAB */}
-              {activeTab === 'garrison' && (
+              {activeTab === 'garrison' && !isVillage && (
                 <div className="space-y-2">
                   {(Object.keys(UNIT_DEFINITIONS) as UnitTierId[]).map((unitId) => {
                     const def = UNIT_DEFINITIONS[unitId];

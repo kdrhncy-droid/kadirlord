@@ -5,6 +5,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createInitialCampaignState } from '../src/game/rules.ts';
 import { SettlementModal } from '../src/components/SettlementModal.tsx';
+import { BannerlordRecruitmentModal } from '../src/components/BannerlordRecruitmentModal.tsx';
 import { readFileSync } from 'node:fs';
 
 const campaign = createInitialCampaignState('Komutan Demirhan', 'noble');
@@ -58,6 +59,57 @@ ok(src.includes('blockedReason'), 'engel gerekçesi gösteriliyor');
 
 const villageHtml = render(village);
 ok(villageHtml.includes(village.name), 'köy modalı render ediliyor');
+
+// BannerlordRecruitmentModal: köylerde rastgele/farklı sayıda asker ve toplanan slotların boşalması
+const villagesSample = campaign.settlements.filter((s) => s.type === 'VILLAGE').slice(0, 12);
+const slotCountsPerVillage = villagesSample.map((v) => {
+  const mHtml = renderToStaticMarkup(
+    React.createElement(BannerlordRecruitmentModal, {
+      settlement: v,
+      campaign,
+      onCommitRecruits: () => {},
+      onClose: () => {},
+    }),
+  );
+  return (mHtml.match(/data-testid="recruitment-slot-/g) || []).length;
+});
+const distinctCounts = new Set(slotCountsPerVillage);
+ok(
+  distinctCounts.size >= 2,
+  `köyler farklı sayıda gönüllü asker çıkarıyor (${Array.from(distinctCounts).join(', ')})`,
+);
+
+// Toplanan slotların ikinci açılışta Boş görünmesi
+const testVillage = villagesSample[0];
+const firstModalHtml = renderToStaticMarkup(
+  React.createElement(BannerlordRecruitmentModal, {
+    settlement: testVillage,
+    campaign,
+    onCommitRecruits: () => {},
+    onClose: () => {},
+  }),
+);
+const slotMatches = [...firstModalHtml.matchAll(/data-testid="recruitment-slot-([^"]+)"/g)].map((m) => {
+  const raw = m[1];
+  const lastDash = raw.lastIndexOf('-');
+  return `${raw.slice(0, lastDash)}_${raw.slice(lastDash + 1)}`;
+});
+ok(slotMatches.length > 0, `köyde başlangıçta açık gönüllü slotu var (${slotMatches.length})`);
+
+const emptiedVillage = {
+  ...testVillage,
+  recruitedSlotKeys: slotMatches,
+};
+const afterRecruitHtml = renderToStaticMarkup(
+  React.createElement(BannerlordRecruitmentModal, {
+    settlement: emptiedVillage,
+    campaign,
+    onCommitRecruits: () => {},
+    onClose: () => {},
+  }),
+);
+const remainingSlots = (afterRecruitHtml.match(/data-testid="recruitment-slot-/g) || []).length;
+ok(remainingSlots === 0, 'asker toplandıktan sonra tekrar açıldığında alınan tüm slotlar boşalıyor');
 
 console.log(fails === 0 ? '\n✅ ASKER TOPLAMA ARAYÜZÜ DOĞRU' : `\n❌ ${fails} hata`);
 process.exit(fails === 0 ? 0 : 1);

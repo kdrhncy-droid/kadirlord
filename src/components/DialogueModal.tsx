@@ -79,6 +79,8 @@ interface DialogueModalProps {
   onPlayerSurrender?: (lord: LordAgent) => void;
   /** Detaylı siyasi divan / ikna penceresini açmak isterse. */
   onOpenDiplomacyCouncil?: (lord: LordAgent) => void;
+  /** Lordla daha önce tanışıldı mı? False ise Bannerlord ilk tanışma diyaloğu ('intro-root') başlar. */
+  hasMet?: boolean;
 }
 
 export const DialogueModal: React.FC<DialogueModalProps> = ({
@@ -101,6 +103,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   onDemandSurrender,
   onPlayerSurrender,
   onOpenDiplomacyCouncil,
+  hasMet = true,
 }) => {
   const questLog = useMemo(() => buildQuestLog(campaign), [campaign]);
 
@@ -112,10 +115,13 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   const isForced = forcedEncounter ?? false;
   const activeScenario = encounterScenario ?? encounterInfo?.scenario;
 
-  const startRelation = lord?.relation ?? 8;
+  const startRelation = lord?.relation ?? 0;
   const [relation, setRelation] = useState(startRelation);
   const [gold, setGold] = useState(campaign.gold);
-  const [nodeId, setNodeId] = useState<string>('root');
+  const isHostileLord = Boolean(lord && (lord.isAtWarWithPlayer || lord.faction === 'bandits'));
+  const initialRootId =
+    lord && !isHostileLord && !isForced && hasMet === false ? 'intro-root' : 'root';
+  const [nodeId, setNodeId] = useState<string>(initialRootId);
   const [lastOutcome, setLastOutcome] = useState<string | null>(null);
   const [speaking, setSpeaking] = useState(true);
   const [gestureKey, setGestureKey] = useState(0);
@@ -213,8 +219,6 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
     setBarterOpen(false);
   };
 
-  const isHostileLord = Boolean(lord && (lord.isAtWarWithPlayer || lord.faction === 'bandits'));
-
   const graph: DialogueGraph = useMemo(
     () =>
       buildDialogue({
@@ -225,6 +229,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
         atWar: isHostileLord,
         forcedEncounter: isForced,
         scenario: activeScenario,
+        hasMet,
         quest: questLog.active.find(
           (q) =>
             (lord && q.giverLordId === lord.id) ||
@@ -241,6 +246,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
       questLog.active.length,
       isForced,
       activeScenario,
+      hasMet,
     ],
   );
 
@@ -260,7 +266,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   useEffect(() => {
     sound.unlock();
     sound.playDialogueOpen();
-    if (lord?.id) {
+    if (lord?.id && (hasMet || isHostileLord || isForced)) {
       onMeetHero?.(lord.id);
     }
     return () => sound.playDialogueClose();
@@ -298,6 +304,17 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
       case 'PLAYER_SURRENDER':
         onPlayerSurrender?.(lord);
         return true;
+      case 'MEET_HERO':
+        onMeetHero?.(lord.id);
+        return false;
+      case 'OPEN_BARTER':
+        setBarterOpen(true);
+        if (action.presetMarriage) setRequestMarriageAlliance(true);
+        if (action.presetPeace) setRequestPeace(true);
+        return true;
+      case 'OPEN_COUNCIL':
+        onOpenDiplomacyCouncil?.(lord);
+        return true;
       default:
         return false;
     }
@@ -307,11 +324,18 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
     setGestureKey((k) => k + 1);
     const res = applyOption(graph, node.id, optionId, { relation, gold });
     const delta = res.relation - relation;
+    const goldDelta = res.gold - gold;
     sound.playDialogueChoice(delta > 0 ? 'good' : delta < 0 ? 'bad' : 'neutral');
     setRelation(res.relation);
     setGold(res.gold);
-    if (res.relation !== relation && lord && onRelationChange) {
-      onRelationChange(lord.id, res.relation - relation);
+    if (goldDelta !== 0 && lord && onCompleteBarter) {
+      onCompleteBarter({
+        lordId: lord.id,
+        goldDelta,
+        relationDelta: delta,
+      });
+    } else if (delta !== 0 && lord && onRelationChange) {
+      onRelationChange(lord.id, delta);
     }
     if (res.acceptedQuestId) {
       sound.playAgreement();
@@ -320,8 +344,8 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
       window.setTimeout(() => setLastOutcome(null), 2500);
     }
     if (res.encounterAction) {
-      handleEncounterAction(res.encounterAction);
-      return;
+      const handled = handleEncounterAction(res.encounterAction);
+      if (handled) return;
     }
     if (res.openTrade && onOpenTrade) {
       onOpenTrade();

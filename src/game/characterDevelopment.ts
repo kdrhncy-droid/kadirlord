@@ -70,12 +70,12 @@ export const SKILL_LABELS: Record<BannerlordSkillId, string> = {
 };
 
 export const ATTRIBUTE_LABELS: Record<AttributeId, { name: string; desc: string }> = {
-  VIGOR: { name: 'Zindelik (Vigor)', desc: 'Yakın dövüş gücü ve silah hızı' },
-  CONTROL: { name: 'Kontrol (Control)', desc: 'Menzilli silah isabeti ve kuvveti' },
-  ENDURANCE: { name: 'Dayanıklılık (Endurance)', desc: 'Fiziksel direnç, binek kontrolü ve zanaat' },
-  CUNNING: { name: 'Kurnazlık (Cunning)', desc: 'Hile, önsezi ve askeri strateji' },
-  SOCIAL: { name: 'Sosyal (Social)', desc: 'İkna kabiliyeti, liderlik ve ticaret' },
-  INTELLIGENCE: { name: 'Zeka (Intelligence)', desc: 'Lojistik, cerrahi tıp ve kuşatma mühendisliği' },
+  VIGOR: { name: 'Zindelik', desc: 'Yakın dövüş gücü ve silah savurma hızı' },
+  CONTROL: { name: 'Kontrol', desc: 'Menzilli silah isabeti ve germe kuvveti' },
+  ENDURANCE: { name: 'Dayanıklılık', desc: 'Fiziksel direnç, binek kontrolü ve zanaat' },
+  CUNNING: { name: 'Kurnazlık', desc: 'Hile, iz sürme önsezisi ve askeri strateji' },
+  SOCIAL: { name: 'Sosyallik', desc: 'İkna kabiliyeti, liderlik ve ticaret' },
+  INTELLIGENCE: { name: 'Zeka', desc: 'Lojistik idare, cerrahi tıp ve kuşatma mühendisliği' },
 };
 
 /**

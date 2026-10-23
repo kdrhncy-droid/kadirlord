@@ -18,8 +18,15 @@ import {
   calculateSacrificeEscape,
   classifyEncounterScenario,
 } from './encounter.ts';
+import { deriveClan, deriveOccupation, nearestSettlement } from './heroes.ts';
 import type { Quest } from './quests.ts';
-import type { CampaignState, LordAgent, Settlement } from './rules.ts';
+import {
+  type CampaignState,
+  FACTION_INFO,
+  type LordAgent,
+  type Settlement,
+  calculateClanTier,
+} from './rules.ts';
 
 export type DialogueNodeId = string;
 
@@ -40,10 +47,14 @@ export interface DialogueOption {
 export type DialogueEffect =
   | { kind: 'NONE' }
   | { kind: 'CLOSE' }
+  | { kind: 'MEET_HERO' }
   | { kind: 'RELATION'; delta: number; reason: string }
   | { kind: 'GOLD'; delta: number; reason: string }
+  | { kind: 'RELATION_AND_GOLD'; relationDelta: number; goldDelta: number; reason: string }
   | { kind: 'ACCEPT_QUEST'; questId: string }
   | { kind: 'OPEN_TRADE' }
+  | { kind: 'OPEN_BARTER'; presetMarriage?: boolean; presetPeace?: boolean }
+  | { kind: 'OPEN_COUNCIL' }
   | { kind: 'START_BATTLE' }
   | { kind: 'AUTO_RESOLVE' }
   | { kind: 'SACRIFICE_ESCAPE' }
@@ -86,6 +97,8 @@ export interface DialogueContext {
   quest?: Quest;
   /** Muhatap pazaryeri olan bir yerleşkede mi? */
   canTrade?: boolean;
+  /** Oyuncu bu lord/kral/leydi ile daha önce tanıştı mı? (False ise ilk tanışma diyaloğu açılır) */
+  hasMet?: boolean;
   /** Haritada düşman/haydut tarafından yakalandı mı veya düşmanı yakaladı mı? */
   forcedEncounter?: boolean;
   scenario?: EncounterScenario;
@@ -303,7 +316,7 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
       },
       {
         id: 'war-parley',
-        text: 'Bir ateşkes konuşalım.',
+        text: 'Bir ateşkes ve barış konuşalım.',
         hint: 'İlişki +1 (ikna gerekir)',
         effect: {
           kind: 'PERSUADE',
@@ -311,6 +324,12 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
           successNext: 'parley-ok',
           failNext: 'parley-fail',
         },
+      },
+      {
+        id: 'war-barter-peace',
+        text: 'Aramızdaki savaşı bitirecek bir anlaşma teklif ediyorum. (Takas Masası)',
+        hint: 'Barış antlaşması için takas ekranını aç',
+        effect: { kind: 'OPEN_BARTER', presetPeace: true },
       },
     ];
 
@@ -391,17 +410,77 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
     };
   }
 
-  /* ── barış zamanı: karşılama ── */
+  /* ── BARIŞ ZAMANI: GERÇEK BANNERLORD LORD / KRAL / LEYDİ / MUHTAR DİYALOĞU ── */
+  const occupation = ctx.lord ? deriveOccupation(ctx.lord) : 'HEADMAN';
+  const isRuler = occupation === 'RULER';
+  const isLady = occupation === 'LADY';
+  const factionId = ctx.lord?.faction ?? ctx.settlement?.faction ?? 'empire';
+  const factionName = FACTION_INFO[factionId]?.name ?? 'Kalradya';
+  const playerName = ctx.campaign.playerName || 'Komutan';
+  const lordIdx = ctx.lord
+    ? Math.max(0, ctx.campaign.lords.findIndex((l) => l.id === ctx.lord!.id))
+    : 0;
+  const clanInfo = ctx.lord ? deriveClan(ctx.lord, lordIdx) : { clanId: 'clan-local', clanName: 'Yerel Eşraf' };
+  const playerClan = calculateClanTier(ctx.campaign.renown);
+  const nearSet = ctx.lord
+    ? nearestSettlement(ctx.campaign.settlements, ctx.lord.x, ctx.lord.z)
+    : ctx.settlement ?? ctx.campaign.settlements[0];
+
+  const greetingLine = isRuler
+    ? `${name}: "${factionName} tahtı ve sancağı adına seni dinliyorum, ${playerName}. Huzuruma ne getirdin?"\n${relationTone(relation)}`
+    : isLady
+      ? `${name}: "${clanInfo.clanName} adına sizi selamlıyorum, ${playerName}. Söyleyin, size nasıl yardımcı olabilirim?"\n${relationTone(relation)}`
+      : ctx.lord
+        ? `${name}: "Yolun açık olsun ${playerName}. ${factionName} sınırlarında sancağını görmek güzel. Ne konuşmak istiyorsun?"\n${relationTone(relation)}`
+        : `${name}: "Sancak senin, yol senin. Ne getirdin?"\n${relationTone(relation)}`;
+
   nodes.root = {
     id: 'root',
     speaker: 'NPC',
-    text: `${name}: "Sancak senin, yol senin. Ne getirdin?"\n${relationTone(relation)}`,
+    text: greetingLine,
     options: [],
   };
 
   const rootOptions = nodes.root.options;
 
-  /* Görev seçeneği */
+  /* 0. İlk Tanışma Akışı (Yalnızca daha önce tanışılmamış Lord/Kral/Leydi için) */
+  const isFirstMeeting = Boolean(ctx.lord && ctx.hasMet === false);
+  if (isFirstMeeting && ctx.lord) {
+    const introText = isRuler
+      ? `${name}: "Sancağını daha önce divanımda görmedim yabancı. Ben ${factionName} hükümdarı ${title} ${name}. Sen kimsin ve topraklarımda ne arıyorsun?"`
+      : isLady
+        ? `${name}: "Daha önce tanıştırıldığımızı sanmıyorum. Ben ${clanInfo.clanName} mensubu ${title} ${name}. Sizin adınız ve sancağınız nedir?"`
+        : `${name}: "Dur bakalım yolcu, simanı daha önce bu sınır boylarında görmedim. Ben ${clanInfo.clanName}'ndan ${title} ${name}. Sen kimsin?"`;
+
+    nodes['intro-root'] = {
+      id: 'intro-root',
+      speaker: 'NPC',
+      text: introText,
+      options: [
+        {
+          id: 'intro-respect',
+          text: `Benim adım ${playerName}. Sizinle tanışmak bir onurdur, ${title} ${name}.`,
+          hint: 'Saygılı tanışma · Ansiklopedi kaydı açılır',
+          effect: { kind: 'MEET_HERO' },
+          next: 'root',
+        },
+        {
+          id: 'intro-proud',
+          text: `Ben ${playerName}, kendi sancağımın komutanıyım. Adımı yakında sıkça duyacaksınız.`,
+          hint: 'Kararlı tanışma · Ansiklopedi kaydı açılır',
+          effect: { kind: 'MEET_HERO' },
+          next: 'root',
+        },
+        {
+          id: 'intro-leave',
+          text: 'Yalnızca yoldan geçiyordum, vaktinizi almayayım. (Vedalaş)',
+          effect: { kind: 'CLOSE' },
+        },
+      ],
+    };
+  }
+
+  /* 1. Aktif Görev Seçeneği (ctx.quest varsa kökte gösterilir) */
   if (ctx.quest) {
     rootOptions.push({
       id: 'quest-talk',
@@ -472,7 +551,409 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
     };
   }
 
-  /* Ticaret söylentisi */
+  /* 2. BANNERLORD LORD / KRAL / LEYDİ ÖZEL DALLARI */
+  if (ctx.lord) {
+    // 2A. "Konuşmamız gereken bir şey var." (Discuss Hub: Teklif/Takas, Vasallık, Paralı Askerlik, Evlilik, Divan)
+    rootOptions.push({
+      id: 'discuss-hub',
+      text: 'Konuşmamız gereken bir şey var.',
+      hint: isRuler
+        ? 'Vasallık yemini, paralı askerlik, evlilik ittifakı veya takas'
+        : isLady
+          ? 'Kur yapma, evlilik ittifakı veya takas teklifi'
+          : 'Takas teklifi, siyasi ittifak, paralı askerlik veya evlilik',
+      next: 'discuss-menu',
+    });
+
+    const discussOptions: DialogueOption[] = [
+      {
+        id: 'discuss-barter',
+        text: 'İkimizin de yararına olacak bir teklifim var. (Takas Yap)',
+        hint: 'Bannerlord çift sütunlu takas ve pazarlık masasını aç',
+        effect: { kind: 'OPEN_BARTER' },
+      },
+      {
+        id: 'discuss-fealty',
+        text: isRuler
+          ? `Kılıcımı ve sancağımı ${factionName} hizmetine sunmak, size bağlılık yemini etmek istiyorum.`
+          : `${factionName} sancağı altına girmek ve hükümdarınıza bağlılık yemini etmek istiyorum.`,
+        hint: `Klan Kademesi 2 gerekir (Mevcut: Kademe ${playerClan.tier})`,
+        next: 'discuss-fealty-node',
+      },
+      {
+        id: 'discuss-mercenary',
+        text: `Sancağımı ${factionName} ordularına paralı asker olarak kiralamak istiyorum.`,
+        hint: 'Sefer sözleşmesi · +60 Dinar avans ve +2 İlişki',
+        next: 'discuss-mercenary-node',
+      },
+    ];
+
+    if (isLady) {
+      discussOptions.push({
+        id: 'discuss-courtship',
+        text: 'Sizinle geleceğimiz hakkında konuşmak ve kalbinize talip olmak istiyorum.',
+        hint: 'Kur yapma & ikna denemesi (+İlişki)',
+        effect: {
+          kind: 'PERSUADE',
+          difficulty: 40,
+          successNext: 'courtship-ok',
+          failNext: 'courtship-fail',
+        },
+      });
+      nodes['courtship-ok'] = {
+        id: 'courtship-ok',
+        speaker: 'NPC',
+        text: `${name}: "Sözleriniz hem cesur hem de asilce, ${playerName}. Hanedanlarımızın birleşmesi Kalradya'da büyük yankı uyandıracaktır."`,
+        options: [
+          {
+            id: 'courtship-barter',
+            text: 'Hanedan başlık ve çeyiz şartlarını konuşalım. (Takas Masası)',
+            effect: { kind: 'OPEN_BARTER', presetMarriage: true },
+          },
+          {
+            id: 'courtship-back',
+            text: 'Bu güzel sözlerinizi unutmayacağım.',
+            hint: 'İlişki +4',
+            effect: { kind: 'RELATION', delta: 4, reason: 'Kur yapma başarısı' },
+            next: 'root',
+          },
+        ],
+      };
+      nodes['courtship-fail'] = {
+        id: 'courtship-fail',
+        speaker: 'NPC',
+        text: `${name}: "Henüz birbirimizi yeterince tanımıyoruz ${playerName}. Önce savaş meydanlarında ve divanda adınızı kanıtlayın."`,
+        options: [
+          {
+            id: 'courtship-fail-back',
+            text: 'Haklısınız, sabırla bekleyeceğim.',
+            next: 'root',
+          },
+        ],
+      };
+    }
+
+    discussOptions.push(
+      {
+        id: 'discuss-marriage',
+        text: 'Ailelerimiz arasında bir evlilik ittifakı kurmayı teklif ediyorum.',
+        hint: 'Hanedan evliliği ve çeyiz pazarlığı',
+        next: 'discuss-marriage-node',
+      },
+      {
+        id: 'discuss-council',
+        text: 'Siyasi divan müzakeresine geçelim. (4 Aşamalı İkna & Divan)',
+        hint: 'Detaylı siyasi müzakere ekranını aç',
+        effect: { kind: 'OPEN_COUNCIL' },
+      },
+      {
+        id: 'discuss-back',
+        text: 'Başka bir konudan bahsedelim.',
+        next: 'root',
+      },
+    );
+
+    nodes['discuss-menu'] = {
+      id: 'discuss-menu',
+      speaker: 'NPC',
+      text: `${name}: "Seni dinliyorum ${playerName}. Aklındaki mesele nedir?"`,
+      options: discussOptions,
+    };
+
+    nodes['discuss-fealty-node'] = {
+      id: 'discuss-fealty-node',
+      speaker: 'NPC',
+      text:
+        playerClan.tier >= 2
+          ? isRuler
+            ? `${name}: "Sancağının şöhreti (${ctx.campaign.renown} Nam, Kademe ${playerClan.tier}) kulağıma kadar geldi ${playerName}. Kılıcını düşmanlarımıza karşı çekmeye ant içersen seni ${factionName} derebeyi olarak kabul ederim!"`
+            : `${name}: "Şöhretin vasallık için yeterli ${playerName}. Hükümdarımızın sancağı altında omuz omuza çarpışmaktan onur duyarız."`
+          : `${name}: "Cesaretini takdir ediyorum ${playerName}, ancak Bannerlord geleneklerine göre vasallık yemini edebilmek için klanının en az Kademe 2 (150 Nam) seviyesine ulaşması gerekir. Şu anki şöhretin ${ctx.campaign.renown} Nam (Kademe ${playerClan.tier})."`,
+      options:
+        playerClan.tier >= 2
+          ? [
+              {
+                id: 'fealty-swear',
+                text: 'Kılıcım ve onurum üzerine bağlılık yemini ediyorum!',
+                hint: 'İlişki +5 · Siyasi İttifak',
+                effect: { kind: 'RELATION', delta: 5, reason: 'Bağlılık yemini' },
+                next: 'root',
+              },
+              {
+                id: 'fealty-back',
+                text: 'Kararımı vermeden önce biraz daha düşüneyim.',
+                next: 'root',
+              },
+            ]
+          : [
+              {
+                id: 'fealty-mercenary-instead',
+                text: 'O halde şimdilik paralı asker olarak hizmet edeyim.',
+                next: 'discuss-mercenary-node',
+              },
+              {
+                id: 'fealty-back',
+                text: 'Anlaşıldı, şöhretimi artırdığımda tekrar geleceğim.',
+                next: 'root',
+              },
+            ],
+    };
+
+    nodes['discuss-mercenary-node'] = {
+      id: 'discuss-mercenary-node',
+      speaker: 'NPC',
+      text: `${name}: "${factionName} ordularının her zaman eli kılıç tutan paralı bölük komutanlarına ihtiyacı vardır. Kazanacağın her muharebe ve esir için günlük sancak akçesi alırsın."`,
+      options: [
+        {
+          id: 'mercenary-sign',
+          text: 'Sözleşmeyi kabul ediyorum, kılıcım hizmetinizdedir.',
+          hint: '+60 dinar sözleşme avansı · İlişki +2',
+          effect: {
+            kind: 'RELATION_AND_GOLD',
+            relationDelta: 2,
+            goldDelta: 60,
+            reason: 'Paralı asker sözleşmesi',
+          },
+          next: 'mercenary-signed',
+        },
+        {
+          id: 'mercenary-back',
+          text: 'Şimdilik bağımsız kalmayı tercih ediyorum.',
+          next: 'root',
+        },
+      ],
+    };
+
+    nodes['mercenary-signed'] = {
+      id: 'mercenary-signed',
+      speaker: 'NPC',
+      text: `${name}: "Güzel! Al bakalım, bu 60 dinar ilk sefer avansındır. Düşman sancaklarını devirdikçe hazinemizden payını alacaksın."`,
+      options: [{ id: 'merc-done', text: 'Başka bir konuya geçelim.', next: 'root' }],
+    };
+
+    nodes['discuss-marriage-node'] = {
+      id: 'discuss-marriage-node',
+      speaker: 'NPC',
+      text: `${name}: "Evlilik, Kalradya'da iki hanedanı kan bağıyla birbirine bağlayan en ciddi antlaşmadır. Çeyiz ve başlık şartlarını takas masasında resmiyete dökebiliriz."`,
+      options: [
+        {
+          id: 'marriage-open-barter',
+          text: 'Evlilik ittifakı şartlarını masada konuşalım. (Takas Masası)',
+          effect: { kind: 'OPEN_BARTER', presetMarriage: true },
+        },
+        {
+          id: 'marriage-back',
+          text: 'Daha sonra tekrar konuşalım.',
+          next: 'root',
+        },
+      ],
+    };
+
+    // 2B. "Size bir sorum var." (Question Hub: Birini Arıyorum / Konum Sorma, Savaş Durumu, Hanedan Bilgisi)
+    rootOptions.push({
+      id: 'ask-question-hub',
+      text: 'Size bir sorum var.',
+      hint: 'Lordların/leydilerin yerini sor, savaş ve krallık durumunu öğren',
+      next: 'question-menu',
+    });
+
+    const fellowLords = ctx.campaign.lords
+      .filter((l) => l.faction === ctx.lord!.faction && l.id !== ctx.lord!.id)
+      .slice(0, 4);
+    const locationLines =
+      fellowLords.length > 0
+        ? fellowLords
+            .map((fl) => {
+              const ns = nearestSettlement(ctx.campaign.settlements, fl.x, fl.z);
+              return `• ${fl.title} ${fl.name}: Son olarak ${ns ? ns.name : 'sınır'} yakınlarında görüldü (${fl.currentAction}).`;
+            })
+            .join('\n')
+        : '• Tüm sancakbeylerimiz şu an kendi tımarlarında devriye geziyor.';
+
+    const activeWars = (ctx.campaign.world?.wars ?? []).filter(
+      (w) => w.a === ctx.lord!.faction || w.b === ctx.lord!.faction,
+    );
+    const warSummaryText =
+      activeWars.length > 0
+        ? activeWars
+            .map((w) => {
+              const enemyFac = w.a === ctx.lord!.faction ? w.b : w.a;
+              const enemyName = FACTION_INFO[enemyFac]?.name ?? enemyFac;
+              const adv =
+                (w.a === ctx.lord!.faction ? w.score : -w.score) >= 0
+                  ? 'Ordularımız cephede üstünlüğü elinde tutuyor'
+                  : 'Sınır hatlarımızda çetin çarpışmalar yaşanıyor';
+              return `• ${enemyName} ile savaş hâlindeyiz (${adv}).`;
+            })
+            .join('\n')
+        : `• Şu an ${factionName} sınırlarında resmi bir meydan savaşı yok; garnizonlarımızı tahkim ediyoruz.`;
+
+    nodes['question-menu'] = {
+      id: 'question-menu',
+      speaker: 'NPC',
+      text: `${name}: "Sor bakalım ${playerName}, ne öğrenmek istiyorsun?"`,
+      options: [
+        {
+          id: 'q-locate',
+          text: 'Birini arıyorum, krallığınızın soylularının nerede olduğunu biliyor musunuz?',
+          hint: 'Lord, kral ve leydilerin güncel konumlarını öğren',
+          next: 'question-locate',
+        },
+        {
+          id: 'q-politics',
+          text: 'Savaşlar ve Kalradya siyaseti nasıl gidiyor?',
+          hint: 'Aktif savaşlar ve cephe durumu',
+          next: 'question-politics',
+        },
+        {
+          id: 'q-lore',
+          text: `Bana ${clanInfo.clanName} ve görevleriniz hakkında bilgi verin.`,
+          hint: 'Kişilik ve hanedan geçmişi',
+          next: 'question-lore',
+        },
+        {
+          id: 'q-back',
+          text: 'Başka bir konudan bahsedelim.',
+          next: 'root',
+        },
+      ],
+    };
+
+    nodes['question-locate'] = {
+      id: 'question-locate',
+      speaker: 'NPC',
+      text: `${name}: "Ulaklarımızdan gelen son raporlara göre sancakbeylerimiz ve leydilerimiz şu bölgelerde bulunuyor:\n${locationLines}"`,
+      options: [
+        {
+          id: 'q-locate-back',
+          text: 'Bilgi için teşekkür ederim. Başka bir sorum var.',
+          next: 'question-menu',
+        },
+        {
+          id: 'q-locate-root',
+          text: 'Anlaşıldı, ana konulara dönelim.',
+          next: 'root',
+        },
+      ],
+    };
+
+    nodes['question-politics'] = {
+      id: 'question-politics',
+      speaker: 'NPC',
+      text: `${name}: "${factionName} divanındaki son stratejik durum şöyle:\n${warSummaryText}"`,
+      options: [
+        {
+          id: 'q-politics-back',
+          text: 'Başka bir sorum olacak.',
+          next: 'question-menu',
+        },
+        {
+          id: 'q-politics-root',
+          text: 'Teşekkürler, başka bir konuya geçelim.',
+          next: 'root',
+        },
+      ],
+    };
+
+    nodes['question-lore'] = {
+      id: 'question-lore',
+      speaker: 'NPC',
+      text: `${name}: "Ben ${clanInfo.clanName}'ndan ${title} ${name}. ${ctx.lord.personality}. Şu sıralar ${nearSet?.name ?? 'sınır'} bölgesinde ${ctx.lord.currentAction.toLowerCase()}."`,
+      options: [
+        {
+          id: 'q-lore-back',
+          text: 'Başka bir sorum var.',
+          next: 'question-menu',
+        },
+        {
+          id: 'q-lore-root',
+          text: 'Memnun oldum, başka bir konuya geçelim.',
+          next: 'root',
+        },
+      ],
+    };
+
+    // 2C. "Yapabileceğim bir görev var mı?" (Soylu / Kral / Leydi Görevleri)
+    rootOptions.push({
+      id: 'noble-task-hub',
+      text: 'Yapabileceğim bir görev var mı?',
+      hint: 'Lord, kral veya leydiden yeni görev iste',
+      next: 'noble-quest-menu',
+    });
+
+    const dynamicQuestId = ctx.quest?.id ?? `noble-quest-${ctx.lord.id}-day-${ctx.campaign.day}`;
+    const targetSetName = nearSet?.name ?? 'Sınır Kalesi';
+
+    nodes['noble-quest-menu'] = {
+      id: 'noble-quest-menu',
+      speaker: 'NPC',
+      text: `${name}: "Doğrusu ${playerName}, ${targetSetName} çevresinde sancağımızın desteğe ihtiyaç duyduğu birkaç acil mesele var. Hangisini üstlenebilirsin?"`,
+      options: [
+        {
+          id: 'noble-q-bounty',
+          text: `${targetSetName} yollarını kesen haydut çetelerini temizleme görevini üstlenirim.`,
+          hint: 'Görev günlüğüne eklenir · +180 Dinar & +3 İlişki',
+          effect: { kind: 'ACCEPT_QUEST', questId: dynamicQuestId },
+          next: 'noble-quest-accepted',
+        },
+        {
+          id: 'noble-q-troops',
+          text: 'Garnizonunuz için kıdemli muhafız ve acemi asker eğitimi görevini alabilirim.',
+          hint: 'Görev günlüğüne eklenir · +150 Dinar & +3 İlişki',
+          effect: { kind: 'ACCEPT_QUEST', questId: `${dynamicQuestId}-troops` },
+          next: 'noble-quest-accepted',
+        },
+        {
+          id: 'noble-q-supply',
+          text: 'Ordunuzun sefer iaşesi için hemen erzak ve lojistik destek sağlayayım.',
+          hint: '+90 Dinar & +2 İlişki (Anında Destek)',
+          effect: {
+            kind: 'RELATION_AND_GOLD',
+            relationDelta: 2,
+            goldDelta: 90,
+            reason: 'Soylu sefer iaşe desteği',
+          },
+          next: 'noble-supply-done',
+        },
+        {
+          id: 'noble-q-back',
+          text: 'Şu an kendi seferimle meşgulüm, başka bir konudan bahsedelim.',
+          next: 'root',
+        },
+      ],
+    };
+
+    nodes['noble-quest-accepted'] = {
+      id: 'noble-quest-accepted',
+      speaker: 'NPC',
+      text: `${name}: "Harika! Sözünü tutup bu işi başarıyla tamamladığında hem kesen altınla dolacak hem de ${clanInfo.clanName} nezdinde itibarın yükselecek."`,
+      options: [
+        {
+          id: 'noble-q-done',
+          text: 'Görevi tamamladığımda döneceğim. (Vedalaş)',
+          effect: { kind: 'RELATION', delta: 2, reason: 'Soylu görevi üstlenildi' },
+        },
+      ],
+      end: true,
+    };
+
+    nodes['noble-supply-done'] = {
+      id: 'noble-supply-done',
+      speaker: 'NPC',
+      text: `${name}: "Bu desteğin tam vaktinde yetişti ${playerName}. İşte malzemelerin karşılığı olan 90 dinar. Bu iyiliğini unutmayacağım."`,
+      options: [{ id: 'noble-supply-back', text: 'Her zaman, başka bir konuya geçelim.', next: 'root' }],
+    };
+
+    // 2D. Doğrudan Takas Kısayolu
+    rootOptions.push({
+      id: 'barter-direct',
+      text: 'İkimizin de yararına olacak bir teklifim var. (Takas)',
+      hint: 'Altın, esir, barış veya evlilik pazarlığı yap',
+      effect: { kind: 'OPEN_BARTER' },
+    });
+  }
+
+  /* 3. Ticaret söylentisi */
   rootOptions.push({
     id: 'trade-rumour',
     text: 'Piyasada ne var ne yok?',
@@ -498,7 +979,7 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
     ],
   };
 
-  /* İlişki seçenekleri */
+  /* 4. İlişki seçenekleri */
   rootOptions.push({
     id: 'praise',
     text: 'Sancağın dillere destan.',
@@ -549,7 +1030,13 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
 
   rootOptions.push({ id: 'leave', text: 'Vedalaş.', effect: { kind: 'CLOSE' } });
 
-  return { root: 'root', nodes, speakerName: name, speakerTitle: title, forcedEncounter: false };
+  return {
+    root: isFirstMeeting ? 'intro-root' : 'root',
+    nodes,
+    speakerName: name,
+    speakerTitle: title,
+    forcedEncounter: false,
+  };
 }
 
 /* ─────────────────────────── doğrulama ─────────────────────────── */
@@ -645,6 +1132,9 @@ export type EncounterActionTrigger =
   | { kind: 'BRIBE_ESCAPE'; cost: number }
   | { kind: 'DEMAND_SURRENDER' }
   | { kind: 'PLAYER_SURRENDER' }
+  | { kind: 'OPEN_BARTER'; presetMarriage?: boolean; presetPeace?: boolean }
+  | { kind: 'OPEN_COUNCIL' }
+  | { kind: 'MEET_HERO' }
   | null;
 
 /** Oyuncu seçeneğini uygular → yeni ilişki/altın + sonraki düğüm + karşılaşma aksiyonu. */
@@ -677,7 +1167,8 @@ export function applyOption(
   }
   let { relation, gold } = state;
   let openTrade = false;
-  let acceptedQuestId: string | null = null;
+  let acceptedQuestId: string | null;
+  acceptedQuestId = null;
   let encounterAction: EncounterActionTrigger = null;
   let closed = false;
   let nextId: DialogueNodeId | null = opt.next ?? null;
@@ -689,17 +1180,36 @@ export function applyOption(
         closed = true;
         nextId = null;
         break;
+      case 'MEET_HERO':
+        encounterAction = { kind: 'MEET_HERO' };
+        break;
       case 'RELATION':
         relation += e.delta;
         break;
       case 'GOLD':
         gold = Math.max(0, gold + e.delta);
         break;
+      case 'RELATION_AND_GOLD':
+        relation += e.relationDelta;
+        gold = Math.max(0, gold + e.goldDelta);
+        break;
       case 'ACCEPT_QUEST':
         acceptedQuestId = e.questId;
         break;
       case 'OPEN_TRADE':
         openTrade = true;
+        closed = true;
+        nextId = null;
+        break;
+      case 'OPEN_BARTER':
+        encounterAction = {
+          kind: 'OPEN_BARTER',
+          presetMarriage: e.presetMarriage,
+          presetPeace: e.presetPeace,
+        };
+        break;
+      case 'OPEN_COUNCIL':
+        encounterAction = { kind: 'OPEN_COUNCIL' };
         closed = true;
         nextId = null;
         break;
@@ -745,6 +1255,9 @@ export function applyOption(
     }
   }
   if (!nextId && !e) closed = true;
+  if (!nextId && e && e.kind !== 'OPEN_BARTER' && e.kind !== 'MEET_HERO') {
+    closed = true;
+  }
   return { nextId, relation, gold, openTrade, acceptedQuestId, encounterAction, closed };
 }
 

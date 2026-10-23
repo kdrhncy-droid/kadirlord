@@ -112,5 +112,34 @@ const deadEnd = structuredClone(peace);
 deadEnd.nodes.root.options = [];
 ok(validateDialogue(deadEnd).some((p) => p.includes('çıkmaz')), 'seçeneksiz düğüm çıkmaz olarak işaretleniyor');
 
+/* 10. Yeni karakterde tüm lord/kral/leydi başlangıç ilişkileri 0 olmalı */
+const nonBanditLords = campaign.lords.filter((l) => l.faction !== 'bandits');
+ok(
+  nonBanditLords.every((l) => l.relation === 0),
+  'yeni karakterde tüm lord/kral/leydi başlangıç ilişkileri 0',
+  `bozuk sayisi: ${nonBanditLords.filter((l) => l.relation !== 0).length}`,
+);
+
+/* 11. İlk tanışma (hasMet: false) ve Bannerlord diyalog dalları */
+const firstMeet = buildDialogue({
+  lord,
+  campaign,
+  relation: 0,
+  atWar: false,
+  hasMet: false,
+});
+ok(validateDialogue(firstMeet).length === 0, 'ilk tanışma (intro-root) diyaloğu tutarlı');
+ok(firstMeet.root === 'intro-root', 'tanışılmamış lordda kök düğüm intro-root');
+const introRes = applyOption(firstMeet, 'intro-root', 'intro-respect', { relation: 0, gold: 500 });
+ok(introRes.nextId === 'root', 'kendini tanıttıktan sonra root düğümüne geçiyor');
+ok(introRes.encounterAction?.kind === 'MEET_HERO', 'kendini tanıtınca MEET_HERO tetikleniyor');
+ok(
+  rootOptions.some((o) => o.id === 'discuss-hub') &&
+    rootOptions.some((o) => o.id === 'ask-question-hub') &&
+    rootOptions.some((o) => o.id === 'noble-task-hub') &&
+    rootOptions.some((o) => o.id === 'barter-direct'),
+  'Bannerlord 4 ana konuşma dalı (konuşma, soru, görev, takas) mevcut',
+);
+
 console.log(fails === 0 ? '\n✅ DİYALOG SİSTEMİ DOĞRU' : `\n❌ ${fails} hata`);
 process.exit(fails === 0 ? 0 : 1);

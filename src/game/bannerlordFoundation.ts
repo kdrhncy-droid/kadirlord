@@ -2326,6 +2326,7 @@ export function ensureBannerlordFoundation(state: CampaignState): CampaignState 
     ];
     return {
       ...setWallSections(settlement, wallSections),
+      garrison: settlement.type === 'VILLAGE' ? 0 : settlement.garrison,
       siegeEngines: normalizedSlots.siegeEngines,
       reserveEngines: normalizedSlots.reserveEngines,
       siegeEngineHp,

@@ -32,7 +32,7 @@ const POOLS: Partial<Record<FactionId, CulturePool>> = {
     banner: ['#581c87', '#6b21a8', '#7e22ce', '#4c1d95'],
   },
   vlandia: {
-    count: 5,
+    count: 6,
     male: ['Godfrey', 'Baldwin', 'Roland', 'Raymond', 'Hugh', 'Gareth', 'Osric'],
     female: ['Isolde', 'Eleanor', 'Mathilde', 'Cecily', 'Adelheid'],
     titles: ['Kont', 'Baron', 'Şövalye'],
@@ -40,7 +40,7 @@ const POOLS: Partial<Record<FactionId, CulturePool>> = {
     banner: ['#991b1b', '#b91c1c', '#7f1d1d', '#dc2626'],
   },
   battania: {
-    count: 4,
+    count: 5,
     male: ['Cadwal', 'Bryn', 'Owain', 'Maddoc', 'Gwydion'],
     female: ['Rhiannon', 'Alys', 'Morwen', 'Ceridwen'],
     titles: ['Şef', 'Bilge', 'Avcıbaşı'],
@@ -72,7 +72,7 @@ const POOLS: Partial<Record<FactionId, CulturePool>> = {
     banner: ['#b45309', '#d97706', '#92400e', '#ca8a04'],
   },
   bandits: {
-    count: 3,
+    count: 1,
     male: ['Kara', 'Çakır', 'Deli', 'Kel', 'Topal'],
     female: ['Yıldız', 'Gülbeyaz'],
     titles: ['Haydut Reisi'],
@@ -194,7 +194,7 @@ export function generateLordParties(
         title,
         faction,
         personality: pickFrom(PERSONALITIES, seed, 'persona'),
-        relation: (seed % 61) - 25, // -25..+35
+        relation: faction === 'bandits' ? -35 : 0,
         x: home.x + jitterX,
         z: home.z + jitterZ,
         targetX: dest.x + jitterX,
