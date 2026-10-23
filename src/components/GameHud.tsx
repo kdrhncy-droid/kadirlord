@@ -73,7 +73,7 @@ interface GameHudProps {
   onOpenArmyModal?: () => void;
 }
 
-type WorldPane = 'atlas' | 'chronicle' | 'quests';
+type WorldPane = 'chronicle' | 'quests';
 
 /** "Harita & Günlük" panelinin sekmeleri — Faz 4/5. */
 const WorldTabs: React.FC<{ pane: WorldPane; onChange: (p: WorldPane) => void }> = ({
@@ -83,9 +83,8 @@ const WorldTabs: React.FC<{ pane: WorldPane; onChange: (p: WorldPane) => void }>
   <div className="flex items-center gap-1 mt-1" data-testid="world-tabs">
     {(
       [
-        { id: 'atlas' as const, label: 'Atlas' },
-        { id: 'chronicle' as const, label: 'Vakanüvis' },
         { id: 'quests' as const, label: 'Görevler' },
+        { id: 'chronicle' as const, label: 'Raporlar' },
       ] as const
     ).map((t) => (
       <button
@@ -143,13 +142,12 @@ export const GameHud: React.FC<GameHudProps> = ({
 }) => {
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [rightBarCollapsed, setRightBarCollapsed] = useState(false);
-  /** Faz 4: Atlas ve Vakanüvis tek "Harita & Günlük" panelinde birleşti. */
-  const [worldPane, setWorldPane] = useState<'atlas' | 'chronicle' | 'quests'>('atlas');
+  /** J menüsü: Görevler ve Raporlar sekmeleri. */
+  const [worldPane, setWorldPane] = useState<'chronicle' | 'quests'>('quests');
   const [activeTab, setActiveTab] = useState<'none' | 'army' | 'character' | 'world'>('none');
   const [hudFeedback, setHudFeedback] = useState<string | null>(null);
   const [hoveredLabelId, setHoveredLabelId] = useState<string | null>(null);
-  const [councilAdvice, setCouncilAdvice] = useState<string | null>(null);
-  const [councilLoading, setCouncilLoading] = useState(false);
+
 
   React.useEffect(() => {
     const onKeyH = (e: KeyboardEvent) => {
@@ -294,38 +292,6 @@ export const GameHud: React.FC<GameHudProps> = ({
       );
     }
     return pips;
-  };
-
-  const consultRoyalCouncil = async () => {
-    if (councilLoading) return;
-    setCouncilLoading(true);
-    try {
-      const res = await fetch('/api/world-council', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          day: campaign.day,
-          season: campaign.season,
-          playerFaction: FACTION_INFO.player.name,
-          playerRenown: campaign.renown,
-          settlementsSummary: campaign.settlements
-            .map((s) => `${s.name} (${FACTION_INFO[s.faction].name})`)
-            .join(', '),
-          recentEvents: campaign.chronicle
-            .slice(0, 2)
-            .map((c) => c.text)
-            .join(' | '),
-        }),
-      });
-      const data = await res.json();
-      setCouncilAdvice(`${data.headline}: ${data.decree} — Tavsiye: ${data.strategicAdvice}`);
-    } catch (_e) {
-      setCouncilAdvice(
-        'Divan Baş Vakanüvisi: Sınır kalelerindeki garnizonları takviye edin ve erzak stoklarınızı koruyun.',
-      );
-    } finally {
-      setCouncilLoading(false);
-    }
   };
 
   return (
@@ -1131,19 +1097,11 @@ export const GameHud: React.FC<GameHudProps> = ({
             <div className="flex items-center justify-between border-b border-[#c6a15b]/25 pb-2 mb-3">
               <div>
                 <h3 className="text-sm font-bold text-[#f8f0df]">
-                  Kalradya Vakanüvis Günlüğü ve Krallık Divanı
+                  Kalradya'da Son Olaylar
                 </h3>
                 <WorldTabs pane={worldPane} onChange={setWorldPane} />
               </div>
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  disabled={councilLoading}
-                  onClick={consultRoyalCouncil}
-                  className="px-3 py-1 rounded text-xs font-semibold bg-[#b45309] hover:bg-[#d97706] text-white whitespace-nowrap shrink-0"
-                >
-                  {councilLoading ? 'Divan Toplanıyor...' : 'Gemini Divan Raporu Al'}
-                </button>
                 <button
                   type="button"
                   onClick={() => setActiveTab('none')}
@@ -1153,12 +1111,6 @@ export const GameHud: React.FC<GameHudProps> = ({
                 </button>
               </div>
             </div>
-
-            {councilAdvice && (
-              <div className="mb-3 p-2.5 rounded bg-[#262015] border border-[#f59e0b]/40 text-xs text-[#fde68a]">
-                {councilAdvice}
-              </div>
-            )}
 
             <WorldWarPanel campaign={campaign} />
 
@@ -1212,7 +1164,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                     {campaign.chronicle.slice(-4).reverse().map((ev) => (
                       <div
                         key={ev.id}
-                        className="px-2.5 py-1 rounded bg-[#0e0b08]/85 border border-[#c6a15b]/35 shadow-md flex items-center gap-1.5 backdrop-blur-xs text-[11px] text-[#f1eadc]"
+                        className="px-2.5 py-1 rounded border border-[#c6a15b]/20 shadow-sm flex items-center gap-1.5 text-[11px] text-[#f1eadc] drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
                       >
                         <span
                           className={`px-1 py-0.2 rounded text-[9px] font-bold uppercase shrink-0 ${
@@ -1433,7 +1385,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                           <circle cx="8" cy="8" r="6" />
                         </svg>
                         <span>
-                          <strong className="text-[#fbbf24]">{Math.round(campaign.gold)}</strong> Dinar
+                          <strong className="text-[#fbbf24]">{Math.round(campaign.gold)}</strong>
                         </span>
                         <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 z-50 w-60 p-2.5 rounded bg-[#0e0b08]/95 border border-[#c6a15b]/80 shadow-2xl text-[11px] font-sans">
                           <div className="font-bold text-[#fbbf24] border-b border-[#c6a15b]/30 pb-1 mb-1">
@@ -1465,9 +1417,9 @@ export const GameHud: React.FC<GameHudProps> = ({
                         <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 fill-[#fde68a]" aria-hidden="true">
                           <path d="M8 1l2.1 4.4 4.9.7-3.5 3.4.8 4.8L8 12l-4.3 2.3.8-4.8L1 6.1l4.9-.7L8 1z" />
                         </svg>
-                        <span>
-                          <strong className="text-[#fde68a]">{campaign.renown}</strong> Şöhret
-                          <span className="text-[#93c5fd] ml-1">({Math.round(campaign.influence ?? 0)} Nüfuz)</span>
+                        <span className="flex items-center gap-1">
+                          <strong className="text-[#fde68a]">{campaign.renown}</strong>
+                          <span className="text-[#93c5fd]">({Math.round(campaign.influence ?? 0)})</span>
                         </span>
                         <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 z-50 w-60 p-2.5 rounded bg-[#0e0b08]/95 border border-[#c6a15b]/80 shadow-2xl text-[11px] font-sans">
                           <div className="font-bold text-[#fde68a] border-b border-[#c6a15b]/30 pb-1 mb-1">
@@ -1494,7 +1446,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                           <path d="M8 14s-5.5-3.3-5.5-7.5A3.2 3.2 0 018 4.2a3.2 3.2 0 015.5 2.3C13.5 10.7 8 14 8 14z" />
                         </svg>
                         <span>
-                          <strong className="text-[#f87171]">{hpPercent}%</strong> HP
+                          <strong className="text-[#f87171]">{hpPercent}%</strong>
                         </span>
                         <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 z-50 w-56 p-2.5 rounded bg-[#0e0b08]/95 border border-[#c6a15b]/80 shadow-2xl text-[11px] font-sans">
                           <div className="font-bold text-[#fca5a5] border-b border-[#c6a15b]/30 pb-1 mb-1">
@@ -1517,7 +1469,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                           <path d="M8 1.5L2.5 3.8v4.4c0 3.5 2.3 6.6 5.5 7.4 3.2-.8 5.5-3.9 5.5-7.4V3.8L8 1.5z" />
                         </svg>
                         <span>
-                          <strong className="text-[#86efac]">{totalTroops}</strong> Asker
+                          <strong className="text-[#86efac]">{totalTroops}</strong>
                         </span>
                         <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 z-50 w-60 p-2.5 rounded bg-[#0e0b08]/95 border border-[#c6a15b]/80 shadow-2xl text-[11px] font-sans">
                           <div className="font-bold text-[#86efac] border-b border-[#c6a15b]/30 pb-1 mb-1">
@@ -1554,7 +1506,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                           <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 fill-[#fbbf24]" aria-hidden="true">
                             <path d="M2 2v12h1.2V8h3.3l-.7-2.5L6.5 3H3.2V2H2zm5.5 1v11h1.2V9h3.3l-.7-2.5L12 4H8.7V3H7.5z" />
                           </svg>
-                          <span>Ordu</span>
+                          <span className="text-[#fde68a]">Ordu</span>
                         </button>
                       )}
 
@@ -1575,7 +1527,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                       <div className="flex items-center justify-end gap-3 text-[11px] text-[#cbd5e1] border-t border-[#c6a15b]/20 pt-0.5">
                         {/* #16 Erzak */}
                         <div className="relative group cursor-help">
-                          <span>Erzak: <strong className="text-[#86efac]">{campaign.food}</strong></span>
+                          <span><strong className="text-[#86efac]">{campaign.food}</strong></span>
                           <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 z-50 w-56 p-2.5 rounded bg-[#0e0b08]/95 border border-[#c6a15b]/80 shadow-2xl text-[11px] font-sans">
                             <div className="font-bold text-[#86efac] border-b border-[#c6a15b]/30 pb-1 mb-1">
                               Erzak Stoğu: {campaign.food} Sandık
@@ -1593,7 +1545,7 @@ export const GameHud: React.FC<GameHudProps> = ({
 
                         {/* #15 Moral */}
                         <div className="relative group cursor-help">
-                          <span>Moral: <strong className="text-[#fde68a]">{campaign.morale}</strong></span>
+                          <span><strong className="text-[#fde68a]">{campaign.morale}</strong></span>
                           <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 z-50 w-56 p-2.5 rounded bg-[#0e0b08]/95 border border-[#c6a15b]/80 shadow-2xl text-[11px] font-sans">
                             <div className="font-bold text-[#fde68a] border-b border-[#c6a15b]/30 pb-1 mb-1">
                               Parti Morali: {campaign.morale} / 100
@@ -1615,7 +1567,7 @@ export const GameHud: React.FC<GameHudProps> = ({
 
                         {/* #18 Harita Hızı */}
                         <div className="relative group cursor-help">
-                          <span>Hız: <strong className="text-[#f8fafc]">{mapTelemetry.partySpeed}</strong></span>
+                          <span><strong className="text-[#f8fafc]">{mapTelemetry.partySpeed}</strong></span>
                           <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 z-50 w-60 p-2.5 rounded bg-[#0e0b08]/95 border border-[#c6a15b]/80 shadow-2xl text-[11px] font-sans">
                             <div className="font-bold text-[#fde68a] border-b border-[#c6a15b]/30 pb-1 mb-1">
                               Harita Hızı: {mapTelemetry.partySpeed} ({mapTelemetry.biomeLabel})
@@ -1637,7 +1589,7 @@ export const GameHud: React.FC<GameHudProps> = ({
 
                         {/* #17 İzcilik / Görüş Mesafesi */}
                         <div className="relative group cursor-help">
-                          <span>Görüş: <strong className="text-[#93c5fd]">{mapTelemetry.spottingRange ?? 140}m</strong></span>
+                          <span><strong className="text-[#93c5fd]">{mapTelemetry.spottingRange ?? 140}</strong></span>
                           <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 z-50 w-56 p-2.5 rounded bg-[#0e0b08]/95 border border-[#c6a15b]/80 shadow-2xl text-[11px] font-sans">
                             <div className="font-bold text-[#93c5fd] border-b border-[#c6a15b]/30 pb-1 mb-1">
                               Keşif & Görüş Menzili: {mapTelemetry.spottingRange ?? 140}m
@@ -1655,7 +1607,7 @@ export const GameHud: React.FC<GameHudProps> = ({
 
                         {/* #19 Günlük Ücret (Maaş) */}
                         <div className="relative group cursor-help">
-                          <span>Maaş: <strong className="text-[#fca5a5]">{dailyWage}</strong></span>
+                          <span><strong className="text-[#fca5a5]">{dailyWage}</strong></span>
                           <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 z-50 w-60 p-2.5 rounded bg-[#0e0b08]/95 border border-[#c6a15b]/80 shadow-2xl text-[11px] font-sans">
                             <div className="font-bold text-[#fca5a5] border-b border-[#c6a15b]/30 pb-1 mb-1">
                               Günlük Parti Ücreti (#19): {dailyWage} Dinar

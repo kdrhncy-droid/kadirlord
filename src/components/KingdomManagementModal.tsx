@@ -49,12 +49,6 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
   const [hasFlexibleEthicsPerk, setHasFlexibleEthicsPerk] = useState(true);
   const [feedbackBanner, setFeedbackBanner] = useState<string | null>(null);
 
-  // Sandbox Sliders for testing WarDesireRatio & Tribute Paradox in real-time
-  const [simFiefCountA, setSimFiefCountA] = useState<number>(10);
-  const [simFiefCountB, setSimFiefCountB] = useState<number>(5);
-  const [simStrengthA, setSimStrengthA] = useState<number>(5000);
-  const [simStrengthB, setSimStrengthB] = useState<number>(5000);
-
   const playerClans = useMemo(
     () => macroState.clans.filter((c) => c.isPlayerClan || c.faction === 'player'),
     [macroState.clans],
@@ -97,68 +91,6 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
     playerFiefs,
     enemyFiefs,
     campaign.settlements,
-  ]);
-
-  // Sandbox Paradox Report
-  const sandboxParadoxReport = useMemo(() => {
-    const syntheticFiefsA: Settlement[] = Array.from({ length: simFiefCountA }, (_, i) => ({
-      id: `sim-a-${i}`,
-      name: `Şehir A-${i + 1}`,
-      type: 'TOWN',
-      faction: 'player',
-      x: 0,
-      z: 0,
-      prosperity: 650,
-      garrison: 60,
-      recruitPool: { militia: 5, archer: 5, cavalry: 3, guard: 2 },
-      foodStock: 50,
-      description: '',
-    }));
-    const syntheticFiefsB: Settlement[] = Array.from({ length: simFiefCountB }, (_, i) => ({
-      id: `sim-b-${i}`,
-      name: `Şehir B-${i + 1}`,
-      type: 'TOWN',
-      faction: selectedEnemyFaction,
-      x: 100,
-      z: 100,
-      prosperity: 650,
-      garrison: 60,
-      recruitPool: { militia: 5, archer: 5, cavalry: 3, guard: 2 },
-      foodStock: 50,
-      description: '',
-    }));
-
-    return calculateWarDesireAndTribute({
-      factionA: 'player',
-      factionB: selectedEnemyFaction,
-      clansA: [
-        {
-          ...macroState.clans[0],
-          warPartyCount: Math.max(2, Math.round(simStrengthA / 1000)),
-          totalStrength: simStrengthA,
-        },
-      ],
-      clansB: [
-        {
-          ...macroState.clans[1],
-          warPartyCount: Math.max(2, Math.round(simStrengthB / 1000)),
-          totalStrength: simStrengthB,
-        },
-      ],
-      fiefsA: syntheticFiefsA,
-      fiefsB: syntheticFiefsB,
-      warStats: macroState.wars[selectedEnemyFaction],
-      useImprovedArchitecture: macroState.useImprovedArchitecture,
-    });
-  }, [
-    simFiefCountA,
-    simFiefCountB,
-    simStrengthA,
-    simStrengthB,
-    selectedEnemyFaction,
-    macroState.clans,
-    macroState.wars,
-    macroState.useImprovedArchitecture,
   ]);
 
   const currentElection = useMemo(() => {
@@ -423,13 +355,13 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
         <div className="px-5 py-3.5 border-b border-[#c6a15b]/35 bg-gradient-to-r from-[#191510] via-[#231c14] to-[#191510] flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-[11px] font-semibold text-[#c6a15b] tracking-wider">
-              TALEWORLDS.CAMPAIGNSYSTEM · 4 KATMANLI FEODAL MAKRO-SİMÜLASYON MOTORU
+              SANCAK DİVANI · KRALLIK MECLİSİ
             </div>
             <h2
               id="kingdom-macro-modal-title"
               className="text-xl sm:text-2xl font-display font-bold text-[#fef08a]"
             >
-              Krallık Divanı, Diplomasi & Algoritmik Simülasyon Mimari Konsolu
+              Krallık Divanı ve Diplomasi
             </h2>
           </div>
 
@@ -454,8 +386,8 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
               }`}
             >
               {macroState.useImprovedArchitecture
-                ? 'Mimari: Çözüm Aktif'
-                : 'Mimari: Vanilla (Hatalar)'}
+                ? 'Mimari: Geliştirilmiş'
+                : 'Mimari: Standart'}
             </button>
 
             <button
@@ -697,7 +629,7 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
                   <p className="text-xs text-[#b5a890] mt-1">
                     Paydada yer alan <code className="text-[#fde68a]">TotalValueOfKingdomFiefs</code>{' '}
                     nedeniyle eşit askeri güçteki iki krallıktan çok toprağı olanın nasıl haraç
-                    ödediğini test edin.
+                    ödediğini gözlemleyin.
                   </p>
 
                   <div className="mt-3 space-y-2.5 text-xs">
@@ -823,7 +755,7 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
                     </h3>
                     <p className="text-xs text-[#b5a890]">
                       En yüksek Liyakat Skorunu (Merit Score) alan 3 klan pusulaya çıkar. İç Bölge
-                      Tuzağını (num7 = distance^0.5) ve Flexible Ethics Perk Eşiğini test edin.
+                      İç Bölge Tuzağını (num7 = distance^0.5) ve Flexible Ethics Perk Eşiğini inceleyin.
                     </p>
                   </div>
 
