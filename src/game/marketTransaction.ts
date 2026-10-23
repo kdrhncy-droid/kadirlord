@@ -10,12 +10,14 @@
  */
 import type { CampaignState, InventoryItem, ItemDefinition, Settlement } from './rules.ts';
 import {
+  PLAYER_HERO_ID,
   addItemDefinitionToInventory,
   ensureBannerlordFoundation,
   inventoryItemQuantity,
   removeInventoryStackQuantity,
   resolveItemDefinition,
 } from './bannerlordFoundation.ts';
+import { addSkillXpToHero } from './characterDevelopment.ts';
 import { CALRADIA_MARKETPLACE_ITEMS } from './marketRules.ts';
 import {
   buildMarketStock,
@@ -37,12 +39,34 @@ export function getMarketSettlement(
   return state.settlements.find((settlement) => settlement.id === settlementId) ?? null;
 }
 
-export function marketUnitBuyPrice(definition: ItemDefinition, profile: MarketProfile): number {
-  return buyPriceAt({ value: definition.baseValue, tier: definition.tier }, profile);
+export function marketUnitBuyPrice(
+  definition: ItemDefinition,
+  profile: MarketProfile,
+  unlockedPerks?: string[],
+): number {
+  const base = buyPriceAt({ value: definition.baseValue, tier: definition.tier }, profile);
+  if (!unlockedPerks || unlockedPerks.length === 0) return base;
+  const isTradeGood = definition.category === 'FOOD' || definition.category === 'TRADE' || definition.category === 'HORSE';
+  const hasCaravanMaster = unlockedPerks.includes('trade_25_a') || unlockedPerks.includes('caravan-master');
+  const hasTownMerchant = unlockedPerks.includes('trade_25_b') || unlockedPerks.includes('appraiser');
+  if (isTradeGood && hasCaravanMaster) return Math.max(1, Math.round(base * 0.92));
+  if (!isTradeGood && hasTownMerchant) return Math.max(1, Math.round(base * 0.92));
+  return base;
 }
 
-export function marketUnitSellPrice(definition: ItemDefinition, profile: MarketProfile): number {
-  return sellPriceAt({ value: definition.baseValue, tier: definition.tier }, profile);
+export function marketUnitSellPrice(
+  definition: ItemDefinition,
+  profile: MarketProfile,
+  unlockedPerks?: string[],
+): number {
+  const base = sellPriceAt({ value: definition.baseValue, tier: definition.tier }, profile);
+  if (!unlockedPerks || unlockedPerks.length === 0) return base;
+  const isTradeGood = definition.category === 'FOOD' || definition.category === 'TRADE' || definition.category === 'HORSE';
+  const hasCaravanMaster = unlockedPerks.includes('trade_25_a') || unlockedPerks.includes('caravan-master');
+  const hasTownMerchant = unlockedPerks.includes('trade_25_b') || unlockedPerks.includes('appraiser');
+  if (isTradeGood && hasCaravanMaster) return Math.max(1, Math.round(base * 1.08));
+  if (!isTradeGood && hasTownMerchant) return Math.max(1, Math.round(base * 1.08));
+  return base;
 }
 
 /**
@@ -273,11 +297,22 @@ export function sellToMarket(
     visited: true,
   }));
 
+  const costBasis = Math.min(stack.value ?? definition.baseValue, Math.round(definition.baseValue * 0.85));
+  const profit = Math.max(0, (unitPrice - costBasis) * safeQty);
+  let nextHeroes = initialized.heroes;
+  if (profit > 0 && Array.isArray(nextHeroes)) {
+    nextHeroes = nextHeroes.map((hero) => {
+      if (hero.id !== PLAYER_HERO_ID && hero.kind !== 'PLAYER') return hero;
+      return addSkillXpToHero(hero, 'trade', Math.max(2, Math.round(profit * 0.45))).hero;
+    });
+  }
+
   const nextState = ensureBannerlordFoundation({
     ...initialized,
     gold: initialized.gold + totalPrice,
     inventoryItems: removal.items,
     settlements,
+    heroes: nextHeroes,
     chronicle: withMarketChronicle(
       initialized,
       settlement,

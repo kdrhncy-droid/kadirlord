@@ -52,6 +52,15 @@ interface DialogueModalProps {
   onClose: () => void;
   /** İlişki değişimi (lord id'si ile). */
   onRelationChange?: (lordId: string, delta: number) => void;
+  /** Lordla ilk kez konuşulduğunda Ansiklopedi'de tanışıldı (revealed) işaretler. */
+  onMeetHero?: (heroId: string) => void;
+  /** Takas (Barter) tamamlandığında altın/ilişki/antlaşma günceller. */
+  onCompleteBarter?: (payload: {
+    lordId: string;
+    goldDelta: number;
+    relationDelta: number;
+    peaceSigned?: boolean;
+  }) => void;
   /** Pazaryeri açma isteği. */
   onOpenTrade?: () => void;
   /** Görev kabul edildiğinde. */
@@ -81,6 +90,8 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   encounterScenario,
   onClose,
   onRelationChange,
+  onMeetHero,
+  onCompleteBarter,
   onOpenTrade,
   onAcceptQuest,
   onStartFieldBattle,
@@ -109,6 +120,98 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   const [speaking, setSpeaking] = useState(true);
   const [gestureKey, setGestureKey] = useState(0);
   const speakTimer = useRef<number | null>(null);
+
+  // ADIM 4.3: Bannerlord Çift Sütunlu Takas (Barter) & Yeşil Tatmin Çubuğu Durumu
+  const [barterOpen, setBarterOpen] = useState(false);
+  const [offeredGold, setOfferedGold] = useState(0);
+  const [requestedGold, setRequestedGold] = useState(0);
+  const [offeredPrisoners, setOfferedPrisoners] = useState(0);
+  const [requestPeace, setRequestPeace] = useState(false);
+  const [requestMarriageAlliance, setRequestMarriageAlliance] = useState(false);
+
+  const lordPurse = useMemo(() => Math.max(450, (lord?.armySize ?? 25) * 32), [lord?.armySize]);
+  const peaceDemandCost = useMemo(
+    () => (lord?.isAtWarWithPlayer ? Math.max(350, (lord.armySize ?? 30) * 18) : 0),
+    [lord?.armySize, lord?.isAtWarWithPlayer],
+  );
+  const marriageDemandCost = useMemo(
+    () => Math.max(400, Math.round(650 - relation * 4)),
+    [relation],
+  );
+
+  const barterDemandValue =
+    requestedGold +
+    (requestPeace ? peaceDemandCost : 0) +
+    (requestMarriageAlliance ? marriageDemandCost : 0);
+  const barterOfferValue = offeredGold + offeredPrisoners * 45;
+  const barterSatisfactionPct = useMemo(() => {
+    if (barterDemandValue <= 0) {
+      return barterOfferValue > 0 ? 100 : 0;
+    }
+    const charmBonus = 1 + Math.max(-0.15, Math.min(0.25, relation * 0.003));
+    return Math.max(0, Math.min(100, Math.round(((barterOfferValue * charmBonus) / barterDemandValue) * 100)));
+  }, [barterDemandValue, barterOfferValue, relation]);
+
+  const handleAutoBalanceBarter = () => {
+    if (barterDemandValue <= 0) {
+      const giftAmount = Math.min(gold, 150);
+      setOfferedGold(giftAmount);
+      return;
+    }
+    const charmBonus = 1 + Math.max(-0.15, Math.min(0.25, relation * 0.003));
+    const neededTotal = Math.ceil(barterDemandValue / charmBonus);
+    const neededGold = Math.max(0, neededTotal - offeredPrisoners * 45);
+    setOfferedGold(Math.min(gold, neededGold));
+  };
+
+  const handleOfferGift = () => {
+    const giftGold = offeredGold > 0 ? offeredGold : Math.min(gold, 100);
+    if (giftGold <= 0 || gold < giftGold) {
+      setLastOutcome('Hediye vermek için yeterli dinar yok.');
+      return;
+    }
+    const relGain = Math.max(2, Math.round(giftGold / 45));
+    const nextGold = gold - giftGold;
+    const nextRel = Math.min(100, relation + relGain);
+    setGold(nextGold);
+    setRelation(nextRel);
+    setOfferedGold(0);
+    if (lord) {
+      onRelationChange?.(lord.id, relGain);
+      onCompleteBarter?.({ lordId: lord.id, goldDelta: -giftGold, relationDelta: relGain });
+    }
+    sound.playCoinChime();
+    setLastOutcome(`Hediye sunuldu (-${giftGold} Dinar, +${relGain} İlişki).`);
+    setBarterOpen(false);
+  };
+
+  const handleCommitBarter = () => {
+    if (barterSatisfactionPct < 100) return;
+    const netGoldDelta = requestedGold - offeredGold;
+    const relGain = requestMarriageAlliance ? 12 : requestPeace ? 8 : Math.max(1, Math.round(barterOfferValue / 80));
+    const nextGold = Math.max(0, gold + netGoldDelta);
+    const nextRel = Math.min(100, relation + relGain);
+    setGold(nextGold);
+    setRelation(nextRel);
+    if (lord) {
+      onRelationChange?.(lord.id, relGain);
+      onCompleteBarter?.({
+        lordId: lord.id,
+        goldDelta: netGoldDelta,
+        relationDelta: relGain,
+        peaceSigned: requestPeace,
+      });
+    }
+    sound.playAgreement();
+    setLastOutcome(
+      requestPeace
+        ? `${lord?.name ?? 'Lord'} ile Barış Takası onaylandı!`
+        : requestMarriageAlliance
+          ? `${lord?.name ?? 'Lord'} ile Hanedan & Evlilik Başlık Parası anlaşması imzalandı!`
+          : `Takas anlaşması başarıyla tamamlandı (+${relGain} İlişki).`,
+    );
+    setBarterOpen(false);
+  };
 
   const isHostileLord = Boolean(lord && (lord.isAtWarWithPlayer || lord.faction === 'bandits'));
 
@@ -157,8 +260,12 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   useEffect(() => {
     sound.unlock();
     sound.playDialogueOpen();
+    if (lord?.id) {
+      onMeetHero?.(lord.id);
+    }
     return () => sound.playDialogueClose();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lord?.id]);
 
   useEffect(() => {
     setSpeaking(true);
@@ -350,6 +457,21 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
                 </span>
               </div>
 
+              {lord && lord.faction !== 'bandits' && (
+                <button
+                  type="button"
+                  data-testid="dialogue-barter-toggle-btn"
+                  onClick={() => setBarterOpen((prev) => !prev)}
+                  className={`px-2.5 py-1 rounded text-[11px] font-semibold border transition-colors ${
+                    barterOpen
+                      ? 'bg-[#b45309] text-white border-[#fde68a]/60'
+                      : 'bg-[#1f1912] hover:bg-[#31261a] text-[#fde68a] border-[#c6a15b]/45'
+                  }`}
+                >
+                  {barterOpen ? 'Konuşmaya Dön' : 'Takas & Pazarlık'}
+                </button>
+              )}
+
               {lord && lord.faction !== 'bandits' && onOpenDiplomacyCouncil && !isForced && (
                 <button
                   type="button"
@@ -403,6 +525,177 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* 2B. BANNERLORD ÇİFT SÜTUNLU TAKAS (BARTER) VE YEŞİL TATMİN ÇUBUĞU EKRANI */}
+      {barterOpen && lord && (
+        <div
+          data-testid="dialogue-barter-panel"
+          className="relative z-10 w-full flex justify-center px-4 my-auto"
+        >
+          <div className="w-full max-w-5xl rounded-lg border border-[#c6a15b]/65 bg-[#120e0a]/95 shadow-2xl overflow-hidden text-[#f3ead8]">
+            <div className="px-4 py-2 border-b border-[#c6a15b]/30 bg-[#1a140e] flex items-center justify-between text-xs">
+              <span className="font-display font-bold text-[#fef08a] tracking-wide">
+                BANNERLORD TAKAS & DİPLOMATİK PAZARLIK MASASI
+              </span>
+              <span className="text-[#b5a890]">
+                Karşı Taraf: <strong className="text-[#fde68a]">{lord.title} {lord.name}</strong> · Sizin Hazineniz:{' '}
+                <strong className="text-[#34d399] font-mono-tabular">{gold} Dinar</strong>
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-12 divide-y md:divide-y-0 md:divide-x divide-[#c6a15b]/25 p-3 gap-3">
+              {/* SOL SÜTUN: KARŞI TARAFIN VARLIKLARI */}
+              <div className="md:col-span-4 space-y-2.5 pr-1">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-[#fca5a5] border-b border-[#c6a15b]/20 pb-1">
+                  Karşı Tarafın Varlıkları ({lord.name})
+                </div>
+                <div className="p-2 rounded bg-[#1a1510] border border-[#c6a15b]/20 space-y-1">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-[#b5a890]">Talep Edilen Altın:</span>
+                    <strong className="text-[#fbbf24] font-mono-tabular">{requestedGold} / {lordPurse} D</strong>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={lordPurse}
+                    step={25}
+                    value={requestedGold}
+                    onChange={(e) => setRequestedGold(Number(e.target.value))}
+                    className="w-full accent-[#f59e0b]"
+                  />
+                </div>
+
+                <div className="space-y-1.5 text-[11px]">
+                  <div className="text-[10px] uppercase tracking-wider text-[#a89b84]">Diplomatik Talepler</div>
+                  {lord.isAtWarWithPlayer && (
+                    <label className="flex items-center justify-between p-2 rounded bg-[#1f1712] border border-[#c6a15b]/25 cursor-pointer">
+                      <span>Barış Antlaşması İmzala</span>
+                      <input
+                        type="checkbox"
+                        checked={requestPeace}
+                        onChange={(e) => setRequestPeace(e.target.checked)}
+                        data-testid="barter-request-peace"
+                        className="accent-[#34d399]"
+                      />
+                    </label>
+                  )}
+                  <label className="flex items-center justify-between p-2 rounded bg-[#1f1712] border border-[#c6a15b]/25 cursor-pointer">
+                    <span>Hanedan & Evlilik Başlık Parası</span>
+                    <input
+                      type="checkbox"
+                      checked={requestMarriageAlliance}
+                      onChange={(e) => setRequestMarriageAlliance(e.target.checked)}
+                      data-testid="barter-request-marriage"
+                      className="accent-[#34d399]"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* ORTA SÜTUN: YEŞİL TATMİN OLMA ÇUBUĞU (SATISFACTION BAR) VE BUTONLAR */}
+              <div className="md:col-span-4 flex flex-col justify-between px-3 space-y-3">
+                <div className="text-center">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-[#fef08a]">
+                    Tatmin Olma Çubuğu (Satisfaction)
+                  </div>
+                  <div className="text-[10px] text-[#a89b84] mt-0.5">
+                    Teklif: <strong className="text-[#34d399] font-mono-tabular">{barterOfferValue} D</strong> vs Talep:{' '}
+                    <strong className="text-[#fca5a5] font-mono-tabular">{barterDemandValue} D</strong>
+                  </div>
+                </div>
+
+                {/* Yeşil Tatmin Olma Çubuğu */}
+                <div className="space-y-1">
+                  <div
+                    data-testid="barter-satisfaction-bar"
+                    data-satisfaction={barterSatisfactionPct}
+                    className="w-full h-5 rounded-full bg-[#1f1912] border border-[#c6a15b]/50 overflow-hidden p-0.5 shadow-inner"
+                  >
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-[#15803d] via-[#22c55e] to-[#4ade80] transition-all duration-200"
+                      style={{ width: `${barterSatisfactionPct}%` }}
+                    />
+                  </div>
+                  <div className="text-center text-xs font-mono-tabular font-bold text-[#4ade80]">
+                    %{barterSatisfactionPct} Kabul Oranı
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    data-testid="barter-gift-btn"
+                    onClick={handleOfferGift}
+                    className="px-2 py-2 rounded text-[11px] font-bold bg-[#1e293b] hover:bg-[#334155] text-[#fde68a] border border-[#c6a15b]/35"
+                    title="Karşılıksız Hediye Ver (+İlişki & Cazibe XP)"
+                  >
+                    Hediye
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="barter-auto-balance-btn"
+                    onClick={handleAutoBalanceBarter}
+                    className="px-2 py-2 rounded text-[11px] font-bold bg-[#33291c] hover:bg-[#463723] text-[#fef08a] border border-[#c6a15b]/45"
+                    title="Otomatik Teklif / El Sıkışma ile Dengele"
+                  >
+                    Otomatik Teklif
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="barter-offer-btn"
+                    disabled={barterSatisfactionPct < 100}
+                    onClick={handleCommitBarter}
+                    className="px-2 py-2 rounded text-[11px] font-bold bg-[#15803d] hover:bg-[#16a34a] disabled:opacity-40 text-white border border-[#86efac]/50 shadow"
+                  >
+                    Teklif Et
+                  </button>
+                </div>
+              </div>
+
+              {/* SAĞ SÜTUN: OYUNCUNUN TEKLİFİ */}
+              <div className="md:col-span-4 space-y-2.5 pl-1">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-[#6ee7b7] border-b border-[#c6a15b]/20 pb-1">
+                  Sizin Teklifiniz ({campaign.playerName})
+                </div>
+                <div className="p-2 rounded bg-[#1a1510] border border-[#c6a15b]/20 space-y-1">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-[#b5a890]">Sunulan Altın (Dinar):</span>
+                    <strong className="text-[#34d399] font-mono-tabular">{offeredGold} / {gold} D</strong>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, gold)}
+                    step={25}
+                    value={offeredGold}
+                    data-testid="barter-offer-gold-slider"
+                    onChange={(e) => setOfferedGold(Number(e.target.value))}
+                    className="w-full accent-[#22c55e]"
+                  />
+                </div>
+
+                <div className="p-2 rounded bg-[#1a1510] border border-[#c6a15b]/20 space-y-1">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-[#b5a890]">Esir Devri (45 D/esir):</span>
+                    <strong className="text-[#fde68a] font-mono-tabular">
+                      {offeredPrisoners} / {campaign.prisoners} Esir
+                    </strong>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, campaign.prisoners)}
+                    step={1}
+                    value={offeredPrisoners}
+                    onChange={(e) => setOfferedPrisoners(Number(e.target.value))}
+                    className="w-full accent-[#fbbf24]"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 3. ALT-ORTA BANNERLORD KONUŞMA METNİ VE NUMARALI SEÇENEKLER KUTUSU */}
       <div className="relative z-10 w-full flex justify-center pb-5 px-4">

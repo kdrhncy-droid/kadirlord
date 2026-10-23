@@ -12,6 +12,7 @@ import {
   computeMeleeDamage,
   getSettlementArrivalRadius,
   getTotalTroops,
+  getVillagePrimaryProduction,
   getWallSections,
 } from '../game/rules';
 import {
@@ -101,6 +102,8 @@ interface WorldCanvasProps {
   activeDiplomacyLordId?: string | null;
   activeDialogueLordId?: string | null;
   activeSettlementModalId?: string | null;
+  /** Tam ekran bir modal açıkken arka plan 3B WebGL çizimini duraklatarak FPS düşüşünü önler. */
+  isRenderPaused?: boolean;
   cameraActionsRef: React.MutableRefObject<CameraControlActions | null>;
   /** Faz 11: lord konumları her karede buraya yazılır (dünya simülasyonu okur). */
   lordPositionsRef?: React.MutableRefObject<Map<string, { x: number; z: number }>>;
@@ -873,6 +876,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   activeDiplomacyLordId,
   activeDialogueLordId,
   activeSettlementModalId,
+  isRenderPaused = false,
   cameraActionsRef,
   lordPositionsRef,
   lordPositionCommandsRef,
@@ -898,6 +902,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     activeDiplomacyLordId,
     activeDialogueLordId,
     activeSettlementModalId,
+    isRenderPaused,
     onSetTimeScale,
     onUpdatePlayerPos,
     onOpenSettlement,
@@ -919,6 +924,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       activeDiplomacyLordId,
       activeDialogueLordId,
       activeSettlementModalId,
+      isRenderPaused,
       onSetTimeScale,
       onUpdatePlayerPos,
       onOpenSettlement,
@@ -938,6 +944,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     activeDiplomacyLordId,
     activeDialogueLordId,
     activeSettlementModalId,
+    isRenderPaused,
     onSetTimeScale,
     onUpdatePlayerPos,
     onOpenSettlement,
@@ -1395,35 +1402,52 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         route?.currentAction,
       );
       const fac = FACTION_INFO[lord.faction];
+      const lordIndex = Math.max(0, stateRef.current.campaign.lords.findIndex((item) => item.id === lord.id));
+      const clanGroups: Record<string, [string, string, string]> = {
+        player: ['Demirtaç', 'Gümüşyay', 'Kartalpençe'],
+        vlandia: ['Bozkurt', 'Alşahin', 'Karadağ'],
+        battania: ['Aybora', 'Tuğrul', 'Sırmaok'],
+        sturgia: ['Erguvan', 'Yelkovan', 'Sarpkalkan'],
+        empire: ['Altınkule', 'Mermertaş', 'Ayışığı'],
+        khuzait: ['Tulpar', 'Demirbörü', 'Gökbayrak'],
+        aserai: ['Kumyeli', 'Çölduman', 'Baharatkolu'],
+        bandits: ['Karagölge', 'Paslıkılıç', 'Kırıkdiş'],
+      };
+      const clanStem = (clanGroups[lord.faction] ?? ['Sınır', 'Uzak', 'Gezgin'])[lordIndex % 3];
+      const clanName = `${clanStem} ${lord.faction === 'bandits' ? 'Çetesi' : 'Hanedanı'}`;
+
       const statusBadge = lord.isAtWarWithPlayer
-        ? '<span class="px-1.5 py-0.5 rounded bg-[#7f1d1d] text-[#fecaca] text-[9px] font-bold">DÜŞMAN</span>'
-        : '<span class="px-1.5 py-0.5 rounded bg-[#1e293b] text-[#fde68a] text-[9px] font-bold">TARAFSIZ</span>';
+        ? '<span class="px-1.5 py-0.5 rounded bg-[#7f1d1d] text-[#fecaca] text-[9px] font-bold">SAVAŞTA</span>'
+        : lord.isAlliedWithPlayer || lord.relation >= 20
+          ? '<span class="px-1.5 py-0.5 rounded bg-[#064e3b] text-[#a7f3d0] text-[9px] font-bold">DOST</span>'
+          : '<span class="px-1.5 py-0.5 rounded bg-[#1e293b] text-[#fde68a] text-[9px] font-bold">TARAFSIZ</span>';
 
       tooltipCard.innerHTML = `
         <div class="flex items-center justify-center gap-1.5 font-display font-bold text-xs text-[#fbbf24] border-b border-[#c6a15b]/30 pb-1 mb-1">
+          <span style="background-color: ${lord.bannerColor}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);" class="w-3.5 h-4 inline-flex items-center justify-center border border-[#fcd34d] text-[8px]">${fac.glyph}</span>
           <span>${lord.title} ${lord.name}</span>
           ${statusBadge}
         </div>
         <div class="text-[10px] text-[#a3b19b]">
-          Krallık: <span class="font-semibold text-[#fde68a]">${fac.name}</span>
+          Klan: <span class="font-semibold text-[#f8f0df]">${clanName}</span> · Krallık: <span class="font-semibold text-[#fde68a]">${fac.name}</span>
         </div>
         <div class="text-[9px] text-[#86efac] mt-0.5 italic">
-          ${intel.currentAction}
+          Emir: ${intel.currentAction}
         </div>
         <div class="my-1.5 border-t border-[#c6a15b]/25 pt-1 text-[10px] text-[#c6a15b] font-semibold">
-          Askerler: <span class="text-[#86efac]">${intel.totalHealthy} Sağlam</span>${
-            intel.wounded > 0 ? ` <span class="text-[#fb923c]">+ ${intel.wounded} Yaralı</span>` : ''
-          }
+          Birlik: <span class="text-[#86efac] font-mono">${intel.totalHealthy}${intel.wounded > 0 ? ` + ${intel.wounded}y` : ''}</span> <span class="text-[#a89b84] text-[9px]">(${intel.totalHealthy} Sağlam${
+            intel.wounded > 0 ? `, ${intel.wounded} Yaralı` : ''
+          })</span>
         </div>
         <div class="text-[9px] text-[#e2e8f0] font-mono">
           Piyade: ${intel.roster.militia} · Okçu: ${intel.roster.archer} · Süvari: ${intel.roster.cavalry} · Muhafız: ${intel.roster.guard}
         </div>
         <div class="mt-1 pt-1 border-t border-[#c6a15b]/20 flex items-center justify-between text-[9px] text-[#fde68a] font-mono">
-          <span>Esirler: ${intel.prisoners} Asker</span>
-          <span>Hız: ${intel.speedInfo.finalSpeed}</span>
+          <span>Esirler: ${intel.prisoners} (+${intel.prisoners}e)</span>
+          <span>Harita Hızı: ${intel.speedInfo.finalSpeed}</span>
         </div>
         <div class="text-[8px] text-[#9ca3af] mt-0.5">
-          Moral: ${intel.morale} · Erzak: ${intel.foodDays} Gün · Sol Tık: Takip Et
+          İlişki: ${lord.relation >= 0 ? `+${lord.relation}` : lord.relation} · Moral: ${intel.morale} · Erzak: ${intel.foodDays} Gün
         </div>
       `;
       const clampedX = Math.max(130, Math.min(window.innerWidth - 130, Math.round(anchorX)));
@@ -1456,8 +1480,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     stateRef.current.campaign.settlements.forEach((s, idx) => {
       const siegeMarkers: SiegeMapMarker[] = [];
       const el = document.createElement('div');
+      // NOT: transition-transform ve hover:scale-* kaldırıldı; fare üzerine gelince isim asla hareket etmez!
       el.className =
-        'absolute top-0 left-0 pointer-events-auto flex items-center cursor-pointer select-none group transition-transform hover:scale-105';
+        'absolute top-0 left-0 pointer-events-auto flex items-center cursor-pointer select-none group hover:brightness-110';
       el.style.contain = 'layout style';
       el.style.willChange = 'transform';
       el.setAttribute('data-testid', `map-label-${s.id}`);
@@ -1467,6 +1492,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       const isTown = s.type === 'TOWN';
       const isCastle = s.type === 'CASTLE';
       const isVillage = s.type === 'VILLAGE';
+      const villageProd = isVillage ? getVillagePrimaryProduction(s) : null;
 
       el.innerHTML = `
         <div data-role="banner-shield" data-faction="${s.faction}" style="background-color: ${fac.color}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
@@ -1481,11 +1507,16 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             }
           </svg>
         </div>
-        <div style="background: linear-gradient(90deg, rgba(24, 22, 19, 0.86) 0%, rgba(34, 31, 27, 0.74) 84%, rgba(34, 31, 27, 0.28) 100%); clip-path: polygon(0% 0%, 89% 0%, 100% 50%, 89% 100%, 0% 100%);"
-             class="-ml-1 pl-2 pr-3 py-0.5 border-y border-[#c6a15b]/35 flex items-center gap-1.5 shadow">
-          <span class="font-display font-semibold ${isVillage ? 'text-[10px]' : isCastle ? 'text-[11px]' : 'text-[12px]'} text-[#fff8eb] tracking-wide hud-stroke">
+        <div style="background: linear-gradient(90deg, rgba(20, 17, 13, 0.92) 0%, rgba(30, 26, 20, 0.82) 84%, rgba(30, 26, 20, 0.32) 100%); clip-path: polygon(0% 0%, 91% 0%, 100% 50%, 91% 100%, 0% 100%);"
+             class="-ml-1 pl-2 pr-3 py-0.5 border-y border-[#c6a15b]/45 group-hover:border-[#e6c885]/80 flex items-center gap-1.5 shadow">
+          <span class="font-display font-semibold ${isVillage ? 'text-[10px]' : isCastle ? 'text-[11px]' : 'text-[12px]'} text-[#f5ead4] tracking-wide hud-stroke">
             ${s.name}
           </span>
+          ${
+            villageProd
+              ? `<span data-role="production-badge" title="Birincil Üretim: ${villageProd.name}" class="text-[8px] font-mono uppercase tracking-tighter text-[#e6c885] leading-none px-1 py-0.5 rounded bg-[#18130d]/90 border border-[#c6a15b]/40">${villageProd.shortLabel}</span>`
+              : ''
+          }
           <span data-role="garrison-count" class="text-[9px] text-[#c6a15b] font-mono">
             ${s.garrison}
           </span>
@@ -1539,11 +1570,14 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           liveS.type !== 'VILLAGE'
             ? stateRef.current.campaign.settlements
                 .filter((v) => v.type === 'VILLAGE' && v.boundSettlementId === liveS.id)
-                .map((v) => v.name)
+                .map((v) => `${getVillagePrimaryProduction(v).icon} ${v.name}`)
             : [];
+        const liveProd = liveS.type === 'VILLAGE' ? getVillagePrimaryProduction(liveS) : null;
         const fiefLine =
-          liveS.type === 'VILLAGE' && liveS.boundSettlementName
-            ? `<div class="text-[9px] text-[#fde68a]/90 mt-0.5">Bağlı Mülk: <span class="font-semibold">${liveS.boundSettlementName}</span></div>`
+          liveS.type === 'VILLAGE'
+            ? `<div class="text-[9px] text-[#fde68a]/90 mt-0.5">Bağlı Mülk: <span class="font-semibold">${liveS.boundSettlementName || 'Bağımsız'}</span></div>
+               <div class="text-[9px] text-[#86efac] mt-0.5">Birincil Üretim: <span class="font-semibold">${liveProd?.icon ?? '🌾'} ${liveProd?.name ?? 'Tahıl'}</span></div>
+               <div class="text-[9px] text-[#d6c9b1] mt-0.5">Ocak (Hane): <span class="font-mono font-semibold">${liveS.hearths ?? Math.round(liveS.prosperity * 1.15)}</span> · Durum: <span class="font-semibold">${liveS.isRaided ? '🔥 Yağmalanmış' : 'Normal'}</span></div>`
             : boundVillages.length > 0
               ? `<div class="text-[9px] text-[#fde68a]/90 mt-0.5">Bağlı Köyler (${boundVillages.length}): <span class="font-semibold">${boundVillages.join(', ')}</span></div>`
               : '';
@@ -1623,20 +1657,23 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     const lordLabelRecords = new Map<string, LordLabelRecord>();
     stateRef.current.campaign.lords.forEach((l) => {
       const el = document.createElement('div');
+      // NOT: transition-transform ve hover:scale-110 kaldırıldı; fare üzerine gelince lord etiketi sabit kalır!
       el.className =
-        'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120e]/85 border border-[#c6a15b]/45 cursor-pointer select-none group transition-transform hover:scale-110 shadow-md';
+        'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120e]/90 border border-[#c6a15b]/50 hover:border-[#f3d999] cursor-pointer select-none group shadow-md';
       el.style.contain = 'layout style';
       el.style.willChange = 'transform';
       el.setAttribute('data-testid', `map-label-${l.id}`);
       const intel = getLordDetailedIntel(l);
-      const initialTroopHtml = `${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#fb923c]">+${intel.wounded}</span>` : ''}`;
+      const initialTroopHtml = `${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#d97706]">+${intel.wounded}</span>` : ''}`;
       el.innerHTML = `
         <span style="background-color: ${l.bannerColor}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
-              class="w-4 h-5 flex items-center justify-center border border-[#fcd34d]/90 shadow shrink-0">
-          <span class="text-[9px] leading-none">${FACTION_INFO[l.faction].glyph}</span>
+              class="w-4 h-5 flex items-center justify-center border border-[#d4af37]/90 shadow shrink-0">
+          <svg viewBox="0 0 16 16" class="w-2.5 h-2.5 fill-[#fde68a]">
+            <path d="M8 2L10.5 6.5L15 8L10.5 9.5L8 14L5.5 9.5L1 8L5.5 6.5L8 2Z"/>
+          </svg>
         </span>
         <span data-role="lord-troops" class="font-display font-extrabold text-[12px] ${
-          l.isAtWarWithPlayer ? 'text-[#fca5a5]' : 'text-[#86efac]'
+          l.isAtWarWithPlayer ? 'text-[#f87171]' : 'text-[#e6d8b8]'
         } hud-stroke tracking-tight">${initialTroopHtml}</span>
       `;
       el.addEventListener('click', (e) => {
@@ -1679,13 +1716,15 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     const playerPartyEl = document.createElement('div');
     playerPartyEl.setAttribute('data-testid', 'map-label-player-party');
     playerPartyEl.className =
-      'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120e]/90 border border-[#fbbf24]/65 cursor-pointer select-none shadow-md';
+      'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120e]/90 border border-[#d4af37]/75 cursor-pointer select-none shadow-md';
     playerPartyEl.style.contain = 'layout style';
     playerPartyEl.style.willChange = 'transform';
     playerPartyEl.innerHTML = `
       <span style="background-color: ${FACTION_INFO.player.color}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
             class="w-4 h-5 flex items-center justify-center border border-[#fcd34d] shadow shrink-0">
-        <span class="text-[9px] leading-none">${FACTION_INFO.player.glyph}</span>
+        <svg viewBox="0 0 16 16" class="w-2.5 h-2.5 fill-[#fef08a]">
+          <path d="M8 1.5L10 5.5L14.5 4L12 9L14 14L8 11.5L2 14L4 9L1.5 4L6 5.5L8 1.5Z"/>
+        </svg>
       </span>
       <span id="player-party-count" class="font-display font-extrabold text-[12px] text-[#fef08a] hud-stroke tracking-tight">
         ${getTotalTroops(stateRef.current.campaign.roster)}
@@ -2268,6 +2307,15 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     const tick = (now: number) => {
       rafId = requestAnimationFrame(tick);
 
+      // Tam ekran bir modal (Karakter Oluşturma, Kayıt Yükle, Envanter, Pazar vb.) açıkken
+      // arka plandaki ağır 3B kıta renderını duraklat -> 0 GPU yükü, %100 akıcı 60 FPS arayüz!
+      if (stateRef.current.isRenderPaused) {
+        lastTime = now;
+        keysJustPressed.clear();
+        mouseLeftJustPressed = false;
+        return;
+      }
+
       if (isHeadless) {
         const camSettled =
           headlessRenderedFrames >= 2 &&
@@ -2305,12 +2353,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         }
       }
 
-      // 1. TITLE SCREEN: Live Continental Camera Spline Flyover
+      // 1. TITLE SCREEN: Smooth low-overhead Continental Camera Flyover
       if (gState === 'title') {
-        const tourAngle = elapsedTotal * 0.14;
+        const tourAngle = elapsedTotal * 0.11;
         const camX = -18 + Math.cos(tourAngle) * 58;
         const camZ = -4 + Math.sin(tourAngle) * 48;
-        const camY = 32 + Math.sin(elapsedTotal * 0.3) * 5;
+        const camY = 32 + Math.sin(elapsedTotal * 0.25) * 4;
         camera.position.lerp(_v1.set(camX, camY, camZ), 1 - Math.exp(-3 * dt));
         _camTarget.set(-18, groundHeightAt(-18, -4) + 2.5, -4);
         camera.lookAt(_camTarget);
@@ -2322,7 +2370,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       }
 
       if (gState === 'paused' || gState === 'gameover') {
-        renderer.render(scene, camera);
         keysJustPressed.clear();
         mouseLeftJustPressed = false;
         return;
@@ -2747,6 +2794,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               playerOverworldZ = THREE.MathUtils.clamp(moveRes.z, -390, 390);
               playerOverworldFacing = moveRes.facing;
               walkPhase += worldSimDt * 5.8 * bannerlordSpeed.terrainMultiplier;
+              // Haritada hareket ederken gerçekçi at nalı / yürüyüş ritmi çal
+              const hasMount =
+                Boolean(camp.equipment?.MOUNT && !camp.equipment.MOUNT.includes('Yok')) ||
+                camp.roster.cavalry > 0;
+              sound.playMapStep(hasMount, timeScale);
             } else {
               overworldWaypoints.shift();
               marchPathDirty = true;
@@ -3286,7 +3338,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
           if (playerPartyCountSpan) {
             const expectedPlayerText =
-              camp.prisoners > 0 ? `${totalTroops} ★${camp.prisoners}` : String(totalTroops);
+              camp.prisoners > 0 ? `${totalTroops}+${camp.prisoners}e` : String(totalTroops);
             if (playerLabelLastText !== expectedPlayerText) {
               playerLabelLastText = expectedPlayerText;
               playerPartyCountSpan.textContent = expectedPlayerText;

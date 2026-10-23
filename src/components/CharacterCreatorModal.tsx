@@ -32,20 +32,301 @@ import {
   cloneDNA,
   generateRandomDNA,
 } from '../game/characterMorph.ts';
-import { FACTION_INFO, FactionId } from '../game/rules.ts';
+import {
+  FACTION_INFO,
+  FactionId,
+  NewGameStartOptions,
+  BannerlordSkillId,
+  AttributeId,
+} from '../game/rules.ts';
 import { sound } from '../game/sound.ts';
 
 interface CharacterCreatorModalProps {
   initialDNA?: CharacterMorphDNA;
   characterName?: string;
   confirmLabel?: string;
-  onSave: (dna: CharacterMorphDNA, name?: string) => void;
+  onSave: (dna: CharacterMorphDNA, name?: string, startOptions?: NewGameStartOptions) => void;
   onClose: () => void;
 }
 
-type TabCategory = 'body' | 'face' | 'hair' | 'scars' | 'presets';
+type TabCategory = 'story' | 'body' | 'face' | 'hair' | 'scars' | 'presets' | 'clan';
 type OutfitPreset = 'civilian' | 'leather' | 'chainmail' | 'royal';
 type CameraViewPreset = 'face' | 'torso' | 'full';
+type DifficultyLevel = 'VERY_EASY' | 'EASY' | 'REALISTIC';
+
+interface StoryChoiceOption {
+  id: string;
+  title: string;
+  desc: string;
+  attr: AttributeId;
+  skills: [BannerlordSkillId, BannerlordSkillId];
+}
+
+const BANNERLORD_LIFE_STAGES: Array<{
+  stageId: string;
+  stageTitle: string;
+  subtitle: string;
+  options: StoryChoiceOption[];
+}> = [
+  {
+    stageId: 'family',
+    stageTitle: '1. Ailenizin Kökeni',
+    subtitle: 'Kalradya topraklarında dünyaya geldiğiniz hanenin geçmişi:',
+    options: [
+      {
+        id: 'retainers',
+        title: 'Bey Konağı Muhafızları',
+        desc: 'Babanız yerel bir sancakbeyinin maiyetinde kılıç kuşanmış kıdemli bir muhafızdı.',
+        attr: 'VIGOR',
+        skills: ['oneHanded', 'polearm'],
+      },
+      {
+        id: 'yeomen',
+        title: 'Özgür Toprak Sahipleri',
+        desc: 'Aileniz kendi tarlasını süren, gerektiğinde milis saflarında köyünü savunan özgür çiftçilerdi.',
+        attr: 'ENDURANCE',
+        skills: ['polearm', 'athletics'],
+      },
+      {
+        id: 'merchants',
+        title: 'Şehirli Kervan Tüccarları',
+        desc: 'Aileniz şehir pazarları arasında ipek, tahıl ve demir taşıyan lonca mensuplarıydı.',
+        attr: 'SOCIAL',
+        skills: ['trade', 'charm'],
+      },
+      {
+        id: 'nomads',
+        title: 'Göçebe Bozkır Boyu',
+        desc: 'Çadırlar ve yılkı sürüleri arasında, eyer üstünde ok atarak büyüyen bir obanın evladısınız.',
+        attr: 'CONTROL',
+        skills: ['riding', 'bow'],
+      },
+    ],
+  },
+  {
+    stageId: 'childhood',
+    stageTitle: '2. Erken Çocukluk',
+    subtitle: 'Çocukluk yıllarınızda yaşıtlarınız arasında hangi özelliğinizle tanındınız?',
+    options: [
+      {
+        id: 'leadership_kid',
+        title: 'Liderlik Yeteneğinizle',
+        desc: 'Mahalledeki ve köydeki çocukları örgütler, oyunlarda bile taktik kurardınız.',
+        attr: 'SOCIAL',
+        skills: ['leadership', 'tactics'],
+      },
+      {
+        id: 'brawn_kid',
+        title: 'Gücünüz ve Cesaretle',
+        desc: 'Ağır işlerden kaçmaz, tahta kılıçlarla yapılan talimlerde kimseye yenilmezdiniz.',
+        attr: 'VIGOR',
+        skills: ['oneHanded', 'twoHanded'],
+      },
+      {
+        id: 'attention_kid',
+        title: 'Keskin Gözleminizle',
+        desc: 'Ormandaki izleri sürer, en küçük ayrıntıyı bile gözden kaçırmazdınız.',
+        attr: 'CUNNING',
+        skills: ['scouting', 'bow'],
+      },
+    ],
+  },
+  {
+    stageId: 'adolescence',
+    stageTitle: '3. Ergenlik Yılları',
+    subtitle: 'Büyüdükçe ailenize hangi günlük görevde omuz verdiniz?',
+    options: [
+      {
+        id: 'herded_horses',
+        title: 'At Sürülerini Güttünüz',
+        desc: 'Yaban atlarını ehlileştirip otlaklarda gece gündüz nöbet tuttunuz.',
+        attr: 'ENDURANCE',
+        skills: ['riding', 'scouting'],
+      },
+      {
+        id: 'village_smithy',
+        title: 'Demirci Ocağında Çıraklık',
+        desc: 'Örs başında pusat onardınız, çeliğin suyunu ve silah dengesini öğrendiniz.',
+        attr: 'VIGOR',
+        skills: ['smithing', 'oneHanded'],
+      },
+      {
+        id: 'sold_produce',
+        title: 'Pazarda Mal Sattınız',
+        desc: 'Hasadı kasaba pazarına götürüp tüccarlarla sıkı pazarlıklar yaptınız.',
+        attr: 'INTELLIGENCE',
+        skills: ['trade', 'steward'],
+      },
+    ],
+  },
+  {
+    stageId: 'youth',
+    stageTitle: '4. Gençlikte Askeri Eğitim',
+    subtitle: 'Kalradya savaşlarla çalkalanırken gençliğinizde nasıl tecrübe kazandınız?',
+    options: [
+      {
+        id: 'cavalry_train',
+        title: 'Süvari Alayında At Koşturdunuz',
+        desc: 'Sınır boylarında atlı devriyelerle birlikte kargı ve kılıç talimi yaptınız.',
+        attr: 'ENDURANCE',
+        skills: ['riding', 'polearm'],
+      },
+      {
+        id: 'skirmisher_train',
+        title: 'Avcılar ve Gözcülerle Gezdiniz',
+        desc: 'Yay gerip pusudan ok yağdırmayı, sarp geçitlerde iz sürmeyi öğrendiniz.',
+        attr: 'CONTROL',
+        skills: ['bow', 'scouting'],
+      },
+      {
+        id: 'infantry_guard',
+        title: 'Garnizon Kalkan Duvarında Durdunuz',
+        desc: 'Kale muhafızlarıyla omuz omuza kalkan tutup yakın dövüşte piştiniz.',
+        attr: 'VIGOR',
+        skills: ['oneHanded', 'athletics'],
+      },
+    ],
+  },
+  {
+    stageId: 'accomplishment',
+    stageTitle: '5. Gençlik Başarınız',
+    subtitle: 'Yola çıkmadan önce adınızı duyuran en önemli olay neydi?',
+    options: [
+      {
+        id: 'defeated_raider',
+        title: 'Bir Haydut Çetesini Püskürttünüz',
+        desc: 'Köyünüze saldıran yağmacıların elebaşını teke tek dövüşte alt ettiniz.',
+        attr: 'VIGOR',
+        skills: ['oneHanded', 'tactics'],
+      },
+      {
+        id: 'saved_caravan',
+        title: 'Kuşatılan Kervanı Kurtardınız',
+        desc: 'Fırtınada ve pusuda dağılan bir kervanı güvenli yoldan şehre ulaştırdınız.',
+        attr: 'CUNNING',
+        skills: ['scouting', 'leadership'],
+      },
+      {
+        id: 'treated_plague',
+        title: 'Salgın ve Kıtlıkta Halkı Yaşattınız',
+        desc: 'Kış kıtlığında erzakları adilce paylaştırıp yaralıları tedavi ettiniz.',
+        attr: 'INTELLIGENCE',
+        skills: ['medicine', 'steward'],
+      },
+    ],
+  },
+  {
+    stageId: 'family_fate',
+    stageTitle: '6. Aile Baskını & Yola Çıkış',
+    subtitle: 'Gece baskınında haneniz yakıldığında ağabeyinizle nasıl kurtuldunuz?',
+    options: [
+      {
+        id: 'subdued_guard',
+        title: 'Nöbetçiyi Haklayıp Silahlandınız',
+        desc: 'Ağabeyinizle sırt sırta verip baskıncıları yararak atlarınıza ulaştınız.',
+        attr: 'VIGOR',
+        skills: ['oneHanded', 'athletics'],
+      },
+      {
+        id: 'snuck_out',
+        title: 'Oklarla Uzaktan Koruma Sağladınız',
+        desc: 'Karanlıkta yayınızı konuşturup ağabeyinizle iz kaybettirdiniz.',
+        attr: 'CONTROL',
+        skills: ['bow', 'roguery'],
+      },
+      {
+        id: 'rode_fast',
+        title: 'Gece Karanlığında At Sürdünüz',
+        desc: 'Ahırdaki son binek atlarını çözüp şafak sökmeden Lycaron vadisine ulaştınız.',
+        attr: 'ENDURANCE',
+        skills: ['riding', 'scouting'],
+      },
+    ],
+  },
+];
+
+const HERALDIC_SVG_EMBLEMS: Record<string, React.ReactNode> = {
+  '🦅': (
+    <svg viewBox="0 0 24 24" className="w-6 h-6 fill-current">
+      <path d="M12 3l2.2 3.2L19 4.5l-1.8 4.8L21 12l-4.5 1.5L18 19l-6-3.2L6 19l1.5-5.5L3 12l3.8-2.7L5 4.5l4.8 1.7L12 3z" />
+    </svg>
+  ),
+  '🦁': (
+    <svg viewBox="0 0 24 24" className="w-6 h-6 fill-current">
+      <path d="M12 2c4.4 0 8 3.6 8 8 0 3.1-1.8 5.8-4.4 7.1L17 22H7l1.4-4.9C5.8 15.8 4 13.1 4 10c0-4.4 3.6-8 8-8zm-2.5 6.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm5 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3zM12 13l-2.5 2.5h5L12 13z" />
+    </svg>
+  ),
+  '🦌': (
+    <svg viewBox="0 0 24 24" className="w-6 h-6 fill-none stroke-current" strokeWidth="2">
+      <path d="M5 4l3 4 4-2 4 2 3-4M4 8l4 1M20 8l-4 1M12 6v14M8 14l4 6 4-6" />
+    </svg>
+  ),
+  '⚔': (
+    <svg viewBox="0 0 24 24" className="w-6 h-6 fill-none stroke-current" strokeWidth="2">
+      <path d="M4 20L19 5M15 4h5v5M20 20L5 5M9 4H4v5" />
+    </svg>
+  ),
+  '👑': (
+    <svg viewBox="0 0 24 24" className="w-6 h-6 fill-current">
+      <path d="M3 18h18v2H3v-2zm0-2l2-9 4.5 4L12 5l2.5 6L19 7l2 9H3z" />
+    </svg>
+  ),
+  '🐎': (
+    <svg viewBox="0 0 24 24" className="w-6 h-6 fill-none stroke-current" strokeWidth="2">
+      <path d="M6 20l2-6 3-3 1-5 5 2 2 5-3 2-2 5H6z" />
+    </svg>
+  ),
+  '☀': (
+    <svg viewBox="0 0 24 24" className="w-6 h-6 fill-current">
+      <circle cx="12" cy="12" r="5" />
+      <path d="M12 1v3m0 16v3M1 12h3m16 0h3M4.2 4.2l2.1 2.1m11.4 11.4l2.1 2.1M19.8 4.2l-2.1 2.1M6.3 17.7l-2.1 2.1" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  ),
+};
+
+const CULTURE_BONUS_CARDS: Array<{
+  id: FactionId;
+  title: string;
+  bonusTitle: string;
+  bonusDesc: string;
+}> = [
+  {
+    id: 'vlandia',
+    title: 'Vlandiya',
+    bonusTitle: 'Feodal Şövalye Geleneği',
+    bonusDesc: 'Savaşta askerler +%20 terfi tecrübesi kazanır; paralı asker geliri +%15 artar.',
+  },
+  {
+    id: 'sturgia',
+    title: 'Sturgia',
+    bonusTitle: 'Kuzey Kar Yürüyüşçüleri',
+    bonusDesc: 'Karlı arazilerde hız cezası %20 azalır; kalkan duvarında piyade toplanması güçlenir.',
+  },
+  {
+    id: 'empire',
+    title: 'İmparatorluk',
+    bonusTitle: 'İmparatorluk Mühendisliği',
+    bonusDesc: 'Garnizon ücretleri %20 daha az; kuşatma silahı ve şehir inşası +%25 daha hızlı.',
+  },
+  {
+    id: 'aserai',
+    title: 'Aserai',
+    bonusTitle: 'Çöl Kervan Sultanlığı',
+    bonusDesc: 'Kervan kurma %30 ucuz, ticaret cezası %10 az; çölde hareket hızı cezası yok.',
+  },
+  {
+    id: 'khuzait',
+    title: 'Kuzait',
+    bonusTitle: 'Bozkır Atlı Göçebeleri',
+    bonusDesc: 'Haritada atlı birliklerden +%10 ekstra hız bonusu; bozkırda süvari devşirme ucuz.',
+  },
+  {
+    id: 'battania',
+    title: 'Batanya',
+    bonusTitle: 'Ulu Orman Pusucuları',
+    bonusDesc: 'Ormanlarda hız cezası %10 daha az ve görüş menzili +%15 daha geniş.',
+  },
+];
 
 export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   initialDNA,
@@ -58,10 +339,61 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
     initialDNA ? cloneDNA(initialDNA) : cloneDNA(PLAYER_DEFAULT_DNA),
   );
   const [name, setName] = useState<string>(defaultName);
-  const [activeTab, setActiveTab] = useState<TabCategory>('body');
+  const [clanName, setClanName] = useState<string>('Demirhan Hanedanı');
+  const [bannerColor, setBannerColor] = useState<string>('#d97706');
+  const [bannerEmblem, setBannerEmblem] = useState<string>('🦅');
+  const [ironmanMode, setIronmanMode] = useState<boolean>(false);
+  const [difficulty, setDifficulty] = useState<{
+    playerDamageTaken: DifficultyLevel;
+    friendlyTroopDamage: DifficultyLevel;
+    recruitmentDifficulty: DifficultyLevel;
+    mapMovementSpeed: DifficultyLevel;
+    persuasionSuccess: DifficultyLevel;
+  }>({
+    playerDamageTaken: 'REALISTIC',
+    friendlyTroopDamage: 'REALISTIC',
+    recruitmentDifficulty: 'REALISTIC',
+    mapMovementSpeed: 'REALISTIC',
+    persuasionSuccess: 'REALISTIC',
+  });
+  const [activeTab, setActiveTab] = useState<TabCategory>('story');
   const [outfit, setOutfit] = useState<OutfitPreset>('civilian');
   const [cameraView, setCameraView] = useState<CameraViewPreset>('full');
-  const [isRotating, setIsRotating] = useState<boolean>(true);
+  // Bannerlord'da manken kendi kendine dönmez; kullanıcı fareyle sürükleyebilir
+  const [isRotating, setIsRotating] = useState<boolean>(false);
+  const [brotherName, setBrotherName] = useState<string>('Niasen');
+  const [startingSettlementId, setStartingSettlementId] = useState<string>('poros');
+  const [storySelections, setStorySelections] = useState<Record<string, string>>({
+    family: 'retainers',
+    childhood: 'leadership_kid',
+    adolescence: 'herded_horses',
+    youth: 'cavalry_train',
+    accomplishment: 'defeated_raider',
+    family_fate: 'subdued_guard',
+  });
+
+  const computedStoryBonuses = useMemo(() => {
+    const attrBonuses: Partial<Record<AttributeId, number>> = {};
+    const skillBonuses: Partial<Record<BannerlordSkillId, number>> = {};
+    const titles: string[] = [];
+
+    for (const stage of BANNERLORD_LIFE_STAGES) {
+      const pickedId = storySelections[stage.stageId];
+      const opt = stage.options.find((o) => o.id === pickedId) || stage.options[0];
+      if (!opt) continue;
+      titles.push(opt.title);
+      attrBonuses[opt.attr] = (attrBonuses[opt.attr] ?? 0) + 1;
+      for (const sk of opt.skills) {
+        skillBonuses[sk] = (skillBonuses[sk] ?? 0) + 10;
+      }
+    }
+
+    return {
+      attrBonuses,
+      skillBonuses,
+      summary: titles.slice(0, 3).join(' · '),
+    };
+  }, [storySelections]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<{
@@ -389,7 +721,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   };
 
   const handleLoadLord = (lordKey: string) => {
-    sound.playWarhorn();
+    sound.playUiClick();
     if (LORD_DNA_PRESETS[lordKey]) {
       const preset = cloneDNA(LORD_DNA_PRESETS[lordKey]);
       setDna(preset);
@@ -406,19 +738,44 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   };
 
   const handleApplyCulture = (culture: FactionId) => {
-    sound.playSwordSwoosh();
+    sound.playUiClick();
     const cultureDNA = generateRandomDNA(culture, dna.gender);
     setDna(cultureDNA);
   };
 
   const handleConfirm = () => {
-    sound.playWarhorn();
-    onSave(dna, name);
+    sound.playSettlementEnter();
+    onSave(dna, name, {
+      realisticBannerlordStart: true,
+      culture: dna.culture,
+      clanName,
+      familyBrotherName: brotherName.trim() || 'Niasen',
+      storySummary: computedStoryBonuses.summary,
+      storyAttrBonuses: computedStoryBonuses.attrBonuses,
+      storySkillBonuses: computedStoryBonuses.skillBonuses,
+      startingSettlementId,
+    });
     onClose();
   };
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.code === 'Enter') {
+        e.preventDefault();
+        handleConfirm();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 md:p-6 select-none animate-fadeIn">
+    <div
+      data-testid="character-creator-modal"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 md:p-6 select-none animate-fadeIn"
+    >
       {/* Outer Bannerlord Parchment / Iron Frame */}
       <div className="relative w-full max-w-7xl h-[94vh] bg-[#14100c] border-2 border-[#c6a15b]/60 rounded-xl shadow-2xl flex flex-col md:flex-row overflow-hidden font-sans">
         
@@ -452,7 +809,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                     : 'text-[#e2e8f0]/80 hover:text-white hover:bg-white/10'
                 }`}
               >
-                👤 Yüz Odak
+                Yüz Odak
               </button>
               <button
                 type="button"
@@ -463,7 +820,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                     : 'text-[#e2e8f0]/80 hover:text-white hover:bg-white/10'
                 }`}
               >
-                🛡️ Gövde
+                Gövde
               </button>
               <button
                 type="button"
@@ -474,7 +831,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                     : 'text-[#e2e8f0]/80 hover:text-white hover:bg-white/10'
                 }`}
               >
-                ⚔️ Tam Boy
+                Tam Boy
               </button>
             </div>
           </div>
@@ -521,7 +878,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                   isRotating ? 'bg-[#c6a15b]/30 text-[#fef3c7]' : 'text-stone-400 hover:text-white'
                 }`}
               >
-                {isRotating ? '🔄 Otomatik Dönüş: Açık' : '⏸️ Dönüş: Sabit'}
+                {isRotating ? 'Otomatik Dönüş: Açık' : 'Dönüş: Sabit'}
               </button>
               <span className="text-[10px] text-stone-400 hidden sm:inline">
                 (Fareyle sürükleyip çevirebilirsiniz)
@@ -533,38 +890,136 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
         {/* ========================================================= */}
         {/* RIGHT PANEL: BANNERLORD CUSTOMIZATION CONTROLS */}
         {/* ========================================================= */}
-        <div className="w-full md:w-[460px] h-1/2 md:h-full bg-[#18140f] border-t-2 md:border-t-0 md:border-l-2 border-[#c6a15b]/40 flex flex-col overflow-hidden">
+        <div className="w-full md:w-[490px] h-1/2 md:h-full bg-[#18140f] border-t-2 md:border-t-0 md:border-l-2 border-[#c6a15b]/40 flex flex-col overflow-hidden">
           
           {/* Tab Header Navigation */}
           <div className="flex items-center border-b border-[#c6a15b]/30 bg-[#120f0c] overflow-x-auto no-scrollbar">
             {[
-              { id: 'body', label: 'Vücut', icon: '🧍' },
-              { id: 'face', label: 'Yüz & Ten', icon: '👤' },
-              { id: 'hair', label: 'Saç & Sakal', icon: '✂️' },
-              { id: 'scars', label: 'İzler & Boya', icon: '⚔️' },
-              { id: 'presets', label: 'Lordlar & Kültür', icon: '👑' },
+              { id: 'story', label: 'Hikaye & Aile' },
+              { id: 'body', label: 'Vücut' },
+              { id: 'face', label: 'Yüz' },
+              { id: 'hair', label: 'Saç' },
+              { id: 'scars', label: 'İzler' },
+              { id: 'presets', label: 'Kültür' },
+              { id: 'clan', label: 'Klan & Zorluk' },
             ].map((tab) => (
               <button
                 key={tab.id}
                 type="button"
+                data-testid={`creator-tab-${tab.id}`}
                 onClick={() => {
-                  sound.playCoin();
+                  sound.playUiClick();
                   setActiveTab(tab.id as TabCategory);
                 }}
-                className={`flex-1 py-3 px-2 text-xs md:text-sm font-serif font-bold uppercase tracking-wider text-center whitespace-nowrap transition border-b-2 flex items-center justify-center gap-1.5 ${
+                className={`flex-1 py-3 px-2 text-[11px] font-serif font-bold uppercase tracking-wider text-center whitespace-nowrap transition border-b-2 flex items-center justify-center ${
                   activeTab === tab.id
                     ? 'border-[#c6a15b] text-[#fef3c7] bg-[#241c14]'
                     : 'border-transparent text-stone-400 hover:text-stone-200 hover:bg-[#1a1510]'
                 }`}
               >
-                <span>{tab.icon}</span>
                 <span>{tab.label}</span>
               </button>
             ))}
           </div>
 
           {/* Scrollable Customization Content */}
-          <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 text-[#fef3c7] scrollbar-thin">
+          <div className="flex-1 overflow-y-auto p-4 md:p-5 space-y-5 text-[#fef3c7] scrollbar-thin">
+            
+            {/* ---------------- TAB 0: BANNERLORD 6-AŞAMALI HİKAYE & BAŞLANGIÇ AİLESİ ---------------- */}
+            {activeTab === 'story' && (
+              <div className="space-y-4 animate-fadeIn" data-testid="creator-story-panel">
+                <div className="p-3 rounded border border-[#c6a15b]/40 bg-[#120f0b]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-serif font-bold text-[#c6a15b] uppercase tracking-wider">
+                      Aile & Başlangıç Durumu (Bannerlord Sefer Başlangıcı)
+                    </span>
+                    <span className="text-[10px] font-mono text-[#e2c275] bg-[#2a2116] px-2 py-0.5 rounded border border-[#c6a15b]/30">
+                      0 Asker · 1 Aile Üyesi
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-stone-300 mt-1.5 leading-relaxed">
+                    Gece baskınından ağabeyinizle birlikte sağ kurtuldunuz. Yanınızda hazır bir ordu yok; yalnızca ağabeyiniz, binek atınız, kılıcınız, yayınız, sadağınız ve birkaç günlük erzağınızla Kalradya yollarındasınız.
+                  </p>
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <label className="text-[11px] text-stone-400 shrink-0">Yanınızdaki Ağabeyinizin Adı:</label>
+                    <input
+                      type="text"
+                      value={brotherName}
+                      onChange={(e) => setBrotherName(e.target.value)}
+                      className="flex-1 px-2.5 py-1 rounded bg-stone-900 border border-[#c6a15b]/40 text-xs font-bold text-[#fef3c7] outline-none focus:border-[#c6a15b]"
+                      placeholder="Niasen"
+                    />
+                  </div>
+                  <div className="mt-2.5 grid grid-cols-2 gap-1.5 text-[10px] text-stone-300">
+                    <div className="px-2 py-1 rounded bg-stone-900/80 border border-stone-800">
+                      <span className="text-[#c6a15b] font-bold">Silahlar:</span> Piyade Kılıcı, Avcı Yayı, 24 Ok
+                    </div>
+                    <div className="px-2 py-1 rounded bg-stone-900/80 border border-stone-800">
+                      <span className="text-[#c6a15b] font-bold">Binek & Kıyafet:</span> Bozkır Atı, Gezgin Tuniği
+                    </div>
+                    <div className="px-2 py-1 rounded bg-stone-900/80 border border-stone-800">
+                      <span className="text-[#c6a15b] font-bold">Erzak:</span> Tahıl (x2) & Kurutulmuş Et (x1)
+                    </div>
+                    <div className="px-2 py-1 rounded bg-stone-900/80 border border-stone-800">
+                      <span className="text-[#c6a15b] font-bold">Başlangıç:</span> 0 Asker · 0 Nam · 1000 Dinar
+                    </div>
+                  </div>
+                </div>
+
+                {/* 6 Life Story Stages */}
+                <div className="space-y-3.5">
+                  {BANNERLORD_LIFE_STAGES.map((stage) => {
+                    const selectedId = storySelections[stage.stageId] || stage.options[0].id;
+                    return (
+                      <div
+                        key={stage.stageId}
+                        className="p-3 rounded border border-stone-800 bg-stone-900/50 space-y-2"
+                      >
+                        <div>
+                          <h5 className="text-xs font-serif font-bold text-[#e6c885]">
+                            {stage.stageTitle}
+                          </h5>
+                          <p className="text-[10px] text-stone-400">{stage.subtitle}</p>
+                        </div>
+                        <div className="space-y-1.5">
+                          {stage.options.map((opt) => {
+                            const active = selectedId === opt.id;
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => {
+                                  sound.playUiClick();
+                                  setStorySelections((prev) => ({
+                                    ...prev,
+                                    [stage.stageId]: opt.id,
+                                  }));
+                                }}
+                                className={`w-full p-2 rounded border text-left transition ${
+                                  active
+                                    ? 'border-[#c6a15b] bg-[#c6a15b]/20 text-[#fef3c7]'
+                                    : 'border-stone-800 bg-[#120f0b]/80 text-stone-300 hover:border-stone-600'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-bold">{opt.title}</span>
+                                  <span className="text-[10px] font-mono text-[#c6a15b]">
+                                    +1 {opt.attr} · +10 {opt.skills[0]}/{opt.skills[1]}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-stone-400 mt-0.5 leading-snug">
+                                  {opt.desc}
+                                </p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             
             {/* ---------------- TAB 1: VÜCUT ---------------- */}
             {activeTab === 'body' && (
@@ -583,7 +1038,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                           : 'border-stone-700 bg-stone-900/60 text-stone-400 hover:border-stone-500'
                       }`}
                     >
-                      <span>⚔️ Erkek</span>
+                      <span>Erkek Savaşçı</span>
                     </button>
                     <button
                       type="button"
@@ -594,7 +1049,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                           : 'border-stone-700 bg-stone-900/60 text-stone-400 hover:border-stone-500'
                       }`}
                     >
-                      <span>🛡️ Kadın</span>
+                      <span>Kadın Savaşçı</span>
                     </button>
                   </div>
                 </div>
@@ -1024,15 +1479,15 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                   </p>
                   <div className="grid grid-cols-2 gap-2 mt-2">
                     {[
-                      { id: 'lord-derthert', title: 'Kral Derthert', fac: 'vlandia', icon: '🦁' },
-                      { id: 'lord-rhagaea', title: 'İmparatoriçe Rhagaea', fac: 'empire', icon: '👑' },
-                      { id: 'lord-caladog', title: 'Yüksek Kral Caladog', fac: 'battania', icon: '🦌' },
-                      { id: 'lord-raganvad', title: 'Büyük Prens Raganvad', fac: 'sturgia', icon: '⚔️' },
-                      { id: 'lord-monchug', title: 'Monchug Han', fac: 'khuzait', icon: '🐎' },
-                      { id: 'lord-unqid', title: 'Sultan Unqid', fac: 'aserai', icon: '☀️' },
-                      { id: 'lord-garios', title: 'General Garios', fac: 'empire', icon: '🦅' },
-                      { id: 'lord-lucon', title: 'Arkon Lucon', fac: 'empire', icon: '🏛️' },
-                      { id: 'lord-kargi', title: 'Reis Kargı', fac: 'bandits', icon: '☠️' },
+                      { id: 'lord-derthert', title: 'Kral Derthert', fac: 'vlandia', emb: '🦁' },
+                      { id: 'lord-rhagaea', title: 'İmparatoriçe Rhagaea', fac: 'empire', emb: '👑' },
+                      { id: 'lord-caladog', title: 'Yüksek Kral Caladog', fac: 'battania', emb: '🦌' },
+                      { id: 'lord-raganvad', title: 'Büyük Prens Raganvad', fac: 'sturgia', emb: '⚔' },
+                      { id: 'lord-monchug', title: 'Monchug Han', fac: 'khuzait', emb: '🐎' },
+                      { id: 'lord-unqid', title: 'Sultan Unqid', fac: 'aserai', emb: '☀' },
+                      { id: 'lord-garios', title: 'General Garios', fac: 'empire', emb: '🦅' },
+                      { id: 'lord-lucon', title: 'Arkon Lucon', fac: 'empire', emb: '👑' },
+                      { id: 'lord-kargi', title: 'Reis Kargı', fac: 'bandits', emb: '⚔' },
                     ].map((lord) => (
                       <button
                         key={lord.id}
@@ -1040,7 +1495,9 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                         onClick={() => handleLoadLord(lord.id)}
                         className="p-2 rounded border border-stone-700 bg-stone-900/60 hover:border-[#c6a15b] hover:bg-[#c6a15b]/10 text-left transition flex items-center gap-2 group"
                       >
-                        <span className="text-base group-hover:scale-110 transition">{lord.icon}</span>
+                        <span className="text-[#c6a15b] shrink-0">
+                          {HERALDIC_SVG_EMBLEMS[lord.emb] ?? HERALDIC_SVG_EMBLEMS['🦅']}
+                        </span>
                         <div className="overflow-hidden">
                           <span className="text-xs font-bold text-stone-200 block truncate group-hover:text-[#fef3c7]">
                             {lord.title}
@@ -1054,33 +1511,229 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                   </div>
                 </div>
 
-                {/* Culture Presets */}
-                <div className="space-y-2 pt-2 border-t border-stone-800">
+                {/* Culture Presets with 6 Bannerlord Culture Bonuses */}
+                <div className="space-y-2 pt-2 border-t border-stone-800" data-testid="culture-bonus-cards">
                   <span className="text-xs font-serif font-bold text-[#c6a15b] uppercase tracking-wider block">
-                    Kültürel Genetik Başlatıcı
+                    6 Kalradya Kültürü ve Başlangıç Bonusları
                   </span>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(['vlandia', 'battania', 'sturgia', 'empire', 'khuzait', 'aserai'] as FactionId[]).map(
-                      (c) => (
+                  <div className="space-y-2">
+                    {CULTURE_BONUS_CARDS.map((card) => (
+                      <button
+                        key={card.id}
+                        type="button"
+                        data-testid={`culture-card-${card.id}`}
+                        onClick={() => handleApplyCulture(card.id)}
+                        className={`w-full p-2.5 rounded border text-left transition flex flex-col gap-1 ${
+                          dna.culture === card.id
+                            ? 'border-[#c6a15b] bg-[#c6a15b]/20 shadow'
+                            : 'border-stone-800 bg-stone-900/50 hover:border-stone-600'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-[#fef3c7]">
+                            {card.title} — <span className="text-[#fbbf24]">{card.bonusTitle}</span>
+                          </span>
+                          <span
+                            className="w-3 h-3 rounded-full border border-white/40"
+                            style={{ backgroundColor: FACTION_INFO[card.id]?.color }}
+                          />
+                        </div>
+                        <p className="text-[11px] text-[#86efac] leading-snug">{card.bonusDesc}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ---------------- TAB 6: KLAN, SANCAK & ZORLUK ---------------- */}
+            {activeTab === 'clan' && (
+              <div className="space-y-5 animate-fadeIn" data-testid="creator-clan-difficulty-panel">
+                {/* Clan Name & Banner Designer */}
+                <div className="space-y-3 border-b border-stone-800 pb-4">
+                  <span className="text-xs font-serif font-bold text-[#c6a15b] uppercase tracking-wider block">
+                    Klan Adı & Sancak Arması
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <div
+                      style={{
+                        backgroundColor: bannerColor,
+                        clipPath: 'polygon(0% 0%, 100% 0%, 100% 70%, 50% 100%, 0% 70%)',
+                      }}
+                      className="w-12 h-14 border-2 border-[#fcd34d] flex items-center justify-center text-[#fef3c7] shadow-lg shrink-0"
+                    >
+                      {HERALDIC_SVG_EMBLEMS[bannerEmblem] ?? HERALDIC_SVG_EMBLEMS['🦅']}
+                    </div>
+                    <div className="flex-1 space-y-1.5">
+                      <label className="text-[11px] text-stone-400 block">Klan / Hanedan Adı</label>
+                      <input
+                        type="text"
+                        value={clanName}
+                        onChange={(e) => setClanName(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded bg-stone-900 border border-[#c6a15b]/50 text-xs font-bold text-[#fef3c7] outline-none focus:border-[#fbbf24]"
+                        placeholder="Demirhan Hanedanı"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Banner Color Swatches */}
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-stone-400 block">Sancak Kumaş Rengi</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {['#d97706', '#991b1b', '#1e3a8a', '#166534', '#581c87', '#0f766e', '#1c1917'].map(
+                        (col) => (
+                          <button
+                            key={col}
+                            type="button"
+                            onClick={() => setBannerColor(col)}
+                            style={{ backgroundColor: col }}
+                            className={`w-6 h-6 rounded-full border-2 transition ${
+                              bannerColor === col ? 'border-[#fef08a] scale-110' : 'border-stone-700'
+                            }`}
+                          />
+                        ),
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Banner Emblem Selector (SVG) */}
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-stone-400 block">Hanedan Arması (SVG)</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {['🦅', '🦁', '🦌', '⚔', '👑', '🐎', '☀'].map((emb) => (
                         <button
-                          key={c}
+                          key={emb}
                           type="button"
-                          onClick={() => handleApplyCulture(c)}
-                          className={`p-2 rounded border text-left transition flex items-center justify-between ${
-                            dna.culture === c
-                              ? 'border-[#c6a15b] bg-[#c6a15b]/20 font-bold'
-                              : 'border-stone-800 bg-stone-900/50 hover:border-stone-600'
+                          onClick={() => setBannerEmblem(emb)}
+                          className={`w-8 h-8 rounded border flex items-center justify-center text-[#fef3c7] ${
+                            bannerEmblem === emb
+                              ? 'border-[#c6a15b] bg-[#c6a15b]/25'
+                              : 'border-stone-800 bg-stone-900/60'
                           }`}
                         >
-                          <span className="text-xs text-stone-200">{FACTION_INFO[c]?.name}</span>
-                          <span
-                            className="w-2.5 h-2.5 rounded-full"
-                            style={{ backgroundColor: FACTION_INFO[c]?.color }}
-                          />
+                          {HERALDIC_SVG_EMBLEMS[emb]}
                         </button>
-                      ),
-                    )}
+                      ))}
+                    </div>
                   </div>
+
+                  {/* Başlangıç Doğum Yeri & Bölgesi */}
+                  <div className="space-y-1.5 pt-2 border-t border-stone-800">
+                    <span className="text-xs font-serif font-bold text-[#c6a15b] uppercase tracking-wider block">
+                      Başlangıç Doğum Yeri &amp; Bölgesi
+                    </span>
+                    <p className="text-[10px] text-stone-400">
+                      Sefer başladığında maceranıza adım atacağınız başlangıç şehrini seçin:
+                    </p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {[
+                        { id: 'poros', name: 'Poros (İmparatorluk)', desc: 'Verimli güney ovaları' },
+                        { id: 'pravend', name: 'Pravend (Vlandiya)', desc: 'Batı okyanus vadisi' },
+                        { id: 'marunath', name: 'Marunath (Batanya)', desc: 'Sisli ulu ormanlar' },
+                        { id: 'omor', name: 'Omor (Sturgiya)', desc: 'Kuzey karlı geçitleri' },
+                        { id: 'chaikand', name: 'Chaikand (Kuzait)', desc: 'Geniş bozkır obaları' },
+                        { id: 'sanala', name: 'Sanala (Aseray)', desc: 'Güneşli vahalar & kervanlar' },
+                        { id: 'zeonica', name: 'Zeonica (İmparatorluk)', desc: 'Batı iç deniz limanı' },
+                        { id: 'lycaron', name: 'Lycaron (İmparatorluk)', desc: 'Doğu dağ geçitleri' },
+                      ].map((sp) => (
+                        <button
+                          key={sp.id}
+                          type="button"
+                          onClick={() => setStartingSettlementId(sp.id)}
+                          className={`p-2 rounded border text-left transition ${
+                            startingSettlementId === sp.id
+                              ? 'border-[#f59e0b] bg-[#f59e0b]/20 text-[#fde68a] shadow'
+                              : 'border-stone-800 bg-stone-900/60 text-stone-300 hover:border-stone-700'
+                          }`}
+                        >
+                          <div className="text-xs font-bold">{sp.name}</div>
+                          <div className="text-[9px] text-stone-400">{sp.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5 Bannerlord Campaign Difficulty Settings */}
+                <div className="space-y-3">
+                  <span className="text-xs font-serif font-bold text-[#c6a15b] uppercase tracking-wider block">
+                    5 Bannerlord Sefer Zorluk Ayarı
+                  </span>
+                  {(
+                    [
+                      {
+                        key: 'playerDamageTaken' as const,
+                        label: 'Oyuncunun Aldığı Hasar',
+                        labels: { VERY_EASY: 'Çok Kolay (%25)', EASY: 'Kolay (%50)', REALISTIC: 'Gerçekçi (%100)' },
+                      },
+                      {
+                        key: 'friendlyTroopDamage' as const,
+                        label: 'Dost Birliklerin Aldığı Hasar',
+                        labels: { VERY_EASY: 'Çok Kolay (%50)', EASY: 'Kolay (%75)', REALISTIC: 'Gerçekçi (%100)' },
+                      },
+                      {
+                        key: 'recruitmentDifficulty' as const,
+                        label: 'Asker Toplama Zorluğu',
+                        labels: { VERY_EASY: 'Çok Kolay (+2 Slot)', EASY: 'Kolay (+1 Slot)', REALISTIC: 'Gerçekçi (Normal)' },
+                      },
+                      {
+                        key: 'mapMovementSpeed' as const,
+                        label: 'Harita Hareket Hızı',
+                        labels: { VERY_EASY: 'Çok Kolay (+%10)', EASY: 'Kolay (+%5)', REALISTIC: 'Gerçekçi (Normal)' },
+                      },
+                      {
+                        key: 'persuasionSuccess' as const,
+                        label: 'İkna Başarısı',
+                        labels: { VERY_EASY: 'Çok Kolay (+%10)', EASY: 'Kolay (+%5)', REALISTIC: 'Gerçekçi (Normal)' },
+                      },
+                    ] as const
+                  ).map((row) => (
+                    <div key={row.key} className="p-2 rounded bg-stone-900/70 border border-stone-800 space-y-1.5">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="font-semibold text-stone-200">{row.label}</span>
+                        <span className="text-[11px] font-mono text-[#fbbf24]">
+                          {row.labels[difficulty[row.key]]}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {(['VERY_EASY', 'EASY', 'REALISTIC'] as DifficultyLevel[]).map((lvl) => (
+                          <button
+                            key={lvl}
+                            type="button"
+                            onClick={() =>
+                              setDifficulty((prev) => ({
+                                ...prev,
+                                [row.key]: lvl,
+                              }))
+                            }
+                            className={`py-1 px-1.5 rounded text-[10px] font-bold transition ${
+                              difficulty[row.key] === lvl
+                                ? 'bg-[#b45309] text-white border border-[#fbbf24]/60'
+                                : 'bg-stone-800 text-stone-400 hover:text-stone-200'
+                            }`}
+                          >
+                            {lvl === 'VERY_EASY' ? 'Çok Kolay' : lvl === 'EASY' ? 'Kolay' : 'Gerçekçi'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Ironman Toggle */}
+                  <label className="flex items-center justify-between p-2.5 rounded bg-stone-900/80 border border-[#c6a15b]/30 cursor-pointer">
+                    <div>
+                      <span className="text-xs font-bold text-[#fde68a] block">Demir Adam (Ironman) Modu</span>
+                      <span className="text-[10px] text-stone-400">
+                        Tek kayıt dosyası ile geri dönüşsüz kararlar
+                      </span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={ironmanMode}
+                      onChange={(e) => setIronmanMode(e.target.checked)}
+                      className="w-4 h-4 accent-[#c6a15b]"
+                    />
+                  </label>
                 </div>
               </div>
             )}
@@ -1095,7 +1748,6 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                 title="Rastgele Yarat"
                 className="px-3 py-2 rounded bg-stone-800 hover:bg-stone-700 text-[#fef3c7] border border-stone-600 text-xs font-bold transition flex items-center gap-1"
               >
-                <span>🎲</span>
                 <span className="hidden sm:inline">Rastgele</span>
               </button>
               <button
@@ -1104,7 +1756,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                 title="Sıfırla"
                 className="px-3 py-2 rounded bg-stone-800 hover:bg-stone-700 text-stone-300 border border-stone-700 text-xs transition"
               >
-                ↺
+                Sıfırla
               </button>
             </div>
 
@@ -1118,10 +1770,10 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
               </button>
               <button
                 type="button"
+                data-testid="creator-confirm-btn"
                 onClick={handleConfirm}
                 className="px-4 py-2 rounded bg-[#c6a15b] hover:bg-[#d4af37] text-[#14100c] font-serif font-bold text-xs md:text-sm tracking-wide shadow-lg hover:shadow-[#c6a15b]/20 transition flex items-center gap-1.5"
               >
-                <span>⚔️</span>
                 <span>{confirmLabel || 'Karakteri Onayla'}</span>
               </button>
             </div>

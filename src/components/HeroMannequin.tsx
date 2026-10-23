@@ -106,7 +106,7 @@ export const HeroMannequin: React.FC<HeroMannequinProps> = ({
       animationFrameId = requestAnimationFrame(renderLoop);
       const delta = clock.getDelta();
       const elapsed = clock.getElapsedTime();
-      if (!draggingRef.current) rotationRef.current += delta * 0.25;
+      // Bannerlord'da manken kendi kendine 360 dönmez; yalnızca kullanıcı fareyle sürüklediğinde döner
       stage.rotation.y = rotationRef.current;
       updateRigAnimation(heroRig, 'IDLE', elapsed, delta);
       if (horseRig) updateWarHorseAnimation(horseRig, 0, elapsed);

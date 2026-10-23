@@ -4,10 +4,12 @@ import { playImpact, setArmorySoundEnabled, unlockArmorySound, armorySoundEnable
 class SoundManager {
   private ctx: AudioContext | null = null;
   public muted = false;
-  public masterVolume = 0.8;
+  public masterVolume = 0.75;
+  private lastStepAt = 0;
+  private stepPhase = 0;
 
   private getContext(): AudioContext | null {
-    if (this.muted || typeof window === 'undefined') return null;
+    if (this.muted || this.masterVolume <= 0.01 || typeof window === 'undefined') return null;
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (AudioCtx) {
@@ -30,6 +32,10 @@ class SoundManager {
     setArmorySoundEnabled(!this.muted && armorySoundEnabled());
   }
 
+  public getVolume(): number {
+    return this.masterVolume;
+  }
+
   public toggleMute(): boolean {
     this.muted = !this.muted;
     setArmorySoundEnabled(!this.muted && armorySoundEnabled());
@@ -41,24 +47,109 @@ class SoundManager {
     unlockArmorySound();
   }
 
-  public playSwordSwing() {
+  /** Arayüz ve menü tıklama sesi (yumuşak orta çağ parşömen/demir tıkı). */
+  public playUiClick() {
     const ctx = this.getContext();
     if (!ctx) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(320, now);
+    osc.frequency.exponentialRampToValueAtTime(135, now + 0.05);
+    gain.gain.setValueAtTime(0.075 * this.masterVolume, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.06);
+  }
+
+  /** Yerleşime girildiğinde veya sefer başladığında çalan sıcak, yumuşak akor. */
+  public playSettlementEnter() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [220, 277.18, 329.63].forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.055);
+      gain.gain.setValueAtTime(0.0001, now + idx * 0.055);
+      gain.gain.linearRampToValueAtTime(0.065 * this.masterVolume, now + idx * 0.055 + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + idx * 0.055 + 0.34);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + idx * 0.055);
+      osc.stop(now + idx * 0.055 + 0.36);
+    });
+  }
+
+  /** Haritada parti hareket ederken çalan gerçekçi at nalı / yürüyüş ritmi. */
+  public playMapStep(hasMountOrCavalry = true, timeScale = 1) {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const intervals = hasMountOrCavalry ? [165, 130, 315] : [285, 285];
+    const speedFactor = Math.max(0.75, Math.min(2.1, timeScale));
+    const minWait = Math.max(90, intervals[this.stepPhase % intervals.length] / speedFactor);
+    if (nowMs - this.lastStepAt < minWait) return;
+    this.lastStepAt = nowMs;
+    this.stepPhase = (this.stepPhase + 1) % intervals.length;
+
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = 'triangle';
+    const pitch = hasMountOrCavalry
+      ? (this.stepPhase === 0 ? 116 : this.stepPhase === 1 ? 134 : 102)
+      : (this.stepPhase % 2 === 0 ? 86 : 94);
+    osc.frequency.setValueAtTime(pitch * (0.96 + Math.random() * 0.08), now);
+    osc.frequency.exponentialRampToValueAtTime(40, now + 0.062);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(hasMountOrCavalry ? 390 : 260, now);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.05 * this.masterVolume, now + 0.007);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.068);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.07);
+  }
+
+  public playSwordSwing() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = this.createOscillatorSafe(ctx);
+    if (!osc) return;
     const gain = ctx.createGain();
     const pitchVar = 0.92 + Math.random() * 0.16;
     osc.type = 'triangle';
     osc.frequency.setValueAtTime(340 * pitchVar, now);
     osc.frequency.exponentialRampToValueAtTime(95 * pitchVar, now + 0.14);
 
-    gain.gain.setValueAtTime(0.16, now);
+    gain.gain.setValueAtTime(0.16 * this.masterVolume, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
 
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.start(now);
     osc.stop(now + 0.16);
+  }
+
+  private createOscillatorSafe(ctx: AudioContext): OscillatorNode | null {
+    try {
+      return ctx.createOscillator();
+    } catch {
+      return null;
+    }
   }
 
   public playHeavyHit(isBlocked = false) {
@@ -73,7 +164,7 @@ class SoundManager {
     osc.frequency.setValueAtTime((isBlocked ? 520 : 190) * pitchVar, now);
     osc.frequency.exponentialRampToValueAtTime(45, now + 0.22);
 
-    gain.gain.setValueAtTime(0.26, now);
+    gain.gain.setValueAtTime(0.22 * this.masterVolume, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.23);
 
     osc.connect(gain);
@@ -83,27 +174,30 @@ class SoundManager {
   }
 
   public playWarhorn() {
-    // BannerForge: 3 katmanlı pirinç savaş borusu + meydan yankısı
-    if (!this.muted && playImpact('battleHorn', { intensity: 1.15 })) return;
+    // Rahatsız edici tiz sawtooth borazan yerine yumuşak, tok davul/mühür sesi
     const ctx = this.getContext();
     if (!ctx) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
     const gain = ctx.createGain();
 
-    osc.type = 'sawtooth';
+    osc.type = 'sine';
     osc.frequency.setValueAtTime(110, now);
-    osc.frequency.linearRampToValueAtTime(146.8, now + 0.25);
-    osc.frequency.setValueAtTime(146.8, now + 0.65);
+    osc.frequency.exponentialRampToValueAtTime(73.4, now + 0.36);
 
-    gain.gain.setValueAtTime(0.01, now);
-    gain.gain.linearRampToValueAtTime(0.2, now + 0.15);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.85);
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(220, now);
 
-    osc.connect(gain);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.08 * this.masterVolume, now + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+
+    osc.connect(filter);
+    filter.connect(gain);
     gain.connect(ctx.destination);
     osc.start(now);
-    osc.stop(now + 0.88);
+    osc.stop(now + 0.4);
   }
 
   public playBowShot() {

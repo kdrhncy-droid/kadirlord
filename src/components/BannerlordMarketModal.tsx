@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   CALRADIA_MARKETPLACE_ITEMS,
+  CampaignHero,
   CampaignState,
+  EquipmentSetId,
   EquipmentSlotId,
   InventoryItem,
   ItemDefinition,
@@ -17,6 +19,7 @@ import {
   inventoryItemQuantity,
   inventoryTotalWeight,
   resolveItemDefinition,
+  setHeroActiveEquipmentSet,
   toggleInventoryStackLocked,
   unequipHeroEquipmentSlot,
 } from '../game/bannerlordFoundation';
@@ -48,7 +51,7 @@ import {
   tradeRumours,
   type MarketProfile,
 } from '../game/market';
-import { calculatePartyCarryCapacity } from '../game/logistics';
+import { calculatePartyCarryCapacity, calculatePartyLogistics } from '../game/logistics';
 
 interface BannerlordMarketModalProps {
   settlement?: Settlement | null;
@@ -253,11 +256,58 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
       });
   }, [campaign, profile, selectedCategory, searchQuery, sortBy]);
 
-  // Derive Character Visual Options from equipped items
-  const visualOptions = useMemo(
-    () => deriveRigVisualOptionsFromEquipment(campaign.equipment, '#b45309'),
-    [campaign.equipment],
+  const [selectedHeroId, setSelectedHeroId] = useState<string>(
+    () => getPlayerHero(committedCampaign)?.id ?? committedCampaign.heroes?.[0]?.id ?? PLAYER_HERO_ID,
   );
+  const heroes = useMemo<CampaignHero[]>(
+    () => (draftCampaign.heroes ?? []).filter((hero) => hero.isInPlayerParty),
+    [draftCampaign.heroes],
+  );
+  const playerHero = useMemo(
+    () =>
+      heroes.find((hero) => hero.id === selectedHeroId) ??
+      heroes[0] ??
+      getPlayerHero(campaign),
+    [campaign, heroes, selectedHeroId],
+  );
+  const selectedHeroIndex = playerHero ? heroes.findIndex((hero) => hero.id === playerHero.id) : -1;
+  const activeSet: EquipmentSetId = playerHero?.activeEquipmentSet ?? 'BATTLE';
+
+  const moveHero = (direction: -1 | 1) => {
+    if (heroes.length <= 1 || selectedHeroIndex < 0) return;
+    const nextIndex = (selectedHeroIndex + direction + heroes.length) % heroes.length;
+    setSelectedHeroId(heroes[nextIndex].id);
+    setFeedback(null);
+  };
+
+  const handleSetActiveSet = (setId: EquipmentSetId) => {
+    if (!playerHero || activeSet === setId) return;
+    const result = setHeroActiveEquipmentSet(draftCampaign, playerHero.id, setId);
+    if (!result.success) {
+      setFeedback(result.reason ?? 'Ekipman seti değiştirilemedi.');
+      return;
+    }
+    setDraftCampaign(result.nextState);
+    setFeedback(
+      `${playerHero.name} için ${setId === 'BATTLE' ? 'savaş' : 'sivil'} set bekleyen taslağa seçildi.`,
+    );
+  };
+
+  // Derive Character Visual Options from equipped items of selected hero
+  const visualOptions = useMemo(() => {
+    if (!playerHero) return deriveRigVisualOptionsFromEquipment(campaign.equipment, '#b45309');
+    const eqText: Partial<Record<EquipmentSlotId, string>> = {};
+    const setObj = playerHero.equipment[activeSet];
+    for (const [slotKey, defId] of Object.entries(setObj)) {
+      const def = resolveItemDefinition(campaign, defId);
+      if (def) {
+        eqText[slotKey as EquipmentSlotId] = def.statBonus
+          ? `${def.name} (${def.statBonus})`
+          : def.name;
+      }
+    }
+    return deriveRigVisualOptionsFromEquipment(eqText, '#b45309');
+  }, [activeSet, campaign, playerHero]);
 
   const healthyTroops =
     (draftCampaign.troopStacks ?? []).reduce((sum, s) => sum + s.count, 0) || 20;
@@ -271,12 +321,27 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
       }),
     [draftCampaign, healthyTroops],
   );
+  const partyLogistics = useMemo(
+    () =>
+      calculatePartyLogistics({
+        x: draftCampaign.playerX,
+        z: draftCampaign.playerZ,
+        healthyTroops,
+        cavalryCount: draftCampaign.roster.cavalry,
+        woundedCount: (draftCampaign.troopStacks ?? []).reduce((sum, s) => sum + (s.wounded ?? 0), 0),
+        prisonerCount: draftCampaign.prisoners,
+        inventoryItems: draftCampaign.inventoryItems,
+        morale: draftCampaign.morale,
+        perks: draftCampaign.unlockedPerks,
+        state: draftCampaign,
+      }),
+    [draftCampaign, healthyTroops],
+  );
 
-  const playerHero = useMemo(() => getPlayerHero(campaign), [campaign]);
   const armorTotals = useMemo(() => {
     const totals = { head: 0, body: 0, arm: 0, leg: 0, mount: 0 };
     if (!playerHero) return totals;
-    const equipmentSet = playerHero.equipment[playerHero.activeEquipmentSet];
+    const equipmentSet = playerHero.equipment[activeSet];
     for (const definitionId of Object.values(equipmentSet)) {
       const definition = resolveItemDefinition(campaign, definitionId);
       if (!definition) continue;
@@ -287,7 +352,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
       totals.mount += definition.stats.armorMount ?? 0;
     }
     return totals;
-  }, [campaign, playerHero]);
+  }, [activeSet, campaign, playerHero]);
 
   const quantityFromClick = (
     event: React.MouseEvent,
@@ -379,7 +444,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
       campaign,
       playerHero?.id ?? PLAYER_HERO_ID,
       itemId,
-      playerHero?.activeEquipmentSet,
+      activeSet,
     );
     if (!res.success) {
       setFeedback(res.reason || 'Eşya kuşanılamadı.');
@@ -396,7 +461,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
       campaign,
       playerHero?.id ?? PLAYER_HERO_ID,
       slot,
-      playerHero?.activeEquipmentSet,
+      activeSet,
     );
     if (!res.success) {
       setFeedback(res.reason || 'Çıkarılamadı.');
@@ -435,6 +500,21 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
   const currentWeight = inventoryTotalWeight(campaign.inventoryItems);
   const isOverweight = currentWeight > maxCapacity;
 
+  const slotList = [
+    { slot: 'HEAD', label: 'Başlık', icon: 'helmet' as const },
+    { slot: 'SHOULDER', label: 'Omuzluk', icon: 'shoulder' as const },
+    { slot: 'BODY', label: 'Gövde', icon: 'armor' as const },
+    { slot: 'GLOVES', label: 'Eldiven', icon: 'gloves' as const },
+    { slot: 'LEG', label: 'Çizme', icon: 'boots' as const },
+    { slot: 'MOUNT', label: 'Binek', icon: 'horse' as const },
+    { slot: 'HARNESS', label: 'Koşum', icon: 'harness' as const },
+    { slot: 'BANNER', label: 'Sancak', icon: 'cloth' as const },
+    { slot: 'WEAPON1', label: 'Silah I', icon: 'sword' as const },
+    { slot: 'WEAPON2', label: 'Kalkan / II', icon: 'shield' as const },
+    { slot: 'WEAPON3', label: 'Silah III', icon: 'spear' as const },
+    { slot: 'WEAPON4', label: 'Silah IV', icon: 'arrows' as const },
+  ] as const;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-none pointer-events-auto select-none"
@@ -444,16 +524,16 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
       data-testid="market-modal"
       data-market-settlement-id={liveSettlement?.id ?? ''}
     >
-      <div className="w-full h-full max-w-7xl max-h-[96vh] rounded-lg border border-[#c6a15b]/40 bg-[#120f0c] shadow-2xl flex flex-col overflow-hidden text-[#f3ead8]">
+      <div className="w-full h-full max-w-[1500px] max-h-[96vh] rounded-lg border border-[#c6a15b]/40 bg-[#120f0c] shadow-2xl flex flex-col overflow-hidden text-[#f3ead8]">
         {/* HEADER BAR */}
-        <div className="px-5 py-3 border-b border-[#c6a15b]/30 bg-[#1a1510] flex items-center justify-between gap-4 shrink-0">
+        <div className="px-5 py-3 border-b border-[#c6a15b]/30 bg-[#1a1510] flex flex-wrap items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-3">
             <ItemIcon iconKey="tools" size={24} className="text-[#c6a15b]" />
             <div>
               <h2 id="market-modal-title" className="text-lg font-display font-bold text-[#fef08a]">
                 {settlementName} · Pazaryeri ve Ticaret Loncası
               </h2>
-              <div className="text-xs text-[#b5a890] flex items-center gap-3">
+              <div className="text-xs text-[#b5a890] flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span>
                   Tüccar Kasası:{' '}
                   <strong className="text-[#fbbf24] font-mono-tabular">{merchantGold} Dinar</strong>
@@ -478,6 +558,14 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                   >
                     {Math.round(capacityBreakdown.currentWeight)} / {capacityBreakdown.totalCapacity} kg
                   </strong>
+                </span>
+                <span>·</span>
+                <span
+                  data-testid="market-mount-summary"
+                  className="px-1.5 py-0.5 rounded bg-[#231d15] border border-[#c6a15b]/30 text-[#fde68a]"
+                  title="Binek Atı: Yaya askerlere harita hızı bonusu sağlar · Yük Hayvanı (Katır/Beygir): +100 kg taşıma kapasitesi verir"
+                >
+                  Binek Atı: <strong className="font-mono-tabular">{partyLogistics.animals.spareMounts}</strong> (+{((partyLogistics as any).spareMountSpeedBonus ?? 0).toFixed(2)} Hız) · Yük Hayvanı: <strong className="font-mono-tabular">{partyLogistics.animals.packAnimals}</strong> (+{partyLogistics.animals.packAnimals * 100} kg)
                 </span>
                 <span>·</span>
                 <span>
@@ -589,10 +677,10 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
           </div>
         )}
 
-        {/* 3-COLUMN WORKSPACE: LEFT MARKET | CENTER 3D PREVIEW | RIGHT INVENTORY */}
+        {/* 3-COLUMN WORKSPACE: LEFT MARKET | CENTER 3D PREVIEW + 12 SLOTS | RIGHT INVENTORY */}
         <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[#c6a15b]/25">
-          {/* 1. LEFT COLUMN: TOWN MERCHANT ITEMS (5 cols) */}
-          <div className="lg:col-span-5 flex flex-col h-full overflow-hidden bg-[#14100c]">
+          {/* 1. LEFT COLUMN: TOWN MERCHANT ITEMS (4 cols) */}
+          <div className="lg:col-span-4 flex flex-col h-full overflow-hidden bg-[#14100c]">
             <div className="p-3 border-b border-[#c6a15b]/20 flex items-center justify-between bg-[#19140f] shrink-0">
               <span className="text-xs font-bold text-[#c6a15b] tracking-wider uppercase">
                 <ItemIcon iconKey="crate" size={13} className="inline-block align-[-2px] mr-1" />
@@ -618,7 +706,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                 return (
                   <div
                     key={item.id}
-                    className="p-2.5 rounded bg-[#1c1712] border border-[#c6a15b]/20 hover:border-[#f59e0b]/60 transition-all flex items-center justify-between gap-3"
+                    className="p-2.5 rounded bg-[#1c1712] border border-[#c6a15b]/20 hover:border-[#f59e0b]/60 transition-all flex items-center justify-between gap-2.5"
                   >
                     <div className="flex items-start gap-2.5 min-w-0">
                       <span className="shrink-0 p-1.5 rounded bg-[#2a2219] text-[#e8d9b5] flex items-center justify-center">
@@ -661,27 +749,39 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex flex-col items-end gap-1 shrink-0">
-                      <span
-                        className={`text-xs font-bold font-mono-tabular ${PRICE_TONE_CLASS[priceTone(price, item.value)]}`}
-                        title={PRICE_TONE_LABEL[priceTone(price, item.value)]}
-                      >
-                        {price} D
-                      </span>
-                      <span className="text-[9px] text-[#8b8072]">Taban {item.value} D</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span
+                          className={`text-xs font-bold font-mono-tabular ${PRICE_TONE_CLASS[priceTone(price, item.value)]}`}
+                          title={PRICE_TONE_LABEL[priceTone(price, item.value)]}
+                        >
+                          {price} D
+                        </span>
+                        <span className="text-[9px] text-[#8b8072]">Taban {item.value} D</span>
+                        <button
+                          type="button"
+                          disabled={!canAfford || quantity <= 0}
+                          data-testid={`market-buy-${item.id}`}
+                          title="Tık: 1 adet · Shift: 5 adet · Ctrl: alınabilen tümü"
+                          onClick={(event) => handleBuy(item, event)}
+                          className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${
+                            canAfford && quantity > 0
+                              ? 'bg-[#15803d] hover:bg-[#16a34a] text-white shadow'
+                              : 'bg-[#27211b] text-[#6b7280] cursor-not-allowed'
+                          }`}
+                        >
+                          {quantity <= 0 ? 'Tükendi' : canAfford ? 'Satın Al' : 'Yetersiz'}
+                        </button>
+                      </div>
                       <button
                         type="button"
                         disabled={!canAfford || quantity <= 0}
-                        data-testid={`market-buy-${item.id}`}
-                        title="Tık: 1 adet · Shift: 5 adet · Ctrl: alınabilen tümü"
+                        data-testid={`market-row-right-${item.id}`}
+                        title="Sağa (Envantere) 1 adet aktar (>)"
                         onClick={(event) => handleBuy(item, event)}
-                        className={`px-3 py-1 rounded text-[11px] font-bold transition-colors ${
-                          canAfford && quantity > 0
-                            ? 'bg-[#15803d] hover:bg-[#16a34a] text-white shadow'
-                            : 'bg-[#27211b] text-[#6b7280] cursor-not-allowed'
-                        }`}
+                        className="w-6 h-8 rounded bg-[#26211a] hover:bg-[#382f25] disabled:opacity-35 border border-[#c6a15b]/35 text-[#fde68a] font-black text-xs flex items-center justify-center"
                       >
-                        {quantity <= 0 ? 'Tükendi' : canAfford ? 'Satın Al' : 'Yetersiz'}
+                        &gt;
                       </button>
                     </div>
                   </div>
@@ -690,121 +790,84 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
             </div>
           </div>
 
-          {/* 2. CENTER COLUMN: 3D CHARACTER MANNEQUIN & STATS (3 cols) */}
-          <div className="lg:col-span-3 flex flex-col h-full overflow-hidden bg-[#100d0a]">
-            <div className="p-2.5 border-b border-[#c6a15b]/20 text-center bg-[#17130e] shrink-0">
-              <span className="text-xs font-bold text-[#fef08a] block">
-                {campaign.playerName}
-              </span>
-              <span className="text-[10px] text-[#b5a890]">
-                3B Canlı Karakter Manken Önizlemesi (Fareyle Döndür)
-              </span>
+          {/* 2. CENTER COLUMN: HERO SWITCHER, SET TOGGLE, 3D MANNEQUIN & 12 EQUIPMENT SLOTS (4 cols) */}
+          <div className="lg:col-span-4 flex flex-col h-full overflow-hidden bg-[#100d0a]">
+            <div className="p-2.5 border-b border-[#c6a15b]/20 bg-[#17130e] shrink-0">
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => moveHero(-1)}
+                  disabled={heroes.length <= 1}
+                  data-testid="market-hero-prev"
+                  className="w-7 h-7 rounded bg-[#26211a] hover:bg-[#362f25] disabled:opacity-30 text-[#fde68a] font-black"
+                  aria-label="Önceki kahraman"
+                >
+                  ‹
+                </button>
+                <div className="text-center min-w-0">
+                  <span
+                    className="text-xs font-bold text-[#fef08a] block truncate"
+                    data-testid="market-selected-hero"
+                  >
+                    {playerHero?.name ?? campaign.playerName}
+                  </span>
+                  <span className="text-[10px] text-[#b5a890] block">
+                    3B Canlı Karakter Manken Önizlemesi (Fareyle Döndür)
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => moveHero(1)}
+                  disabled={heroes.length <= 1}
+                  data-testid="market-hero-next"
+                  className="w-7 h-7 rounded bg-[#26211a] hover:bg-[#362f25] disabled:opacity-30 text-[#fde68a] font-black"
+                  aria-label="Sonraki kahraman"
+                >
+                  ›
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 mt-2">
+                {(
+                  [
+                    ['BATTLE', 'Savaş Seti'],
+                    ['CIVILIAN', 'Sivil Set'],
+                  ] as Array<[EquipmentSetId, string]>
+                ).map(([setId, label]) => (
+                  <button
+                    key={setId}
+                    type="button"
+                    onClick={() => handleSetActiveSet(setId)}
+                    data-testid={`market-set-${setId.toLowerCase()}`}
+                    className={`px-2 py-1 rounded text-[11px] font-bold transition-colors ${
+                      activeSet === setId
+                        ? 'bg-[#b45309] text-white'
+                        : 'bg-[#23201a] text-[#d6c7a4] hover:bg-[#2e2920]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* 3D Model Viewport */}
-            <div className="flex-1 w-full relative overflow-hidden min-h-[220px]">
+            <div className="flex-1 w-full relative overflow-hidden min-h-[185px]">
               <HeroMannequin
                 visualOptions={visualOptions}
-                showMount={Boolean(
-                  playerHero?.equipment[playerHero.activeEquipmentSet].MOUNT,
-                )}
+                showMount={Boolean(playerHero?.equipment[activeSet].MOUNT)}
                 testId="market-hero-mannequin"
               />
             </div>
 
-            {/* Armor & Encumbrance Stats Dock */}
-            <div className="p-3 border-t border-[#c6a15b]/20 bg-[#16120e] space-y-2.5 shrink-0 text-xs">
-              {/* Encumbrance Bar */}
-              <div>
-                <div className="flex items-center justify-between text-[11px] mb-1">
-                  <span className="text-[#c6a15b] font-semibold">Taşıma Ağırlığı:</span>
-                  <span
-                    className={`font-mono-tabular font-bold ${
-                      isOverweight ? 'text-[#ef4444]' : 'text-[#34d399]'
-                    }`}
-                  >
-                    {Math.round(currentWeight)} / {maxCapacity} kg
-                  </span>
-                </div>
-                <div className="w-full h-2 rounded-full bg-[#26211a] overflow-hidden">
-                  <div
-                    className={`h-full transition-all ${
-                      isOverweight ? 'bg-[#dc2626]' : 'bg-[#d97706]'
-                    }`}
-                    style={{
-                      width: `${Math.min(100, Math.round((currentWeight / maxCapacity) * 100))}%`,
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Character Armor Breakdown */}
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
-                  <span className="text-[#a89b84] block"><ItemIcon iconKey="helmet" size={12} className="inline-block align-[-2px] mr-1" />Baş Zırhı</span>
-                  <span className="text-[#f8f0df] font-bold">+{armorTotals.head} Zırh</span>
-                </div>
-                <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
-                  <span className="text-[#a89b84] block"><ItemIcon iconKey="armor" size={12} className="inline-block align-[-2px] mr-1" />Gövde Zırhı</span>
-                  <span className="text-[#f8f0df] font-bold">+{armorTotals.body} Zırh</span>
-                </div>
-                <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
-                  <span className="text-[#a89b84] block"><ItemIcon iconKey="gloves" size={12} className="inline-block align-[-2px] mr-1" />Kol Zırhı</span>
-                  <span className="text-[#f8f0df] font-bold">+{armorTotals.arm} Zırh</span>
-                </div>
-                <div className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/15">
-                  <span className="text-[#a89b84] block"><ItemIcon iconKey="boots" size={12} className="inline-block align-[-2px] mr-1" />Bacak Zırhı</span>
-                  <span className="text-[#f8f0df] font-bold">+{armorTotals.leg} Zırh</span>
-                </div>
-              </div>
-
-              {/* Quick Actions */}
-              <button
-                type="button"
-                onClick={handleSellAllLoot}
-                className="w-full py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white transition-colors shadow"
-              >
-                Tüm Fazla Ganimeti Sat
-              </button>
-            </div>
-          </div>
-
-          {/* 3. RIGHT COLUMN: PLAYER INVENTORY & 12 EQUIPMENT SLOTS (4 cols) */}
-          <div className="lg:col-span-4 flex flex-col h-full overflow-hidden bg-[#14100c]">
-            <div className="p-3 border-b border-[#c6a15b]/20 flex items-center justify-between bg-[#19140f] shrink-0">
-              <span className="text-xs font-bold text-[#fef08a] tracking-wider uppercase">
-                <ItemIcon iconKey="crate" size={13} className="inline-block align-[-2px] mr-1" />
-                Donanım & Sırt Çantası ({filteredPlayerItems.length} Eşya)
-              </span>
-              <span className="text-[11px] text-[#fbbf24] font-mono-tabular font-bold">
-                {campaign.gold} Dinar
-              </span>
-            </div>
-
-            {/* 12 Equipped Slots Header Ribbon */}
-            <div className="p-2 border-b border-[#c6a15b]/15 bg-[#17130e] max-h-36 overflow-y-auto shrink-0">
+            {/* 12 Equipped Slots in Center Column (Matching InventoryModal) */}
+            <div className="p-2 border-t border-[#c6a15b]/20 bg-[#14100b] max-h-44 overflow-y-auto shrink-0">
               <div className="text-[10px] text-[#c6a15b] font-bold mb-1">
                 Kuşanılmış Teçhizat Slotları:
               </div>
               <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-                {(
-                  [
-                    { slot: 'HEAD', label: 'Başlık', icon: 'helmet' as const },
-                    { slot: 'SHOULDER', label: 'Omuzluk', icon: 'shoulder' as const },
-                    { slot: 'BODY', label: 'Gövde', icon: 'armor' as const },
-                    { slot: 'GLOVES', label: 'Eldiven', icon: 'gloves' as const },
-                    { slot: 'LEG', label: 'Çizme', icon: 'boots' as const },
-                    { slot: 'MOUNT', label: 'Binek', icon: 'horse' as const },
-                    { slot: 'HARNESS', label: 'Koşum', icon: 'harness' as const },
-                    { slot: 'BANNER', label: 'Sancak', icon: 'cloth' as const },
-                    { slot: 'WEAPON1', label: 'Silah I', icon: 'sword' as const },
-                    { slot: 'WEAPON2', label: 'Kalkan / II', icon: 'shield' as const },
-                    { slot: 'WEAPON3', label: 'Silah III', icon: 'spear' as const },
-                    { slot: 'WEAPON4', label: 'Silah IV', icon: 'arrows' as const },
-                  ] as const
-                ).map((slotInfo) => {
+                {slotList.map((slotInfo) => {
                   const equippedDefinitionId = playerHero
-                    ? playerHero.equipment[playerHero.activeEquipmentSet][slotInfo.slot]
+                    ? playerHero.equipment[activeSet][slotInfo.slot]
                     : null;
                   const equippedDefinition = resolveItemDefinition(campaign, equippedDefinitionId);
                   const eqName =
@@ -815,14 +878,15 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                   return (
                     <div
                       key={slotInfo.slot}
-                      className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/20 flex items-center justify-between gap-1"
+                      data-testid={`market-slot-${slotInfo.slot}`}
+                      className="p-1.5 rounded bg-[#1f1913] border border-[#c6a15b]/20 flex items-center justify-between gap-1 min-w-0"
                     >
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <span className="text-[#a89b84] flex items-center gap-1 truncate">
                           <ItemIcon iconKey={slotInfo.icon} size={11} />
                           {slotInfo.label}
                         </span>
-                        <span className="text-[#f8f0df] font-semibold truncate block">
+                        <span className="text-[#f8f0df] font-semibold truncate block" title={eqName}>
                           {eqName.split(' (')[0]}
                         </span>
                       </div>
@@ -842,6 +906,72 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
               </div>
             </div>
 
+            {/* Armor & Encumbrance Stats Dock */}
+            <div className="p-2.5 border-t border-[#c6a15b]/20 bg-[#16120e] space-y-2 shrink-0 text-xs">
+              <div>
+                <div className="flex items-center justify-between text-[11px] mb-1">
+                  <span className="text-[#c6a15b] font-semibold">Taşıma Ağırlığı:</span>
+                  <span
+                    className={`font-mono-tabular font-bold ${
+                      isOverweight ? 'text-[#ef4444]' : 'text-[#34d399]'
+                    }`}
+                  >
+                    {Math.round(currentWeight)} / {maxCapacity} kg
+                  </span>
+                </div>
+                <div className="w-full h-1.5 rounded-full bg-[#26211a] overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      isOverweight ? 'bg-[#dc2626]' : 'bg-[#d97706]'
+                    }`}
+                    style={{
+                      width: `${Math.min(100, Math.round((currentWeight / maxCapacity) * 100))}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-4 gap-1.5 text-[10px]">
+                <div className="p-1 rounded bg-[#1f1913] border border-[#c6a15b]/15 text-center">
+                  <span className="text-[#a89b84] block">Baş</span>
+                  <span className="text-[#f8f0df] font-bold">+{armorTotals.head}</span>
+                </div>
+                <div className="p-1 rounded bg-[#1f1913] border border-[#c6a15b]/15 text-center">
+                  <span className="text-[#a89b84] block">Gövde</span>
+                  <span className="text-[#f8f0df] font-bold">+{armorTotals.body}</span>
+                </div>
+                <div className="p-1 rounded bg-[#1f1913] border border-[#c6a15b]/15 text-center">
+                  <span className="text-[#a89b84] block">Kol</span>
+                  <span className="text-[#f8f0df] font-bold">+{armorTotals.arm}</span>
+                </div>
+                <div className="p-1 rounded bg-[#1f1913] border border-[#c6a15b]/15 text-center">
+                  <span className="text-[#a89b84] block">Bacak</span>
+                  <span className="text-[#f8f0df] font-bold">+{armorTotals.leg}</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSellAllLoot}
+                className="w-full py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white transition-colors shadow"
+              >
+                Tüm Fazla Ganimeti Sat (&lt;&lt;)
+              </button>
+            </div>
+          </div>
+
+          {/* 3. RIGHT COLUMN: PLAYER INVENTORY (4 cols) */}
+          <div className="lg:col-span-4 flex flex-col h-full overflow-hidden bg-[#14100c]">
+            <div className="p-3 border-b border-[#c6a15b]/20 flex items-center justify-between bg-[#19140f] shrink-0">
+              <span className="text-xs font-bold text-[#fef08a] tracking-wider uppercase">
+                <ItemIcon iconKey="crate" size={13} className="inline-block align-[-2px] mr-1" />
+                Donanım & Sırt Çantası ({filteredPlayerItems.length} Eşya)
+              </span>
+              <span className="text-[11px] text-[#fbbf24] font-mono-tabular font-bold">
+                {campaign.gold} Dinar
+              </span>
+            </div>
+
             {/* Backpack Inventory Items */}
             <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
               {filteredPlayerItems.length === 0 ? (
@@ -858,63 +988,73 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                   const quantity = inventoryItemQuantity(item);
                   const totalWeight = item.weight * quantity;
                   return (
-                  <div
-                    key={item.id}
-                    className="p-2 rounded bg-[#1c1712] border border-[#c6a15b]/20 flex items-center justify-between gap-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-[#f8f0df] truncate">
-                        {item.name} <span className="text-[#fbbf24]">×{quantity}</span>
-                      </div>
-                      <div className="text-[10px] text-[#34d399] truncate font-medium">
-                        {item.statBonus}
-                      </div>
-                      <div className="text-[10px] text-[#a89b84] flex items-center gap-2">
-                        <span>Ağırlık: {totalWeight.toFixed(1)} kg</span>
-                        <span>·</span>
-                        <span className="text-[#fbbf24] font-mono">
-                          Birim değer: {item.value} D
-                        </span>
-                        <span className="text-[#8b8072]">· Satış: {saleUnitPrice} D/adet</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleLock(item)}
-                        data-testid={`market-lock-${item.id}`}
-                        aria-pressed={Boolean(item.locked)}
-                        title={item.locked ? 'Kilidi aç' : 'Kilitle (satış ve toplu satışta korunur)'}
-                        className={`px-1.5 py-1 rounded text-[10px] font-bold border ${
-                          item.locked
-                            ? 'bg-[#3f2d12] text-[#fbbf24] border-[#fbbf24]/50'
-                            : 'bg-[#1f1913] text-[#8b8072] border-[#c6a15b]/20'
-                        }`}
-                      >
-                        {item.locked ? 'KİLİTLİ' : 'AÇIK'}
-                      </button>
-                      {item.slot !== 'TRADE' && (
-                        <button
-                          type="button"
-                          onClick={() => handleEquip(item.id)}
-                          className="px-2 py-1 rounded text-[10px] font-bold bg-[#b45309] hover:bg-[#d97706] text-white transition-colors"
-                        >
-                          Kuşan
-                        </button>
-                      )}
+                    <div
+                      key={item.id}
+                      className="p-2 rounded bg-[#1c1712] border border-[#c6a15b]/20 flex items-center justify-between gap-2"
+                    >
                       <button
                         type="button"
                         onClick={(event) => handleSell(item, event)}
                         disabled={Boolean(item.locked) || merchantGold < saleUnitPrice}
-                        data-testid={`market-sell-${item.id}`}
-                        title="Tık: 1 adet · Shift: 5 adet · Ctrl: kasanın alabildiği tümü"
-                        className="px-2 py-1 rounded text-[10px] font-bold bg-[#991b1b] hover:bg-[#b91c1c] text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        data-testid={`market-row-left-${item.id}`}
+                        title="Sola (Tüccara) 1 adet sat (<)"
+                        className="w-6 h-8 rounded bg-[#26211a] hover:bg-[#382f25] disabled:opacity-35 border border-[#c6a15b]/35 text-[#fde68a] font-black text-xs flex items-center justify-center shrink-0"
                       >
-                        Sat (+{saleUnitPrice} D)
+                        &lt;
                       </button>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-semibold text-[#f8f0df] truncate">
+                          {item.name} <span className="text-[#fbbf24]">×{quantity}</span>
+                        </div>
+                        <div className="text-[10px] text-[#34d399] truncate font-medium">
+                          {item.statBonus}
+                        </div>
+                        <div className="text-[10px] text-[#a89b84] flex flex-wrap items-center gap-x-2">
+                          <span>Ağırlık: {totalWeight.toFixed(1)} kg</span>
+                          <span>·</span>
+                          <span className="text-[#fbbf24] font-mono">
+                            Birim değer: {item.value} D
+                          </span>
+                          <span className="text-[#8b8072]">· Satış: {saleUnitPrice} D/adet</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleLock(item)}
+                          data-testid={`market-lock-${item.id}`}
+                          aria-pressed={Boolean(item.locked)}
+                          title={item.locked ? 'Kilidi aç' : 'Kilitle (satış ve toplu satışta korunur)'}
+                          className={`px-1.5 py-1 rounded text-[10px] font-bold border ${
+                            item.locked
+                              ? 'bg-[#3f2d12] text-[#fbbf24] border-[#fbbf24]/50'
+                              : 'bg-[#1f1913] text-[#8b8072] border-[#c6a15b]/20'
+                          }`}
+                        >
+                          {item.locked ? 'KİLİTLİ' : 'AÇIK'}
+                        </button>
+                        {item.slot !== 'TRADE' && (
+                          <button
+                            type="button"
+                            onClick={() => handleEquip(item.id)}
+                            className="px-2 py-1 rounded text-[10px] font-bold bg-[#b45309] hover:bg-[#d97706] text-white transition-colors"
+                          >
+                            Kuşan
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(event) => handleSell(item, event)}
+                          disabled={Boolean(item.locked) || merchantGold < saleUnitPrice}
+                          data-testid={`market-sell-${item.id}`}
+                          title="Tık: 1 adet · Shift: 5 adet · Ctrl: kasanın alabildiği tümü"
+                          className="px-2 py-1 rounded text-[10px] font-bold bg-[#991b1b] hover:bg-[#b91c1c] text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Sat (+{saleUnitPrice} D)
+                        </button>
+                      </div>
                     </div>
-                  </div>
                   );
                 })
               )}
@@ -952,7 +1092,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
               data-testid="market-done"
               className="px-4 py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fde68a]/50 shadow"
             >
-              Bitti
+              Bitti<span className="sr-only"> (Bitir)</span>
             </button>
           </div>
         </div>

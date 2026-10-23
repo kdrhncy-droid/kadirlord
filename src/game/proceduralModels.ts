@@ -20,8 +20,8 @@ export function createTerrainTextures(maxAnisotropy: number) {
   const isHeadless =
     typeof navigator !== 'undefined' &&
     (navigator.webdriver || /HeadlessChrome/i.test(navigator.userAgent));
-  const texW = isHeadless ? 768 : 1440;
-  const texH = isHeadless ? 576 : 1080;
+  const texW = isHeadless ? 640 : 1024;
+  const texH = isHeadless ? 480 : 768;
   const albedoCanvas = document.createElement('canvas');
   albedoCanvas.width = texW;
   albedoCanvas.height = texH;
@@ -59,7 +59,7 @@ export function createTerrainTextures(maxAnisotropy: number) {
   // - R channel: Organic grass blades & soil clumps
   // - G channel: Sharp mountain rock strata & cliff fissures
   // - B channel: Fine pebbles, sand ripples & micro-relief
-  const detailSize = 512;
+  const detailSize = isHeadless ? 256 : 384;
   const detailCanvas = document.createElement('canvas');
   detailCanvas.width = detailSize;
   detailCanvas.height = detailSize;
@@ -856,40 +856,43 @@ function getSettlementAssets(stoneTex: THREE.CanvasTexture) {
     }
   });
 
-  // 2. Pre-merge CASTLE geometries by material
-  const castleR = 2.35;
+  // 2. Pre-merge CASTLE geometries by material (Enhanced Bannerlord Concentric Keep + Barbican)
+  const castleR = 2.45;
   const castleStoneParts: Parameters<typeof mergeStaticGeometries>[0] = [
-    { geo: keepCastleGeo, x: 0, y: 2.35, z: -0.2 },
+    { geo: keepCastleGeo, x: 0, y: 2.45, z: -0.25 },
+    { geo: towerCastleGeo, x: 0, y: 2.95, z: -0.95 },
     { geo: wallCastleGeo, x: 0, y: 1.55, z: castleR, ry: 0 },
     { geo: wallCastleGeo, x: 0, y: 1.55, z: -castleR, ry: 0 },
     { geo: wallCastleGeo, x: castleR, y: 1.55, z: 0, ry: Math.PI / 2 },
     { geo: wallCastleGeo, x: -castleR, y: 1.55, z: 0, ry: Math.PI / 2 },
-    { geo: towerCastleGeo, x: -castleR, y: 1.95, z: -castleR },
-    { geo: towerCastleGeo, x: castleR, y: 1.95, z: -castleR },
-    { geo: towerCastleGeo, x: -castleR, y: 1.95, z: castleR },
-    { geo: towerCastleGeo, x: castleR, y: 1.95, z: castleR },
+    { geo: towerCastleGeo, x: -castleR, y: 2.05, z: -castleR },
+    { geo: towerCastleGeo, x: castleR, y: 2.05, z: -castleR },
+    { geo: towerCastleGeo, x: -castleR, y: 2.05, z: castleR },
+    { geo: towerCastleGeo, x: castleR, y: 2.05, z: castleR },
   ];
   const castleDarkStoneParts: Parameters<typeof mergeStaticGeometries>[0] = [
     { geo: plinthCastleGeo, x: 0, y: 0.35, z: 0 },
-    { geo: gatehouseGeo, x: 0, y: 1.65, z: castleR + 0.25 },
-    { geo: battlementGeo, x: -castleR, y: 3.6, z: -castleR },
-    { geo: battlementGeo, x: castleR, y: 3.6, z: -castleR },
-    { geo: battlementGeo, x: -castleR, y: 3.6, z: castleR },
-    { geo: battlementGeo, x: castleR, y: 3.6, z: castleR },
+    { geo: gatehouseGeo, x: 0, y: 1.65, z: castleR + 0.3 },
+    { geo: battlementGeo, x: -castleR, y: 3.7, z: -castleR },
+    { geo: battlementGeo, x: castleR, y: 3.7, z: -castleR },
+    { geo: battlementGeo, x: -castleR, y: 3.7, z: castleR },
+    { geo: battlementGeo, x: castleR, y: 3.7, z: castleR },
+    { geo: battlementGeo, x: 0, y: 4.5, z: -0.95 },
   ];
   const castleSlateGeo = mergeStaticGeometries([
-    { geo: keepRoofGeo, x: 0, y: 4.55, z: -0.2, ry: Math.PI / 4 },
+    { geo: keepRoofGeo, x: 0, y: 4.65, z: -0.25, ry: Math.PI / 4 },
   ]);
   const castleTimberGeo = mergeStaticGeometries([
-    { geo: poleGeo, x: 0, y: 5.15, z: -0.2 },
+    { geo: poleGeo, x: 0, y: 5.25, z: -0.25 },
   ]);
 
-  // 3. Pre-merge VILLAGE geometries by material
+  // 3. Pre-merge VILLAGE geometries by material (Rural cottages + granary + watchtower)
   const cottages: Array<[number, number, number]> = [
-    [-0.95, 0.45, 0.25],
-    [0.85, -0.55, -0.35],
-    [-0.25, -0.95, 0.55],
-    [0.95, 0.75, 0.15],
+    [-1.05, 0.55, 0.25],
+    [0.95, -0.65, -0.35],
+    [-0.35, -1.05, 0.55],
+    [1.05, 0.85, 0.15],
+    [0.05, 0.15, -0.15],
   ];
   const villageTimberParts: Parameters<typeof mergeStaticGeometries>[0] = [
     { geo: poleGeo, x: -0.95, y: 2.65, z: -0.75 },

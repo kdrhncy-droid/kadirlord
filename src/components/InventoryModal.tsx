@@ -94,6 +94,30 @@ function validIconKey(icon: string | undefined): ItemIconKey {
   return icon && ITEM_ICON_KEYS.includes(icon as ItemIconKey) ? (icon as ItemIconKey) : 'crate';
 }
 
+function defaultSlotIconKey(slot: EquipmentSlotId): ItemIconKey {
+  switch (slot) {
+    case 'HEAD':
+      return 'helmet';
+    case 'SHOULDER':
+    case 'BODY':
+    case 'GLOVES':
+    case 'LEG':
+      return 'armor';
+    case 'MOUNT':
+    case 'HARNESS':
+      return 'horse';
+    case 'BANNER':
+      return 'shield';
+    case 'WEAPON1':
+    case 'WEAPON2':
+    case 'WEAPON3':
+    case 'WEAPON4':
+      return 'sword';
+    default:
+      return 'crate';
+  }
+}
+
 function definitionArmorTotal(definition: ItemDefinition): number {
   return (
     (definition.stats.armorHead ?? 0) +
@@ -447,14 +471,26 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
             <h2 className="font-display text-lg sm:text-xl font-bold text-[#fef08a] tracking-wide">
               Parti Envanteri
             </h2>
-            <p className="text-[11px] text-[#b5a890] mt-0.5">
-              Hazine: <span className="text-[#34d399] font-mono-tabular">{draftCampaign.gold} Dinar</span>
+            <p className="text-[11px] text-[#b5a890] mt-0.5 flex flex-wrap items-center gap-y-1">
+              <span>
+                Hazine: <span className="text-[#34d399] font-mono-tabular">{draftCampaign.gold} Dinar</span>
+              </span>
               <span className="mx-2 text-[#6b5d43]">·</span>
-              Yük: <span className="font-mono-tabular">{formatWeight(inventoryWeight)}</span>
+              <span>
+                Yük: <span className="font-mono-tabular">{formatWeight(inventoryWeight)}</span>
+              </span>
               <span className="mx-2 text-[#6b5d43]">·</span>
-              {inventoryQuantity} eşya
+              <span>{inventoryQuantity} eşya</span>
               <span className="mx-2 text-[#6b5d43]">·</span>
-              Değişiklikler yalnız Bitti ile işlenir
+              <span
+                data-testid="inventory-mount-summary"
+                className="px-1.5 py-0.5 rounded bg-[#262016] border border-[#c6a15b]/30 text-[#fde68a]"
+                title="Binek Atı: Yaya askerlere harita hızı bonusu sağlar · Yük Hayvanı (Katır/Beygir): +100 kg taşıma kapasitesi verir"
+              >
+                Binek Atı: <strong className="font-mono-tabular">{partyLogistics.animals.spareMounts}</strong> (+{((partyLogistics as any).spareMountSpeedBonus ?? 0).toFixed(2)} Hız) · Yük Hayvanı: <strong className="font-mono-tabular">{partyLogistics.animals.packAnimals}</strong> (+{partyLogistics.animals.packAnimals * 100} kg)
+              </span>
+              <span className="mx-2 text-[#6b5d43]">·</span>
+              <span>Değişiklikler yalnız Bitti ile işlenir</span>
             </p>
           </div>
           <button
@@ -550,7 +586,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                   return (
                     <article
                       key={item.id}
-                      className="rounded border border-red-900/50 bg-[#1b1210] p-2.5 flex gap-2"
+                      className="rounded border border-red-900/50 bg-[#1b1210] p-2.5 flex gap-2 items-center"
                     >
                       <div className="w-9 h-9 rounded bg-[#100d0a] border border-[#c6a15b]/20 flex items-center justify-center text-red-200 shrink-0">
                         <ItemIcon iconKey={validIconKey(definition?.icon ?? item.icon)} size={21} />
@@ -577,14 +613,25 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                         </p>
                         <div className="flex items-center justify-between mt-2">
                           <span className="text-[10px] text-[#8b8072]">{formatWeight(item.weight * quantity)}</span>
-                          <button
-                            type="button"
-                            onClick={(event) => handleReturnFromDiscard(item, event)}
-                            data-testid={`inventory-discard-return-${item.id}`}
-                            className="px-2 py-1 rounded text-[10px] font-bold bg-[#33291c] hover:bg-[#463723] text-amber-100"
-                          >
-                            Geri Al
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={(event) => handleReturnFromDiscard(item, event)}
+                              data-testid={`inventory-discard-return-${item.id}`}
+                              className="px-2 py-1 rounded text-[10px] font-bold bg-[#33291c] hover:bg-[#463723] text-amber-100"
+                            >
+                              Geri Al
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => handleReturnFromDiscard(item, event)}
+                              data-testid={`inventory-row-right-${item.id}`}
+                              title="Envantere geri aktar (>)"
+                              className="w-6 h-6 rounded bg-[#26211a] hover:bg-[#382f25] border border-[#c6a15b]/35 text-[#fde68a] font-black text-xs flex items-center justify-center"
+                            >
+                              &gt;
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </article>
@@ -627,7 +674,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                 data-testid="inventory-discard-return-all"
                 className="mt-3 w-full px-3 py-2 rounded text-[11px] font-bold bg-[#33291c] hover:bg-[#463723] disabled:opacity-35 text-amber-100"
               >
-                Tümünü Geri Al
+                Tümünü Geri Al (&gt;&gt;)
               </button>
             </div>
           </aside>
@@ -735,8 +782,17 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                     data-testid={`inventory-slot-${slot}`}
                   >
                     <div className="flex items-start gap-1.5">
-                      <span className="text-[#c6a15b] mt-0.5 shrink-0">
-                        <ItemIcon iconKey={validIconKey(definition?.icon)} size={15} />
+                      <span
+                        className={`w-7 h-7 rounded bg-[#100d0a] border border-[#c6a15b]/25 flex items-center justify-center shrink-0 ${
+                          definition ? 'text-[#f3d38a]' : 'text-[#6b5d43]'
+                        }`}
+                      >
+                        <ItemIcon
+                          iconKey={
+                            definition ? validIconKey(definition.icon) : defaultSlotIconKey(slot)
+                          }
+                          size={16}
+                        />
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="text-[9px] uppercase tracking-wider text-[#8b8072]">
@@ -787,9 +843,19 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                   return (
                     <article
                       key={item.id}
-                      className="rounded border border-[#c6a15b]/25 bg-[#1d1913] p-2.5 flex gap-2.5"
+                      className="rounded border border-[#c6a15b]/25 bg-[#1d1913] p-2.5 flex gap-2.5 items-center"
                       data-testid={`inventory-item-${item.id}`}
                     >
+                      <button
+                        type="button"
+                        onClick={(event) => handleMoveToDiscard(item, event)}
+                        disabled={Boolean(item.locked)}
+                        data-testid={`inventory-row-left-${item.id}`}
+                        title={item.locked ? 'Kilitli eşya atılamaz' : 'Discard alanına 1 adet aktar (<)'}
+                        className="w-6 h-9 rounded bg-[#26211a] hover:bg-[#382f25] disabled:opacity-35 border border-[#c6a15b]/35 text-[#fde68a] font-black text-xs flex items-center justify-center shrink-0"
+                      >
+                        &lt;
+                      </button>
                       <div className="w-11 h-11 rounded bg-[#100d0a] border border-[#c6a15b]/20 flex items-center justify-center text-[#f3d38a] shrink-0">
                         <ItemIcon iconKey={validIconKey(definition?.icon ?? item.icon)} size={24} />
                       </div>
@@ -881,8 +947,11 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
               Ordu Hızı: <strong>{partyLogistics.finalSpeed}</strong>
             </span>
             {partyLogistics.capacity.isOverweight && (
-              <span className="text-red-400 font-bold bg-red-950/60 px-2 py-0.5 rounded border border-red-800">
-                ⚠️ Aşırı Yük ({partyLogistics.overburdenPenalty} Hız)
+              <span className="text-red-400 font-bold bg-red-950/60 px-2 py-0.5 rounded border border-red-800 inline-flex items-center gap-1">
+                <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true">
+                  <path d="M8 1.5L1 14h14L8 1.5zm-.75 4.5h1.5v4h-1.5V6zm0 5.25h1.5v1.5h-1.5v-1.5z" />
+                </svg>
+                <span>Aşırı Yük ({partyLogistics.overburdenPenalty} Hız)</span>
               </span>
             )}
             {discardItems.length > 0 && (

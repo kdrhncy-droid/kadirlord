@@ -5,6 +5,7 @@ import {
   BuildingProjectId,
   CampaignState,
   LordAgent,
+  NewGameStartOptions,
   Settlement,
   SettlementDailyDefault,
   SiegeEngineType,
@@ -393,6 +394,8 @@ export default function App() {
             lords: current.lords.length,
             settlements: current.settlements.length,
           },
+          settlementOpen: Boolean(state.activeSettlementModal),
+          activeSettlementId: state.activeSettlementModal?.id ?? null,
         };
       },
       setTimeScale: (scale) => {
@@ -519,6 +522,43 @@ export default function App() {
         return true;
       },
       closeSiege: () => setActiveSiegeSettlementId(null),
+      openSettlement: (settlementIdOrType, options) => {
+        const current = testStateRef.current.campaign;
+        const target =
+          !settlementIdOrType || settlementIdOrType === 'TOWN'
+            ? current.settlements.find((s) => s.id === 'zeonica_west') ??
+              current.settlements.find((s) => s.id === 'zeonica') ??
+              current.settlements.find((s) => s.type === 'TOWN')
+            : settlementIdOrType === 'CASTLE'
+              ? current.settlements.find((s) => s.id === 'lochana_castle') ??
+                current.settlements.find((s) => s.type === 'CASTLE')
+              : settlementIdOrType === 'VILLAGE'
+                ? current.settlements.find((s) => s.id === 'sancaktepe') ??
+                  current.settlements.find((s) => s.type === 'VILLAGE')
+                : current.settlements.find(
+                    (s) =>
+                      s.id === settlementIdOrType ||
+                      s.name.toLowerCase() === settlementIdOrType.toLowerCase(),
+                  );
+        if (!target) return false;
+        playerPositionCommandRef.current = { x: target.x + 2, z: target.z + 2 };
+        setCampaign((prev) => ({
+          ...prev,
+          playerX: target.x + 2,
+          playerZ: target.z + 2,
+          settlements: prev.settlements.map((s) =>
+            s.id === target.id ? { ...s, visited: true } : s,
+          ),
+        }));
+        setSettlementModalInitialTab(options?.tab ?? 'overview');
+        setActiveSiegeSettlementId(null);
+        setDialogueLord(null);
+        setDialogueSettlement(null);
+        setActiveSettlementModal({ ...target, visited: true });
+        cameraActionsRef.current?.focusOnCoords(target.x - 4, target.z, 36);
+        return true;
+      },
+      closeSettlement: () => setActiveSettlementModal(null),
       openDialogue: (lordId, options) => {
         const current = testStateRef.current.campaign;
         const lord = current.lords.find((item) => item.id === lordId);
@@ -612,41 +652,85 @@ export default function App() {
   const [playerName, setPlayerName] = useState('Komutan Demirhan');
   const [isNewGameCreatorFlow, setIsNewGameCreatorFlow] = useState(false);
   const [isTitleLoadOpen, setIsTitleLoadOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [loadingScreen, setLoadingScreen] = useState<{
+    active: boolean;
+    title: string;
+    subtitle: string;
+    tip: string;
+  } | null>(null);
 
-  const startGame = useCallback((customDna?: CharacterMorphDNA, customName?: string) => {
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-    const finalName = customName || playerName;
-    const fresh = createInitialCampaignState(finalName, backgroundChoice);
-    if (customDna) {
-      fresh.playerMorphDNA = customDna;
-    }
-    setCampaign(fresh);
-    setMacroState(createInitialKingdomMacroState(fresh));
-    setSubMode('overworld');
-    setCampaignTimeScale(1);
-    setActiveSettlementModal(null);
-    setActiveDiplomacyLord(null);
-    setDialogueLord(null);
-    setDialogueSettlement(null);
-    setIsForcedEncounter(false);
-    setEncounterScenario(undefined);
-    setIsMarketModalOpen(false);
-    setIsInventoryModalOpen(false);
-    setIsPartyModalOpen(false);
-    setIsCharacterModalOpen(false);
-    setIsKingdomModalOpen(false);
-    setIsEncyclopediaOpen(false);
-    setOutcomeSnapshot(null);
-    // Yeni seferde tanışıklıklar sıfırlanır (fog of war baştan).
-    setMetHeroIds([]);
-    setGameState('playing');
-    document.body.dataset.state = 'playing';
-    cameraActionsRef.current?.focusOnCoords(fresh.playerX, fresh.playerZ, 52);
-    cameraActionsRef.current?.focusOnPlayer();
-    sound.playWarhorn();
-  }, [backgroundChoice, playerName]);
+  const BANNERLORD_TIPS = [
+    'Kalradya İpucu: Köylerden topladığınız gönüllüleri savaş tecrübesiyle terfi ettirerek krallığınıza özgü ağır süvari ve okçulara dönüştürün.',
+    'Kalradya İpucu: Bir krallığın kalesini veya şehrini kuşattığınızda o krallıkla resmen savaşa girersiniz; kuşatma kampında koçbaşı ve mancınık inşa etmeyi unutmayın.',
+    'Kalradya İpucu: Envanterinizdeki binek atları piyadelerinizin harita yürüyüş hızını artırır; katırlar ve yük beygirleri ise erzak ve ganimet kapasitenizi genişletir.',
+    'Kalradya İpucu: Nam (Renown) yalnız gerçek meydan muharebeleri, kale kuşatmaları, turnuva zaferleri ve eşraf görevleriyle kazanılır.',
+  ];
+
+  const runWithLoadingScreen = useCallback(
+    (title: string, subtitle: string, action: () => void) => {
+      if (e2eRequest.enabled || isAutostart) {
+        action();
+        return;
+      }
+      const tip = BANNERLORD_TIPS[Math.floor(Math.random() * BANNERLORD_TIPS.length)];
+      setLoadingScreen({ active: true, title, subtitle, tip });
+      window.setTimeout(() => {
+        action();
+        window.setTimeout(() => {
+          setLoadingScreen(null);
+        }, 260);
+      }, 420);
+    },
+    [e2eRequest.enabled, isAutostart],
+  );
+
+  const startGame = useCallback(
+    (
+      customDna?: CharacterMorphDNA,
+      customName?: string,
+      startOptions?: NewGameStartOptions,
+    ) => {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      const finalName = customName || playerName;
+      const fresh = createInitialCampaignState(
+        finalName,
+        backgroundChoice,
+        startOptions ?? { realisticBannerlordStart: true },
+      );
+      if (customDna) {
+        fresh.playerMorphDNA = customDna;
+      }
+      setCampaign(fresh);
+      setMacroState(createInitialKingdomMacroState(fresh));
+      setSubMode('overworld');
+      setCampaignTimeScale(1);
+      setActiveSettlementModal(null);
+      setActiveSiegeSettlementId(null);
+      setActiveDiplomacyLord(null);
+      setDialogueLord(null);
+      setDialogueSettlement(null);
+      setIsForcedEncounter(false);
+      setEncounterScenario(undefined);
+      setIsMarketModalOpen(false);
+      setIsInventoryModalOpen(false);
+      setIsPartyModalOpen(false);
+      setIsCharacterModalOpen(false);
+      setIsKingdomModalOpen(false);
+      setIsEncyclopediaOpen(false);
+      setOutcomeSnapshot(null);
+      setMetHeroIds([]);
+      setGameState('playing');
+      document.body.dataset.state = 'playing';
+      playerPositionCommandRef.current = { x: fresh.playerX, z: fresh.playerZ };
+      cameraActionsRef.current?.focusOnCoords(fresh.playerX, fresh.playerZ, 52);
+      cameraActionsRef.current?.focusOnPlayer();
+      sound.playSettlementEnter();
+    },
+    [backgroundChoice, playerName],
+  );
 
   /* ───────────────── Faz 10a: UI katmanları & kayıt ───────────────── */
 
@@ -799,7 +883,7 @@ export default function App() {
     lastAutosaveDayRef.current = fresh.day;
     cameraActionsRef.current?.focusOnCoords(fresh.playerX, fresh.playerZ, 52);
     cameraActionsRef.current?.focusOnPlayer();
-    sound.playWarhorn();
+    sound.playSettlementEnter();
     showToast(`Sefer yüklendi · Gün ${fresh.day}`);
   }, [showToast, startGame]);
 
@@ -815,6 +899,7 @@ export default function App() {
     setViewMode('campaign');
     setCampaignTimeScale(1);
     setActiveSettlementModal(null);
+    setActiveSiegeSettlementId(null);
     setActiveDiplomacyLord(null);
     setDialogueLord(null);
     setDialogueSettlement(null);
@@ -830,7 +915,7 @@ export default function App() {
     lastAutosaveDayRef.current = fresh.day;
     cameraActionsRef.current?.focusOnCoords(fresh.playerX, fresh.playerZ, 52);
     cameraActionsRef.current?.focusOnPlayer();
-    sound.playWarhorn();
+    sound.playSettlementEnter();
   }, []);
 
   /**
@@ -884,6 +969,19 @@ export default function App() {
       }
 
       if (gameState === 'title') {
+        if (isCharacterCreatorOpen || isTitleLoadOpen || isSettingsModalOpen || isEncyclopediaOpen) {
+          if (e.code === 'Escape') {
+            if (isCharacterCreatorOpen) {
+              setIsNewGameCreatorFlow(false);
+              setIsCharacterCreatorOpen(false);
+            } else if (isTitleLoadOpen) {
+              setIsTitleLoadOpen(false);
+            } else if (isSettingsModalOpen) {
+              setIsSettingsModalOpen(false);
+            }
+          }
+          return;
+        }
         if (e.code === 'Enter' || e.code === 'Space') {
           e.preventDefault();
           // Kayıt varsa Enter "devam et"tir; yeni sefer karakter oluşturucuyla başlatılır.
@@ -896,13 +994,6 @@ export default function App() {
           e.preventDefault();
           setIsNewGameCreatorFlow(false);
           setIsCharacterCreatorOpen((prev) => !prev);
-        } else if (e.code === 'Escape') {
-          if (isCharacterCreatorOpen) {
-            setIsNewGameCreatorFlow(false);
-            setIsCharacterCreatorOpen(false);
-          } else if (isTitleLoadOpen) {
-            setIsTitleLoadOpen(false);
-          }
         }
         return;
       }
@@ -920,11 +1011,8 @@ export default function App() {
       }
 
       if (e.code === 'KeyR' && gameState === 'playing' && !uiPausesWorld) {
-        // Kayıt silineceği için onay istenir (eski sürüm sessizce sıfırlıyordu).
-        const ok =
-          typeof window === 'undefined' ||
-          window.confirm('Yeni sefer başlatılsın mı? Mevcut kayıt silinecek.');
-        if (ok) startGame();
+        setIsNewGameCreatorFlow(true);
+        setIsCharacterCreatorOpen(true);
         return;
       }
 
@@ -1001,6 +1089,14 @@ export default function App() {
     saveInfo,
   ]);
 
+  useEffect(() => {
+    const handleGlobalContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener('contextmenu', handleGlobalContextMenu);
+    return () => window.removeEventListener('contextmenu', handleGlobalContextMenu);
+  }, []);
+
   // Living World Periodic Tick scaled by campaignTimeScale (Faz 11: canlı dünya)
   useEffect(() => {
     if (gameState !== 'playing' || subMode !== 'overworld' || campaignTimeScale === 0) return;
@@ -1044,6 +1140,7 @@ export default function App() {
         setSettlementModalInitialTab('overview');
         setActiveSiegeSettlementId(null);
         setActiveSettlementModal(live);
+        cameraActionsRef.current?.focusOnCoords(live.x - 4, live.z, 36);
       }
       return nextState;
     });
@@ -1245,13 +1342,13 @@ export default function App() {
         if (res.victory) {
           outcome = {
             victory: true,
-            message: `3 tur boyunca tüm gladyatörleri dize getirerek turnuva şampiyonu oldunuz! Kazanılan ödül: +${res.goldEarned} Dinar, +${res.renownEarned} Nam ve ${res.prizeName}!`,
+            message: `3 tur boyunca tüm rakipleri dize getirerek turnuva şampiyonu oldunuz! Kazanılan ödül: +${res.goldEarned} Dinar, +${res.renownEarned} Nam ve ${res.prizeName}!`,
           };
         } else {
           outcome = {
             victory: false,
             message:
-              'Turnuvanın çekişmeli yarı finalinde elendiniz. Yine de sergilediğiniz cesaretle +2 Nam kazandınız.',
+              'Turnuvanın çekişmeli yarı finalinde elendiniz.',
           };
         }
         return res.nextState;
@@ -1506,6 +1603,19 @@ export default function App() {
         activeDiplomacyLordId={activeDiplomacyLord?.id ?? null}
         activeDialogueLordId={dialogueLord?.id ?? null}
         activeSettlementModalId={activeSettlementModal?.id ?? null}
+        isRenderPaused={
+          Boolean(loadingScreen?.active) ||
+          isCharacterCreatorOpen ||
+          isTitleLoadOpen ||
+          isSettingsModalOpen ||
+          isInventoryModalOpen ||
+          isMarketModalOpen ||
+          isPartyModalOpen ||
+          isCharacterModalOpen ||
+          isEncyclopediaOpen ||
+          isKingdomModalOpen ||
+          gameState === 'paused'
+        }
         onSetTimeScale={setMapTimeScale}
         onUpdatePlayerPos={handleUpdatePlayerPos}
         onOpenSettlement={handleOpenSettlement}
@@ -1516,7 +1626,7 @@ export default function App() {
           setEncounterScenario(info.scenario);
         }}
         onHostileEncounter={(l, scenario) => {
-          sound.playWarhorn();
+          sound.playSettlementEnter();
           setDialogueLord(l);
           setIsForcedEncounter(true);
           setEncounterScenario(scenario);
@@ -1530,16 +1640,16 @@ export default function App() {
         onBattleComplete={handleBattleComplete}
       />
 
-      {/* 1. TITLE SCREEN OVERLAY */}
+      {/* 1. BANNERLORD MAIN MENU OVERLAY */}
       {gameState === 'title' && (
         <div
-          className="fixed inset-0 z-30 flex flex-col justify-between p-12 pointer-events-auto"
+          className="fixed inset-0 z-30 flex flex-col justify-between p-10 sm:p-14 pointer-events-auto"
           style={{
             background:
-              'linear-gradient(90deg, rgba(10,9,7,0.92) 0%, rgba(10,9,7,0.72) 42%, rgba(10,9,7,0.12) 100%)',
+              'linear-gradient(90deg, rgba(10,9,7,0.95) 0%, rgba(12,10,8,0.82) 42%, rgba(10,9,7,0.18) 100%)',
           }}
         >
-          <div className="max-w-lg my-auto">
+          <div className="max-w-md my-auto">
             <div className="mb-5">
               <svg
                 viewBox="0 0 420 115"
@@ -1550,21 +1660,21 @@ export default function App() {
                 <defs>
                   <linearGradient id="crestGold" x1="0%" y1="0%" x2="100%" y2="100%">
                     <stop offset="0%" stopColor="#fde68a" />
-                    <stop offset="50%" stopColor="#d97706" />
-                    <stop offset="100%" stopColor="#92400e" />
+                    <stop offset="50%" stopColor="#c6a15b" />
+                    <stop offset="100%" stopColor="#785826" />
                   </linearGradient>
                 </defs>
                 <g transform="translate(8, 10)">
                   <path
                     d="M36 4L8 16v26c0 24 12 42 28 48 16-6 28-24 28-48V16L36 4z"
-                    fill="#1c1610"
+                    fill="#14110c"
                     stroke="url(#crestGold)"
-                    strokeWidth="3"
+                    strokeWidth="2.5"
                   />
                   <path
                     d="M22 24l28 36M50 24L22 60"
                     stroke="#f3ead8"
-                    strokeWidth="2.5"
+                    strokeWidth="2.2"
                     strokeLinecap="round"
                   />
                   <polygon points="36,14 41,28 36,24 31,28" fill="url(#crestGold)" />
@@ -1592,7 +1702,7 @@ export default function App() {
                 <text
                   x="86"
                   y="82"
-                  fill="#fbbf24"
+                  fill="#c6a15b"
                   fontFamily="Cinzel, Georgia, serif"
                   fontWeight="600"
                   fontSize="15"
@@ -1603,140 +1713,112 @@ export default function App() {
               </svg>
             </div>
 
-            <p className="text-sm text-[#d6cbb5] leading-relaxed mb-6 max-w-md">
-              Kuzeyin karlı sıradağlarından doğunun altın bozkırlarına ve güneyin kızıl
-              vahalarına uzanan devasa 3B Kalradya kıtasında Bannerlord tarzı stratejik
-              harita kamerasıyla ordunuzu yönetin, lordlarla diplomasi yürütün ve
-              meydan savaşlarına liderlik edin.
+            <p className="text-xs sm:text-sm text-[#cfc3ad] leading-relaxed mb-6">
+              İmparatorluk iç savaşının gölgesinde kalan Kalradya kıtasında sancağınızı dikin,
+              ailenizin mirasını koruyun, ordular kurup kaleler kuşatın ve tahtın kaderini
+              belirleyin.
             </p>
 
-            <div className="mb-6">
-              <div className="text-xs font-semibold text-[#c6a15b] mb-2">
-                Sancaktar Geçmişini Seçin:
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {(
-                  [
-                    {
-                      id: 'noble',
-                      title: 'Soylu Sancaktar',
-                      sub: '680 Dinar · Yüksek Nam',
-                    },
-                    {
-                      id: 'steppe',
-                      title: 'Bozkır Akıncısı',
-                      sub: '6 Zırhlı Süvari · Hızlı Ordu',
-                    },
-                    {
-                      id: 'tactician',
-                      title: 'İmparatorluk Taktisyeni',
-                      sub: '7 Uzun Okçu · 3 Muhafız',
-                    },
-                  ] as const
-                ).map((bg) => (
-                  <button
-                    key={bg.id}
-                    type="button"
-                    onClick={() => setBackgroundChoice(bg.id)}
-                    className={`p-2.5 rounded text-left border transition-colors ${
-                      backgroundChoice === bg.id
-                        ? 'bg-[#2b2114] border-[#f59e0b] text-[#f8f0df]'
-                        : 'bg-[#16130e] border-[#c6a15b]/25 text-[#b5a890] hover:border-[#c6a15b]/50'
-                    }`}
-                  >
-                    <div className="text-xs font-bold whitespace-nowrap truncate">
-                      {bg.title}
+            {/* Bannerlord Vertical Main Menu Stack */}
+            <nav
+              aria-label="Ana Menü"
+              className="flex flex-col gap-2.5 border-l-2 border-[#c6a15b]/45 pl-4"
+            >
+              {saveInfo && (
+                <button
+                  type="button"
+                  data-testid="title-continue-campaign"
+                  onClick={() => {
+                    sound.playUiClick();
+                    runWithLoadingScreen(
+                      'SEFER YÜKLENİYOR',
+                      `${saveInfo.playerName} · Gün ${saveInfo.day}`,
+                      () => continueGame(),
+                    );
+                  }}
+                  className="group w-full px-5 py-3 rounded-xs text-left bg-[#1b1610]/95 hover:bg-[#2a2117] border border-[#c6a15b]/60 hover:border-[#fde68a] transition-colors flex items-center justify-between shadow-lg"
+                >
+                  <div>
+                    <div className="font-display font-bold text-sm tracking-wider text-[#fde68a] group-hover:text-white">
+                      SEFERE DEVAM ET (CONTINUE CAMPAIGN)
                     </div>
-                    <div className="text-[11px] text-[#c6a15b] mt-0.5 truncate">
-                      {bg.sub}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {saveInfo && (
-              <div className="mb-4 rounded border border-[#34d399]/40 bg-[#0f1a13] px-3 py-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={continueGame}
-                    className="px-6 py-3 rounded text-sm font-display font-bold tracking-wider bg-[#166534] hover:bg-[#15803d] text-[#ecfdf5] border border-[#34d399]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                  >
-                    SEFERE DEVAM ET · GÜN {saveInfo.day} [ENTER]
-                  </button>
-                  <div className="text-[11px] text-[#a7d8bd] leading-tight">
-                    <div>
-                      {saveInfo.playerName} · {saveInfo.gold} dinar
-                    </div>
-                    <div className="text-[#6f8f7d]">
-                      Son kayıt:{' '}
-                      {saveInfo.savedAt > 0
-                        ? new Date(saveInfo.savedAt).toLocaleTimeString('tr-TR', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })
-                        : '—'}
+                    <div className="text-[11px] text-[#b5a890] mt-0.5">
+                      {saveInfo.playerName} · Gün {saveInfo.day} · {saveInfo.gold} Dinar
                     </div>
                   </div>
-                </div>
-              </div>
-            )}
+                  <span className="text-[10px] font-mono text-[#c6a15b]">[ENTER]</span>
+                </button>
+              )}
 
-            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 data-start="true"
+                data-testid="title-start-campaign"
                 onClick={() => {
-                  if (saveInfo && !window.confirm('Yeni sefer başlatılsın mı? Mevcut kayıt silinecek.')) return;
+                  sound.playUiClick();
                   setIsNewGameCreatorFlow(true);
                   setIsCharacterCreatorOpen(true);
-                  sound.playCoin();
                 }}
-                className="px-7 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fbbf24]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="group w-full px-5 py-3.5 rounded-xs text-left bg-[#231a11]/95 hover:bg-[#332517] border border-[#c6a15b]/65 hover:border-[#fde68a] transition-colors flex items-center justify-between shadow-lg"
               >
-                {saveInfo ? 'YENİ SEFER BAŞLAT' : 'SEFERİ BAŞLAT [ENTER]'}
+                <span className="font-display font-bold text-sm tracking-wider text-[#f8f0df] group-hover:text-[#fde68a]">
+                  {saveInfo ? 'YENİ SEFER BAŞLAT (NEW CAMPAIGN)' : 'SEFERİ BAŞLAT (NEW CAMPAIGN)'}
+                </span>
+                <span className="text-[10px] font-mono text-[#c6a15b]">Hikâye &amp; Soy</span>
               </button>
+
               <button
                 type="button"
                 data-testid="title-load-saves-btn"
                 onClick={() => {
-                  sound.playCoin();
+                  sound.playUiClick();
                   setIsTitleLoadOpen(true);
                 }}
-                className="px-5 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#261f17] hover:bg-[#382d22] text-[#fde68a] border border-[#c6a15b]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-2"
+                className="group w-full px-5 py-3 rounded-xs text-left bg-[#16120d]/95 hover:bg-[#241d15] border border-[#c6a15b]/35 hover:border-[#c6a15b]/80 transition-colors flex items-center justify-between shadow"
               >
-                <span>📂</span>
-                <span>KAYIT YÜKLE (LOAD GAME)</span>
+                <span className="font-display font-semibold text-sm tracking-wider text-[#e2d6c1] group-hover:text-[#fde68a]">
+                  KAYITLI OYUNLAR (SAVED GAMES)
+                </span>
+                <span className="text-[10px] font-mono text-[#9c8e78]">Kayıt Yöneticisi</span>
               </button>
+
               <button
                 type="button"
+                data-testid="title-settings-btn"
                 onClick={() => {
-                  setIsNewGameCreatorFlow(false);
-                  setIsCharacterCreatorOpen(true);
-                  sound.playCoin();
+                  sound.playUiClick();
+                  setIsSettingsModalOpen(true);
                 }}
-                className="px-5 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#2a1d13] hover:bg-[#3d2a1b] text-[#fef3c7] border border-[#c6a15b]/60 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-2"
+                className="group w-full px-5 py-3 rounded-xs text-left bg-[#16120d]/95 hover:bg-[#241d15] border border-[#c6a15b]/35 hover:border-[#c6a15b]/80 transition-colors flex items-center justify-between shadow"
               >
-                <span>👤</span>
-                <span>KARAKTERİNİ MODELLE [B]</span>
+                <span className="font-display font-semibold text-sm tracking-wider text-[#e2d6c1] group-hover:text-[#fde68a]">
+                  AYARLAR (OPTIONS)
+                </span>
+                <span className="text-[10px] font-mono text-[#9c8e78]">Ses · Grafik · Oynanış</span>
               </button>
+
               <button
                 type="button"
+                data-testid="title-encyclopedia-btn"
                 onClick={() => {
-                  setViewMode('character_arena');
-                  sound.playWarhorn();
+                  sound.playUiClick();
+                  setIsEncyclopediaOpen(true);
                 }}
-                className="px-5 py-3.5 rounded text-sm font-display font-bold tracking-wider bg-[#221a12] hover:bg-[#34271a] text-[#fbbf24] border border-[#f59e0b]/50 shadow-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-2"
+                className="group w-full px-5 py-3 rounded-xs text-left bg-[#16120d]/95 hover:bg-[#241d15] border border-[#c6a15b]/35 hover:border-[#c6a15b]/80 transition-colors flex items-center justify-between shadow"
               >
-                <span>⚔️</span>
-                <span>SAVAŞ & KARAKTER ARENASI TEST ET</span>
+                <span className="font-display font-semibold text-sm tracking-wider text-[#e2d6c1] group-hover:text-[#fde68a]">
+                  KALRADYA ANSİKLOPEDİSİ (ENCYCLOPEDIA)
+                </span>
+                <span className="text-[10px] font-mono text-[#9c8e78]">6 Krallık · 211 Yerleşim</span>
               </button>
-            </div>
+            </nav>
           </div>
 
-          <div className="text-xs text-[#c7baa3] tracking-wide">
-            WASD Harita Kamerasını Kaydır · Q/E veya Sağ Tık Kamera Döndür · Tekerlek (Z/X) Yakınlaştır · Sol Tık Sancağı Yürüt · C Sancağa Odakla · Space Zamanı Duraklat
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#a89b84] tracking-wide border-t border-[#c6a15b]/20 pt-3">
+            <span>
+              WASD Harita Kamerası · Q/E Kamera Döndür · Tekerlek Yakınlaştır · Sol Tık Yürüt · Space Duraklat
+            </span>
+            <span className="font-mono text-[11px] text-[#c6a15b]">Sürüm 1.4 · Bannerlord Kurgusu</span>
           </div>
         </div>
       )}
@@ -1821,6 +1903,7 @@ export default function App() {
           onOpenCharacterArena={() => setViewMode('character_arena')}
           onOpenKingdomModal={() => setIsKingdomModalOpen(true)}
           onOpenCharacterCreator={() => setIsCharacterCreatorOpen(true)}
+          onOpenArmyModal={() => setIsArmyModalOpen(true)}
         />
       )}
 
@@ -1908,6 +1991,18 @@ export default function App() {
             setDialogueSettlement(activeSettlementModal);
           }}
           onOpenCharacterArena={() => setViewMode('character_arena')}
+          onBeginSiege={(targetSettlement) => {
+            setCampaign((prev) => {
+              const next = startPlayerSiege(prev, targetSettlement.id);
+              playerPositionCommandRef.current = { x: next.playerX, z: next.playerZ };
+              return next;
+            });
+            setActiveSettlementModal(null);
+            setActiveSiegeSettlementId(targetSettlement.id);
+            showToast(
+              `${targetSettlement.name} kuşatma altına alındı! Krallık ile savaş başladı.`,
+            );
+          }}
           onRecruit={handleRecruit}
           onRecruitBatch={handleRecruitBatch}
           onBuyFood={handleBuyFood}
@@ -1962,6 +2057,38 @@ export default function App() {
             const res = bombardSettlementWalls(campaign, settlementId, target);
             if (res.success) setCampaign(res.nextState);
             return res.reason || null;
+          }}
+          onResolveNotableQuest={(settlementId, notableId, goldGain, renownGain, relationGain, summaryText) => {
+            sound.playCoinChime();
+            setCampaign((prev) => {
+              const nextSettlements = prev.settlements.map((s) => {
+                if (s.id !== settlementId) return s;
+                const nextNotables = (s.notables ?? []).map((n) =>
+                  n.id === notableId
+                    ? { ...n, relation: Math.min(100, n.relation + relationGain) }
+                    : n,
+                );
+                return { ...s, notables: nextNotables };
+              });
+              const updatedSettlement = nextSettlements.find((s) => s.id === settlementId) ?? null;
+              if (updatedSettlement) setActiveSettlementModal(updatedSettlement);
+              return {
+                ...prev,
+                gold: prev.gold + goldGain,
+                renown: prev.renown + renownGain,
+                settlements: nextSettlements,
+                chronicle: [
+                  {
+                    id: `notable-quest-${prev.day}-${notableId}-${Date.now()}`,
+                    day: prev.day,
+                    category: 'ECONOMY' as const,
+                    text: summaryText,
+                  },
+                  ...prev.chronicle,
+                ].slice(0, 25),
+              };
+            });
+            showToast(summaryText);
           }}
         />
       )}
@@ -2097,7 +2224,9 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm('Yeni sefer başlatılsın mı? Mevcut kayıt silinecek.')) startGame();
+                  setOutcomeSnapshot(null);
+                  setIsNewGameCreatorFlow(true);
+                  setIsCharacterCreatorOpen(true);
                 }}
                 className="px-4 py-2.5 rounded text-xs font-semibold bg-[#241f18] hover:bg-[#332c22] text-[#e2d6c1] border border-[#c6a15b]/30 transition-colors whitespace-nowrap"
               >
@@ -2112,7 +2241,13 @@ export default function App() {
       {/* FAZ 1: BANNERLORD ANSİKLOPEDİSİ (N) */}
       {isEncyclopediaOpen && (
         <EncyclopediaModal
-          campaign={campaign}
+          campaign={{
+            ...campaign,
+            lords: campaign.lords.map((l) => {
+              const livePos = lordPositionsRef.current.get(l.id);
+              return livePos ? { ...l, x: livePos.x, z: livePos.z } : l;
+            }),
+          }}
           revealedHeroIds={metHeroIds}
           onMeetHero={(heroId) =>
             setMetHeroIds((prev) => (prev.includes(heroId) ? prev : [...prev, heroId]))
@@ -2134,6 +2269,24 @@ export default function App() {
             setDialogueSettlement(null);
             setIsForcedEncounter(false);
             setEncounterScenario(undefined);
+          }}
+          onMeetHero={(heroId) =>
+            setMetHeroIds((prev) => (prev.includes(heroId) ? prev : [...prev, heroId]))
+          }
+          onCompleteBarter={({ lordId, goldDelta, relationDelta, peaceSigned }) => {
+            setCampaign((prev) => ({
+              ...prev,
+              gold: Math.max(0, prev.gold + goldDelta),
+              lords: prev.lords.map((l) =>
+                l.id === lordId
+                  ? {
+                      ...l,
+                      relation: Math.max(-100, Math.min(100, l.relation + relationDelta)),
+                      isAtWarWithPlayer: peaceSigned ? false : l.isAtWarWithPlayer,
+                    }
+                  : l,
+              ),
+            }));
           }}
           onRelationChange={(lordId, delta) =>
             setCampaign((prev) => ({
@@ -2333,9 +2486,9 @@ export default function App() {
         />
       )}
 
-      {/* 7A. BANNERLORD ORDU & UYUM (ARMY MANAGEMENT) MODAL */}
+      {/* 7A. BANNERLORD ORDU & UYUM (ARMY MANAGEMENT) WIDGET */}
       {gameState === 'playing' && subMode === 'overworld' && !dialogueLord && !dialogueSettlement && (
-        <div className="fixed right-4 bottom-24 z-40 flex flex-col items-end gap-2 pointer-events-none">
+        <div className="fixed right-4 bottom-20 z-40 flex flex-col items-end gap-2 pointer-events-none">
           <ArmyCohesionHudWidget
             campaign={campaign}
             onOpenArmyModal={() => setIsArmyModalOpen(true)}
@@ -2349,17 +2502,6 @@ export default function App() {
               }
             }}
           />
-          <button
-            type="button"
-            data-testid="open-army-modal-btn"
-            onClick={() => setIsArmyModalOpen(true)}
-            className="pointer-events-auto flex items-center gap-2 rounded border-2 border-[#c6a15b]/80 bg-[#19130d]/95 px-3.5 py-2 text-xs font-bold text-[#fde68a] shadow-[0_6px_24px_rgba(0,0,0,0.85)] hover:border-[#fbbf24] hover:bg-[#261c13]"
-          >
-            <span>Ordu Yönetimi</span>
-            <span className="rounded bg-[#2b2015] px-1.5 py-0.5 font-mono-tabular text-[11px] text-[#fbbf24]">
-              ★ {Math.round(campaign.influence ?? 0)}
-            </span>
-          </button>
         </div>
       )}
 
@@ -2454,18 +2596,22 @@ export default function App() {
           initialDNA={campaign.playerMorphDNA}
           characterName={campaign.playerName}
           confirmLabel={isNewGameCreatorFlow ? 'Seferi Başlat [Enter]' : 'Karakteri Onayla'}
-          onSave={(newDNA, newName) => {
+          onSave={(newDNA, newName, startOptions) => {
             if (isNewGameCreatorFlow) {
               setIsNewGameCreatorFlow(false);
               setIsCharacterCreatorOpen(false);
-              startGame(newDNA, newName);
+              if (newName) setPlayerName(newName);
+              runWithLoadingScreen(
+                'KALRADYA DÜNYASI HAZIRLANIYOR',
+                `${newName || playerName} · Yeni Sefer Başlıyor`,
+                () => startGame(newDNA, newName, startOptions),
+              );
             } else {
               setCampaign((prev) => ({
                 ...prev,
                 playerMorphDNA: newDNA,
                 playerName: newName || prev.playerName,
               }));
-              // Faz 10a: seçilen ad yeni seferde de korunur (eski sürümde 'Komutan Demirhan'a dönüyordu).
               if (newName) setPlayerName(newName);
               showToast('Karakter kaydedildi.');
               setIsCharacterCreatorOpen(false);
@@ -2476,6 +2622,144 @@ export default function App() {
             setIsCharacterCreatorOpen(false);
           }}
         />
+      )}
+
+      {/* 11. BANNERLORD AYARLAR (OPTIONS) MODAL */}
+      {isSettingsModalOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 pointer-events-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Oyun Ayarları"
+          data-testid="settings-modal"
+        >
+          <div className="hud-panel rounded-sm border-2 border-[#8b6b36] bg-[#14110c] w-full max-w-lg p-6 text-[#f3ead8] shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-[#c6a15b]/30 pb-3">
+              <div>
+                <h2 className="font-display text-lg font-bold text-[#fde68a] tracking-wider uppercase">
+                  Oyun Ayarları (Options)
+                </h2>
+                <p className="text-xs text-[#a89b84]">Ses, Harita Performansı ve Kamera Kontrolleri</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSettingsModalOpen(false)}
+                className="px-3 py-1 rounded text-xs font-bold bg-[#262018] hover:bg-[#382f23] text-[#fde68a] border border-[#c6a15b]/40"
+              >
+                Kapat [Esc]
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="p-3.5 rounded bg-[#1b1610] border border-[#c6a15b]/25 flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-sm text-[#f8f0df]">Oyun Sesleri ve Harita Efektleri</div>
+                  <div className="text-[#a89b84] mt-0.5">
+                    At nalı sesleri, arayüz tıklamaları ve muharebe efektleri ([M] kısayolu)
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = sound.toggleMute();
+                    setMuted(next);
+                  }}
+                  className={`px-4 py-2 rounded font-bold border ${
+                    muted
+                      ? 'bg-[#3b1d1d] border-[#ef4444]/60 text-[#fecaca]'
+                      : 'bg-[#1e3a2a] border-[#34d399]/60 text-[#d1fae5]'
+                  }`}
+                >
+                  {muted ? 'Sessizde (Kapalı)' : 'Ses Açık'}
+                </button>
+              </div>
+
+              <div className="p-3.5 rounded bg-[#1b1610] border border-[#c6a15b]/25 space-y-2">
+                <div className="font-bold text-sm text-[#f8f0df]">Varsayılan Sancak Geçmişi</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { id: 'noble', label: 'Soylu Sancaktar' },
+                      { id: 'steppe', label: 'Bozkır Akıncısı' },
+                      { id: 'tactician', label: 'İmparatorluk Taktisyeni' },
+                    ] as const
+                  ).map((bg) => (
+                    <button
+                      key={bg.id}
+                      type="button"
+                      onClick={() => setBackgroundChoice(bg.id)}
+                      className={`p-2 rounded border text-center font-bold ${
+                        backgroundChoice === bg.id
+                          ? 'bg-[#3b2d18] border-[#fbbf24] text-[#fef08a]'
+                          : 'bg-[#14110c] border-[#c6a15b]/25 text-[#b5a890]'
+                      }`}
+                    >
+                      {bg.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded bg-[#1b1610] border border-[#c6a15b]/25 space-y-1 text-[#d1c5b0]">
+                <div className="font-bold text-sm text-[#fde68a] mb-1">Klavye &amp; Fare Rehberi</div>
+                <div>• Sol Tık: Haritada yürü / Yerleşime veya Lorda doğru takip başlat</div>
+                <div>• WASD: Stratejik kamerayı kaydır · Q/E veya Sağ Tık: Kamerayı döndür</div>
+                <div>• Space: Zamanı duraklat/başlat · 1 / 2 / 3: Zaman hızı</div>
+                <div>• I: Saha Envanteri · P: Parti &amp; Birlikler · C: Karakter · N: Ansiklopedi</div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-[#c6a15b]/25">
+              <button
+                type="button"
+                onClick={() => setIsSettingsModalOpen(false)}
+                className="px-5 py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white"
+              >
+                Tamam
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 12. BANNERLORD LOADING SCREEN OVERLAY */}
+      {loadingScreen?.active && (
+        <div
+          className="fixed inset-0 z-[100] flex flex-col justify-between p-10 bg-[#0b0907] text-[#f3ead8] select-none pointer-events-auto"
+          data-testid="bannerlord-loading-screen"
+        >
+          <div className="flex items-center justify-between border-b border-[#c6a15b]/30 pb-4">
+            <span className="font-display text-sm tracking-[0.25em] text-[#c6a15b] uppercase">
+              Sancak-ı Kalradya · Taht ve Kılıç
+            </span>
+            <span className="text-xs font-mono text-[#a89b84]">1084 Yazı · Kalradya Kıtası</span>
+          </div>
+
+          <div className="my-auto max-w-xl mx-auto text-center space-y-5">
+            <svg
+              viewBox="0 0 80 80"
+              className="w-20 h-20 mx-auto text-[#c6a15b] animate-pulse"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path d="M40 6L12 18v24c0 20 12 34 28 40 16-6 28-20 28-40V18L40 6z" fill="#17130e" />
+              <path d="M25 25l30 30M55 25L25 55" stroke="#fde68a" strokeWidth="2.5" />
+            </svg>
+            <h2 className="font-display text-2xl font-bold text-[#fde68a] tracking-widest uppercase">
+              {loadingScreen.title}
+            </h2>
+            <p className="text-sm text-[#d6cbb5]">{loadingScreen.subtitle}</p>
+            <div className="w-80 max-w-full mx-auto h-2 rounded-full bg-[#1c1610] border border-[#c6a15b]/40 overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-[#92400e] via-[#d97706] to-[#fde68a] w-full animate-pulse" />
+            </div>
+          </div>
+
+          <div className="max-w-2xl mx-auto text-center border-t border-[#c6a15b]/25 pt-4">
+            <p className="text-xs text-[#cfc3ad] italic">{loadingScreen.tip}</p>
+          </div>
+        </div>
       )}
     </main>
   );

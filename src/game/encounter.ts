@@ -637,9 +637,16 @@ export function resolveCorneredBanditSurrender(
 
   const nextLords = campaign.lords.map((l) => {
     if (l.id !== lord.id) return l;
-    const nextSize = Math.max(8, Math.round(lord.armySize * 0.65));
+    const nextRoster: TroopRoster = {
+      militia: Math.max(2, Math.floor((l.roster.militia ?? 4) * 0.5)),
+      archer: Math.max(1, Math.floor((l.roster.archer ?? 2) * 0.5)),
+      cavalry: Math.max(0, Math.floor((l.roster.cavalry ?? 0) * 0.5)),
+      guard: Math.max(0, Math.floor((l.roster.guard ?? 0) * 0.5)),
+    };
+    const nextSize = getTotalTroops(nextRoster);
     return {
       ...l,
+      roster: nextRoster,
       armySize: nextSize,
       x: Math.max(-460, Math.min(460, l.x + (l.x >= 0 ? -65 : 65))),
       z: Math.max(-340, Math.min(340, l.z + (l.z >= 0 ? -55 : 55))),
@@ -685,12 +692,15 @@ export function applyPlayerSurrender(
   foodLost: number;
 } {
   const goldLost = Math.min(campaign.gold, Math.max(30, Math.round(campaign.gold * 0.35)));
-  const foodLost = Math.min(campaign.food, Math.max(2, Math.round(campaign.food * 0.3)));
+  const foodLost =
+    campaign.food <= 4
+      ? Math.min(campaign.food, Math.floor(campaign.food * 0.3))
+      : Math.min(campaign.food - 4, Math.max(2, Math.round(campaign.food * 0.3)));
 
   const nextState: CampaignState = {
     ...campaign,
     gold: Math.max(0, campaign.gold - goldLost),
-    food: Math.max(4, campaign.food - foodLost),
+    food: Math.max(0, campaign.food - foodLost),
     morale: Math.max(20, campaign.morale - 12),
     chronicle: [
       {

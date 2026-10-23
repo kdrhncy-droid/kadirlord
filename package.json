@@ -21,6 +21,7 @@
     "verify:body": "tsx scripts/probe-body-fit.ts",
     "verify:decals": "tsx scripts/probe-face-decals.ts",
     "verify:ladies": "tsx scripts/probe-ladies.ts",
+    "ui:gallery": "node scripts/capture-ui-gallery.mjs",
     "verify:all": "npx tsc --noEmit && npx tsx src/game/rules.test.ts && for f in scripts/probe-*.ts scripts/probe-*.tsx; do npx tsx \"$f\" || exit 1; done"
   },
   "dependencies": {

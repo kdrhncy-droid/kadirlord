@@ -786,7 +786,6 @@ export function ransomPrisonersAtTavern(
       ...state,
       gold: state.gold + totalGold,
       prisoners: 0,
-      renown: state.renown + 1,
       chronicle: [
         {
           id: `ransom-${Date.now()}`,
@@ -822,7 +821,7 @@ export function participateInArenaPractice(
   settlementId: string,
 ): { nextState: CampaignState; success: boolean; goldEarned: number; renownEarned: number } {
   const goldEarned = 25;
-  const renownEarned = 2;
+  const renownEarned = 0; // Bannerlord'da talim dövüşü yalnızca dinar ve silah tecrübesi verir, nam vermez.
   const s = state.settlements.find((item) => item.id === settlementId);
 
   return {
@@ -832,13 +831,12 @@ export function participateInArenaPractice(
     nextState: {
       ...state,
       gold: state.gold + goldEarned,
-      renown: state.renown + renownEarned,
       chronicle: [
         {
           id: `arena-prac-${Date.now()}`,
           day: state.day,
           category: 'WAR' as const,
-          text: `${s?.name || 'Şehir'} arenasında talim dövüşünü kazanıp +${goldEarned} Dinar elde ettiniz.`,
+          text: `${s?.name || 'Şehir'} arenasında talim dövüşünü kazanıp +${goldEarned} Dinar ödül kazandınız.`,
         },
         ...state.chronicle,
       ].slice(0, 25),
@@ -869,7 +867,7 @@ export function joinArenaTournament(
 
   if (victory) {
     const goldEarned = 250;
-    const renownEarned = 15;
+    const renownEarned = 3; // Bannerlord'da turnuva şampiyonluğu standart +3 Nam kazandırır
     const prizeName = 'Şampiyonun Çelik Kalkanı ve Şeref Miğferi';
     return {
       success: true,
@@ -881,13 +879,13 @@ export function joinArenaTournament(
         ...state,
         gold: state.gold - entryFee + goldEarned,
         renown: state.renown + renownEarned,
-        morale: Math.min(100, state.morale + 10),
+        morale: Math.min(100, state.morale + 6),
         chronicle: [
           {
             id: `tourney-win-${Date.now()}`,
             day: state.day,
             category: 'CONQUEST' as const,
-            text: `${s?.name || 'Şehir'} arenasında büyük turnuva şampiyonu oldunuz! (+${renownEarned} Nam, +${goldEarned} Dinar, ${prizeName})`,
+            text: `${s?.name || 'Şehir'} arenasında turnuva şampiyonu oldunuz! (+${renownEarned} Nam, +${goldEarned} Dinar, ${prizeName})`,
           },
           ...state.chronicle,
         ].slice(0, 25),
@@ -898,18 +896,17 @@ export function joinArenaTournament(
       success: true,
       victory: false,
       goldEarned: 0,
-      renownEarned: 2,
+      renownEarned: 0,
       prizeName: '',
       nextState: {
         ...state,
         gold: state.gold - entryFee,
-        renown: state.renown + 2,
         chronicle: [
           {
             id: `tourney-loss-${Date.now()}`,
             day: state.day,
             category: 'WAR' as const,
-            text: `${s?.name || 'Şehir'} turnuvasının yarı finalinde elendiniz (+2 Nam).`,
+            text: `${s?.name || 'Şehir'} turnuvasının yarı finalinde elendiniz.`,
           },
           ...state.chronicle,
         ].slice(0, 25),
@@ -1088,7 +1085,6 @@ export function raidAndPillageVillage(
       food: state.food + foodLoot,
       inventoryItems: nextInventory,
       morale: Math.max(10, state.morale - 4),
-      renown: state.renown + 5,
       settlements: updatedSettlements,
       lords: updatedLords,
       chronicle: [
@@ -1418,7 +1414,8 @@ export function resolveBattleOutcome(
 
   const isSiegeVictory = Boolean(conqueredSettlementId);
   const goldLoot = battleGoldReward(enemiesDefeatedCount, isSiegeVictory);
-  const renownGain = 15 + enemiesDefeatedCount * 3;
+  // Bannerlord dengeli muharebe namı: küçük çatışmalar +2..8, büyük meydan ve kuşatma zaferleri +12..45 Nam
+  const renownGain = Math.max(2, Math.min(48, Math.round((isSiegeVictory ? 12 : 3) + enemiesDefeatedCount * 0.65)));
   const prisonersGain = Math.max(1, Math.floor(enemiesDefeatedCount * 0.35));
   // Faz B0: zafer artık eşya da bırakır (envantere düşer, pazarda satılır).
   const defeatedFaction =
@@ -2818,11 +2815,46 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
     }
   });
 
+  // Assign deterministic primaryProduction & hearths to every village, and default wallLevel/loyalty/security/militia to towns & castles
+  const VILLAGE_PRODUCTION_POOL: Record<FactionId, string[]> = {
+    player: ['Tahıl', 'At', 'Demir', 'Zeytin'],
+    empire: ['Tahıl', 'Zeytin', 'Üzüm', 'Gümüş & Demir', 'Koyun & Yün', 'Balık', 'Kil', 'At'],
+    vlandia: ['Tahıl', 'Zeytin', 'Üzüm', 'Demir', 'At', 'Domuz & Sığır', 'Keten', 'Balık'],
+    battania: ['Kereste', 'Demir', 'Üzüm', 'Koyun & Yün', 'Tahıl', 'Kil', 'Keten'],
+    sturgia: ['Balık', 'Keten', 'Kereste', 'Demir', 'Kürk & Av', 'Tahıl', 'Koyun & Yün'],
+    khuzait: ['At', 'Koyun & Yün', 'Tahıl', 'Demir', 'Tuz & Kil', 'At'],
+    aserai: ['At', 'Hurma & Tahıl', 'Balık', 'Demir', 'Kil', 'Koyun & Yün', 'Keten'],
+    bandits: ['Kereste', 'Demir'],
+  };
+
   // Register flat valley plateau for every single Town, Castle, and Bound Village so no settlement is ever buried by a mountain
   for (let i = 0; i < allSettlements.length; i++) {
     const s = allSettlements[i];
     const radius = s.type === 'TOWN' ? 14.5 : s.type === 'CASTLE' ? 11.2 : 8.0;
     registerSettlementTerrace(s.x, s.z, radius);
+
+    // Bannerlord ölçekli gerçekçi garnizon ve milis sayıları (Şehirler: 280-420, Kaleler: 160-260, Köyler: 45-80)
+    if (s.type === 'TOWN' && s.garrison < 120) {
+      s.garrison = Math.round(s.garrison * 5.2);
+      if (s.militia === undefined) s.militia = Math.round(s.prosperity * 0.35);
+    } else if (s.type === 'CASTLE' && s.garrison < 100) {
+      s.garrison = Math.round(s.garrison * 4.5);
+      if (s.militia === undefined) s.militia = Math.round(s.prosperity * 0.28);
+    } else if (s.type === 'VILLAGE' && s.garrison < 35) {
+      s.garrison = Math.round(s.garrison * 2.8);
+      if (s.militia === undefined) s.militia = Math.round(s.prosperity * 0.22);
+    }
+
+    if (s.type === 'VILLAGE') {
+      const pool = VILLAGE_PRODUCTION_POOL[s.faction] || VILLAGE_PRODUCTION_POOL.empire;
+      const hash = s.id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+      if (!s.primaryProduction) {
+        s.primaryProduction = pool[(hash + i) % pool.length];
+      }
+      if (s.hearths === undefined) {
+        s.hearths = Math.round(s.prosperity * 1.15);
+      }
+    }
   }
 
   cachedCanonicalSettlements = allSettlements;
@@ -2832,22 +2864,233 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
   }));
 }
 
+export function getVillagePrimaryProduction(settlement: Settlement): {
+  name: string;
+  icon: string;
+  shortLabel: string;
+} {
+  const raw = settlement.primaryProduction || 'Tahıl';
+  if (raw.includes('At')) return { name: raw, icon: '🐎', shortLabel: 'At' };
+  if (raw.includes('Demir') || raw.includes('Gümüş')) return { name: raw, icon: '⛏️', shortLabel: 'Demir' };
+  if (raw.includes('Balık')) return { name: raw, icon: '🐟', shortLabel: 'Balık' };
+  if (raw.includes('Üzüm')) return { name: raw, icon: '🍇', shortLabel: 'Üzüm' };
+  if (raw.includes('Zeytin')) return { name: raw, icon: '🫒', shortLabel: 'Zeytin' };
+  if (raw.includes('Koyun') || raw.includes('Yün') || raw.includes('Sığır'))
+    return { name: raw, icon: '🐑', shortLabel: 'Yün' };
+  if (raw.includes('Keten')) return { name: raw, icon: '🌿', shortLabel: 'Keten' };
+  if (raw.includes('Kil') || raw.includes('Tuz')) return { name: raw, icon: '🏺', shortLabel: 'Kil' };
+  if (raw.includes('Kereste') || raw.includes('Kürk')) return { name: raw, icon: '🪵', shortLabel: 'Kereste' };
+  return { name: raw, icon: '🌾', shortLabel: 'Tahıl' };
+}
+
+export interface SettlementStatBreakdown {
+  value: number;
+  delta: number;
+  lines: Array<{ label: string; value: string; positive?: boolean }>;
+}
+
+export interface SettlementDailyStatsReport {
+  wallLevel: number;
+  wallMaxHp: number;
+  prosperity: SettlementStatBreakdown;
+  militia: SettlementStatBreakdown;
+  loyalty: SettlementStatBreakdown;
+  garrison: SettlementStatBreakdown;
+  food: SettlementStatBreakdown;
+  security: SettlementStatBreakdown;
+}
+
+export function calculateSettlementDailyStats(
+  settlement: Settlement,
+  campaign?: CampaignState,
+): SettlementDailyStatsReport {
+  const bld = settlement.buildings ?? {
+    FORTIFICATIONS: settlement.wallLevel ?? (settlement.type === 'TOWN' ? 2 : 1),
+    GRANARY: 1,
+    BARRACKS: 1,
+    FAIRGROUNDS: 1,
+    FORUM: 1,
+    AQUEDUCTS: 1,
+  };
+  const wallLevel = settlement.wallLevel ?? bld.FORTIFICATIONS ?? (settlement.type === 'TOWN' ? 2 : 1);
+  const wallMaxHp = wallLevel * 1000;
+  const boundVillages = campaign
+    ? campaign.settlements.filter((v) => v.type === 'VILLAGE' && v.boundSettlementId === settlement.id)
+    : [];
+  const activeVillages = boundVillages.filter((v) => !v.isRaided).length;
+  const besieged = Boolean(
+    campaign &&
+      (campaign.playerSiege?.settlementId === settlement.id ||
+        campaign.lords.some(
+          (l) => l.order?.kind === 'SIEGE' && l.order.targetSettlementId === settlement.id,
+        )),
+  );
+
+  // Prosperity
+  const baseProsp = 2;
+  const aqueductBonus = bld.AQUEDUCTS ?? 1;
+  const housingBonus = settlement.dailyDefault === 'HOUSING' || settlement.dailyDefault === 'IRRIGATION' ? 1 : 0;
+  const siegeProspPenalty = besieged ? -5 : 0;
+  const prospDelta = baseProsp + aqueductBonus + housingBonus + siegeProspPenalty;
+
+  // Militia
+  const curMilitia =
+    settlement.militia ??
+    (settlement.type === 'TOWN'
+      ? Math.round(settlement.prosperity * 0.26)
+      : settlement.type === 'CASTLE'
+        ? Math.round(settlement.prosperity * 0.22)
+        : Math.round(settlement.prosperity * 0.1));
+  const militiaDefaultBonus = settlement.dailyDefault === 'MILITIA' ? 2 : 0;
+  const militiaRetire = curMilitia > 160 ? -2 : -1;
+  const militiaDelta = 1 + (bld.BARRACKS ?? 1) + militiaDefaultBonus + militiaRetire;
+
+  // Loyalty
+  const curLoyalty = settlement.loyalty ?? (settlement.faction === 'player' ? 86.4 : 74.2);
+  const fairgroundsBonus = bld.FAIRGROUNDS ?? 1;
+  const festivalBonus = settlement.dailyDefault === 'FESTIVAL' ? 2 : 0;
+  const securityLoyalty = (settlement.security ?? 64) >= 50 ? 1 : -1;
+  const loyaltyDrift = curLoyalty > 75 ? -1 : 0;
+  const loyaltyDelta = fairgroundsBonus + festivalBonus + securityLoyalty + loyaltyDrift;
+
+  // Garrison
+  const barracksCap = 120 + (bld.BARRACKS ?? 1) * 60;
+  const garrisonDelta = besieged && settlement.foodStock <= 0 ? -4 : 0;
+
+  // Food
+  const villageFood = Math.max(2, activeVillages * 4);
+  const granaryBonus = (bld.GRANARY ?? 1) * 2;
+  const garrisonConsumption = -Math.max(1, Math.round(settlement.garrison / 20));
+  const foodDelta = besieged
+    ? -SIEGE_GARRISON_FOOD_PER_DAY
+    : villageFood + granaryBonus + garrisonConsumption;
+
+  // Security
+  const curSecurity = settlement.security ?? (settlement.type === 'TOWN' ? 62.5 : 72.0);
+  const garrisonSec = settlement.garrison >= 45 ? 2 : 1;
+  const wallSec = wallLevel >= 2 ? 1 : 0;
+  const gangDrain = settlement.type === 'TOWN' ? -1 : 0;
+  const secDelta = garrisonSec + wallSec + gangDrain;
+
+  return {
+    wallLevel,
+    wallMaxHp,
+    prosperity: {
+      value: settlement.prosperity,
+      delta: prospDelta,
+      lines: [
+        { label: 'Temel Ticaret & Vergi', value: `+${baseProsp}`, positive: true },
+        { label: `Su Kemerleri (Sv. ${bld.AQUEDUCTS ?? 1})`, value: `+${aqueductBonus}`, positive: true },
+        ...(housingBonus > 0
+          ? [{ label: 'Günlük İskân / Sulama', value: `+${housingBonus}`, positive: true }]
+          : []),
+        ...(siegeProspPenalty < 0
+          ? [{ label: 'Kuşatma Ablukası', value: `${siegeProspPenalty}`, positive: false }]
+          : []),
+      ],
+    },
+    militia: {
+      value: curMilitia,
+      delta: militiaDelta,
+      lines: [
+        { label: 'Yerel Gönüllü Katılımı', value: '+1', positive: true },
+        { label: `Kışla Talimi (Sv. ${bld.BARRACKS ?? 1})`, value: `+${bld.BARRACKS ?? 1}`, positive: true },
+        ...(militiaDefaultBonus > 0
+          ? [{ label: 'Günlük Milis Talimi', value: `+${militiaDefaultBonus}`, positive: true }]
+          : []),
+        { label: 'Emeklilik & Terhis', value: `${militiaRetire}`, positive: false },
+      ],
+    },
+    loyalty: {
+      value: Number(curLoyalty.toFixed(1)),
+      delta: loyaltyDelta,
+      lines: [
+        { label: `Panayır Alanı (Sv. ${bld.FAIRGROUNDS ?? 1})`, value: `+${fairgroundsBonus}`, positive: true },
+        ...(festivalBonus > 0
+          ? [{ label: 'Festival ve Oyunlar', value: `+${festivalBonus}`, positive: true }]
+          : []),
+        {
+          label: 'Güvenlik Etkisi',
+          value: securityLoyalty >= 0 ? `+${securityLoyalty}` : `${securityLoyalty}`,
+          positive: securityLoyalty >= 0,
+        },
+        ...(loyaltyDrift < 0
+          ? [{ label: 'Denge Eğilimi', value: `${loyaltyDrift}`, positive: false }]
+          : []),
+      ],
+    },
+    garrison: {
+      value: settlement.garrison,
+      delta: garrisonDelta,
+      lines: [
+        { label: 'Mevcut Garnizon', value: `${settlement.garrison}`, positive: true },
+        { label: 'Kışla Kapasitesi', value: `${barracksCap}`, positive: true },
+        ...(garrisonDelta < 0
+          ? [{ label: 'Açlık Kaybı', value: `${garrisonDelta}`, positive: false }]
+          : []),
+      ],
+    },
+    food: {
+      value: settlement.foodStock,
+      delta: foodDelta,
+      lines: besieged
+        ? [{ label: 'Kuşatma Altında Tüketim', value: `-${SIEGE_GARRISON_FOOD_PER_DAY}`, positive: false }]
+        : [
+            { label: `Bağlı Köyler (${activeVillages})`, value: `+${villageFood}`, positive: true },
+            { label: `Tahıl Ambarı (Sv. ${bld.GRANARY ?? 1})`, value: `+${granaryBonus}`, positive: true },
+            { label: 'Garnizon Tüketimi', value: `${garrisonConsumption}`, positive: false },
+          ],
+    },
+    security: {
+      value: Number(curSecurity.toFixed(1)),
+      delta: secDelta,
+      lines: [
+        { label: 'Garnizon Devriyesi', value: `+${garrisonSec}`, positive: true },
+        ...(wallSec > 0 ? [{ label: 'Sur Koruması', value: `+${wallSec}`, positive: true }] : []),
+        ...(gangDrain < 0 ? [{ label: 'Sokak Çeteleri', value: `${gangDrain}`, positive: false }] : []),
+      ],
+    },
+  };
+}
+
 // Pre-register all 211 canonical settlement terraces at module load so terrain mesh & textures always flatten all settlements
 buildCanonicalCalradiaSettlements();
+
+export interface NewGameStartOptions {
+  /** UI'dan yeni oyun açıldığında gerçek Bannerlord başlangıcı (0 asker, başlangıç ekipmanı, kardeş yoldaş). */
+  realisticBannerlordStart?: boolean;
+  culture?: FactionId;
+  clanName?: string;
+  familyBrotherName?: string;
+  storySummary?: string;
+  storySkillBonuses?: Partial<Record<BannerlordSkillId, number>>;
+  storyAttrBonuses?: Partial<Record<AttributeId, number>>;
+  startingSettlementId?: string;
+}
 
 export function createInitialCampaignState(
   playerName = 'Komutan Demirhan',
   backgroundId: 'noble' | 'steppe' | 'tactician' = 'noble',
+  options?: NewGameStartOptions,
 ): CampaignState {
-  const initialRoster: TroopRoster =
-    backgroundId === 'steppe'
+  const isRealistic = Boolean(options?.realisticBannerlordStart);
+
+  const initialRoster: TroopRoster = isRealistic
+    ? { militia: 0, archer: 0, cavalry: 0, guard: 0 }
+    : backgroundId === 'steppe'
       ? { militia: 4, archer: 5, cavalry: 6, guard: 1 }
       : backgroundId === 'tactician'
         ? { militia: 6, archer: 7, cavalry: 2, guard: 3 }
         : { militia: 6, archer: 4, cavalry: 4, guard: 3 };
 
-  const initialGold = backgroundId === 'noble' ? 680 : backgroundId === 'tactician' ? 620 : 550;
-  const initialRenown = backgroundId === 'noble' ? 65 : 45;
+  const initialGold = isRealistic
+    ? 1000
+    : backgroundId === 'noble'
+      ? 680
+      : backgroundId === 'tactician'
+        ? 620
+        : 550;
+  const initialRenown = isRealistic ? 0 : backgroundId === 'noble' ? 65 : 45;
 
   // Faz B0: her yerleşimin kendi ileri gelenleri (deterministik, kayda yazılır).
   const settlements: Settlement[] = ensureNotables(buildCanonicalCalradiaSettlements());
@@ -2882,10 +3125,10 @@ export function createInitialCampaignState(
       faction: 'bandits',
       personality: 'Acımasız, yağma ve ganimet peşinde koşan, yalnızca kılıçtan anlayan asi komutan',
       relation: -45,
-      x: -18,
-      z: 122,
-      targetX: 4,
-      targetZ: 98,
+      x: -312,
+      z: 178,
+      targetX: -295,
+      targetZ: 165,
       armySize: 16,
       roster: { militia: 7, archer: 4, cavalry: 4, guard: 1 },
       wounded: 1,
@@ -2894,7 +3137,7 @@ export function createInitialCampaignState(
       foodDays: 9,
       isAtWarWithPlayer: true,
       isAlliedWithPlayer: false,
-      currentAction: 'Sancaktepe - Poros yolunda pusu kuruyor',
+      currentAction: 'Kara Dağ Geçitlerinde devriye geziyor',
       bannerColor: '#44403c',
     },
     {
@@ -3053,12 +3296,16 @@ export function createInitialCampaignState(
     },
   ];
 
+  const brotherName = options?.familyBrotherName || 'Niasen';
+
   const chronicle: ChronicleEvent[] = [
     {
       id: 'init-1',
       day: 1,
       category: 'DIPLOMACY',
-      text: `${playerName}, Lycaron ve Sancaktepe vadisinde sancağını göndere çekti ve Kalradya kıtasında seferine başladı.`,
+      text: isRealistic
+        ? `${playerName} ve ağabeyi ${brotherName}, ailesinin dağılan mirasını yeniden kurmak üzere Lycaron vadisinde yola çıktı.${options?.storySummary ? ` (${options.storySummary})` : ''}`
+        : `${playerName}, Lycaron ve Sancaktepe vadisinde sancağını göndere çekti ve Kalradya kıtasında seferine başladı.`,
     },
     {
       id: 'init-2',
@@ -3074,22 +3321,217 @@ export function createInitialCampaignState(
     },
   ];
 
-  return ensureBannerlordFoundation({
+  const baseAttributes: Record<AttributeId, number> = isRealistic
+    ? {
+        VIGOR: 2 + (options?.storyAttrBonuses?.VIGOR ?? (backgroundId === 'noble' ? 1 : 0)),
+        CONTROL: 2 + (options?.storyAttrBonuses?.CONTROL ?? (backgroundId === 'steppe' ? 1 : 0)),
+        ENDURANCE: 2 + (options?.storyAttrBonuses?.ENDURANCE ?? (backgroundId === 'steppe' ? 1 : 0)),
+        CUNNING: 2 + (options?.storyAttrBonuses?.CUNNING ?? (backgroundId === 'tactician' ? 1 : 0)),
+        SOCIAL: 2 + (options?.storyAttrBonuses?.SOCIAL ?? (backgroundId === 'noble' ? 1 : 0)),
+        INTELLIGENCE: 2 + (options?.storyAttrBonuses?.INTELLIGENCE ?? (backgroundId === 'tactician' ? 1 : 0)),
+      }
+    : {
+        VIGOR: backgroundId === 'noble' ? 5 : 4,
+        CONTROL: backgroundId === 'steppe' ? 5 : 3,
+        ENDURANCE: backgroundId === 'steppe' ? 5 : 4,
+        CUNNING: backgroundId === 'tactician' ? 5 : 3,
+        SOCIAL: backgroundId === 'noble' ? 5 : 4,
+        INTELLIGENCE: backgroundId === 'tactician' ? 5 : 4,
+      };
+
+  const baseSkills: Record<BannerlordSkillId, { level: number; focus: number }> = isRealistic
+    ? {
+        oneHanded: { level: 25 + (options?.storySkillBonuses?.oneHanded ?? 10), focus: 1 },
+        twoHanded: { level: 15 + (options?.storySkillBonuses?.twoHanded ?? 0), focus: 0 },
+        polearm: { level: 20 + (options?.storySkillBonuses?.polearm ?? 10), focus: 1 },
+        bow: { level: 25 + (options?.storySkillBonuses?.bow ?? 10), focus: 1 },
+        crossbow: { level: 10 + (options?.storySkillBonuses?.crossbow ?? 0), focus: 0 },
+        throwing: { level: 15 + (options?.storySkillBonuses?.throwing ?? 0), focus: 0 },
+        riding: { level: 30 + (options?.storySkillBonuses?.riding ?? 10), focus: 1 },
+        athletics: { level: 20 + (options?.storySkillBonuses?.athletics ?? 5), focus: 1 },
+        smithing: { level: 15 + (options?.storySkillBonuses?.smithing ?? 0), focus: 0 },
+        scouting: { level: 20 + (options?.storySkillBonuses?.scouting ?? 10), focus: 1 },
+        tactics: { level: 20 + (options?.storySkillBonuses?.tactics ?? 5), focus: 1 },
+        roguery: { level: 10 + (options?.storySkillBonuses?.roguery ?? 0), focus: 0 },
+        charm: { level: 25 + (options?.storySkillBonuses?.charm ?? 10), focus: 1 },
+        leadership: { level: 25 + (options?.storySkillBonuses?.leadership ?? 10), focus: 1 },
+        trade: { level: 15 + (options?.storySkillBonuses?.trade ?? 5), focus: 0 },
+        steward: { level: 20 + (options?.storySkillBonuses?.steward ?? 5), focus: 1 },
+        medicine: { level: 15 + (options?.storySkillBonuses?.medicine ?? 5), focus: 1 },
+        engineering: { level: 10 + (options?.storySkillBonuses?.engineering ?? 0), focus: 0 },
+      }
+    : {
+        oneHanded: { level: 95, focus: 3 },
+        twoHanded: { level: 45, focus: 1 },
+        polearm: { level: 85, focus: 3 },
+        bow: { level: 70, focus: 2 },
+        crossbow: { level: 25, focus: 1 },
+        throwing: { level: 35, focus: 1 },
+        riding: { level: 110, focus: 4 },
+        athletics: { level: 65, focus: 2 },
+        smithing: { level: 60, focus: 2 },
+        scouting: { level: 80, focus: 3 },
+        tactics: { level: 90, focus: 3 },
+        roguery: { level: 30, focus: 1 },
+        charm: { level: 105, focus: 3 },
+        leadership: { level: 120, focus: 4 },
+        trade: { level: 65, focus: 2 },
+        steward: { level: 115, focus: 4 },
+        medicine: { level: 80, focus: 3 },
+        engineering: { level: 75, focus: 2 },
+      };
+
+  const initialEquipment: Record<EquipmentSlotId, string> = isRealistic
+    ? {
+        HEAD: 'Keten Gezgin Başlığı (+6 Baş Zırhı)',
+        SHOULDER: 'Yün Yolcu Pelerini (+5 Gövde/Kol)',
+        BODY: 'Deri Kuşaklı Gezgin Tuniği (+14 Gövde Zırhı)',
+        GLOVES: 'Deri Yolcu Eldiveni (+6 Kol Zırhı)',
+        LEG: 'Deri Binici Çizmesi (+8 Bacak Zırhı)',
+        MOUNT: 'Bozkır Binek Atı (Hız: 52 · Hücum: 12)',
+        HARNESS: 'Sade Deri Eyer (+10 Binek Zırhı)',
+        BANNER: 'Gezgin Klan Sancağı (+%3 Hareket Hızı)',
+        WEAPON1: 'Paslı Demir Piyade Kılıcı (Kesici: 54)',
+        WEAPON2: 'Avcı Kısa Yayı (Delici: 48)',
+        WEAPON3: 'Deri Ok Sadağı (24 Ok · +2 Delici)',
+        WEAPON4: 'Boş Yuva',
+      }
+    : {
+        HEAD: 'İmparatorluk Miğferi (+38 Baş Zırhı)',
+        SHOULDER: 'Pullu Omuzluk & Pelerin (+16 Gövde/Kol)',
+        BODY: 'Lamellar Süvari Zırhı (+52 Gövde Zırhı)',
+        GLOVES: 'Çelik Bileklikli Eldiven (+22 Kol Zırhı)',
+        LEG: 'Zincir Zırhlı Süvari Çizmesi (+26 Bacak Zırhı)',
+        MOUNT: 'Asil Kalradya Küheylanı (Hız: 64 · Hücum: 28)',
+        HARNESS: 'Yarım Pullu At Zırhı (+42 Binek Zırhı)',
+        BANNER: 'Altın Kartal Sancağı (+%10 Yakın Dövüş Hasarı)',
+        WEAPON1: 'Thamaskene İmparatorluk Spathası (Kesici: 84)',
+        WEAPON2: 'Ağır Süvari Kalkanı (Dayanıklılık: 480)',
+        WEAPON3: 'Kontos Ağır Süvari Kargısı (Delici: 135)',
+        WEAPON4: 'Kompozit Bozkır Yayı & Zırh Delici Sadak',
+      };
+
+  const initialInventoryItems: InventoryItem[] = isRealistic
+    ? [
+        {
+          id: 'item_starter_grain',
+          definitionId: 'mkt_grain_sack',
+          name: 'Tahıl Çuvalı (10 Birim Erzak)',
+          slot: 'TRADE',
+          category: 'FOOD',
+          quantity: 2,
+          value: 28,
+          weight: 10,
+          statBonus: '+10 Ordu Erzağı',
+          civilianLegal: true,
+        },
+        {
+          id: 'item_starter_meat',
+          definitionId: 'mkt_cured_meat',
+          name: 'Kurutulmuş Et (10 Birim Erzak)',
+          slot: 'TRADE',
+          category: 'FOOD',
+          quantity: 1,
+          value: 46,
+          weight: 10,
+          statBonus: '+10 Ordu Erzağı · +2 Moral Çeşitliliği',
+          civilianLegal: true,
+        },
+      ]
+    : [
+        {
+          id: 'item_thamaskene_sword',
+          name: 'Thamaskene Çift Elli Falx Kılıcı',
+          slot: 'WEAPON1',
+          value: 540,
+          weight: 2.4,
+          statBonus: '+96 Kesici Hasar · Kalkan Kırıcı',
+          civilianLegal: false,
+        },
+        {
+          id: 'item_imperial_helm',
+          name: 'Altın Kakmalı Katafrakt Miğferi',
+          slot: 'HEAD',
+          value: 620,
+          weight: 3.1,
+          statBonus: '+48 Baş Zırhı · +4 İtibar',
+          civilianLegal: false,
+        },
+        {
+          id: 'item_cataphract_armor',
+          name: 'Ağır İmparatorluk Katafrakt Zırhı',
+          slot: 'BODY',
+          value: 980,
+          weight: 11.5,
+          statBonus: '+64 Gövde Zırhı · +22 Bacak Zırhı',
+          civilianLegal: false,
+        },
+        {
+          id: 'item_noble_steed',
+          name: 'Safkan Aserai Savaş Küheylanı',
+          slot: 'MOUNT',
+          value: 750,
+          weight: 0,
+          statBonus: 'Hız: 68 · Manevra: 72 · +20kg Taşıma',
+          civilianLegal: true,
+        },
+        {
+          id: 'item_dragon_banner',
+          name: 'Kalradya Ejderha Sancağı',
+          slot: 'BANNER',
+          value: 1200,
+          weight: 1.0,
+          statBonus: '+%15 Ordu Morali · +%12 Hücum Hasarı',
+          civilianLegal: true,
+        },
+        {
+          id: 'item_sumpter_mule',
+          name: 'Kervan Yük Katırı (x3)',
+          slot: 'TRADE',
+          value: 240,
+          weight: 0,
+          statBonus: '+300 kg Ordu Taşıma Kapasitesi',
+          civilianLegal: true,
+        },
+      ];
+
+  const cultureCapitalMap: Record<FactionId, string> = {
+    vlandia: 'pravend',
+    battania: 'marunath',
+    sturgia: 'omor',
+    empire: 'poros',
+    khuzait: 'chaikand',
+    aserai: 'sanala',
+    player: 'poros',
+    bandits: 'poros',
+  };
+  const targetStartId =
+    options?.startingSettlementId ||
+    (options?.culture ? cultureCapitalMap[options.culture] : 'poros');
+  const startSettlement =
+    settlements.find((s) => s.id === targetStartId) ||
+    settlements.find((s) => s.id === 'poros') ||
+    settlements[0];
+  const candidateX = startSettlement ? startSettlement.x + 3.8 : 14;
+  const candidateZ = startSettlement ? startSettlement.z + 3.8 : 88;
+  const safeStart = snapToNearestLand(candidateX, candidateZ);
+
+  const founded = ensureBannerlordFoundation({
     playerName,
     backgroundId,
     day: 1,
     hour: 9,
     season: 'Yaz',
     gold: initialGold,
-    food: 36,
+    food: isRealistic ? 18 : 36,
     renown: initialRenown,
-    morale: 86,
+    morale: isRealistic ? 75 : 86,
     playerHp: 120,
     playerMaxHp: 120,
-    playerX: 14,
-    playerZ: 88,
+    playerX: safeStart.x,
+    playerZ: safeStart.z,
     roster: initialRoster,
-    prisoners: 2,
+    prisoners: isRealistic ? 0 : 2,
     battlesWon: 0,
     settlements,
     lords: [...lords, ...generateLordParties(settlements, new Set(lords.map((l) => l.id)))].map((l) => ({
@@ -3099,7 +3541,6 @@ export function createInitialCampaignState(
     chronicle,
     world: {
       seed: 20261021,
-      // Faz 11: kıta başlangıçta iki sınır savaşıyla açılır (Bannerlord'un açılış durumu gibi).
       wars: [
         { a: 'vlandia', b: 'battania', sinceDay: 1, score: 4, sieges: 0 },
         { a: 'empire', b: 'sturgia', sinceDay: 1, score: -3, sieges: 0 },
@@ -3107,117 +3548,91 @@ export function createInitialCampaignState(
       stats: { ...EMPTY_WORLD_STATS },
     },
     playerMorphDNA: cloneDNA(PLAYER_DEFAULT_DNA),
-    characterLevel: 6,
-    freeAttributePoints: 2,
-    freeFocusPoints: 4,
-    attributes: {
-      VIGOR: backgroundId === 'noble' ? 5 : 4,
-      CONTROL: backgroundId === 'steppe' ? 5 : 3,
-      ENDURANCE: backgroundId === 'steppe' ? 5 : 4,
-      CUNNING: backgroundId === 'tactician' ? 5 : 3,
-      SOCIAL: backgroundId === 'noble' ? 5 : 4,
-      INTELLIGENCE: backgroundId === 'tactician' ? 5 : 4,
-    },
-    skills: {
-      oneHanded: { level: 95, focus: 3 },
-      twoHanded: { level: 45, focus: 1 },
-      polearm: { level: 85, focus: 3 },
-      bow: { level: 70, focus: 2 },
-      crossbow: { level: 25, focus: 1 },
-      throwing: { level: 35, focus: 1 },
-      riding: { level: 110, focus: 4 },
-      athletics: { level: 65, focus: 2 },
-      smithing: { level: 60, focus: 2 },
-      scouting: { level: 80, focus: 3 },
-      tactics: { level: 90, focus: 3 },
-      roguery: { level: 30, focus: 1 },
-      charm: { level: 105, focus: 3 },
-      leadership: { level: 120, focus: 4 },
-      trade: { level: 65, focus: 2 },
-      steward: { level: 115, focus: 4 },
-      medicine: { level: 80, focus: 3 },
-      engineering: { level: 75, focus: 2 },
-    },
-    unlockedPerks: ['shield_wall_master', 'full_speed_charge', 'spartan_rations'],
+    characterLevel: isRealistic ? 1 : 6,
+    freeAttributePoints: isRealistic ? 1 : 2,
+    freeFocusPoints: isRealistic ? 2 : 4,
+    attributes: baseAttributes,
+    skills: baseSkills,
+    unlockedPerks: isRealistic ? [] : ['shield_wall_master', 'full_speed_charge', 'spartan_rations'],
     outfitMode: 'BATTLE',
-    equipment: {
-      HEAD: 'İmparatorluk Miğferi (+38 Baş Zırhı)',
-      SHOULDER: 'Pullu Omuzluk & Pelerin (+16 Gövde/Kol)',
-      BODY: 'Lamellar Süvari Zırhı (+52 Gövde Zırhı)',
-      GLOVES: 'Çelik Bileklikli Eldiven (+22 Kol Zırhı)',
-      LEG: 'Zincir Zırhlı Süvari Çizmesi (+26 Bacak Zırhı)',
-      MOUNT: 'Asil Kalradya Küheylanı (Hız: 64 · Hücum: 28)',
-      HARNESS: 'Yarım Pullu At Zırhı (+42 Binek Zırhı)',
-      BANNER: 'Altın Kartal Sancağı (+%10 Yakın Dövüş Hasarı)',
-      WEAPON1: 'Thamaskene İmparatorluk Spathası (Kesici: 84)',
-      WEAPON2: 'Ağır Süvari Kalkanı (Dayanıklılık: 480)',
-      WEAPON3: 'Kontos Ağır Süvari Kargısı (Delici: 135)',
-      WEAPON4: 'Kompozit Bozkır Yayı & Zırh Delici Sadak',
-    },
-    inventoryItems: [
-      {
-        id: 'item_thamaskene_sword',
-        name: 'Thamaskene Çift Elli Falx Kılıcı',
-        slot: 'WEAPON1',
-        value: 540,
-        weight: 2.4,
-        statBonus: '+96 Kesici Hasar · Kalkan Kırıcı',
-        civilianLegal: false,
-      },
-      {
-        id: 'item_imperial_helm',
-        name: 'Altın Kakmalı Katafrakt Miğferi',
-        slot: 'HEAD',
-        value: 620,
-        weight: 3.1,
-        statBonus: '+48 Baş Zırhı · +4 İtibar',
-        civilianLegal: false,
-      },
-      {
-        id: 'item_cataphract_armor',
-        name: 'Ağır İmparatorluk Katafrakt Zırhı',
-        slot: 'BODY',
-        value: 980,
-        weight: 11.5,
-        statBonus: '+64 Gövde Zırhı · +22 Bacak Zırhı',
-        civilianLegal: false,
-      },
-      {
-        id: 'item_noble_steed',
-        name: 'Safkan Aserai Savaş Küheylanı',
-        slot: 'MOUNT',
-        value: 750,
-        weight: 0,
-        statBonus: 'Hız: 68 · Manevra: 72 · +20kg Taşıma',
-        civilianLegal: true,
-      },
-      {
-        id: 'item_dragon_banner',
-        name: 'Kalradya Ejderha Sancağı',
-        slot: 'BANNER',
-        value: 1200,
-        weight: 1.0,
-        statBonus: '+%15 Ordu Morali · +%12 Hücum Hasarı',
-        civilianLegal: true,
-      },
-      {
-        id: 'item_sumpter_mule',
-        name: 'Kervan Yük Katırı (x3)',
-        slot: 'TRADE',
-        value: 240,
-        weight: 0,
-        statBonus: '+300 kg Ordu Taşıma Kapasitesi',
-        civilianLegal: true,
-      },
-    ],
+    equipment: initialEquipment,
+    inventoryItems: initialInventoryItems,
     clanRoles: {
-      QUARTERMASTER: 'Komutan Demirhan (+45 Birlik Kapasitesi)',
-      SCOUT: 'İzci Aybars (+%12 Harita Görüşü & Hız)',
+      QUARTERMASTER: `${playerName} (+45 Birlik Kapasitesi)`,
+      SCOUT: `${brotherName} (Ağabey · İzci)`,
       SURGEON: 'Hekim Helena (+%25 Yaralı Kurtarma)',
       ENGINEER: 'Mimar Torvald (+%30 Kuşatma İnşası)',
     },
     armies: [],
   });
+
+  if (isRealistic) {
+    // Bannerlord hikaye başlangıcı: Oyuncu 0 askerle fakat yanında ailesinden ağabeyi (Niasen) ile başlar!
+    const playerHero = founded.heroes?.find((h) => h.id === PLAYER_HERO_ID);
+    const familyHero: CampaignHero = {
+      id: 'hero_family_brother',
+      name: `${brotherName} (Ağabey)`,
+      kind: 'FAMILY',
+      culture: options?.culture ?? playerHero?.culture ?? 'empire',
+      age: 27,
+      hp: 100,
+      maxHp: 100,
+      wage: 0,
+      level: 4,
+      xp: 0,
+      freeAttributePoints: 0,
+      freeFocusPoints: 1,
+      attributes: {
+        VIGOR: 4,
+        CONTROL: 3,
+        ENDURANCE: 4,
+        CUNNING: 4,
+        SOCIAL: 3,
+        INTELLIGENCE: 3,
+      },
+      skills: playerHero
+        ? {
+            ...playerHero.skills,
+            oneHanded: { level: 65, focus: 2, xp: 0 },
+            riding: { level: 60, focus: 2, xp: 0 },
+            scouting: { level: 55, focus: 2, xp: 0 },
+            tactics: { level: 50, focus: 2, xp: 0 },
+            leadership: { level: 50, focus: 2, xp: 0 },
+          }
+        : ({} as Record<BannerlordSkillId, HeroSkillState>),
+      perks: [],
+      equipment: playerHero
+        ? {
+            BATTLE: { ...playerHero.equipment.BATTLE },
+            CIVILIAN: { ...playerHero.equipment.CIVILIAN },
+          }
+        : { BATTLE: {}, CIVILIAN: {} },
+      activeEquipmentSet: 'BATTLE',
+      isInPlayerParty: true,
+      morphDNA: getLordDNA('hero_family_brother', options?.culture ?? 'empire'),
+    };
+
+    const existingHeroes = (founded.heroes ?? []).filter((h) => h.id !== 'hero_family_brother');
+    return {
+      ...founded,
+      roster: { militia: 0, archer: 0, cavalry: 0, guard: 0 },
+      troopStacks: [],
+      prisoners: 0,
+      prisonerStacks: [],
+      heroes: [
+        ...existingHeroes.slice(0, 1),
+        familyHero,
+        ...existingHeroes.slice(1),
+      ],
+      roleAssignments: {
+        ...founded.roleAssignments,
+        QUARTERMASTER: PLAYER_HERO_ID,
+        SCOUT: 'hero_family_brother',
+      },
+    };
+  }
+
+  return founded;
 }
 
 export function calculateLearningLimit(attributeValue: number, focusPoints: number): number {
@@ -3373,7 +3788,6 @@ export function upgradeSettlementBuilding(
     nextState: {
       ...state,
       gold: state.gold - upgradeCost,
-      renown: buildingId === 'FORUM' ? state.renown + 8 : state.renown + 3,
       settlements: nextSettlements,
       chronicle: [
         {
@@ -3442,7 +3856,6 @@ export function buyOrChangeWorkshop(
     nextState: {
       ...state,
       gold: state.gold - cost,
-      renown: state.renown + 4,
       settlements: nextSettlements,
       chronicle: [
         {
@@ -3491,7 +3904,6 @@ export function forgeCustomWeaponAtSmithy(
     nextState: {
       ...state,
       gold: state.gold - materialCost + weaponMeta.profit,
-      renown: state.renown + 3,
       skills: {
         ...baseSkills,
         smithing: {
@@ -3708,7 +4120,6 @@ export function bombardSettlementWalls(
     nextState: {
       ...state,
       day: state.day + 1,
-      renown: state.renown + 4,
       settlements: nextSettlements,
       chronicle: [
         {
@@ -3867,7 +4278,7 @@ export function attemptLordPersuasionStep(
     replyText,
     nextState: {
       ...state,
-      renown: convinced ? state.renown + 15 : state.renown + 2,
+      renown: convinced ? state.renown + 5 : state.renown,
       skills: {
         ...baseSkills,
         charm: {
@@ -3923,7 +4334,6 @@ export function executeLordBarterOffer(
       ...state,
       gold: state.gold - goldOffered,
       prisoners: state.prisoners - prisonersOffered,
-      renown: state.renown + 10,
       lords: nextLords,
       chronicle: [
         {

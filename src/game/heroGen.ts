@@ -61,15 +61,15 @@ const POOLS: Partial<Record<FactionId, CulturePool>> = {
     female: ['Altani', 'Saran', 'Borte', 'Khulan'],
     titles: ['Boy Beyi', 'Noyan', 'Bahadır'],
     ladyTitles: ['Hatun'],
-    banner: ['#a16207', '#ca8a04', '#854d0e', '#eab308'],
+    banner: ['#0f766e', '#0d9488', '#115e59', '#14b8a6'],
   },
   aserai: {
     count: 4,
     male: ['Faris', 'Hakim', 'Nassir', 'Ziyad', 'Tariq'],
     female: ['Leyla', 'Zahra', 'Amina', 'Yasmin'],
     titles: ['Emir', 'Şeyh', 'Kervanbaşı'],
-    ladyTitles: ['Hatun', 'Leyla'],
-    banner: ['#0f766e', '#0d9488', '#115e59', '#14b8a6'],
+    ladyTitles: ['Hatun', 'Emire'],
+    banner: ['#b45309', '#d97706', '#92400e', '#ca8a04'],
   },
   bandits: {
     count: 3,
@@ -108,13 +108,34 @@ function pickFrom<T>(list: T[], seed: number, salt: string): T {
   return list[hash32(`${seed}:${salt}`) % list.length];
 }
 
-function makeRoster(armySize: number): TroopRoster {
-  return {
-    militia: Math.max(1, Math.round(armySize * 0.35)),
-    archer: Math.max(1, Math.round(armySize * 0.28)),
-    cavalry: Math.max(1, Math.round(armySize * 0.22)),
-    guard: Math.max(1, Math.round(armySize * 0.15)),
-  };
+/**
+ * Her krallığın Bannerlord askeri doktrinine göre özel birlik oranları ve
+ * toplam asker sayısı (`armySize === getTotalTroops(roster)` garantili).
+ */
+const CULTURE_TROOP_DOCTRINE: Record<
+  FactionId,
+  { baseSize: number; spread: number; ratios: [number, number, number, number] }
+> = {
+  player: { baseSize: 22, spread: 10, ratios: [0.32, 0.28, 0.24, 0.16] },
+  empire: { baseSize: 24, spread: 14, ratios: [0.32, 0.26, 0.22, 0.20] }, // Lejyoner + Palatin + Katafrakt
+  vlandia: { baseSize: 25, spread: 14, ratios: [0.22, 0.28, 0.34, 0.16] }, // Şövalye Süvarisi + Arbaletçi
+  battania: { baseSize: 22, spread: 12, ratios: [0.28, 0.44, 0.10, 0.18] }, // Fian Şampiyon Okçuları + Yaban Süvarisi
+  sturgia: { baseSize: 24, spread: 13, ratios: [0.42, 0.18, 0.12, 0.28] }, // Ağır Kalkan Duvarı Piyadesi + Drujinnik
+  khuzait: { baseSize: 26, spread: 14, ratios: [0.16, 0.32, 0.42, 0.10] }, // Atlı Okçu + Kargılı Bozkır Süvarisi
+  aserai: { baseSize: 24, spread: 13, ratios: [0.24, 0.30, 0.30, 0.16] }, // Faris Süvarisi + Çöl Okçusu + Memlük
+  bandits: { baseSize: 16, spread: 9, ratios: [0.50, 0.28, 0.14, 0.08] }, // Haydut Çetesi
+};
+
+function makeCultureRoster(faction: FactionId, targetSize: number): { roster: TroopRoster; armySize: number } {
+  const doc = CULTURE_TROOP_DOCTRINE[faction] ?? CULTURE_TROOP_DOCTRINE.empire;
+  const [rMilitia, rArcher, rCavalry] = doc.ratios;
+  const militia = Math.max(1, Math.round(targetSize * rMilitia));
+  const archer = Math.max(1, Math.round(targetSize * rArcher));
+  const cavalry = Math.max(1, Math.round(targetSize * rCavalry));
+  const guard = Math.max(1, targetSize - (militia + archer + cavalry));
+  const roster: TroopRoster = { militia, archer, cavalry, guard };
+  const exactTotal = roster.militia + roster.archer + roster.cavalry + roster.guard;
+  return { roster, armySize: exactTotal };
 }
 
 /**
@@ -143,6 +164,8 @@ export function generateLordParties(
       ...pool.female.map((name) => ({ name, female: true })),
     ].sort((a, b) => hash32(`${faction}:${a.name}`) - hash32(`${faction}:${b.name}`));
 
+    const doctrine = CULTURE_TROOP_DOCTRINE[faction] ?? CULTURE_TROOP_DOCTRINE.empire;
+
     for (let i = 0; i < pool.count; i++) {
       serial += 1;
       const seed = hash32(`${faction}:${i}:${serial}`);
@@ -162,9 +185,9 @@ export function generateLordParties(
       const jitterX = ((seed % 7) - 3) * 0.9;
       const jitterZ = (((seed >> 3) % 7) - 3) * 0.9;
 
-      // Gerçek parti: en az 16 sağlıklı asker, en az 1 yaralı ve 1 esir
-      // (rules.test.ts'teki "her lord tam istihbarat verir" kuralına uyumlu).
-      const armySize = 16 + (seed % 15); // 16..30
+      // Kültür doktrinine göre parti büyüklüğü ve dağılımı (en az 16 sağlıklı asker)
+      const targetSize = Math.max(16, doctrine.baseSize + (seed % doctrine.spread));
+      const { roster: lordRoster, armySize } = makeCultureRoster(faction, targetSize);
       out.push({
         id,
         name,
@@ -177,12 +200,12 @@ export function generateLordParties(
         targetX: dest.x + jitterX,
         targetZ: dest.z + jitterZ,
         armySize,
-        roster: makeRoster(armySize),
+        roster: lordRoster,
         wounded: 1 + (seed % 4),
         prisoners: 1 + (seed % 3),
-        morale: 65 + (seed % 30),
-        foodDays: 6 + (seed % 10),
-        isAtWarWithPlayer: false,
+        morale: 68 + (seed % 28),
+        foodDays: 7 + (seed % 10),
+        isAtWarWithPlayer: faction === 'bandits',
         isAlliedWithPlayer: false,
         currentAction: pickFrom(ACTIONS, seed, 'action'),
         bannerColor: pickFrom(pool.banner, seed, 'banner'),

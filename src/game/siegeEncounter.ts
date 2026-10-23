@@ -334,30 +334,46 @@ export function startPlayerSiege(state: CampaignState, settlementId: string): Ca
   const playerArmy = getPlayerArmy(state);
   const memberIds = playerArmy?.memberLordIds ?? [];
 
+  // Bannerlord kuralı: Bir krallığın şehir veya kalesini kuşatmak o krallıkla doğrudan savaşa girmektir!
+  const targetFaction = settlement.faction;
+  const isHostileAction = targetFaction !== 'player' && state.playerFaction !== targetFaction;
+  const wasAlreadyAtWar = state.lords.some(
+    (l) => l.faction === targetFaction && l.isAtWarWithPlayer,
+  );
+
   const nextLords = state.lords.map((lord) => {
     const memberIdx = memberIds.indexOf(lord.id);
-    if (memberIdx === -1) return lord;
-    const slotPt = getSiegeCampSlotPoint(
-      settlement,
-      state.playerX,
-      state.playerZ,
-      memberIdx + 1,
-      memberIds.length + 1,
-    );
-    return {
-      ...lord,
-      x: slotPt.x,
-      z: slotPt.z,
-      targetX: slotPt.x,
-      targetZ: slotPt.z,
-      currentAction: `${settlement.name} kuşatma çemberinde (${playerArmy?.name ?? 'Ordu'})`,
-      order: {
-        kind: 'SIEGE' as const,
-        targetSettlementId: settlement.id,
-        sinceDay: state.day,
-        siegeProgress: Math.max(12, state.playerSiege?.campProgress ?? 18),
-      },
-    };
+    if (memberIdx !== -1) {
+      const slotPt = getSiegeCampSlotPoint(
+        settlement,
+        state.playerX,
+        state.playerZ,
+        memberIdx + 1,
+        memberIds.length + 1,
+      );
+      return {
+        ...lord,
+        x: slotPt.x,
+        z: slotPt.z,
+        targetX: slotPt.x,
+        targetZ: slotPt.z,
+        currentAction: `${settlement.name} kuşatma çemberinde (${playerArmy?.name ?? 'Ordu'})`,
+        order: {
+          kind: 'SIEGE' as const,
+          targetSettlementId: settlement.id,
+          sinceDay: state.day,
+          siegeProgress: Math.max(12, state.playerSiege?.campProgress ?? 18),
+        },
+      };
+    }
+    if (isHostileAction && lord.faction === targetFaction) {
+      return {
+        ...lord,
+        isAtWarWithPlayer: true,
+        relation: Math.max(-100, lord.relation - (wasAlreadyAtWar ? 5 : 30)),
+      };
+    }
+    return lord;
   });
 
   const nextArmies = (state.armies ?? []).map((a) =>
@@ -366,17 +382,57 @@ export function startPlayerSiege(state: CampaignState, settlementId: string): Ca
       : a,
   );
 
+  let nextWorld = state.world;
+  if (nextWorld && isHostileAction) {
+    const playerSideFaction: FactionId = state.playerFaction ?? 'player';
+    const hasWarRecord = nextWorld.wars.some(
+      (w) =>
+        (w.a === playerSideFaction && w.b === targetFaction) ||
+        (w.a === targetFaction && w.b === playerSideFaction),
+    );
+    if (!hasWarRecord && playerSideFaction !== targetFaction) {
+      nextWorld = {
+        ...nextWorld,
+        wars: [
+          ...nextWorld.wars,
+          {
+            a: playerSideFaction,
+            b: targetFaction,
+            sinceDay: state.day,
+            score: 0,
+            sieges: 1,
+          },
+        ],
+      };
+    }
+  }
+
+  const warNotice =
+    isHostileAction && !wasAlreadyAtWar
+      ? ` ${settlement.name} kuşatması nedeniyle krallığın tüm lordlarıyla savaş durumu başladı!`
+      : '';
+
   return {
     ...state,
     playerX: campPoint.x,
     playerZ: campPoint.z,
     lords: nextLords,
     armies: nextArmies,
+    world: nextWorld,
     playerSiege: {
       settlementId,
       campProgress: Math.max(12, state.playerSiege?.campProgress ?? 18),
       inside: false,
     },
+    chronicle: [
+      {
+        id: `siege-start-${state.day}-${settlementId}`,
+        day: state.day,
+        category: 'WAR',
+        text: `${settlement.name} önünde kuşatma kampı kuruldu.${warNotice}`,
+      },
+      ...state.chronicle,
+    ].slice(0, 25),
   };
 }
 

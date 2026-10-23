@@ -71,12 +71,10 @@ export const BannerlordPauseModal: React.FC<BannerlordPauseModalProps> = ({
 
   const handleDeleteSlot = (slotId: string, slotName: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm(`${slotName} kaydı silinsin mi?`)) {
-      deleteSaveSlot(storage, slotId);
-      sound.playShieldHit();
-      onShowToast(`${slotName} kaydı silindi.`);
-      setRefreshTrigger((prev) => prev + 1);
-    }
+    deleteSaveSlot(storage, slotId);
+    sound.playShieldHit();
+    onShowToast(`${slotName} kaydı silindi.`);
+    setRefreshTrigger((prev) => prev + 1);
   };
 
   const handleSaveAndExit = () => {
@@ -182,9 +180,7 @@ export const BannerlordPauseModal: React.FC<BannerlordPauseModalProps> = ({
                   type="button"
                   data-testid="pause-mainmenu-btn"
                   onClick={() => {
-                    if (window.confirm('Kaydedilmemiş ilerleme kaybolabilir. Ana menüye dönülsün mü?')) {
-                      onExitToTitle();
-                    }
+                    onExitToTitle();
                   }}
                   className="w-full py-2 px-4 rounded text-xs font-semibold bg-[#18140f] hover:bg-[#251f18] text-[#a89b84] hover:text-white transition"
                 >

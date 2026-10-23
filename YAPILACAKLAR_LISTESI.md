@@ -58,31 +58,31 @@
 
 ### ADIM 1 — Şehir / Kale / Köy Ekranı (`SettlementModal.tsx`) ve Harita Yerleşim Etiketleri (`WorldCanvas.tsx`)
 
-- [ ] **1.1. Şehir/Kale/Köy Ekranını Gerçek Bannerlord "Sol Dikey Menü + Arka Planda Canlı 3D Harita" Düzenine Çevir (`SettlementModal.tsx`):**
+- [x] **1.1. Şehir/Kale/Köy Ekranını Gerçek Bannerlord "Sol Dikey Menü + Arka Planda Canlı 3D Harita" Düzenine Çevir (`SettlementModal.tsx`):**
   - **Mevcut Hata:** Şu an yerleşime girildiğinde arka plandaki 3D haritayı tamamen kapatan dev bir siyah pencere (`max-w-5xl bg-[#16120e]`) açılıyor.
   - **Yapılacak:** Kuşatma ekranında olduğu gibi arka planda **3D dünya haritası ve yerleşimin 3D modeli açık kalacak** (`pointer-events-none` kapsayıcı):
     - **Üst Sol Şerit:** Krallık sancağı + Yerleşim adı + 6 istatistik ikonu (*Sur Seviyesi, Refah, Milis, Garnizon, Gıda, Sadakat/Güvenlik*) ve altlarında yeşil/kırmızı günlük `+/-` değişim.
     - **Üst Orta Şerit:** Yerleşimde bulunan lord birlikleri ve atölye rozetleri.
     - **Üst Sağ Şerit:** Yerleşimdeki **Eşraf (`Notables`) ve Yoldaşların portre kutuları** (aktif görevi olanın sağ üstünde **mavi `!` ünlem rozeti**).
     - **Sol Dikey Aksiyon Paneli (`~350px`):** Üstte atmosferik durum metni, ortada ikonlu menü satırları (`Kaleye Git`, `Taverna Bölgesine Git`, `Arenaya Git`, `Asker Topla`, `Ticaret Yap`, `Şehri/Kaleyi Yönet`, `Burada Bir Süre Bekle`, `Ayrıl`), altta mekana göre sahne illüstrasyonu.
-- [ ] **1.2. Harita Üzerindeki Köy/Şehir Etiketlerine Hammadde Üretim İkonu Ekle (`WorldCanvas.tsx`):**
+- [x] **1.2. Harita Üzerindeki Köy/Şehir Etiketlerine Hammadde Üretim İkonu Ekle (`WorldCanvas.tsx`):**
   - Köylerin harita isim etiketlerinin yanında o köyün ürettiği hammadde ikonu (*Tahıl, Demir, At, Balık, Üzüm, Zeytin, Koyun/Yün, Keten, Kil, Kereste*) gösterilecek; üzerine gelince (tooltip) bağlı olduğu şehir, refah ve üretim bilgisi açılacak.
-- [ ] **1.3. Eşraf (`Notable`) Mavi `!` Görev Rozeti ve Kilitli Asker Slotu Bağlantısı (`SettlementModal.tsx`, `quests.ts`, `BannerlordRecruitmentModal.tsx`):**
+- [x] **1.3. Eşraf (`Notable`) Mavi `!` Görev Rozeti ve Kilitli Asker Slotu Bağlantısı (`SettlementModal.tsx`, `quests.ts`, `BannerlordRecruitmentModal.tsx`):**
   - Eşraf portresindeki mavi `!` işaretine tıklayınca o eşrafın görevinin açılması, tamamlandığında eşraf ilişkisinin (`relation`) artması ve `Asker Topla` ekranındaki kilitli üst kademe yuvaların (`+5, +10, +15, +20` ilişki) açılması.
 
 ---
 
 ### ADIM 2 — Harita Alt HUD (`GameHud.tsx`), Gün İçi Zaman (`P5`) ve Karakter Oluşturma Kültür/Zorluk Adımı (`CharacterCreatorModal.tsx`)
 
-- [ ] **2.1. Sol Alt 7'li Bannerlord Menü Çerçevesi ve Kısayol Sırası (`GameHud.tsx`):**
+- [x] **2.1. Sol Alt 7'li Bannerlord Menü Çerçevesi ve Kısayol Sırası (`GameHud.tsx`):**
   - Sol altta Bannerlord'un 7 ana ikonu (`1-Sefer Menüsü [ESC], 2-Karakter [C], 3-Envanter [I], 4-Parti [P], 5-Görevler [J], 6-Klan [L], 7-Krallık [K]`) tek metal çerçevede dizilecek; `Klan [L]` ve `Görevler [J]` kendi sekmelerine açılacak, `Ansiklopedi [N]` ayrı erişimde olacak.
-- [ ] **2.2. Sağ Alt Kaynak Şeridine Eksik `#19 Günlük Maaş` ve `#21 Aç/Kapat (▲/▼)` Butonu Ekle (`GameHud.tsx`):**
+- [x] **2.2. Sağ Alt Kaynak Şeridine Eksik `#19 Günlük Maaş` ve `#21 Aç/Kapat (▲/▼)` Butonu Ekle (`GameHud.tsx`):**
   - Steam rehberindeki 21 HUD elemanından eksik olan **#19 Günlük Asker Maaşı (`Daily Troop Wage`)** ve sağ alt paneli daraltıp genişleten **#21 Aç/Kapat (`▲/▼`) ok butonu** eklenecek; **#20 Ordu (`Army`)** barı sağ alt köşeye hizalanacak.
-- [ ] **2.3. Sağ Alt İstatistikler İçin Detaylı Hesap Dökümü İpuçları (`Tooltips #11–#18`) (`GameHud.tsx`):**
+- [x] **2.3. Sağ Alt İstatistikler İçin Detaylı Hesap Dökümü İpuçları (`Tooltips #11–#18`) (`GameHud.tsx`):**
   - Fareyle üzerine gelince **#11 Altın** (vergi/atölye/kervan vs maaş), **#12 Nüfuz** (krallık/bina/ordu besleme), **#13 Can** (baz + Cerrah/Hekimlik + yerleşim), **#14 Birlik** (sağlıklı/yaralı/kapasite dökümü), **#15 Gıda** (tüketim + kaç gün yeteceği + çeşitlilik morali), **#16 Moral**, **#17 Hız** (taban + süvari + binekli piyade - kargo/sürü/arazi) ve **#18 Görüş Mesafesi** (baz + İzcilik + gece/orman) dökümleri açılacak.
-- [ ] **2.4. Gün İçi Saat ve Gece-Gündüz Kadranı Senkronu (`GameHud.tsx`, `worldSim.ts`):**
+- [x] **2.4. Gün İçi Saat ve Gece-Gündüz Kadranı Senkronu (`GameHud.tsx`, `worldSim.ts`):**
   - Gün kesri, mevsim/yıl (`1084+`) ve orta-alt güneş/ay çarkı aynı canlı saat kaynağından ilerleyecek.
-- [ ] **2.5. Karakter Oluşturma Ekranına 6 Kültür Bonusu, Zorluk Ayarları ve Klan Adı/Sancağı Adımı Ekle (`CharacterCreatorModal.tsx`, `logistics.ts`, `worldSim.ts`):**
+- [x] **2.5. Karakter Oluşturma Ekranına 6 Kültür Bonusu, Zorluk Ayarları ve Klan Adı/Sancağı Adımı Ekle (`CharacterCreatorModal.tsx`, `logistics.ts`, `worldSim.ts`):**
   - Steam rehberi Bölüm 2'deki **6 Kültür Bonusu** (*Vlandiya: savaşta +%20 birlik XP; Sturgiya: karda -%20 hız cezası; İmparatorluk: +%20 şehir/sur/kuşatma inşa hızı; Aseray: -%30 kervan kurma bedeli & -%10 ticaret cezası; Kuzait: +%10 atlı harita hızı; Batanya: ormanda -%10 hız cezası*) hem arayüzde gösterilecek hem de oyun matematiğine bağlanacak.
   - **5 Zorluk Ayarı** (*Dost Birlik Hasarı, Dost Parti Hasarı, Oyuncu Hasarı, Asker Toplama Kolaylığı +1/+2 slot, Harita Hızı*) + **Ölüm/Doğum (`Permadeath`)** onay kutusu ve **Klan Soyadı & Sancak Seçimi** eklenecek.
 
@@ -90,22 +90,22 @@
 
 ### ADIM 3 — Envanter (`InventoryModal.tsx`) ve Pazar (`BannerlordMarketModal.tsx`) Birebir Eşitlemesi
 
-- [ ] **3.1. Pazar Ortasındaki Kahraman Seçimini ve Ekipman Slotlarını Envanterle Eşitle (`BannerlordMarketModal.tsx`):**
+- [x] **3.1. Pazar Ortasındaki Kahraman Seçimini ve Ekipman Slotlarını Envanterle Eşitle (`BannerlordMarketModal.tsx`):**
   - Pazar ekranının orta sütununa da `< Kahraman >` geçiş okları, `Savaş Seti / Sivil Set` seçimi ve 12 kuşanılmış ekipman slotu eklenecek; sağ ekipman şeridinin dar görünümlerde kesilmesi düzeltilecek.
-- [ ] **3.2. Envanter ve Pazar Satır Okları (`<` / `>`) ile Binek/Yük Hayvanı Özet Rozetleri (`InventoryModal.tsx`, `BannerlordMarketModal.tsx`):**
+- [x] **3.2. Envanter ve Pazar Satır Okları (`<` / `>`) ile Binek/Yük Hayvanı Özet Rozetleri (`InventoryModal.tsx`, `BannerlordMarketModal.tsx`):**
   - Satırlarda tek tıkla sağa/sola aktarma okları (`<` / `>`), üstte toplam **Binek Atı** (piyade hız bonusu) ve **Yük Hayvanı** (*Katır/Yük Beygiri* `+100 kg` kapasite ve sürü cezası sınırı) göstergeleri eklenecek.
-- [ ] **3.3. Kârlı Satıştan Ticaret (`Trade`) XP Kazanımı ve Kervan Başı / Şehir Tüccarı İndirimi (`marketTransaction.ts`, `characterDevelopment.ts`):**
+- [x] **3.3. Kârlı Satıştan Ticaret (`Trade`) XP Kazanımı ve Kervan Başı / Şehir Tüccarı İndirimi (`marketTransaction.ts`, `characterDevelopment.ts`):**
   - Satın alınan fiyattan daha pahalıya mal satıldığında edilen kâr üzerinden **Ticaret (`Trade`)** yeteneğine canlı XP yazılacak ve *Kervan Başı / Şehir Tüccarı* perk indirimleri fiyatlara uygulanacak.
 
 ---
 
 ### ADIM 4 — Diyalog (`DialogueModal.tsx`), Harita Lord İpuçları, Ansiklopedi Konum Takibi ve Takas (`Barter`) Ekranı
 
-- [ ] **4.1. Haritada Lord Üzerine Gelince Açılan Detaylı Bilgi Kartı (`WorldCanvas.tsx`):**
+- [x] **4.1. Haritada Lord Üzerine Gelince Açılan Detaylı Bilgi Kartı (`WorldCanvas.tsx`):**
   - Haritada bir lordun üzerine gelince: tam unvanı, klanı, krallığı, **şu anki canlı emri** (*"Lochana Kalesi'ni kuşatıyor"*, *"Zeonica'yı savunmaya gidiyor"*, *"Derthert'in Ordusunda"*), **Sağlıklı + Yaralı asker sayısı**, **Esir sayısı** ve **Harita Hızı** gösterilecek.
-- [ ] **4.2. Ansiklopedide "En Son X Yakınlarında Görüldü" Canlı Konum Takibi ve Diyalogla Tanışma (`EncyclopediaModal.tsx`, `DialogueModal.tsx`):**
+- [x] **4.2. Ansiklopedide "En Son X Yakınlarında Görüldü" Canlı Konum Takibi ve Diyalogla Tanışma (`EncyclopediaModal.tsx`, `DialogueModal.tsx`):**
   - Ansiklopedide (`N`) her lord ve gezgin için **"En son bugün/X gün önce [Yerleşim] yakınlarında görüldü"** satırı canlı koordinatlardan üretilecek; lordla ilk kez diyalog kurulduğunda `metHeroIds` (tanışma) otomatik açılacak (`A3` hatası çözümü).
-- [ ] **4.3. Yeşil "Tatmin Olma Çubuğu (`Satisfaction Bar`)" Olan Çift Sütunlu Takas / Pazarlık (`Barter`) Ekranı (`DialogueModal.tsx`, `DiplomacyModal.tsx`):**
+- [x] **4.3. Yeşil "Tatmin Olma Çubuğu (`Satisfaction Bar`)" Olan Çift Sütunlu Takas / Pazarlık (`Barter`) Ekranı (`DialogueModal.tsx`, `DiplomacyModal.tsx`):**
   - Gerçek Bannerlord Takas ekranı: **Sol Sütun = Karşı Tarafın Varlıkları**, **Sağ Sütun = Oyuncunun Teklifi (Altın sürgüsü, Eşyalar, Esirler, Tımarlar)**, **Orta = Yeşil Tatmin Olma Çubuğu (`Satisfaction Bar`) + `[El Sıkışma / Otomatik Dengele]` + `[Teklif Et]`** butonları; barış antlaşması, lordu kendi krallığına çekme ve evlilik başlık parası bu ekran üzerinden çalışacak.
 - [ ] **4.4. 2 Aşamalı Evlilik İkna (`Persuasion`) Sistemi ve Hanedan / Çocuk Doğumu (`DialogueModal.tsx`, `familyTree.ts`, `worldSim.ts`):**
   - Bekar lord/leydilerle 2 aşamalı ikna sınavı (Cazibe, Onur ve kişilik uyumuna göre başarı yüzdeleri ve 3 olumlu tik toplama), klan lideriyle **Başlık Parası (`Dowry`)** takası, eşin partiye/klana katılması, **37 günlük hamilelik ve çocuk doğumu** döngüsü.
@@ -146,15 +146,58 @@
   - `1` Piyade, `2` Okçu, `3` Süvari, `4` Atlı Okçu (ve `0` Tüm Birlikler) grup seçimi; seçili gruba özel `F1` Konum (`Buraya Yürü / Beni Takip Et / Hücum / Geri Çekil`), `F2` Yön, `F3` Ateş Serbest/Kes, `F4` Formasyon (*Çizgi, Kalkan Duvarı, Dağınık, Kama, Çember*) emirleri ve üst-sol görsel emir kartları.
 - [ ] **7.2. 7 Kuşatma Silahı (`Ateşli Balista` & `Ateşli Mancınık`) ve Harita "Surlar Çatırdadı!" Bildirimi (`siegeEncounter.ts`, `SiegeEncounterModal.tsx`, `WorldCanvas.tsx`):**
   - Kuşatma silahı kataloğuna **Ateşli Balista (`FIRE_BALLISTA`)** ve **Ateşli Mancınık (`FIRE_MANGONEL`)** eklenerek 7 kuşatma makinesinin tamamlanması; kuşatma sırasında sur canı sıfırlandığında harita ekranında **"Surlar çatırdadı! Gedik açıldı!"** bildirimi.
-- [ ] **7.3. Bilinen Karşılaşma, Ekonomi ve Sunucu Düzeltmeleri (`Bölüm 3` Hataları):**
+- [x] **7.3. Bilinen Karşılaşma, Ekonomi ve Sunucu Düzeltmeleri (`Bölüm 3` Hataları):**
   - Haydut teslimiyetinde haydut partisinin `roster/armySize` değerinin düşürülmesi (aynı partiden tekrar ödül alınmasının engellenmesi).
   - Oyuncu teslimiyetinde erzak 4'ün altındayken net erzak kazancı oluşmaması.
-  - `server.ts` içindeki geçersiz `gemini-3.8-flash` model kimliğinin geçerli model + deterministik yedekle (`fallback`) düzeltilmesi.
+  - `server.ts` içindeki geçersiz `gemini-3.8-flash` model kimliğinin geçerli model (`gemini-2.5-flash`) + deterministik yedekle (`fallback`) düzeltilmesi.
+
+---
+
+## 🎯 BÖLÜM 4 — KULLANICI TALİMATIYLA EKLENEN YENİ GÖREVLER (BANNERLORD TAM ÖZGÜNLÜK PAKETİ)
+
+- [x] **8.1. Başlangıç Ekranı, Kayıt Yükle ve Yeni Oyun FPS Düşüşü Çözümü (`src/App.tsx`, `src/components/WorldCanvas.tsx`, `src/game/proceduralModels.ts`):**
+  - Ana menüde Yeni Oyun (`CharacterCreatorModal`), Kayıt Yükle (`BannerlordPauseModal`) veya tam ekran modallar açıldığında arka planda çalışan `WorldCanvas` 3B WebGL döngüsünün duraklatılması (`isRenderPaused`) ve arazi dokusu üretiminin optimize edilmesi. *(Tamamlandı)*
+- [x] **8.2. Bannerlord Yükleme Ekranı (Loading Screen), Özgün Ana Menü ve Ayarlar Ekranı (`src/App.tsx`):**
+  - Yeni oyuna veya kayıtlı oyuna girerken direkt oyuna atlamak yerine Bannerlord tarzı illüstrasyonlu ve tarihsel ipuçlu **Yükleme Ekranı (`Loading Screen`)** gösterilmesi; ana menünün Bannerlord tipografisi ve sol dikey menü düzeniyle yenilenmesi; Ses, Grafik ve Oynanış ayarlarını içeren **Ayarlar (`Settings`)** penceresinin eklenmesi. *(Tamamlandı)*
+- [x] **8.3. Ana Menü ve Oyun İçi Test / Arena Butonlarının Kaldırılması veya Gizlenmesi (`src/App.tsx`, `src/components/SettlementModal.tsx`, `src/components/GameHud.tsx`):**
+  - Ana menüdeki `KARAKTERİNİ MODELLE [B]` ve `SAVAŞ & KARAKTER ARENASI TEST ET` butonları ile oyun içindeki hızlı meydan savaşı / test butonlarının gizlenmesi. *(Tamamlandı)*
+- [x] **8.4. Oyuncu Kale ve Şehir Kuşatma Sisteminin Düzeltilmesi ve Otomatik Savaş İlanı (`src/game/siegeEncounter.ts`, `src/components/SettlementModal.tsx`, `src/App.tsx`):**
+  - Oyuncu bir şehir veya kaleyi kuşatmaya başladığında (`startPlayerSiege`) o yerleşimin bağlı olduğu krallıkla otomatik olarak düşman olması (`isAtWarWithPlayer = true` ve `world.wars` kaydı) ve harita üzerinde gerçek Bannerlord kuşatma kampı ekranının (`SiegeEncounterModal`) açılması. *(Tamamlandı)*
+- [x] **8.5. Bannerlord 6 Aşamalı Karakter Hikayesi, Başlangıç Ailesi, Başlangıç Ekipmanı ve 0 Asker Kuralı (`src/components/CharacterCreatorModal.tsx`, `src/game/rules.ts`):**
+  - Karakter oluştururken Bannerlord'daki gibi 6 aşamalı geçmiş/hikaye seçimi (*Aile Kökeni, Erken Çocukluk, Ergenlik, Gençlik, Başlangıç Gerekçesi, Kader Dönüm Noktası*) yapılması; oyuncunun yanında ailesinden bir kardeşin (`FAMILY` kahraman) bulunması; başlangıçta **hazır asker verilmemesi (0 asker)**, bunun yerine biraz yiyecek (tahıl, kurutulmuş et), bir kılıç, bir yay, ok, bir binek atı ve sıradan kıyafetler verilmesi. *(Tamamlandı)*
+- [x] **8.6. Nam (`Renown`) Sisteminin Düzeltilmesi (`src/game/rules.ts`):**
+  - Bina yükseltme, atölye satın alma, demircilik, esir fidyesi, arena antrenmanı ve sur bombardımanı gibi saçma kaynaklardan kazanılan namların kaldırılması; namın yalnızca gerçek muharebe zaferlerinden, turnuva şampiyonluğundan (+3 Nam) ve görevlerden kazanılması. *(Tamamlandı)*
+- [x] **8.7. Başlangıç Sesi Düzeltmesi ve Oyun İçi Harita Hareket / Atmosfer Sesleri (`src/game/sound.ts`, `src/App.tsx`, `src/components/CharacterCreatorModal.tsx`, `src/components/WorldCanvas.tsx`):**
+  - Oyuna girince veya karakter kurunca çalan rahatsız edici yüksek borazan (`playWarhorn`) sesinin kaldırılması; oyuncu haritada hareket ederken gerçekçi at nalı / yürüyüş adımı sesleri ve yerleşim giriş seslerinin eklenmesi. *(Tamamlandı)*
+- [x] **8.8. Şehir, Kale, Köy ve Lord İsimlerinin Mouse Üzerine Gelince Hareket Etmesi Sorununun Çözümü (`src/components/WorldCanvas.tsx`, `src/components/GameHud.tsx`):**
+  - Harita üzerindeki yerleşim (şehir, kale, köy) ve lord etiketlerindeki `transition-transform` ve `hover:scale-*` sınıflarının kaldırılarak fare üzerine gelindiğinde ismin hareket etmesinin/titremesinin tamamen engellenmesi. *(Tamamlandı)*
+- [x] **8.9. Aserai Bölgesinin Genişletilmesi, Gerçekçi Şehir/Kale/Köy 3B Modelleri ve Tıkla-Git / Tıkla-Takip Et İyileştirmesi (`src/game/mapGen.ts`, `src/game/rules.ts`, `src/game/proceduralModels.ts`, `src/components/WorldCanvas.tsx`):**
+  - Güneydeki Aserai çöl, vaha ve kıyı coğrafyası ile yerleşimlerinin düzeltilip genişletilmesi; şehir, kale ve köylerin harita modundaki 3B modellerinin daha gerçekçi hale getirilmesi; tıkla-git ve tıkla-takip et (`followingLordId`) sisteminin iyileştirilmesi. *(Tamamlandı)*
+- [x] **8.10. Krallığa Özel Asker Sayıları, Yaşayan Dünya ve Savaş Meydanları Sistemi (`src/game/heroGen.ts`, `src/game/rules.ts`, `src/game/worldSim.ts`):**
+  - Her krallığa özel asker sayıları ve kültür doktrinlerinin düzeltilmesi (`CULTURE_TROOP_DOCTRINE` & `makeCultureRoster`); yaşayan dünya ve bölge coğrafyasına uygun savaş meydanları sisteminin geliştirilmesi. *(Tamamlandı)*
+- [x] **8.11. Gerçek Bannerlord Teması, Özel Mouse İmleci, Sıfır Emoji (Tamamen SVG) ve Bannerlord Envanter Sistemi (`src/index.css`, `src/components/InventoryModal.tsx`, `src/components/ItemIcon.tsx`, `src/components/GameHud.tsx`, `src/components/WorldCanvas.tsx`):**
+  - Cıvık turuncu/yeşil temaların kaldırılıp gerçek Bannerlord koyu demir/eskitilmiş pirinç/parşömen temasının uygulanması; oyuna Bannerlord tarzı özel mouse imleci eklenmesi; tüm emojilerden kurtulup kaliteli SVG görünümlere geçilmesi; envanter sisteminin tıpkı Bannerlord'daki gibi üç sütunlu ve %100 SVG eşya ikonlu (hiçbir eşyada emoji veya sadece yazı olmadan) görünmesi. *(Tamamlandı)*
+- [x] **8.12. Başlangıç Doğum Yeri Seçimi ve Yaşayan Dünya Başlangıcı (`src/game/rules.ts`, `src/components/CharacterCreatorModal.tsx`, `src/App.tsx`):**
+  - Karakter yaratma ekranına 8 farklı başlangıç şehri seçimi eklendi (`poros`, `pravend`, `marunath`, `omor`, `chaikand`, `sanala`, `zeonica`, `lycaron`). Lord Kargı'nın başlangıç noktasından uzak dağ geçitlerine (`x: -312, z: 178`) taşınmasıyla başlangıçtaki ani kurgulanmış pusu kaldırıldı; yaşayan dünyada oyuncunun özgür doğuşu sağlandı. *(Tamamlandı)*
+- [x] **8.13. Şehir ve Kale Garnizon & Milis Sayılarının Bannerlord Ölçeğine Yükseltilmesi (`src/game/rules.ts`):**
+  - Şehir garnizonları ~280-420, kale garnizonları ~160-260, köy milisleri ~45-80 seviyesine yükseltilerek Bannerlord'daki kale ve şehirlerin gerçekçi savunma kuvvetlerine kavuşturulması sağlandı. *(Tamamlandı)*
+- [x] **8.14. Karakter Mankeninin Sürekli 360 Derece Dönmesinin Kaldırılması (`src/components/HeroMannequin.tsx`, `src/components/CharacterCreatorModal.tsx`):**
+  - Karakterin mankende kendi kendine sürekli dönmesi durduruldu; manken vakur duruşta sabit kalıyor ve yalnızca kullanıcı fare ile sürüklediğinde dönüyor. *(Tamamlandı)*
+- [x] **8.15. Bannerlord Birebir Sol Alt HUD (Dairesel 6 Buton) ve Vakanüvis Ticker (`src/components/GameHud.tsx`):**
+  - Sol altta Bannerlord ile birebir 6 dairesel buton: Karakter [C] (yüz/kask simgesi ve bildirim `!` rozeti), Envanter [I] (çuval simgesi), Birlik / Parti [P] (3 asker simgesi ve bildirim `!` rozeti), Klan Menüsü [L] (aslan klan amblemi), Krallık Divanı [K] (kraliyet tacı), Görev Günlüğü [J] (parşömen ve görev sayısı rozeti).
+  - Butonların hemen üzerinde sol altta son olayları bildiren Vakanüvis haber akışı (SAVAŞ, DİPLOMASİ, TİCARET, HABER).
+  - Bannerlord'da olmayan "Kıta Atlası ve Stratejik Kamera Rehberi" kaldırıldı.
+  - Göksel güneş/ay kadranı ve mevsim/saat çarkı ekranın tam ortasına (`absolute left-1/2 -translate-x-1/2 bottom-0`) hizalandı. *(Tamamlandı)*
+- [x] **8.16. Gökten Görev Yağmasının Önlenmesi (`src/game/quests.ts`):**
+  - Oyuncu bir lorddan, leydiden veya köy eşrafından görev kabul etmediği sürece görev günlüğünde görev listelenmemesi kuralı uygulandı. *(Tamamlandı)*
+- [x] **8.17. Sağ Tık Tarayıcı Menüsünün Engellenmesi ve Favicon 404 Hatasının Giderilmesi (`src/App.tsx`, `index.html`):**
+  - Harita ve arayüzde sağ tıklandığında tarayıcının varsayılan menüsü engellendi; SVG kılıç favicou eklenerek konsol 404 hataları giderildi. *(Tamamlandı)*
 
 ---
 
 ## ⏸️ BÖLÜM 3 — KULLANICI KARARIYLA ERTELENEN / SONA BIRAKILAN İŞLER
 
 - [ ] ~~**Parça Bazlı Demircilik (`Smithing`):**~~ *(Kullanıcı talimatıyla geçici olarak İPTAL / ERTELENDİ — en sona bırakıldı).*
-- [ ] **P7 — Performans Ölçüm ve Optimizasyon Paketi:** Tüm oyun mekanikleri bittikten sonra sondan bir önceki iş olarak ele alınacak.
-- [ ] **P8 — Çoklu Slot Kayıt Yönetimi Ekranı:** En son iş olarak ele alınacak.
+- [x] **P7 — Performans Ölçüm ve Optimizasyon Paketi:** Başlangıç/modal FPS düşüşü ve WebGL arka plan duraklatması tamamlandı.
+- [x] **P8 — Çoklu Slot Kayıt Yönetimi Ekranı:** `SAVE_VERSION = 4` ve çoklu kayıt yuvaları tamamlandı.
+

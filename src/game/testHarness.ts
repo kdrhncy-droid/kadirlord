@@ -160,6 +160,8 @@ export interface KadirlordTestSnapshot {
     lords: number;
     settlements: number;
   };
+  settlementOpen?: boolean;
+  activeSettlementId?: string | null;
 }
 
 export interface KadirlordTestApi {
@@ -174,6 +176,11 @@ export interface KadirlordTestApi {
   getLordPosition: (lordId: string) => { x: number; z: number } | null;
   openSiege: (role: SiegeEncounterRole, options?: { focusOnCamp?: boolean }) => boolean;
   closeSiege: () => void;
+  openSettlement: (
+    settlementIdOrType?: string,
+    options?: { tab?: 'overview' | 'siege' },
+  ) => boolean;
+  closeSettlement: () => void;
   openDialogue: (
     lordId: string,
     options?: { forced?: boolean; scenario?: EncounterScenario },

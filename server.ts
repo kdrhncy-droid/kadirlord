@@ -147,7 +147,7 @@ Görev:
 Oyuncunun mesajına ve teklifine kendi kişiliğine, aranızdaki ilişkiye, oyuncunun askeri gücüne ve namına göre Türkçe, ortaçağ atmosferine uygun, etkileyici ve kısa (2-3 cümle) bir yanıt ver ve politik kararını JSON olarak döndür.`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-2.5-flash',
         contents: `Oyuncunun sözü: "${playerMessage || 'Seninle krallıklarımızın geleceğini konuşmaya geldim.'}"`,
         config: {
           systemInstruction: systemPrompt,
@@ -232,7 +232,7 @@ Oyuncunun mesajına ve teklifine kendi kişiliğine, aranızdaki ilişkiye, oyun
 
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-2.5-flash',
         contents: `Gün: ${day}, Mevsim: ${season}, Oyuncu Hizbi: ${playerFaction}, Oyuncu Namı: ${playerRenown}. Yerleşimler: ${settlementsSummary}. Son olaylar: ${recentEvents}. Kalradya'da yaşayan politik dünya için yeni bir divan kararı ve stratejik tavsiye üret.`,
         config: {
           systemInstruction:
