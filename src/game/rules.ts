@@ -1404,16 +1404,9 @@ export function resolveBattleOutcome(
     let updatedTotal = getTotalTroops(updatedRoster);
 
     if (victory) {
-      // On total battlefield victory, routed/captured troops also reduce the Lord's active retinue
-      const maxSurvivingOnDefeat = Math.max(2, Math.floor(l.armySize * 0.25));
-      if (updatedTotal > maxSurvivingOnDefeat) {
-        updatedRoster = deductCasualtiesFromRoster(
-          updatedRoster,
-          updatedTotal - maxSurvivingOnDefeat,
-        );
-        updatedTotal = getTotalTroops(updatedRoster);
-      }
-      // Ensure defeated Lord keeps at least 1 battered retainer on the map while rebuilding
+      // B5: mağlup ordunun kadrosu yalnızca gerçek kayıplarla düşer.
+      // (Eski "zorla %25 sağ kalan" cezası Bannerlord'da yok; kaldırıldı.)
+      // Ordusu tümüyle düşen lord haritada tek başına kalır, yeniden toplar.
       if (updatedTotal <= 0) {
         updatedRoster = { infantry: 1, archer: 0, cavalry: 0, horseArcher: 0 };
         updatedTotal = 1;

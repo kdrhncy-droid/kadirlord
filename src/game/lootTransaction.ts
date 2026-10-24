@@ -279,14 +279,7 @@ export function commitBattleLoot(
     let updatedRoster = deductCasualtiesFromRoster(currentRoster, pendingLoot.enemiesDefeatedCount);
     let updatedTotal = getTotalTroops(updatedRoster);
 
-    const maxSurvivingOnDefeat = Math.max(2, Math.floor(l.armySize * 0.25));
-    if (updatedTotal > maxSurvivingOnDefeat) {
-      updatedRoster = deductCasualtiesFromRoster(
-        updatedRoster,
-        updatedTotal - maxSurvivingOnDefeat,
-      );
-      updatedTotal = getTotalTroops(updatedRoster);
-    }
+    // B5: kadro yalnız gerçek kayıplarla düşer (eski %25 zorlaması kaldırıldı).
     if (updatedTotal <= 0) {
       updatedRoster = { infantry: 1, archer: 0, cavalry: 0, horseArcher: 0 };
       updatedTotal = 1;

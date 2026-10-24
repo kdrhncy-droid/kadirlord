@@ -53,6 +53,14 @@ import {
   nextFormation,
   type DeployFormation,
 } from '../game/deployment';
+import {
+  BATTLE_FIELD_CAP,
+  REINFORCEMENT_CHECK_INTERVAL,
+  allocateByClass,
+  computeInitialFieldCounts,
+  planReinforcementWave,
+  remainingReserves,
+} from '../game/reinforcements';
 import { createWarriorModel, type WarriorMeshHandles } from '../game/proceduralModels';
 import { sound } from '../game/sound';
 
@@ -140,9 +148,6 @@ interface MissionActor {
   handles: WarriorMeshHandles;
 }
 
-/** Taraf başına en çok aktör (B5'te 1:1 + takviye dalgalarına geçilecek). */
-const MAX_ACTORS_PER_SIDE = 60;
-
 const CLASS_ORDER: UnitTierId[] = ['infantry', 'archer', 'horseArcher', 'cavalry'];
 
 function classStats(unitType: UnitTierId): {
@@ -205,26 +210,6 @@ function createFormationBanner(factionHex: number): { group: THREE.Group; cloth:
   cloth.castShadow = true;
   group.add(cloth);
   return { group, cloth };
-}
-
-/** Kadro sınıf sayılarını aktör bütçesine orantılı böler (her sınıftan en az 1, varsa). */
-function allocateActors(roster: TroopRoster): Record<UnitTierId, number> {
-  const total = Math.max(0, getTotalTroops(roster));
-  const out: Record<UnitTierId, number> = { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 };
-  if (total <= 0) return out;
-  const budget = Math.min(MAX_ACTORS_PER_SIDE, total);
-  for (const cls of CLASS_ORDER) {
-    if (roster[cls] > 0) out[cls] = Math.max(1, Math.round((roster[cls] / total) * budget));
-  }
-  // Yuvarlama bütçeyi aşarsa en kalabalık sınıftan kıs.
-  let sum = CLASS_ORDER.reduce((s, c) => s + out[c], 0);
-  while (sum > budget) {
-    const biggest = CLASS_ORDER.reduce((a, b) => (out[a] >= out[b] ? a : b));
-    if (out[biggest] <= 1) break;
-    out[biggest]--;
-    sum--;
-  }
-  return out;
 }
 
 /** Konuşlanma diziliş tercihleri savaşlar arasında hatırlanır (Bannerlord'da kalıcıdır). */
@@ -300,7 +285,6 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     const enemyHex = FACTION_INFO[enemyFaction]?.hex ?? 0x991b1b;
     const enemyCommanderName =
       targetLord?.name ?? (targetSettlement ? `${targetSettlement.name} Garnizonu` : 'Haydut Çetesi');
-    const enemyTotal = Math.max(1, getTotalTroops(enemyRoster));
 
     /* ── Sahne ── */
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -359,13 +343,15 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     const bannerCloths: THREE.Mesh[] = [];
     const groundY = (x: number, z: number) => battleGroundY(profile, x, z);
 
-    const spawnSide = (
+    let actorSeq = 0;
+    const spawnActors = (
       team: ActorTeam,
-      roster: TroopRoster,
+      counts: Record<UnitTierId, number>,
       factionHex: number,
       spawn: { x: number; z: number; facing: number },
-    ): Record<UnitTierId, number> => {
-      const counts = allocateActors(roster);
+      withBanners: boolean,
+    ): MissionActor[] => {
+      const created: MissionActor[] = [];
       const forward = team === 'ally' ? -1 : 1; // müttefik -Z'ye, düşman +Z'ye bakar
       // Sınıf şeritleri: piyade önde, okçu geride, atlı okçu sol, süvari sağ kanatta.
       // Bannerlord hatları sıktır (kalkan duvarı omuz omuza): piyade 1.35,
@@ -391,7 +377,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
           });
           handles.telegraphRing.visible = false;
           // Şeridin ilk neferi bölük sancağını taşır (sağ kolda uzun direk).
-          if (i === 0 && count >= 3) {
+          if (withBanners && i === 0 && count >= 3) {
             const banner = createFormationBanner(factionHex);
             banner.group.position.set(0.42, 0.55, 0.1);
             banner.group.rotation.x = -0.08;
@@ -401,8 +387,8 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
           }
           handles.root.position.set(x, groundY(x, z), z);
           scene.add(handles.root);
-          actors.push({
-            id: `${team}-${lane.cls}-${i}`,
+          const actor: MissionActor = {
+            id: `${team}-${lane.cls}-${actorSeq++}`,
             team,
             unitType: lane.cls,
             archetype: stats.archetype,
@@ -435,14 +421,28 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
             homeX: x,
             homeZ: z,
             handles,
-          });
+          };
+          actors.push(actor);
+          created.push(actor);
         }
       }
-      return counts;
+      return created;
     };
 
-    const allyCounts = spawnSide('ally', campaign.roster, FACTION_INFO.player.hex, profile.allySpawn);
-    const enemyCounts = spawnSide('enemy', enemyRoster, enemyHex, profile.enemySpawn);
+    /* B5: 1 aktör = 1 asker. İlk dalga saha bütçesini ordu büyüklüğüne
+       orantılı paylaşır (%75 tavanıyla); kalani yedekte bekler ve takviye
+       dalgalarıyla kendi kenarından girer (bkz. reinforcements.ts). */
+    const allyRosterTotal = Math.max(0, getTotalTroops(campaign.roster));
+    const enemyRosterTotal = Math.max(0, getTotalTroops(enemyRoster));
+    const initialField = computeInitialFieldCounts(allyRosterTotal, enemyRosterTotal);
+    const allyFielded = allocateByClass(campaign.roster, initialField.ally);
+    const enemyFielded = allocateByClass(enemyRoster, initialField.enemy);
+    const reserves: Record<ActorTeam, TroopRoster> = {
+      ally: remainingReserves(campaign.roster, allyFielded),
+      enemy: remainingReserves(enemyRoster, enemyFielded),
+    };
+    spawnActors('ally', allyFielded, FACTION_INFO.player.hex, profile.allySpawn, true);
+    spawnActors('enemy', enemyFielded, enemyHex, profile.enemySpawn, true);
 
     // Düşman komutanı (ağır süvari görünümü; kadro dışı tek aktör, eski davranış).
     {
@@ -551,8 +551,9 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     scene.add(playerHandles.root);
     actors.push(player);
 
-    const alliesTotal = actors.filter((a) => a.team === 'ally').length;
-    const enemiesTotal = actors.filter((a) => a.team === 'enemy').length;
+    // HUD toplamları yedekler dahil tam ordudur (komutan aktörleri +1).
+    const alliesTotal = allyRosterTotal + 1;
+    const enemiesTotal = enemyRosterTotal + 1;
 
     /* ── B3: Order of Battle konuşlanma fazı ──────────────────────────────
        Oyuncu tarafında ≥20 asker varsa savaş konuşlanmayla açılır (Bannerlord
@@ -697,9 +698,12 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       anchor: { x: number; z: number },
       facing: number,
       withMarker: boolean,
+      rosterHasClass: boolean,
     ): DivisionState | null => {
       const members = actors.filter((a) => a.team === team && a.unitType === cls);
-      if (members.length === 0) return null;
+      // Sınıf kadroda varsa bölük kurulur; ilk dalga o sınıftan kimse
+      // çıkarmadıysa üyeler takviye dalgasıyla katılır.
+      if (members.length === 0 && !rosterHasClass) return null;
       const marker = withMarker ? createDivisionMarker() : null;
       if (marker) scene.add(marker.group);
       const pref = team === 'ally' ? deploymentPrefs[cls] : undefined;
@@ -731,19 +735,57 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     const enemyDivisions: DivisionState[] = [];
     const actorDivision = new Map<string, DivisionState>();
     for (const cls of DIVISION_ORDER) {
-      const ally = buildDivision('ally', cls, anchorDefaults[cls], profile.allySpawn.facing, true);
+      const ally = buildDivision('ally', cls, anchorDefaults[cls], profile.allySpawn.facing, true, campaign.roster[cls] > 0);
       if (ally) {
         divisions.push(ally);
         for (const m of ally.members) actorDivision.set(m.id, ally);
         if (!deployEnabled && ally.marker) ally.marker.visible = false;
       }
-      const foe = buildDivision('enemy', cls, enemyAnchorDefaults[cls], profile.enemySpawn.facing, false);
+      const foe = buildDivision('enemy', cls, enemyAnchorDefaults[cls], profile.enemySpawn.facing, false, enemyRoster[cls] > 0);
       if (foe) {
         enemyDivisions.push(foe);
         for (const m of foe.members) actorDivision.set(m.id, foe);
       }
     }
     selectedCls = divisions[0]?.cls ?? 'infantry';
+
+    /* B5: takviye dalgaları — sahadaki mevcut ilk dalganın yarısına düşünce
+       yedekler kendi konuşlanma kenarından girip bölüğüne koşar. */
+    const fieldAliveOf = (team: ActorTeam): number =>
+      actors.filter(
+        (a) =>
+          a.team === team &&
+          a.hp > 0 &&
+          !a.gone &&
+          a.id !== 'player-commander' &&
+          a.id !== 'enemy-commander',
+      ).length;
+    const processReinforcements = (team: ActorTeam) => {
+      const totalAlive = actors.filter((a) => a.hp > 0 && !a.gone).length;
+      const plan = planReinforcementWave({
+        fieldAlive: fieldAliveOf(team),
+        initialField: team === 'ally' ? initialField.ally : initialField.enemy,
+        reserves: reserves[team],
+        fieldCapRemaining: BATTLE_FIELD_CAP - totalAlive,
+      });
+      if (!plan) return;
+      const hex = team === 'ally' ? FACTION_INFO.player.hex : enemyHex;
+      const spawn = team === 'ally' ? profile.allySpawn : profile.enemySpawn;
+      const created = spawnActors(team, plan, hex, spawn, false);
+      const divs = team === 'ally' ? divisions : enemyDivisions;
+      for (const a of created) {
+        const cls = a.unitType;
+        if (cls === 'commander') continue;
+        const div = divs.find((d) => d.cls === cls);
+        if (div) {
+          div.members.push(a);
+          actorDivision.set(a.id, div);
+        }
+      }
+      for (const cls of CLASS_ORDER) {
+        reserves[team][cls] = Math.max(0, reserves[team][cls] - plan[cls]);
+      }
+    };
 
     if (deployEnabled) {
       const zonePoints: THREE.Vector3[] = [];
@@ -1317,6 +1359,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     let lastNow = performance.now();
     let elapsed = 0;
     let hudTimer = 0;
+    let waveTimer = REINFORCEMENT_CHECK_INTERVAL;
     let battleEnded = false;
     let endTimer = 0;
     let completed = false;
@@ -1326,23 +1369,18 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       completed = true;
       const enemiesAlive = actors.filter((a) => a.team === 'enemy' && a.hp > 0 && !a.gone).length;
       const victory = enemiesAlive === 0;
-      // Kayıplar sınıf bazında orantılı yazılır (B5'te 1:1 olacak).
+      // B5: kayıplar bire bir — ölen her aktör kadrodan tek askerdir.
+      // Ricatla ayrılanlar (hp > 0, gone) ve hiç sahaya çıkmayan yedekler
+      // kayıp değildir. Düşman komutanı kadro dışı kahraman aktörüdür.
       const losses: Partial<TroopRoster> = {};
       for (const cls of CLASS_ORDER) {
-        const dead = actors.filter(
+        losses[cls] = actors.filter(
           (a) => a.team === 'ally' && a.unitType === cls && a.hp <= 0,
         ).length;
-        const fielded = allyCounts[cls];
-        const real = campaign.roster[cls];
-        losses[cls] =
-          fielded > 0 ? Math.min(real, Math.round((dead / fielded) * real)) : 0;
       }
-      const enemyDead = actors.filter((a) => a.team === 'enemy' && a.hp <= 0).length;
-      const enemyFielded = Math.max(1, enemiesTotal);
-      const enemiesDefeated = Math.min(
-        enemyTotal,
-        Math.round((enemyDead / enemyFielded) * enemyTotal),
-      );
+      const enemiesDefeated = actors.filter(
+        (a) => a.team === 'enemy' && a.hp <= 0 && a.id !== 'enemy-commander',
+      ).length;
       if (document.pointerLockElement) document.exitPointerLock();
       propsRef.current.onBattleComplete(victory, losses, enemiesDefeated);
     };
@@ -1410,6 +1448,14 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
         /* B4: bölük çapaları + formasyon slotları (aktör döngüsünden önce) */
         for (const d of divisions) updateDivision(d, dt);
         for (const d of enemyDivisions) updateDivision(d, dt);
+
+        /* B5: takviye dalgası kontrolü */
+        waveTimer -= dt;
+        if (waveTimer <= 0) {
+          waveTimer = REINFORCEMENT_CHECK_INTERVAL;
+          processReinforcements('ally');
+          processReinforcements('enemy');
+        }
 
         /* Aktör güncellemesi */
         for (let i = 0; i < actors.length; i++) {
@@ -1684,8 +1730,12 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
         pGeo.attributes.position.needsUpdate = true;
 
         /* Telemetri + bitiş */
-        const alliesAlive = actors.filter((a) => a.team === 'ally' && a.hp > 0 && !a.gone).length;
-        const enemiesAlive = actors.filter((a) => a.team === 'enemy' && a.hp > 0 && !a.gone).length;
+        const alliesAlive =
+          actors.filter((a) => a.team === 'ally' && a.hp > 0 && !a.gone).length +
+          getTotalTroops(reserves.ally);
+        const enemiesAlive =
+          actors.filter((a) => a.team === 'enemy' && a.hp > 0 && !a.gone).length +
+          getTotalTroops(reserves.enemy);
         hudTimer += dt;
         if (hudTimer >= 0.12) {
           hudTimer = 0;
