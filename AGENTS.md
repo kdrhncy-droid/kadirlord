@@ -166,3 +166,12 @@ tekrar üretmeyi kolaylaştırır:
   `WorldCanvas` kendi yakalama döngüsünü kullanıyor.
 
 Yeni bir açık kapatıldığında bu listeyi ve ilgili denetim belgesini güncelleyin.
+## Kapsam İlkesi (kullanıcı, 2026-10-24)
+
+"Bannerlord'un her özelliğini yapmak zorunda değiliz hemen; özellikle zor olanları
+sonraya bırakabiliriz — önemli olanlara öncelik verelim."
+
+Bu ilke **ne zaman** yapılacağını düzenler, Bannerlord doğrusunu gevşetmez:
+yapılan her şey Altın Kural'a göre araştırılarak doğru yapılır; ertelenen iş
+gerekçesiyle `YAPILACAKLAR_LISTESI.md`ye işlenir, sahte/yarım arayüz konmaz.
+Öncelik: savaş meydanı, karakterler, ordular ve savaş hissi.

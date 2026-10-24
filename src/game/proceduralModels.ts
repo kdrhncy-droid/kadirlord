@@ -1055,6 +1055,66 @@ export interface WarriorMeshHandles {
   armorMat: THREE.MeshStandardMaterial;
 }
 
+/* B6-oncesi performans: savasci geometri/malzemeleri paylasilir. Eskiden her
+   aktorde ~25 yeni geometri + 7 malzeme uretiliyordu (200 aktorde ~5000 GPU
+   arabellegi; savas kurulusunda uzun gorev takilmasi). Paylasilan ornekler
+   yalniz okunur kullanilir; sahne temizligindeki dispose sonrasi three.js
+   arabellegi yeniden yukler. armorMat vuruş parlamasi icin aktor bazli kalir. */
+const warriorGeoCache = new Map<string, THREE.BufferGeometry>();
+function warriorGeo<T extends THREE.BufferGeometry>(key: string, make: () => T): T {
+  let g = warriorGeoCache.get(key) as T | undefined;
+  if (!g) {
+    g = make();
+    warriorGeoCache.set(key, g);
+  }
+  return g;
+}
+let sharedSteelMat: THREE.MeshStandardMaterial | null = null;
+let sharedLeatherMat: THREE.MeshStandardMaterial | null = null;
+let sharedGoldMat: THREE.MeshStandardMaterial | null = null;
+let sharedCoatMat: THREE.MeshStandardMaterial | null = null;
+let sharedManeMat: THREE.MeshStandardMaterial | null = null;
+const sharedClothMats = new Map<number, THREE.MeshStandardMaterial>();
+function warriorSteelMat(): THREE.MeshStandardMaterial {
+  if (!sharedSteelMat) {
+    sharedSteelMat = new THREE.MeshStandardMaterial({ color: 0xd6d3d1, roughness: 0.38, metalness: 0.35 });
+  }
+  return sharedSteelMat;
+}
+function warriorLeatherMat(): THREE.MeshStandardMaterial {
+  if (!sharedLeatherMat) {
+    sharedLeatherMat = new THREE.MeshStandardMaterial({ color: 0x6e4a2c, roughness: 0.85, metalness: 0.08 });
+  }
+  return sharedLeatherMat;
+}
+function warriorGoldMat(): THREE.MeshStandardMaterial {
+  if (!sharedGoldMat) {
+    sharedGoldMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.4, metalness: 0.35 });
+  }
+  return sharedGoldMat;
+}
+function warriorCoatMat(): THREE.MeshStandardMaterial {
+  if (!sharedCoatMat) {
+    sharedCoatMat = new THREE.MeshStandardMaterial({ color: 0x7b5233, roughness: 0.9, metalness: 0.02 });
+  }
+  return sharedCoatMat;
+}
+function warriorManeMat(): THREE.MeshStandardMaterial {
+  if (!sharedManeMat) {
+    sharedManeMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1c, roughness: 0.95, metalness: 0.0 });
+  }
+  return sharedManeMat;
+}
+function warriorClothMat(factionHex: number): THREE.MeshStandardMaterial {
+  let m = sharedClothMats.get(factionHex);
+  if (!m) {
+    const clothColor = new THREE.Color(factionHex).lerp(new THREE.Color(0x7d6c56), 0.52);
+    m = new THREE.MeshStandardMaterial({ color: clothColor, roughness: 0.88, metalness: 0.05 });
+    sharedClothMats.set(factionHex, m);
+  }
+  return m;
+}
+
 export function createWarriorModel(options: {
   factionHex: number;
   isMounted?: boolean;
@@ -1068,8 +1128,11 @@ export function createWarriorModel(options: {
 
   root.add(createContactShadowDisc(options.isMounted ? 1.15 : 0.75));
 
-  const ringGeo = new THREE.RingGeometry(0.85, 1.15, 24);
-  ringGeo.rotateX(-Math.PI / 2);
+  const ringGeo = warriorGeo('telegraph-ring', () => {
+    const g = new THREE.RingGeometry(0.85, 1.15, 24);
+    g.rotateX(-Math.PI / 2);
+    return g;
+  });
   const ringMat = new THREE.MeshBasicMaterial({
     color: 0xef4444,
     side: THREE.DoubleSide,
@@ -1090,52 +1153,27 @@ export function createWarriorModel(options: {
   });
   // Gövde kumaşı hizi renginin solmuş hâli: tam turuncu gövde yerine
   // hizi rengi kalkan/sancak/bardakta kimlik olarak kalır.
-  const clothColor = new THREE.Color(options.factionHex).lerp(new THREE.Color(0x7d6c56), 0.52);
-  const clothMat = new THREE.MeshStandardMaterial({
-    color: clothColor,
-    roughness: 0.88,
-    metalness: 0.05,
-  });
-  const steelMat = new THREE.MeshStandardMaterial({
-    color: 0xd6d3d1,
-    roughness: 0.38,
-    metalness: 0.35,
-  });
-  const leatherMat = new THREE.MeshStandardMaterial({
-    color: 0x6e4a2c,
-    roughness: 0.85,
-    metalness: 0.08,
-  });
-  const goldMat = new THREE.MeshStandardMaterial({
-    color: 0xf59e0b,
-    roughness: 0.4,
-    metalness: 0.35,
-  });
+  const clothMat = warriorClothMat(options.factionHex);
+  const steelMat = warriorSteelMat();
+  const leatherMat = warriorLeatherMat();
+  const goldMat = warriorGoldMat();
 
   let riderYOffset = 0;
 
   if (options.isMounted) {
     riderYOffset = 0.75;
     const horseGroup = new THREE.Group();
-    const coatMat = new THREE.MeshStandardMaterial({
-      color: 0x7b5233,
-      roughness: 0.9,
-      metalness: 0.02,
-    });
-    const maneMat = new THREE.MeshStandardMaterial({
-      color: 0x3a2a1c,
-      roughness: 0.95,
-      metalness: 0.0,
-    });
+    const coatMat = warriorCoatMat();
+    const maneMat = warriorManeMat();
 
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.62, 1.45), coatMat);
+    const barrel = new THREE.Mesh(warriorGeo('BoxGeometry:0.68,0.62,1.45', () => new THREE.BoxGeometry(0.68, 0.62, 1.45)), coatMat);
     barrel.position.set(0, 0.98, 0);
     barrel.castShadow = true;
     horseGroup.add(barrel);
 
     // Dört bacak (alt yarı koyu çorap) — bacaksız "uçan kutu" görünümü biter.
-    const legGeo = new THREE.CylinderGeometry(0.09, 0.07, 0.78, 7);
-    const sockGeo = new THREE.CylinderGeometry(0.075, 0.08, 0.3, 7);
+    const legGeo = warriorGeo('CylinderGeometry:0.09,0.07,0.78,7', () => new THREE.CylinderGeometry(0.09, 0.07, 0.78, 7));
+    const sockGeo = warriorGeo('CylinderGeometry:0.075,0.08,0.3,7', () => new THREE.CylinderGeometry(0.075, 0.08, 0.3, 7));
     for (const [lx, lz] of [
       [-0.24, 0.52],
       [0.24, 0.52],
@@ -1152,40 +1190,40 @@ export function createWarriorModel(options: {
     }
 
     // Eyer altı hizi örtüsü (caparison) + eyer
-    const barding = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.34, 0.95), armorMat);
+    const barding = new THREE.Mesh(warriorGeo('BoxGeometry:0.76,0.34,0.95', () => new THREE.BoxGeometry(0.76, 0.34, 0.95)), armorMat);
     barding.position.set(0, 1.05, -0.05);
     horseGroup.add(barding);
-    const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.14, 0.55), leatherMat);
+    const saddle = new THREE.Mesh(warriorGeo('BoxGeometry:0.5,0.14,0.55', () => new THREE.BoxGeometry(0.5, 0.14, 0.55)), leatherMat);
     saddle.position.set(0, 1.3, -0.02);
     horseGroup.add(saddle);
 
-    const neck = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.68, 0.4), coatMat);
+    const neck = new THREE.Mesh(warriorGeo('BoxGeometry:0.34,0.68,0.4', () => new THREE.BoxGeometry(0.34, 0.68, 0.4)), coatMat);
     neck.position.set(0, 1.42, 0.6);
     neck.rotation.x = 0.42;
     horseGroup.add(neck);
-    const mane = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.6, 0.34), maneMat);
+    const mane = new THREE.Mesh(warriorGeo('BoxGeometry:0.1,0.6,0.34', () => new THREE.BoxGeometry(0.1, 0.6, 0.34)), maneMat);
     mane.position.set(0, 1.52, 0.47);
     mane.rotation.x = 0.42;
     horseGroup.add(mane);
 
     // Baş: eğik kafa bloğu + ağızlık + kulaklar
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.34, 0.52), coatMat);
+    const head = new THREE.Mesh(warriorGeo('BoxGeometry:0.28,0.34,0.52', () => new THREE.BoxGeometry(0.28, 0.34, 0.52)), coatMat);
     head.position.set(0, 1.66, 0.92);
     head.rotation.x = 0.5;
     head.castShadow = true;
     horseGroup.add(head);
-    const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.28), coatMat);
+    const muzzle = new THREE.Mesh(warriorGeo('BoxGeometry:0.2,0.2,0.28', () => new THREE.BoxGeometry(0.2, 0.2, 0.28)), coatMat);
     muzzle.position.set(0, 1.52, 1.16);
     muzzle.rotation.x = 0.5;
     horseGroup.add(muzzle);
-    const earGeo = new THREE.ConeGeometry(0.06, 0.2, 5);
+    const earGeo = warriorGeo('ConeGeometry:0.06,0.2,5', () => new THREE.ConeGeometry(0.06, 0.2, 5));
     for (const ex of [-0.1, 0.1]) {
       const ear = new THREE.Mesh(earGeo, coatMat);
       ear.position.set(ex, 1.86, 0.8);
       horseGroup.add(ear);
     }
 
-    const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.04, 0.62, 6), maneMat);
+    const tail = new THREE.Mesh(warriorGeo('CylinderGeometry:0.07,0.04,0.62,6', () => new THREE.CylinderGeometry(0.07, 0.04, 0.62, 6)), maneMat);
     tail.position.set(0, 1.05, -0.82);
     tail.rotation.x = 0.4;
     horseGroup.add(tail);
@@ -1194,22 +1232,22 @@ export function createWarriorModel(options: {
   }
 
   const legSpreadX = options.isMounted ? 0.42 : 0.18;
-  const leftLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.11, 0.68, 8), leatherMat);
+  const leftLeg = new THREE.Mesh(warriorGeo('CylinderGeometry:0.13,0.11,0.68,8', () => new THREE.CylinderGeometry(0.13, 0.11, 0.68, 8)), leatherMat);
   leftLeg.position.set(-legSpreadX, 0.34 + riderYOffset * 0.4, 0);
   leftLeg.rotation.z = options.isMounted ? 0.32 : 0;
   bodyGroup.add(leftLeg);
 
-  const rightLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.11, 0.68, 8), leatherMat);
+  const rightLeg = new THREE.Mesh(warriorGeo('CylinderGeometry:0.13,0.11,0.68,8', () => new THREE.CylinderGeometry(0.13, 0.11, 0.68, 8)), leatherMat);
   rightLeg.position.set(legSpreadX, 0.34 + riderYOffset * 0.4, 0);
   rightLeg.rotation.z = options.isMounted ? -0.32 : 0;
   bodyGroup.add(rightLeg);
 
-  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.29, 0.86, 8), clothMat);
+  const torso = new THREE.Mesh(warriorGeo('CylinderGeometry:0.36,0.29,0.86,8', () => new THREE.CylinderGeometry(0.36, 0.29, 0.86, 8)), clothMat);
   torso.position.set(0, 0.98 + riderYOffset, 0);
   torso.castShadow = true;
   bodyGroup.add(torso);
 
-  const pauldronGeo = new THREE.SphereGeometry(0.2, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  const pauldronGeo = warriorGeo('SphereGeometry:0.2,10,8,0,Math.PI*2,0,Math.PI/2', () => new THREE.SphereGeometry(0.2, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2));
   const leftPauldron = new THREE.Mesh(pauldronGeo, steelMat);
   leftPauldron.position.set(-0.4, 1.28 + riderYOffset, 0);
   leftPauldron.rotation.z = 0.35;
@@ -1220,17 +1258,17 @@ export function createWarriorModel(options: {
   rightPauldron.rotation.z = -0.35;
   bodyGroup.add(rightPauldron);
 
-  const helm = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.38, 10), steelMat);
+  const helm = new THREE.Mesh(warriorGeo('CylinderGeometry:0.22,0.24,0.38,10', () => new THREE.CylinderGeometry(0.22, 0.24, 0.38, 10)), steelMat);
   helm.position.set(0, 1.62 + riderYOffset, 0);
   helm.castShadow = true;
   bodyGroup.add(helm);
 
-  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.12, 0.24), goldMat);
+  const visor = new THREE.Mesh(warriorGeo('BoxGeometry:0.32,0.12,0.24', () => new THREE.BoxGeometry(0.32, 0.12, 0.24)), goldMat);
   visor.position.set(0, 1.62 + riderYOffset, 0.16);
   bodyGroup.add(visor);
 
   if (options.isCommander || options.isHeavy) {
-    const plume = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.34, 0.46), goldMat);
+    const plume = new THREE.Mesh(warriorGeo('BoxGeometry:0.1,0.34,0.46', () => new THREE.BoxGeometry(0.1, 0.34, 0.46)), goldMat);
     plume.position.set(0, 1.92 + riderYOffset, -0.05);
     bodyGroup.add(plume);
   }
@@ -1240,28 +1278,32 @@ export function createWarriorModel(options: {
   bodyGroup.add(leftArm);
 
   if (options.isRanged) {
-    const bowCurve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(0, -0.5, 0.1),
-      new THREE.Vector3(0, 0, 0.36),
-      new THREE.Vector3(0, 0.5, 0.1),
-    ]);
-    const bowGeo = new THREE.TubeGeometry(bowCurve, 12, 0.04, 6, false);
+    const bowGeo = warriorGeo('warrior-bow', () => {
+      const bowCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0, -0.5, 0.1),
+        new THREE.Vector3(0, 0, 0.36),
+        new THREE.Vector3(0, 0.5, 0.1),
+      ]);
+      return new THREE.TubeGeometry(bowCurve, 12, 0.04, 6, false);
+    });
     const bow = new THREE.Mesh(bowGeo, leatherMat);
     leftArm.add(bow);
   } else {
-    const shieldShape = new THREE.Shape();
-    shieldShape.moveTo(-0.32, 0.42);
-    shieldShape.lineTo(0.32, 0.42);
-    shieldShape.lineTo(0.28, -0.1);
-    shieldShape.lineTo(0, -0.52);
-    shieldShape.lineTo(-0.28, -0.1);
-    shieldShape.closePath();
-    const shieldGeo = new THREE.ExtrudeGeometry(shieldShape, {
-      depth: 0.06,
-      bevelEnabled: true,
-      bevelSize: 0.02,
-      bevelThickness: 0.02,
-      bevelSegments: 2,
+    const shieldGeo = warriorGeo('warrior-shield', () => {
+      const shieldShape = new THREE.Shape();
+      shieldShape.moveTo(-0.32, 0.42);
+      shieldShape.lineTo(0.32, 0.42);
+      shieldShape.lineTo(0.28, -0.1);
+      shieldShape.lineTo(0, -0.52);
+      shieldShape.lineTo(-0.28, -0.1);
+      shieldShape.closePath();
+      return new THREE.ExtrudeGeometry(shieldShape, {
+        depth: 0.06,
+        bevelEnabled: true,
+        bevelSize: 0.02,
+        bevelThickness: 0.02,
+        bevelSegments: 2,
+      });
     });
     const shield = new THREE.Mesh(shieldGeo, armorMat);
     shield.position.set(-0.12, -0.05, 0.22);
@@ -1273,12 +1315,12 @@ export function createWarriorModel(options: {
   rightArm.position.set(0.42, 1.18 + riderYOffset, 0.1);
   bodyGroup.add(rightArm);
 
-  const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.08), goldMat);
+  const hilt = new THREE.Mesh(warriorGeo('BoxGeometry:0.28,0.06,0.08', () => new THREE.BoxGeometry(0.28, 0.06, 0.08)), goldMat);
   hilt.position.set(0, 0.12, 0.25);
   rightArm.add(hilt);
 
   const bladeLen = options.isMounted ? 1.55 : options.isHeavy ? 1.25 : 0.98;
-  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.07, bladeLen, 0.04), steelMat);
+  const blade = new THREE.Mesh(warriorGeo(`blade:${bladeLen}`, () => new THREE.BoxGeometry(0.07, bladeLen, 0.04)), steelMat);
   blade.position.set(0, 0.12 + bladeLen * 0.5, 0.25);
   blade.rotation.x = 0.25;
   rightArm.add(blade);

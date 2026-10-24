@@ -19,6 +19,7 @@ import {
   ensureBannerlordFoundation,
   equipInventoryItemForHero,
   PLAYER_HERO_ID,
+  getTroopDefinition,
 } from './bannerlordFoundation';
 import {
   advanceDailyPartyFood,
@@ -669,6 +670,25 @@ export function calculateDailyFoodConsumption(roster: TroopRoster): number {
   return calculateDailyFoodDemand(roster);
 }
 
+/**
+ * Günlük parti maaşı — tek kaynak. Yığınlar (troopStacks) varsa maaş her
+ * birlik türünün kendi tanım ücretinden hesaplanır: Bannerlord'da maaş
+ * kademeyle artar; eskiden sınıf başına düz ücret elit kadroyu acemi
+ * fiyatına çalıştırıyordu. Yığın yoksa (eski kayıt) kadro-sınıf ücreti.
+ */
+export function calculatePartyDailyWage(state: CampaignState): number {
+  const stacks = state.troopStacks;
+  if (stacks && stacks.length > 0) {
+    let total = 0;
+    for (const stack of stacks) {
+      const def = getTroopDefinition(stack.troopId);
+      if (def) total += def.wage * Math.max(0, stack.count);
+    }
+    return total;
+  }
+  return calculateDailyWage(state.roster);
+}
+
 export function recruitUnit(
   state: CampaignState,
   settlementId: string,
@@ -1251,7 +1271,7 @@ export const SIEGE_GARRISON_FOOD_PER_DAY = 3;
 export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState {
   // 10.8: Aserai kültürel cezası — parti ücretleri +%5 (cultureBonuses tek kaynak).
   const wage = Math.round(
-    calculateDailyWage(state.roster) * getPlayerCultureModifiers(state).wageMultiplier,
+    calculatePartyDailyWage(state) * getPlayerCultureModifiers(state).wageMultiplier,
   );
   const foodResult = advanceDailyPartyFood(state);
   const stateAfterFood = foodResult.nextState;

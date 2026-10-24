@@ -10,7 +10,7 @@ import {
   UNIT_DEFINITIONS,
   UnitTierId,
   calculateClanTier,
-  calculateDailyWage,
+  calculatePartyDailyWage,
   calculateLearningLimit,
   calculatePartyStrength,
   getTotalTroops,
@@ -211,7 +211,7 @@ export const GameHud: React.FC<GameHudProps> = ({
     campaign.roster,
     campaign.playerHp / campaign.playerMaxHp,
   );
-  const dailyWage = calculateDailyWage(campaign.roster);
+  const dailyWage = calculatePartyDailyWage(campaign);
   const clanInfo = calculateClanTier(campaign.renown);
   // Tek kaynak (10.5): parti kapasitesi partySystem'den gelir; eski `45 + kademe` uydurmaydı.
   const partyCapacity = getPartyLimit(campaign);

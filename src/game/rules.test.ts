@@ -5,6 +5,7 @@ import {
   getTotalTroops,
   calculatePartyStrength,
   calculateDailyWage,
+  calculatePartyDailyWage,
   recruitUnit,
   buyFoodAtSettlement,
   advanceDailyEconomyAndWorld,
@@ -323,7 +324,7 @@ test('buyFoodAtSettlement increases party food and deducts gold', () => {
 
 test('advanceDailyEconomyAndWorld advances day, collects fief taxes from castle and bound village, and pays wages', () => {
   const state = createInitialCampaignState('Komutan Demirhan', 'noble');
-  const wage = calculateDailyWage(state.roster);
+  const wage = calculatePartyDailyWage(state);
   const playerFiefs = state.settlements.filter((s) => s.faction === 'player');
   const expectedTax = playerFiefs.reduce((sum, s) => sum + Math.round(s.prosperity * 0.25), 0);
   const next = advanceDailyEconomyAndWorld(state);
