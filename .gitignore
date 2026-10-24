@@ -13,3 +13,4 @@ tools/e2e/.cache/
 .playwright-cli/
 /*.png
 /*.webm
+image-search/
