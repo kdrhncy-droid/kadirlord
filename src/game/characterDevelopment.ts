@@ -16,7 +16,11 @@ import type {
   CampaignState,
   HeroSkillState,
 } from './rules.ts';
-import { PLAYER_HERO_ID } from './bannerlordFoundation.ts';
+import {
+  PLAYER_HERO_ID,
+  calculateLearningHardCap,
+  calculateLearningSoftCap,
+} from './bannerlordFoundation.ts';
 
 export const SKILL_ATTRIBUTE_MAP: Record<BannerlordSkillId, AttributeId> = {
   oneHanded: 'VIGOR',
@@ -79,41 +83,38 @@ export const ATTRIBUTE_LABELS: Record<AttributeId, { name: string; desc: string 
 };
 
 /**
- * Bannerlord yumuşak öğrenme sınırı:
- * Taban 10 + (Nitelik - 1) * 14 + Odak * 40
+ * Bannerlord öğrenme sınırı (yumuşak tavan) — tek kanonik kaynak
+ * `bannerlordFoundation.calculateLearningSoftCap`:
+ *   LearningLimit = Odak × 30 + (Nitelik − 1) × 10
+ * (Mount & Blade wiki "Skills (Bannerlord)": Learning Limit and Maximum Skill Level.)
+ * Not: Eski kopya `(N−1)×14 + O×40 + 10` yanlışlıkla sert tavan ailesini kullanıyordu (10.6).
  */
 export function calculateLearningLimit(attributeValue: number, focusPoints: number): number {
-  const safeAttr = Math.max(1, Math.min(10, attributeValue));
-  const safeFocus = Math.max(0, Math.min(5, focusPoints));
-  return (safeAttr - 1) * 14 + safeFocus * 40 + 10;
+  return calculateLearningSoftCap(attributeValue, focusPoints);
 }
 
 /**
- * Bannerlord öğrenme hızı çarpanı:
- * Becerinin seviyesi sınırın altındayken yüksek hız (x1.0 - x3.0),
- * sınır aşıldığında kademeli olarak sıfıra düşer (Sert tavan: Sınır + 60).
+ * Bannerlord öğrenme hızı (araştırılmış formül):
+ *   Seviye ≤ Sınır: Hız = 0.5×Nitelik + 1.25×Odak + 1.25
+ *   Seviye > Sınır: Hız = 0.5×Nitelik + 1.25×Odak − 0.125×(Seviye − Sınır), taban 0.
+ * Hız, tam olarak sert tavanda (4 + (N−1)×14 + O×40) sıfıra iner; iki formül tutarlıdır.
+ * Kaynak: r/Bannerlord "Learning rate formula and skill-caps" (2023) + wiki tavan tabloları.
  */
 export function calculateLearningRate(
   skillLevel: number,
   attributeValue: number,
   focusPoints: number,
 ): number {
-  const limit = calculateLearningLimit(attributeValue, focusPoints);
-  const hardCap = limit + 60;
+  const safeAttr = Math.max(1, Math.min(10, attributeValue));
+  const safeFocus = Math.max(0, Math.min(5, focusPoints));
+  const limit = calculateLearningSoftCap(safeAttr, safeFocus);
+  const hardCap = calculateLearningHardCap(safeAttr, safeFocus);
   if (skillLevel >= hardCap) return 0;
 
-  // Temel çarpan: her odak puanı +0.4, her nitelik +0.1 çarpan katar
-  const baseMultiplier = 1.0 + focusPoints * 0.4 + (Math.max(1, attributeValue) - 1) * 0.1;
-
   if (skillLevel <= limit) {
-    const ratio = skillLevel / Math.max(1, limit);
-    return Math.max(0.3, baseMultiplier * (1.0 - ratio * 0.35));
-  } else {
-    // Sınır aşımı durumunda yumuşak sönümleme
-    const overflow = skillLevel - limit;
-    const decay = Math.max(0, 1 - overflow / 60);
-    return Number((baseMultiplier * 0.65 * decay).toFixed(3));
+    return 0.5 * safeAttr + 1.25 * safeFocus + 1.25;
   }
+  return Math.max(0, 0.5 * safeAttr + 1.25 * safeFocus - 0.125 * (skillLevel - limit));
 }
 
 /**

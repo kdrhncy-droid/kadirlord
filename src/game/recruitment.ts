@@ -10,18 +10,22 @@
  */
 import {
   UNIT_DEFINITIONS,
-  calculateClanTier,
   getTotalTroops,
   recruitUnit,
   type CampaignState,
   type Settlement,
   type UnitTierId,
 } from './rules.ts';
+import { getPartyLimit } from './partySystem.ts';
+import { getPlayerCultureModifiers } from './cultureBonuses.ts';
 
-/** Parti kapasitesi: 20 taban + klan kademesi bonusu + nam. */
+/**
+ * Parti kapasitesi — tek kaynak `partySystem.getPartyLimit` (10.5):
+ * 20 taban + klan kademesi + İaşeci İdare×0.25. Eski `+ Nam/40` uydurmaydı;
+ * nam yalnız klan kademesi üzerinden etki eder.
+ */
 export function partyLimit(campaign: CampaignState): number {
-  const tier = calculateClanTier(campaign.renown);
-  return 20 + tier.maxPartyBonus + Math.floor(campaign.renown / 40);
+  return getPartyLimit(campaign);
 }
 
 export function partySize(campaign: CampaignState): number {
@@ -80,16 +84,21 @@ export function recruitQuote(
   const def = UNIT_DEFINITIONS[unitId];
   const available = settlement.recruitPool[unitId] ?? 0;
   const modifier = recruitCostModifier(relation);
-  const unitCost = Math.max(1, Math.round(def.recruitCost * modifier));
+  // 10.8: Kuzait feat'i — atlı birlik devşirme %10 ucuz.
+  const cultureModifier = def.isMounted
+    ? getPlayerCultureModifiers(campaign).mountedRecruitCostMultiplier
+    : 1;
+  const unitCost = Math.max(1, Math.round(def.recruitCost * modifier * cultureModifier));
   const room = partyRoom(campaign);
   const byRoom = Math.floor(room);
   const byGold = unitCost > 0 ? Math.floor(campaign.gold / unitCost) : 0;
   const gate = recruitRelationGate(relation);
 
   let blockedReason: string | null = null;
+  // Bannerlord'da yerleşim başına günlük asker toplama kilidi yoktur (10.7):
+  // sınırlayıcı olan yalnız eşraf yuvalarındaki gönüllülerdir; yuvalar boşalır
+  // ve günlük üretimle azar azar dolar. Aynı gün tekrar toplamak serbesttir.
   if (!gate.allowed) blockedReason = gate.reason ?? null;
-  else if (settlement.lastRecruitDay !== undefined && settlement.lastRecruitDay === campaign.day)
-    blockedReason = 'Bu yerleşimden bugün zaten asker topladınız. Yeni gönüllüler için 1 gün bekleyin.';
   else if (available <= 0) blockedReason = 'Yerleşkede bu birlikten gönüllü kalmadı.';
   else if (room <= 0) blockedReason = 'Parti kapasitesi dolu — önce asker terhis et veya klan kademeni yükselt.';
   else if (campaign.gold < unitCost) blockedReason = 'Yetersiz dinar.';
@@ -171,12 +180,10 @@ export function recruitBatch(
 
   // Altın: `recruitUnit` her asker için **taban** ücreti düşürür; ilişki
   // indirimi/zammı uygulanmış gerçek tutarı yazıyoruz (tek kaynak: totalCost).
+  // Günlük kilit işareti yazılmaz — Bannerlord'da böyle bir kural yok (10.7).
   state = {
     ...state,
     gold: Math.max(0, campaign.gold - totalCost),
-    settlements: state.settlements.map((s) =>
-      s.id === settlementId ? { ...s, lastRecruitDay: state.day } : s,
-    ),
   };
 
   return { success: true, nextState: state, recruited, totalCost };
@@ -188,24 +195,16 @@ export function recruitPoolCap(type: Settlement['type']): number {
 }
 
 /**
- * Havuzların tazelenmesi — her 3 günde bir +1 (üst sınıra kadar).
- * Deterministik: `day % 3 === 0` olduğunda çalışır.
+ * Havuz tazeleme — Bannerlord modeli (10.7): gönüllüler **her gün** azar azar
+ * üretilir (`GetDailyVolunteerProductionProbability`); 3 günde bir toplu dolum
+ * ve toplanmış yuvaların toplu sıfırlanması Bannerlord'da yoktur.
+ *
+ * Günlük üretim tek yerden, `rules.ts` günlük tikinden yapılır (havuz artışı +
+ * günde 2 toplanmış yuvanın geri açılması). Bu fonksiyon eski çağrı uyumu için
+ * durur ve artık toplu tazeleme yapmaz.
  */
-export function refreshRecruitPools(settlements: Settlement[], day: number): Settlement[] {
-  if (day % 3 !== 0) return settlements;
-  return settlements.map((s) => {
-    const cap = recruitPoolCap(s.type);
-    const nextPool = { ...s.recruitPool };
-    for (const unitId of Object.keys(UNIT_DEFINITIONS) as UnitTierId[]) {
-      const current = nextPool[unitId] ?? 0;
-      // Köyler yalnız acemi/milistenin yanı sıra sınırlı seçkin verir; şehirler daha çok.
-      const step = s.type === 'TOWN' ? 2 : 1;
-      // Tazeleme **asla azaltmaz**: mevcut havuz üst sınırın üzerindeyse korunur.
-      const ceiling = Math.max(cap, current);
-      nextPool[unitId] = Math.min(ceiling, current + step);
-    }
-    return { ...s, recruitPool: nextPool, recruitedSlotKeys: undefined };
-  });
+export function refreshRecruitPools(settlements: Settlement[], _day: number): Settlement[] {
+  return settlements;
 }
 
 /** Toplam havuz (UI özeti). */

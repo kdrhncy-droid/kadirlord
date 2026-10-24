@@ -8,6 +8,7 @@ import {
 } from '../game/rules';
 import {
   type SettlementNotable,
+  NOTABLE_POWER_POWERFUL,
   generateNotables,
 } from '../game/notables';
 import { hash32 } from '../game/heroes';
@@ -40,7 +41,14 @@ interface BannerlordRecruitmentModalProps {
   onClose: () => void;
 }
 
-const REQUIRED_RELATIONS = [0, 0, 5, 10, 15, 20];
+/**
+ * Yuva ilişki eşikleri (10.7 araştırması): Bannerlord'da ilk üç yuva ilişkisiz
+ * açıktır; 4/5/6. yuvalar +5/+10/+20 ilişki ister
+ * (`DefaultVolunteerModel.MaximumIndexHeroCanRecruitFromHero` davranışı;
+ * topluluk SSS: "starting three troops... 4th, 5th, 6th slots +5, +10, +20").
+ * Eski `[0,0,5,10,15,20]` dizisi bu eşiklerin kaymış hâliydi.
+ */
+const REQUIRED_RELATIONS = [0, 0, 0, 5, 10, 20];
 
 export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProps> = ({
   settlement,
@@ -76,7 +84,8 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
     return notables.map((notable, nIdx) => {
       const slots: (RecruitmentSlotData | null)[] = [];
       const isLandowner = notable.role === 'headman' || notable.role === 'elder';
-      const isPowerful = notable.power >= 70;
+      // Bannerlord: soylu hat yalnız Güçlü (200+) köy toprak sahiplerinden gelir (10.7).
+      const isPowerful = notable.power >= NOTABLE_POWER_POWERFUL;
 
       // Her köy ve eşraf farklı/rastgele sayıda gönüllü asker çıkarır (köylerde eşraf başına 1..4, şehirlerde 2..5)
       const notableSeed = hash32(`${settlement.id}:${notable.id}:${nIdx}`);
@@ -310,10 +319,10 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
 
             {availableUnlockedSlots <= 0 && (
               <div
-                data-testid="recruitment-cooldown-banner"
+                data-testid="recruitment-empty-banner"
                 className="p-2.5 rounded border border-[#f59e0b]/50 bg-[#292014] text-xs text-[#fde68a]"
               >
-                Bu yerleşimdeki alınabilir gönüllü askerlerin tamamı toplandı (slotlar boş). Yeni gönüllüler için birkaç gün bekleyin.
+                Bu yerleşimdeki alınabilir gönüllü askerlerin tamamı toplandı (yuvalar boş). Eşraf yeni gönüllüleri günlük üretimle azar azar sunar; kilitli yuvalar için eşrafla ilişki gerekir.
               </div>
             )}
 

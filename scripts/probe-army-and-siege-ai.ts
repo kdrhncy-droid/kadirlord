@@ -219,7 +219,15 @@ console.log('=== PROBE: Görev 2 (Ordu & Uyum) + Çoklu Kuşatma Yay Çemberi + 
   assert.equal(army!.memberLordIds.length, 2, 'Orduda 2 üye parti bulunmalı');
 
   const expectedLoss = calculateDailyCohesionLoss(army!, state);
-  assert.ok(expectedLoss < -5, `Günlük uyum kaybı negatif olmalı (${expectedLoss})`);
+  // 10.11: -2 baz -1/parti -0.5/aç parti. Fikstürde 2 üye parti + 1 aç üye var.
+  const starvingMembers = state.lords.filter(
+    (l) => army!.memberLordIds.includes(l.id) && (l.foodDays ?? 5) <= 0,
+  ).length;
+  assert.equal(
+    expectedLoss,
+    -2 - army!.memberLordIds.length - 0.5 * starvingMembers,
+    `Günlük uyum kaybı Bannerlord modeline uymalı (${expectedLoss})`,
+  );
 
   // Günlük Ordu & Erzak Paylaşımı döngüsü
   const beforeFood = state.food;
@@ -238,8 +246,14 @@ console.log('=== PROBE: Görev 2 (Ordu & Uyum) + Çoklu Kuşatma Yay Çemberi + 
   );
 
   // +10 Uyum Artırma (Boost Cohesion)
-  const boostCost = calculateCohesionBoostCost(armyAfterDay1.memberLordIds.length);
-  assert.equal(boostCost, 10 + 2 * 2, '+10 Uyum maliyeti (10 + memberCount*2) Nüfuz olmalı');
+  const boostCost = calculateCohesionBoostCost(armyAfterDay1, state);
+  // 10.11: +10 maliyeti = üye çağrı maliyetleri toplamının %10'u; kendi klan
+  // partisi (0) girmez, yalnız yabancı lordunkinin %10'u kalır.
+  assert.equal(
+    boostCost,
+    Math.round(vassalCost * 0.1),
+    '+10 Uyum maliyeti, yabancı partilerin çağrı maliyetinin %10\'u olmalı',
+  );
   const boosted = boostArmyCohesion(state);
   assert.ok(boosted.success, '+10 Uyum artışı başarılı olmalı');
   assert.equal(boosted.influenceSpent, boostCost, '+10 Uyum için doğru nüfuz düşülmeli');

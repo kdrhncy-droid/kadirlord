@@ -3,6 +3,7 @@
 > **Son Konsolidasyon:** 2026-10-22 (`d929f6f` — Canlı Kuşatma, Çoklu Lord Yarım Ay Dizilimi ve Ordu/Bütünlük Sistemleri Sonrası)
 > **Kapsam:** Bu dosya; eski `YAPILACAKLAR_LISTESI.md`, `docs/CURSOR_ZOR_GOREVLER.md`, `docs/EKSIKLER_VE_HATALAR.md`, **Steam Bannerlord Türkçe Detaylı Tam Rehberi (`id=2046201799` — 17 Bölüm + SSS)** ve **6 Ana Ekranın (Şehir/Köy/Kale, Harita HUD, Envanter, Pazar, Diyalog/Lord, Parti/Karakter/Krallık) Görsel/Mekanik Denetimi** içindeki **TÜM görevlerin birleştirilmiş tek kaynağıdır**.
 > **Doğrulama Prensibi:** Her madde gerçek kod tabanında (`src/game/` ve `src/components/`) kontrol edilerek gerçekten tamamlanmış olanlar `[x]`, eksik/yarım/görsel olarak hatalı olanlar `[ ]` olarak işaretlenmiştir.
+> **⚠️ 2026-10-24 denetimi:** Bazı `[x]` maddelerin sayı/formül ve doğrulama bakımından Bannerlord'a uymadığı (ve `verify:fast`in kırmızı olduğu) kod kanıtıyla tespit edildi; düzeltmeler **Bölüm 6 (10.1–10.11)** altında takip edilir. Ayrıntı: [`docs/DENETIM_2026-10-24_YAPILANLAR_VE_SAVAS_MEYDANI.md`](docs/DENETIM_2026-10-24_YAPILANLAR_VE_SAVAS_MEYDANI.md).
 
 ---
 
@@ -248,3 +249,50 @@
 - [x] **P7 — Performans Ölçüm ve Optimizasyon Paketi:** Başlangıç/modal FPS düşüşü ve WebGL arka plan duraklatması tamamlandı.
 - [x] **P8 — Çoklu Slot Kayıt Yönetimi Ekranı:** `SAVE_VERSION = 4` ve çoklu kayıt yuvaları tamamlandı.
 
+---
+
+## 🔍 BÖLÜM 6 — 2026-10-24 DENETİM DÜZELTMELERİ (Altın Kural 2–3: yanlış/eksik Bannerlord sistemi)
+
+> Kaynak denetim: [`docs/DENETIM_2026-10-24_YAPILANLAR_VE_SAVAS_MEYDANI.md`](docs/DENETIM_2026-10-24_YAPILANLAR_VE_SAVAS_MEYDANI.md).
+> Bu bölümdeki maddeler, yukarıda `[x]` görünen bazı işlerin Bannerlord'a **sayı/formül ya da bütünlük**
+> bakımından uymadığının kod kanıtıyla tespitidir; `[x]` satırları tarihî kayıt olarak bırakılmıştır,
+> düzeltme buradan takip edilir.
+
+- [x] **10.1. Derlenebilirlik ve "doğrulandı" iddiasını geri kazan (`KingdomManagementModal.tsx`, `package-lock.json`):** *(2026-10-24 yapıldı)*
+  - *Canlı Tımar-Güç Paradoksu Laboratuvarı* (tanımsız `simFiefCountA/B`, `simStrengthA/B`, `sandboxParadoxReport` referansları, 119 satır) tamamen silindi; canlı savaş-isteği paneli tam genişliğe alındı. Bannerlord'da böyle bir laboratuvar ekranı yok.
+  - Lock eşitlendi (`npm install --legacy-peer-deps` → esbuild 0.28.2); `node_modules` zaten repoda izlenmiyordu (0 dosya).
+  - `probe-troops`: hatalı iddia düzeltildi — genel (bozkır temalı) `UNIT_DEFINITIONS.cavalry.name`'in Vlandiya kasabasında yazılması yerine kültürel rol metninin yazılması ve genel adın sızmaması beklenir (probe içi not).
+  - Kanıt: temiz `rm -rf node_modules && npm ci` sonrası `npx tsc --noEmit` 0 hata, `npm run verify:fast` yeşil, `probe-troops` yeşil.
+- [ ] **10.2. Meydan Savaşını Bannerlord Doğrusuna Göre Yeniden Yap (`WorldCanvas.tsx` sefer savaşı → ayrı misyon; `CharacterArenaView.tsx` + `battleEnginePool.ts` + `tacticalFormation.ts` üretim yoluna taşınacak):**
+  - Ayrıntı ve fazlar (B1–B7) denetim raporu Bölüm 3 ve 5'te: bölge-arazi sahnesi (nehir/köprü/orman/köy yakınlığı, yaklaşma vektöründen doğuş kenarları, ~450×450 alan, kırmızı sınır), **Order of Battle** diziliş fazı (≤8 bölük, filtreler, kaptanlar, başlangıç emirleri), 0–8 bölük seçimi + F1/F2/F3/F4/F5/F6 emirleri ve konum sancağı, sınıf davranışları (piyade/okçu/süvari/**atlı okçu**) + düşman kaptan AI, **1 aktör = 1 asker** (28+28 sıkıştırması kalkacak), orantılı ilk dalga + kendi kenarından takviye dalgaları, yönlü dövüş + gerçek mermiler + sınırlı mühimmat + ayrı at aktörü (kuşanılmış eşya/beceriden hasar), moral/bozgun, Tab skor ekranı + kurallı geri çekilme, oyuncu bayılınca AI devri ve yenilgide **esaret** (`gameover` değil), sonuç → esir → ganimet akışı.
+  - Kaldırılacak alâkasız katman: Space dash + stamina, kombo sayacı, hitstop/kamera sarsıntısı, düşman altı telegraph halkası, bedelsiz "Haritaya Çekil", `BattlePrewarmModal`daki uydurma ipuçları ("%82 koruma", "[M] +45 ezme" vb.), zaferde lord kadrosunu %25'e zorla indirme.
+- [ ] **10.3. Kuşatma Taarruz Sahnesini Meydan Savaşından Ayır (`App.tsx:handleStartSiegeBattle`):**
+  - Şu an kuşatma taarruzu açık arazide ızgara meydan savaşı açıyor. Doğrusu: sur/gedik/kapı + inşa edilmiş makinelerin (koçbaşı/kuleler/merdivenler) cephelere yerleştiği ayrı sur sahnesi. Sahne hazır olana kadar taarruz düğmesi meydan savaşını "kuşatma" diye sunmamalı.
+- [x] **10.4. Erzak Tüketimi ve Çeşitlilik Moralini Düzelt (`foodSystem.ts`):** *(2026-10-24 yapıldı)*
+  - Tüketim Bannerlord ölçeğine çekildi: `ceil((asker+1)/20)` (~20 askere günde 1 birim). Yiyecek türleri 9'a tamamlandı (tereyağı/üzüm/zeytin/bira pazar kalemleri eklendi); yenebilirlik artık tanım→tür eşlemesiyle (zeytinyağı ve çömlek gibi `FOOD` kategorili ticaret malları yenmez), çeşit türle sayılır (iki peynir tek çeşit).
+  - Çeşitlilik morali tür başına +1, tavan +8 (Gourmet parametresi ×2 hazır, perk bağlaması 10.10'da). Moral artık günlük toplamsal şişmez; beslenen partide `50 + çeşitlilik` hedefine %25 yakınsar.
+  - Kalan küçük fark: kesirli günlük tüketim yerine tam birime yuvarlama (kod içinde notlu).
+- [x] **10.5. Parti/Tutsak Kapasite Formüllerini Düzelt (`partySystem.ts`, `rules.ts:calculateClanTier`):** *(2026-10-24 yapıldı)*
+  - Klan kademesi parti bonusu doğrusuna çekildi: Kademe 0: 0, Kademe 1: +25, sonra +15/kademe birikimli (25/40/55/70/85/100). Uydurma `Liderlik×0.15`, `Nam/50` ve `recruitment.partyLimit`teki `Nam/40` kaldırıldı; parti limiti tek kaynaktan (`partySystem.getPartyLimit`) besleniyor (HUD'daki `45 + kademe` kopyası da buna bağlandı). Parti ekranı dökümünden sahte satırlar silindi.
+  - Tutsak sınırı artık **sağlıklı (yaralı olmayan) mevcut askerin yarısı**; yaralılar düşülür, sınır savaş sonrası kendiliğinden azalır. Parti ekranı bu dökümü gösterir.
+- [x] **10.6. Öğrenme Sınırını Tek Kaynağa İndir (`characterDevelopment.ts` vs `bannerlordFoundation.ts`):** *(2026-10-24 yapıldı)*
+  - Kanonik kaynak `bannerlordFoundation.calculateLearningSoftCap/HardCap`. `characterDevelopment.calculateLearningLimit` buna devreder; `rules.ts` kopyası da yumuşak sınıra çekilip eşitliği `rules.test.ts` ile kilitlendi. Arayüzler artık doğru sınırı gösterir (5N/4O: 160, eskiden 226).
+  - Öğrenme hızı da araştırılmış Bannerlord formülüne çevrildi: sınır altında `0.5N + 1.25O + 1.25`, üstünde seviye başına `-0.125`, sert tavanda 0. Probe beklentileri (226/336) düzeltildi.
+  - [ ] Kalıntı: beceri XP ihtiyaç eğrisi (`getXpRequiredForSkillLevel`) hâlen proje ölçekli; Bannerlord eğrisiyle değişimi ayrı denge işi.
+- [x] **10.7. Asker Toplama 1 Gün Cooldown'ını Kaldır (`recruitment.ts:91`, `App.tsx:1269`, `lastRecruitDay`):** *(2026-10-24 yapıldı)*
+  - Günlük kilit tamamen kaldırıldı (`lastRecruitDay` alanı ve tüm yazımları silindi); aynı gün tekrar toplama serbest (probe ile kilitli). 3 günde bir toplu tazeleme + yuva sıfırlama kaldırıldı; üretim tek yerden, günlük tikten azar azar (havuz artışı + günde 2 yuvanın geri açılması).
+  - Yuva eşikleri araştırılmış modele çekildi: ilk üç yuva serbest, 4/5/6. yuvalar +5/+10/+20 ilişki (`[0,0,0,5,10,20]`). Eşraf nüfuzu Bannerlord ölçeğine taşındı (Sıradan <100, Etkili 100–199, Güçlü 200+; tek kaynak `notables.ts`); soylu hat yalnız Güçlü toprak sahiplerinden.
+  - Kalan: yuva içeriği hâlâ ekran açılışında deterministik üretiliyor; gerçek günlük üretim olasılığı ve yuva-içi kademe yükselmesi 10.9 birlik ağaçlarıyla birlikte ele alınacak.
+- [ ] **10.8. Kültür Bonuslarını Tek Sürümde Doğru Yaz + Matematiğe Bağla (`CharacterCreatorModal.tsx`, `cultureBonuses.ts`):** *(2026-10-24 kısmen yapıldı)*
+  - ✅ Tek kaynak kuruldu: `src/game/cultureBonuses.ts` (Wiki "Culture" güncel feat listesi, cezalar dahil). Kartlar buradan türer; kartta yazan her satırın `wiredIn` karşılığı var: Aserai çöl hızı + ücret +%5 cezası, Batanya orman cezası %50 az, Kuzait atlı devşirme −%10 + şehir vergisi −%20 cezası, Sturgia ordu toplama −%50 nüfuz, Vlandiya nam +%5 + ordu çağırma +%20 cezası. Kültür seçiminin oyuncu kahramanına yazılmaması hatası da düzeltildi. Probe: `probe-culture-feats.ts`.
+  - [ ] Kalan: sistemi projede olmayan satırlar karta çıkmıyor (`pendingLines`): Aserai kervan/ticaret cezası, Batanya görüş menzili + veteran milis + proje hızı, Kuzait terfi indirimi + köy hayvancılığı, Sturgia tahıl + karar ilişki cezası, Vlandiya paralı asker geliri + kale köyü üretimi, İmparatorluk'un üç satırı (garnizon ücreti, ordu nüfuzu, ocak). Bu sistemler kuruldukça satırlar bağlanacak; İmparatorluk kartı şimdilik bunu açıkça söyler.
+- [ ] **10.9. Birlik Ağaçlarını Gerçek Kültür Hatlarına Çevir + `guard` Sınıfını Kaldır (`bannerlordFoundation.ts`, `troops.ts`, ADIM 5.1 ile birleşik):**
+  - Şu an her kültür aynı şablon: Acemi → Piyade/Okçu/Süvari (T2!) + uydurma Muhafız dalı; "Katafrakt" T3 sıradan asker. Doğrusu: sıradan hat piyade/okçu (T1–T5, kültüre özgü ad/dallar — örn. İmparatorluk Menavliaton şok dalı, Vlandiya arbalet hattı), süvari/atlı okçu elitleri soylu hatta (T2–T6). Savaş sınıfları `infantry/archer/cavalry/horseArcher` olmalı; `guard` kovası roster/aktör/kayıp muhasebesinden çıkmalı (10.2 ile birlikte).
+- [ ] **10.10. Perk Kataloğunu "Tam" Seviyesine Getir veya İddiayı Düzelt (`perks.ts` — şu an 42 kayıt):**
+  - Her beceride 25'lik eşiklerde çift seçenekli gerçek perk listesine genişlet; perk etkilerinin hangi sistemde uygulandığını katalogda işlevsel karşılığıyla bağla (yalnız ad/açıklama yetmez — Discard perkleri doğru örnek).
+- [x] **10.11. Cohesion ve Ordu Çağırma Formüllerini Araştırılmış Değerlerle Değiştir (`armySystem.ts`):** *(2026-10-24 yapıldı)*
+  - Günlük kayıp araştırılmış modele çekildi: **-2 baz − 1/ek parti − 0.5/aç parti** (asker sayısı terimi silindi). Kaynak: rehber dökümü ("always -2, another 1 for each party") + oyun içi açlık satırı bildirimi; kod yorumunda atıflı.
+  - +10 maliyeti artık **üye partilerin çağrı maliyetleri toplamının %10'u**; çağrı maliyeti 0 olan klan partileri girmez (yalnız klan ordusunda bedava — Fandom "Influence" doğrulaması). `calculateCohesionBoostCost(army, state)` imzası ve tüm çağrıları güncellendi.
+  - Dürüst not: çağrı maliyetinin etkenleri Bannerlord'undur (asker/kademe/ilişki/mesafe) ama katsayıları proje nüfuz ekonomisine ölçeklidir; kesin oyun katsayıları yayımlı olmadığından kod yorumunda böyle belirtilir.
+
+- [ ] **10.12. Önceden kırmızı problar (`probe-hud`, `probe-ui-session`):** 2026-10-24 düzeltme turunda, değişiklikler geri alınarak (stash) bu iki probun HEAD'de de kırmızı olduğu doğrulandı (HUD menü etiketleri ve UI katman sayısı beklentileri kodla uyumsuz). `verify:fast` içinde olmadıkları için fark edilmemiş. Beklentiler güncel HUD/UI ile karşılaştırılıp ya kod ya probe düzeltilecek; ikisi de `verify:fast`e eklenmeli.

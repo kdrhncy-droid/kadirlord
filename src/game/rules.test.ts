@@ -632,8 +632,8 @@ test('Bannerlord settlement arrival radii and Town, Castle, Village menu systems
 test('Bannerlord Character Sheet, Inventory, Building Projects, Smithy, Siege Camp & Persuasion systems work deterministically', () => {
   let state = createInitialCampaignState('Komutan Demirhan', 'noble');
 
-  // 1. Learning Limit & Clan Tier math
-  assert.equal(calculateLearningLimit(5, 4), (5 - 1) * 14 + 4 * 40 + 10);
+  // 1. Learning Limit & Clan Tier math (10.6: yumuşak sınır = Odak×30 + (Nitelik−1)×10)
+  assert.equal(calculateLearningLimit(5, 4), 4 * 30 + (5 - 1) * 10); // 160
   assert.equal(calculateClanTier(65).tier, 1);
   assert.equal(calculateClanTier(950).tier, 4);
 
@@ -1454,6 +1454,10 @@ test('P0/P1 Bannerlord foundation: canonical heroes, stacks, troop trees, migrat
   assert.equal(calculateLearningHardCap(5, 4), 220);
   assert.equal(calculateLearningSoftCap(2, 0), 10);
   assert.equal(calculateLearningHardCap(2, 0), 18);
+  // 10.6: rules.ts kopyası kanonik yumuşak sınırla birebir aynı sonucu vermeli.
+  for (const [attr, focus] of [[1, 0], [2, 0], [5, 4], [10, 5], [7, 3]] as const) {
+    assert.equal(calculateLearningLimit(attr, focus), calculateLearningSoftCap(attr, focus));
+  }
 
   // Discard: değerin %50’si, resmi kademe tavanları, perk şartı ve taşma hesabı.
   assert.deepEqual([0, 1, 2, 3, 4, 6].map(discardXpCapForTier), [35, 75, 150, 250, 300, 300]);
@@ -2058,15 +2062,17 @@ test('P2 erzak: envanter gıda yığınları, çeşitlilik morali, canlı tüket
   const summary = getPartyFoodSummary(stateWithFood.inventoryItems);
   assert.equal(summary.totalFood, 36);
   assert.equal(summary.distinctVarieties, 3);
-  assert.equal(summary.varietyMoraleBonus, 5); // 3 çeşit = +5 moral
+  assert.equal(summary.varietyMoraleBonus, 2); // 10.4: 3 tür = +(3-1) moral
 
-  // 2. Çeşitlilik moral bonusu eğrisi
+  // 2. Çeşitlilik moral bonusu eğrisi (10.4: tür başına ~+1, tavan +8; Gourmet ×2)
   assert.equal(calculateVarietyMoraleBonus(0), 0);
   assert.equal(calculateVarietyMoraleBonus(1), 0);
-  assert.equal(calculateVarietyMoraleBonus(2), 2);
-  assert.equal(calculateVarietyMoraleBonus(3), 5);
-  assert.equal(calculateVarietyMoraleBonus(4), 8);
-  assert.equal(calculateVarietyMoraleBonus(5), 12);
+  assert.equal(calculateVarietyMoraleBonus(2), 1);
+  assert.equal(calculateVarietyMoraleBonus(3), 2);
+  assert.equal(calculateVarietyMoraleBonus(4), 3);
+  assert.equal(calculateVarietyMoraleBonus(5), 4);
+  assert.equal(calculateVarietyMoraleBonus(9), 8);
+  assert.equal(calculateVarietyMoraleBonus(9, true), 16);
 
   // 3. Günlük tüketim envanterdeki gıda yığınlarından gerçek adetleri eksiltir
   const nextDayState = advanceDailyEconomyAndWorld(stateWithFood);
@@ -2130,8 +2136,8 @@ test('P3 party system: capacity breakdown, troopStacks single source of truth, b
   assert.equal(partyCap.total, getPartyLimit(state));
 
   const prisonerCap = calculatePrisonerLimitBreakdown(state);
-  assert.equal(prisonerCap.base, 10);
-  assert.equal(prisonerCap.total >= 10, true);
+  // 10.5: tutsak sınırı = sağlıklı mevcut askerin yarısı (yaralılar sayılmaz).
+  assert.equal(prisonerCap.total, Math.floor(prisonerCap.healthyTroops / 2));
   assert.equal(prisonerCap.total, getPrisonerLimit(state));
 
   // 2. troopStacks tek kaynak yapısı ve roster senkronu

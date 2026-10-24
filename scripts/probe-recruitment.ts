@@ -83,18 +83,15 @@ ok(refused.nextState === campaign, 'reddedilen işlem durumu değiştirmez');
 ok(!recruitBatch(campaign, 'yok', unit, 1).success, 'bilinmeyen yerleşim reddedilir');
 ok(!recruitBatch(campaign, town.id, unit, 0).success, 'sıfır miktar reddedilir');
 
-/* 9. Havuz tazeleme */
+/* 9. Günlük kilit yok + toplu tazeleme yok (10.7: Bannerlord'da yerleşim
+      başına 1 günlük toplama kilidi ve 3 günde bir toplu dolum yoktur;
+      gönüllüler günlük üretimle azar azar gelir — günlük tik rules.ts'tedir.) */
+const sameDayAgain = recruitBatch(res.nextState, town.id, unit, 1, 0);
+ok(sameDayAgain.success && sameDayAgain.recruited === 1, 'aynı gün aynı yerleşimden tekrar asker toplanabilir');
 const refreshed = refreshRecruitPools(campaign.settlements, 3);
-const oldVillage = campaign.settlements.find((s) => s.id === village.id)!;
-const newVillage = refreshed.find((s) => s.id === village.id)!;
-ok(poolTotal(newVillage) >= poolTotal(oldVillage), '3. günde havuz tazelenir');
-ok(refreshRecruitPools(campaign.settlements, 4) === campaign.settlements, 'diğer günlerde değişmez');
-ok(
-  (Object.keys(newVillage.recruitPool) as UnitTierId[]).every(
-    (u) => (newVillage.recruitPool[u] ?? 0) <= Math.max(recruitPoolCap('VILLAGE'), oldVillage.recruitPool[u] ?? 0),
-  ),
-  'havuz üst sınırı aşılmıyor',
-);
+ok(refreshed === campaign.settlements, 'toplu (3 günlük) tazeleme artık yok — üretim günlük tikte');
+ok(recruitPoolCap('TOWN') >= recruitPoolCap('VILLAGE'), 'şehir havuz tavanı köyden küçük değil');
+void poolTotal;
 
 /* 10. Genel tutarlılık */
 ok(validateRecruitment(campaign).length === 0, 'kampanya toplama açısından tutarlı');

@@ -107,7 +107,12 @@ const kText = render(khuzaitTown).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 ok(vText.includes(CULTURE_TROOPS.vlandia.cavalry.name), 'Vlandiya kasabasında Vlandiya süvarisi görünüyor');
 ok(kText.includes(CULTURE_TROOPS.khuzait.cavalry.name), 'Khuzait kasabasında bozkır süvarisi görünüyor');
 ok(!kText.includes(CULTURE_TROOPS.vlandia.cavalry.name), 'Khuzait kasabasında Vlandiya adı sızmıyor');
-ok(vText.includes(UNIT_DEFINITIONS.cavalry.name), 'genel sınıf adı da yazılıyor (savaş paneliyle eşleşsin)');
+// 10.1 düzeltmesi: eski iddia, genel UNIT adı olan "Zırhlı Bozkır Süvarisi"nin Vlandiya
+// kasabasında da yazılmasını istiyordu — bu, kültür adları diliminin amacına aykırı (bozkır
+// temalı genel ad yabancı kültürde sızıntı olur). Doğrusu: sınıf bilgisi kültürel rol
+// metniyle verilir ("Ağır süvari · Mızrak"), genel ad yabancı kasabaya sızmaz.
+ok(vText.includes(CULTURE_TROOPS.vlandia.cavalry.role), 'sınıf bilgisi kültürel rol metniyle yazılıyor');
+ok(!vText.includes(UNIT_DEFINITIONS.cavalry.name), 'genel (bozkır temalı) ad Vlandiya kasabasına sızmıyor');
 
 /* ── 6. FACTION_INFO ile tutarlılık ── */
 ok(

@@ -6,11 +6,11 @@
  *  - Çağrı Nüfuz Maliyeti (`calculatePartyCallInfluenceCost`):
  *      · Kendi klanındaki yoldaş/aile partileri: 0 Nüfuz
  *      · Diğer klan lordları: kademe (tier), asker sayısı, mesafe ve ilişki bazlı 15..65 Nüfuz
- *  - Günlük Uyum Kaybı (`calculateDailyCohesionLoss`):
- *      · Baz -2, her ek parti için -(memberCount * 1.5), toplam asker için -(totalTroops / 50),
- *        erzak kıtlığı varsa ekstra -5
- *  - Uyum Artırma (`boostArmyCohesion`):
- *      · +10 Uyum başına (10 + memberCount * 2) Nüfuz
+ *  - Günlük Uyum Kaybı (`calculateDailyCohesionLoss`, 10.11 araştırması):
+ *      · Baz -2/gün, ordudaki her ek parti için -1/gün; aç parti başına -0.5
+ *  - Uyum Artırma (`boostArmyCohesion`, 10.11):
+ *      · +10 Uyum maliyeti, üye partilerin çağrı maliyetleri toplamının %10'udur;
+ *        çağrı maliyeti 0 olan klan partileri maliyete hiç girmez
  *  - Ordu İaşesi (`shareArmyFoodDaily`):
  *      · Ordudaki bir lordun `foodDays <= 0` olduğunda liderin erzağından tüketir ve lidere +2 Nüfuz kazandırır
  *  - Otomatik Dağılma (`disbandArmy`):
@@ -25,6 +25,7 @@ import {
   getTotalTroops,
 } from './rules';
 import { getSiegeCampSlotPoint } from './siegeMechanics';
+import { getPlayerCultureModifiers } from './cultureBonuses.ts';
 
 export type ArmyOrderKind = 'GATHERING' | 'SIEGE' | 'DEFEND' | 'PATROL';
 
@@ -43,10 +44,9 @@ export interface ArmyRecord {
 export interface CohesionBreakdown {
   baseLoss: number;
   partyCountPenalty: number;
-  troopCountPenalty: number;
   starvationPenalty: number;
-  totalDailyChange: number; // negatif (örn. -6.8)
-  totalDailyLoss: number; // pozitif büyüklük (örn. 6.8)
+  totalDailyChange: number; // negatif (örn. -4.5)
+  totalDailyLoss: number; // pozitif büyüklük (örn. 4.5)
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
@@ -78,16 +78,17 @@ export function resolvePlayerArmyFaction(state: CampaignState): FactionId {
 }
 
 /**
- * Bannerlord `DefaultArmyManagementCalculationModel.CalculatePartyInfluenceCost`:
- * - Kendi klanındaki yoldaş/aile partileri: 0 Nüfuz
- * - Diğer klan lordları: klan kademesi (tier), asker sayısı, mesafe ve ilişki bazlı 15..65 Nüfuz
+ * Bannerlord çağrı maliyeti etkenleri (10.11): kendi klan partileri 0 Nüfuz;
+ * diğerleri asker sayısı, klan kademesi, ilişki ve mesafeye göre pahalanır.
+ * Etkenler Bannerlord'undur; katsayılar bu projenin nüfuz ekonomisine
+ * ölçeklidir (kesin oyun katsayıları kaynaklarda yayımlı değildir).
  */
 export function calculatePartyCallInfluenceCost(
   lord: Pick<
     LordAgent,
     'id' | 'faction' | 'armySize' | 'roster' | 'relation' | 'x' | 'z' | 'isPlayerClan' | 'clanTier'
   >,
-  state?: Pick<CampaignState, 'playerX' | 'playerZ'>,
+  state?: Pick<CampaignState, 'playerX' | 'playerZ'> & Partial<Pick<CampaignState, 'heroes'>>,
   leaderPos?: { x: number; z: number },
 ): number {
   if (isPlayerClanParty(lord)) {
@@ -108,16 +109,21 @@ export function calculatePartyCallInfluenceCost(
   const relationDiscount = relation * 0.14; // -14 .. +14
 
   const raw = Math.round(12 + tierComponent + sizeComponent + distanceComponent - relationDiscount);
-  return clamp(raw, 15, 65);
+  // 10.8: Sturgia orduları %50 ucuza toplar; Vlandiya %20 pahalıya (kültürel feat).
+  const cultureMultiplier = getPlayerCultureModifiers(
+    state?.heroes ? { heroes: state.heroes } : undefined,
+  ).armyCallCostMultiplier;
+  return Math.max(1, Math.round(clamp(raw, 15, 65) * cultureMultiplier));
 }
 
 /**
- * Günlük Uyum (Cohesion) değişimini ve alt kalemlerini hesaplar.
- * Formül:
- *  - Baz kayıp: -2
- *  - Her ek parti için: -(memberCount * 1.5)
- *  - Toplam asker sayısı için: -(totalTroops / 50)
- *  - Erzak kıtlığı varsa: ekstra -5
+ * Günlük Uyum (Cohesion) değişimini ve alt kalemlerini hesaplar — Bannerlord
+ * modeli (10.11 araştırması):
+ *  - Baz kayıp: -2/gün (her ordu için sabit)
+ *  - Her ek parti için: -1/gün ("5 ek parti → toplam -7")
+ *  - Aç (erzaksız) parti başına: -0.5 (oyun içi döküm satırı)
+ * Eski `-1.5×parti - asker/50 - 5 açlık` formülü uydurmaydı; asker sayısı
+ * uyum kaybına doğrudan girmez.
  */
 export function getArmyCohesionBreakdown(
   army: Pick<ArmyRecord, 'leaderId' | 'memberLordIds'>,
@@ -126,17 +132,6 @@ export function getArmyCohesionBreakdown(
   const memberLords = state.lords.filter((l) => army.memberLordIds.includes(l.id));
   const memberCount = memberLords.length;
 
-  const leaderTroops =
-    army.leaderId === 'player'
-      ? getTotalTroops(state.roster)
-      : (() => {
-          const leader = state.lords.find((l) => l.id === army.leaderId);
-          return leader ? getLordTroopCount(leader) : 0;
-        })();
-
-  const memberTroops = memberLords.reduce((sum, l) => sum + getLordTroopCount(l), 0);
-  const totalTroops = leaderTroops + memberTroops;
-
   const leaderStarving =
     army.leaderId === 'player'
       ? state.food <= 0
@@ -144,22 +139,20 @@ export function getArmyCohesionBreakdown(
           const leader = state.lords.find((l) => l.id === army.leaderId);
           return (leader?.foodDays ?? 5) <= 0;
         })();
-  const memberStarving = memberLords.some((l) => (l.foodDays ?? 5) <= 0);
-  const isStarving = leaderStarving || memberStarving;
+  const starvingMemberCount = memberLords.filter((l) => (l.foodDays ?? 5) <= 0).length;
+  const starvingPartyCount = starvingMemberCount + (leaderStarving ? 1 : 0);
 
   const baseLoss = -2;
-  const partyCountPenalty = Number((-(memberCount * 1.5)).toFixed(2));
-  const troopCountPenalty = Number((-(totalTroops / 50)).toFixed(2));
-  const starvationPenalty = isStarving ? -5 : 0;
+  const partyCountPenalty = -memberCount;
+  const starvationPenalty = Number((-0.5 * starvingPartyCount).toFixed(2));
 
   const totalDailyChange = Number(
-    (baseLoss + partyCountPenalty + troopCountPenalty + starvationPenalty).toFixed(2),
+    (baseLoss + partyCountPenalty + starvationPenalty).toFixed(2),
   );
 
   return {
     baseLoss,
     partyCountPenalty,
-    troopCountPenalty,
     starvationPenalty,
     totalDailyChange,
     totalDailyLoss: Math.abs(totalDailyChange),
@@ -177,11 +170,23 @@ export function calculateDailyCohesionLoss(
 }
 
 /**
- * +10 Uyum (Cohesion) artışı başına Nüfuz maliyeti:
- * `10 + memberCount * 2` Nüfuz.
+ * +10 Uyum (Cohesion) artışı başına Nüfuz maliyeti — Bannerlord modeli (10.11):
+ * maliyet, ordudaki her partinin çağrı maliyetine doğrudan bağlıdır; çağrı
+ * maliyeti 0 olan kendi klan partileri maliyete hiç katkı vermez (yalnız klan
+ * partilerinden kurulu orduda uyum tazelemek bedavadır). +10 uyum, toplam
+ * çağrı maliyetinin %10'u olarak hesaplanır.
+ * Eski `10 + memberCount × 2` formülü uydurmaydı.
  */
-export function calculateCohesionBoostCost(memberCount: number): number {
-  return Math.max(10, 10 + Math.max(0, Math.floor(memberCount)) * 2);
+export function calculateCohesionBoostCost(
+  army: Pick<ArmyRecord, 'leaderId' | 'memberLordIds'>,
+  state: Pick<CampaignState, 'lords' | 'playerX' | 'playerZ'>,
+): number {
+  const memberLords = state.lords.filter((l) => army.memberLordIds.includes(l.id));
+  const totalCallCost = memberLords.reduce(
+    (sum, lord) => sum + calculatePartyCallInfluenceCost(lord, state),
+    0,
+  );
+  return Math.round(totalCallCost * 0.1);
 }
 
 /**
@@ -422,7 +427,7 @@ export function createOrExpandPlayerArmy(
 }
 
 /**
- * +10 Uyum (Cohesion) artışı uygular (`10 + memberCount * 2` Nüfuz).
+ * +10 Uyum (Cohesion) artışı uygular (maliyet: `calculateCohesionBoostCost`).
  */
 export function boostArmyCohesion(
   state: CampaignState,
@@ -461,7 +466,7 @@ export function boostArmyCohesion(
   }
 
   const safeSteps = Math.max(1, Math.floor(steps));
-  const costPerStep = calculateCohesionBoostCost(targetArmy.memberLordIds.length);
+  const costPerStep = calculateCohesionBoostCost(targetArmy, state);
   const totalCost = costPerStep * safeSteps;
   const currentInfluence = state.influence ?? 0;
 

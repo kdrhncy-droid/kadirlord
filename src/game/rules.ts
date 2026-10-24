@@ -24,6 +24,7 @@ import {
   advanceDailyPartyFood,
   calculateDailyFoodDemand,
 } from './foodSystem.ts';
+import { getPlayerCultureModifiers } from './cultureBonuses.ts';
 import type { ArmyRecord } from './armySystem';
 import {
   SIEGE_MELEE_SLOTS,
@@ -314,8 +315,6 @@ export interface Settlement {
   merchantGold?: number;
   /** P2: ticaret söylentileri yalnız ziyaret edilmiş yerleşimler için görünür. */
   visited?: boolean;
-  /** Yerleşimden en son gönüllü asker toplanan sefer günü (1 gün bekleme kuralı). */
-  lastRecruitDay?: number;
   /** Bannerlord 6-slot asker toplama ekranında bu yerleşimden toplanmış (boşaltılmış) slot anahtarları. */
   recruitedSlotKeys?: string[];
 }
@@ -1222,7 +1221,10 @@ export function settlementWorkshopIncome(settlement: Settlement): number {
 export const SIEGE_GARRISON_FOOD_PER_DAY = 3;
 
 export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState {
-  const wage = calculateDailyWage(state.roster);
+  // 10.8: Aserai kültürel cezası — parti ücretleri +%5 (cultureBonuses tek kaynak).
+  const wage = Math.round(
+    calculateDailyWage(state.roster) * getPlayerCultureModifiers(state).wageMultiplier,
+  );
   const foodResult = advanceDailyPartyFood(state);
   const stateAfterFood = foodResult.nextState;
 
@@ -1235,7 +1237,12 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
         (lord) => lord.order?.kind === 'SIEGE' && lord.order.targetSettlementId === s.id,
       );
     if (s.faction === 'player') {
-      playerSettlementTaxes += Math.round(s.prosperity * 0.25);
+      // 10.8: Kuzait kültürel cezası — şehir vergisi %20 az (yalnız kasabalar).
+      playerSettlementTaxes += Math.round(
+        s.prosperity *
+          0.25 *
+          (s.type === 'TOWN' ? getPlayerCultureModifiers(state).townTaxMultiplier : 1),
+      );
     }
     // Faz B0: oyuncunun atölyesi refaha bağlı günlük gelir üretir.
     if (s.workshopOwner === 'player') {
@@ -1427,7 +1434,11 @@ export function resolveBattleOutcome(
   const isSiegeVictory = Boolean(conqueredSettlementId);
   const goldLoot = battleGoldReward(enemiesDefeatedCount, isSiegeVictory);
   // Bannerlord dengeli muharebe namı: küçük çatışmalar +2..8, büyük meydan ve kuşatma zaferleri +12..45 Nam
-  const renownGain = Math.max(2, Math.min(48, Math.round((isSiegeVictory ? 12 : 3) + enemiesDefeatedCount * 0.65)));
+  // 10.8: Vlandiya feat'i — savaşlardan +%5 nam.
+  const renownGain = Math.round(
+    Math.max(2, Math.min(48, Math.round((isSiegeVictory ? 12 : 3) + enemiesDefeatedCount * 0.65))) *
+      getPlayerCultureModifiers(state).battleRenownMultiplier,
+  );
   const prisonersGain = Math.max(1, Math.floor(enemiesDefeatedCount * 0.35));
   // Faz B0: zafer artık eşya da bırakır (envantere düşer, pazarda satılır).
   const defeatedFaction =
@@ -3549,6 +3560,14 @@ export function createInitialCampaignState(
     armies: [],
   });
 
+  // 10.8: Karakter yaratmada seçilen kültür oyuncu kahramanına yazılır; kültürel
+  // feat'ler (cultureBonuses.ts) buradan okunur. Önceden seçim yalnız kardeşe gidiyordu.
+  if (options?.culture && founded.heroes) {
+    founded.heroes = founded.heroes.map((h) =>
+      h.id === PLAYER_HERO_ID ? { ...h, culture: options.culture! } : h,
+    );
+  }
+
   if (isRealistic) {
     // Bannerlord hikaye başlangıcı: Oyuncu 0 askerle fakat yanında ailesinden ağabeyi (Niasen) ile başlar!
     const playerHero = founded.heroes?.find((h) => h.id === PLAYER_HERO_ID);
@@ -3628,10 +3647,16 @@ export function createInitialCampaignState(
   return founded;
 }
 
+/**
+ * Bannerlord yumuşak öğrenme sınırı: Odak × 30 + (Nitelik − 1) × 10.
+ * Kanonik kaynak `bannerlordFoundation.calculateLearningSoftCap`tır; bu kopya
+ * döngüsel importu önlemek için formülü tekrarlar ve eşitliği `rules.test.ts`
+ * kilitler (10.6). Eski `(N−1)×14 + O×40 + 10` sert tavan ailesindendi, yanlıştı.
+ */
 export function calculateLearningLimit(attributeValue: number, focusPoints: number): number {
   const safeAttr = Math.max(1, Math.min(10, attributeValue));
   const safeFocus = Math.max(0, Math.min(5, focusPoints));
-  return (safeAttr - 1) * 14 + safeFocus * 40 + 10;
+  return safeFocus * 30 + (safeAttr - 1) * 10;
 }
 
 export function calculateClanTier(renown: number): {
@@ -3640,13 +3665,15 @@ export function calculateClanTier(renown: number): {
   nextRenown: number;
   title: string;
 } {
-  if (renown >= 6150) return { tier: 6, maxPartyBonus: 150, nextRenown: 10000, title: 'İmparatorluk Hanedanı (Kademe 6)' };
-  if (renown >= 2350) return { tier: 5, maxPartyBonus: 125, nextRenown: 6150, title: 'Ulu Soylu Klan (Kademe 5)' };
-  if (renown >= 900) return { tier: 4, maxPartyBonus: 100, nextRenown: 2350, title: 'Krallık Kurucu Klan (Kademe 4)' };
-  if (renown >= 350) return { tier: 3, maxPartyBonus: 75, nextRenown: 900, title: 'Sancakbeyi Klanı (Kademe 3)' };
-  if (renown >= 150) return { tier: 2, maxPartyBonus: 50, nextRenown: 350, title: 'Derebeyi / Vasal Klanı (Kademe 2)' };
+  // Bannerlord klan kademesi parti bonusu (10.5): Kademe 1'de +25, sonra kademe
+  // başına +15 birikimli (25/40/55/70/85/100); Kademe 0 bonusu yoktur.
+  if (renown >= 6150) return { tier: 6, maxPartyBonus: 100, nextRenown: 10000, title: 'İmparatorluk Hanedanı (Kademe 6)' };
+  if (renown >= 2350) return { tier: 5, maxPartyBonus: 85, nextRenown: 6150, title: 'Ulu Soylu Klan (Kademe 5)' };
+  if (renown >= 900) return { tier: 4, maxPartyBonus: 70, nextRenown: 2350, title: 'Krallık Kurucu Klan (Kademe 4)' };
+  if (renown >= 350) return { tier: 3, maxPartyBonus: 55, nextRenown: 900, title: 'Sancakbeyi Klanı (Kademe 3)' };
+  if (renown >= 150) return { tier: 2, maxPartyBonus: 40, nextRenown: 350, title: 'Derebeyi / Vasal Klanı (Kademe 2)' };
   if (renown >= 50) return { tier: 1, maxPartyBonus: 25, nextRenown: 150, title: 'Paralı Asker Sancağı (Kademe 1)' };
-  return { tier: 0, maxPartyBonus: 15, nextRenown: 50, title: 'Gezgin Sancak (Kademe 0)' };
+  return { tier: 0, maxPartyBonus: 0, nextRenown: 50, title: 'Gezgin Sancak (Kademe 0)' };
 }
 
 export function allocateAttributePoint(

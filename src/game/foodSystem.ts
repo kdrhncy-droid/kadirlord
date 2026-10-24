@@ -4,25 +4,42 @@ function itemQuantity(item: InventoryItem): number {
   return Math.max(1, Math.floor(Number.isFinite(item.quantity) ? (item.quantity as number) : 1));
 }
 
-export const EDIBLE_FOOD_DEFINITION_IDS = [
-  'mkt_grain_sack',
-  'mkt_cured_meat',
-  'mkt_smoked_fish',
-  'mkt_cheese_wheel',
-  'mkt_olive_oil',
-] as const;
+/**
+ * Bannerlord'un 9 yiyecek türü (10.4): tahıl, et, balık, peynir, tereyağı,
+ * üzüm, zeytin, bira, hurma. Zeytinyağı yiyecek **değildir** (ticaret malıdır);
+ * `FOOD` kategorisi bu projede çömlek/demir gibi mallarda da kullanıldığı için
+ * yenebilirlik kategoriyle değil, tanım kimliği → yiyecek türü eşlemesiyle belirlenir.
+ */
+export const FOOD_TYPE_BY_DEFINITION_ID: Record<string, string> = {
+  mkt_grain_sack: 'grain',
+  mkt_cured_meat: 'meat',
+  mkt_smoked_fish: 'fish',
+  mkt_cheese_wheel: 'cheese',
+  mkt_cheese_round: 'cheese',
+  mkt_butter: 'butter',
+  mkt_grapes: 'grapes',
+  mkt_olives: 'olives',
+  mkt_beer: 'beer',
+  mkt_dates: 'dates',
+};
 
-export type EdibleFoodDefinitionId = (typeof EDIBLE_FOOD_DEFINITION_IDS)[number];
+export const EDIBLE_FOOD_DEFINITION_IDS = Object.keys(FOOD_TYPE_BY_DEFINITION_ID) as readonly string[];
+
+export type EdibleFoodDefinitionId = keyof typeof FOOD_TYPE_BY_DEFINITION_ID;
+
+export function foodTypeOfItem(
+  item: { definitionId?: string; id?: string; category?: string } | null | undefined,
+): string | null {
+  if (!item) return null;
+  const defId = item.definitionId ?? item.id;
+  if (!defId) return null;
+  return FOOD_TYPE_BY_DEFINITION_ID[defId] ?? null;
+}
 
 export function isEdibleFoodItem(
   item: { definitionId?: string; id?: string; category?: string } | null | undefined,
 ): boolean {
-  if (!item) return false;
-  const defId = item.definitionId ?? item.id;
-  if (defId && (EDIBLE_FOOD_DEFINITION_IDS as readonly string[]).includes(defId)) return true;
-  // Ticari mallar (demir külçesi, ipek) gıda sayılamaz
-  if (defId === 'mkt_iron_ingot' || defId === 'mkt_velvet_silk') return false;
-  return item.category === 'FOOD';
+  return foodTypeOfItem(item) !== null;
 }
 
 export interface PartyFoodSummary {
@@ -33,19 +50,14 @@ export interface PartyFoodSummary {
 }
 
 /**
- * Bannerlord erzak çeşitliliği moral bonusu:
- * 1 çeşit: 0
- * 2 çeşit: +2
- * 3 çeşit: +5
- * 4 çeşit: +8
- * 5+ çeşit: +12
+ * Bannerlord erzak çeşitliliği morali (10.4): her ek yiyecek türü yaklaşık +1,
+ * tavan +8 (9 tür). İdare 175 "Gourmet" perki çeşitlilik moralini ikiye katlar
+ * (tavan ~+16) — perk bağlaması 10.10 ile gelecek, parametre hazır.
+ * Eski `0/2/5/8/12` tablosu uydurmaydı.
  */
-export function calculateVarietyMoraleBonus(distinctCount: number): number {
-  if (distinctCount <= 1) return 0;
-  if (distinctCount === 2) return 2;
-  if (distinctCount === 3) return 5;
-  if (distinctCount === 4) return 8;
-  return 12;
+export function calculateVarietyMoraleBonus(distinctCount: number, hasGourmetPerk = false): number {
+  const base = Math.max(0, Math.min(8, Math.floor(distinctCount) - 1));
+  return hasGourmetPerk ? base * 2 : base;
 }
 
 export function getPartyFoodSummary(inventoryItems: InventoryItem[] | undefined): PartyFoodSummary {
@@ -53,10 +65,12 @@ export function getPartyFoodSummary(inventoryItems: InventoryItem[] | undefined)
   let totalFood = 0;
 
   for (const item of inventoryItems ?? []) {
-    if (!isEdibleFoodItem(item)) continue;
+    // Çeşit, tanım kimliğiyle değil yiyecek **türüyle** sayılır: iki farklı peynir
+    // tek çeşit eder (Bannerlord'da tür esastır).
+    const foodKey = foodTypeOfItem(item);
+    if (!foodKey) continue;
     const qty = itemQuantity(item);
     if (qty <= 0) continue;
-    const foodKey = item.definitionId ?? item.id;
     breakdown[foodKey] = (breakdown[foodKey] ?? 0) + qty;
     totalFood += qty;
   }
@@ -76,13 +90,19 @@ export function getPartyFoodUnits(inventoryItems: InventoryItem[] | undefined): 
   return getPartyFoodSummary(inventoryItems).totalFood;
 }
 
+/**
+ * Günlük erzak talebi — Bannerlord ölçeği (10.4): yaklaşık **20 askere günde
+ * 1 birim** yiyecek ("20 garnizon askeri günde 1 yemek yer"). Eski
+ * `ceil((asker+1)/4)` ölçeği ~5 kat fazlaydı. Kesirli tüketim yerine tam
+ * birime yuvarlanır; +1, parti liderinin kendisidir.
+ */
 export function calculateDailyFoodDemand(roster: TroopRoster, unlockedPerks: string[] = []): number {
   const totalTroops =
     Math.max(0, Math.floor(roster.militia)) +
     Math.max(0, Math.floor(roster.archer)) +
     Math.max(0, Math.floor(roster.cavalry)) +
     Math.max(0, Math.floor(roster.guard));
-  const base = Math.max(1, Math.ceil((totalTroops + 1) / 4));
+  const base = Math.max(1, Math.ceil((totalTroops + 1) / 20));
   if (unlockedPerks.includes('spartan_rations')) {
     return Math.max(1, Math.ceil(base * 0.8));
   }
@@ -129,7 +149,8 @@ export function consumePartyFood(
       items[targetIdx] = { ...targetItem, quantity: currentQty - 1 };
     }
 
-    eatenKeys.add(targetItem.definitionId ?? targetItem.id);
+    const eatenType = foodTypeOfItem(targetItem);
+    if (eatenType) eatenKeys.add(eatenType);
     consumed += 1;
     needed -= 1;
   }
@@ -208,9 +229,12 @@ export function advanceDailyPartyFood(state: CampaignState): DailyFoodAdvanceRes
       }).`,
     });
   } else {
-    // Tokluk: temel ordu beslenme hissi + çeşitlilik morali
+    // Bannerlord morali toplamsal birikmez; hedef değere yakınsar (10.4).
+    // Beslenen partide hedef = 50 taban + çeşitlilik bonusu; moral her gün
+    // hedefe %25 yaklaşır. Eski günlük `+2 + bonus` morali hep 100'e şişiriyordu.
     const varietyBonus = calculateVarietyMoraleBonus(eatenVarieties);
-    moraleDelta += 2 + varietyBonus;
+    const moraleTarget = 50 + varietyBonus;
+    moraleDelta += Math.round((moraleTarget - state.morale) * 0.25);
   }
 
   let nextTroopStacks = state.troopStacks;

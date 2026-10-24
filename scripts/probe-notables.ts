@@ -51,9 +51,12 @@ ok(
   'kalede 2–3 ileri gelen',
 );
 
-const badPower = settlements.flatMap((s) => s.notables ?? []).filter((n) => n.power < 0 || n.power > 100);
+// 10.7: nüfuz Bannerlord ölçeğindedir (Sıradan <100, Etkili 100–199, Güçlü 200+).
+const badPower = settlements.flatMap((s) => s.notables ?? []).filter((n) => n.power < 0 || n.power > 600);
 const badRelation = settlements.flatMap((s) => s.notables ?? []).filter((n) => n.relation < -100 || n.relation > 100);
-ok(badPower.length === 0, 'nüfuz 0..100 aralığında', `${badPower.length} aykırı`);
+ok(badPower.length === 0, 'nüfuz Bannerlord ölçeğinde (0..600)', `${badPower.length} aykırı`);
+const powerfulCount = settlements.flatMap((s) => s.notables ?? []).filter((n) => n.power >= 200).length;
+ok(powerfulCount > 0, 'Güçlü (200+) eşraf var — soylu gönüllü kaynağı mevcut', `${powerfulCount} kişi`);
 ok(badRelation.length === 0, 'ilişki -100..100 aralığında', `${badRelation.length} aykırı`);
 
 const duplicateNames = settlements.filter((s) => {

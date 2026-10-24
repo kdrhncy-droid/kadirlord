@@ -33,21 +33,22 @@ export interface PartyLimitBreakdown {
   base: number;
   clanTierBonus: number;
   quartermasterBonus: number;
-  leadershipBonus: number;
-  renownBonus: number;
   total: number;
 }
 
 export interface PrisonerLimitBreakdown {
-  base: number;
-  partyCapacityBonus: number;
-  rogueryBonus: number;
+  /** Yaralı olmayan (sağlıklı) mevcut asker sayısı. */
+  healthyTroops: number;
   total: number;
 }
 
 /**
- * Bannerlord kuralına uygun parti asker kapasitesi dökümü:
- * Taban (20) + Klan Kademesi (+15/kademe) + İaşeci (Steward) becerisi + Liderlik + Nam
+ * Bannerlord parti asker kapasitesi dökümü (10.5):
+ * Taban 20 + Klan Kademesi (Kademe 1: +25, sonra +15/kademe birikimli)
+ * + İaşeci İdare becerisi (puan başına +0.25).
+ * Liderlik becerisi ve nam doğrudan kapasite vermez — nam kademe üzerinden,
+ * Liderlik yalnız perkleriyle (örn. 275 perki) etki eder. Eski uydurma
+ * `Liderlik×0.15` ve `Nam/50` kalemleri kaldırıldı.
  */
 export function calculatePartyLimitBreakdown(state: CampaignState): PartyLimitBreakdown {
   const base = 20;
@@ -60,21 +61,12 @@ export function calculatePartyLimitBreakdown(state: CampaignState): PartyLimitBr
   const qmPerkBonus = qmHero?.perks?.includes('steward_25_a') ? 5 : 0;
   const quartermasterBonus = Math.floor(stewardSkill * 0.25) + qmPerkBonus;
 
-  // Liderlik becerisi katkısı (parti lideri)
-  const playerHero = getPlayerHero(state);
-  const leadershipSkill = playerHero?.skills?.leadership?.level ?? state.skills?.leadership?.level ?? 20;
-  const leadershipBonus = Math.floor(leadershipSkill * 0.15);
-
-  const renownBonus = Math.floor(state.renown / 50);
-
-  const total = base + clanTierBonus + quartermasterBonus + leadershipBonus + renownBonus;
+  const total = base + clanTierBonus + quartermasterBonus;
 
   return {
     base,
     clanTierBonus,
     quartermasterBonus,
-    leadershipBonus,
-    renownBonus,
     total: Math.max(20, total),
   };
 }
@@ -84,24 +76,28 @@ export function getPartyLimit(state: CampaignState): number {
 }
 
 /**
- * Tutsak taşıma kapasitesi dökümü:
- * Taban (10) + Parti kapasitesinin yarısı + Haydutluk (Roguery) becerisi
+ * Tutsak taşıma kapasitesi — Bannerlord modeli (10.5): sınır, o anki **sağlıklı
+ * (yaralı olmayan) asker sayısının yaklaşık yarısıdır**; yaralılar sayılmaz, bu
+ * yüzden büyük savaş sonrası sınır düşer. Eski `10 + limit×0.4 + Haydutluk×0.1`
+ * formülü uydurmaydı. Kaynak: topluluk doğrulaması (RPS/Reddit) — "prisoner cap
+ * is around half of your current troop party size; wounded don't count".
  */
 export function calculatePrisonerLimitBreakdown(state: CampaignState): PrisonerLimitBreakdown {
-  const base = 10;
-  const partyCap = getPartyLimit(state);
-  const partyCapacityBonus = Math.floor(partyCap * 0.4);
-  const playerHero = getPlayerHero(state);
-  const roguery = playerHero?.skills?.roguery?.level ?? state.skills?.roguery?.level ?? 10;
-  const rogueryBonus = Math.floor(roguery * 0.1);
-
-  const total = base + partyCapacityBonus + rogueryBonus;
+  const stacks = state.troopStacks ?? [];
+  const healthyTroops =
+    stacks.length > 0
+      ? Math.max(0, troopStackTotal(stacks) - troopStackWoundedTotal(stacks))
+      : Math.max(
+          0,
+          (state.roster.militia ?? 0) +
+            (state.roster.archer ?? 0) +
+            (state.roster.cavalry ?? 0) +
+            (state.roster.guard ?? 0),
+        );
 
   return {
-    base,
-    partyCapacityBonus,
-    rogueryBonus,
-    total: Math.max(10, total),
+    healthyTroops,
+    total: Math.floor(healthyTroops / 2),
   };
 }
 

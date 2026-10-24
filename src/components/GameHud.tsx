@@ -22,6 +22,7 @@ import type {
   MapCameraTelemetry,
 } from '../game/types';
 import { isSettlementLabelVisible } from '../game/mapGen';
+import { getPartyLimit } from '../game/partySystem';
 import {
   QUEST_KIND_ICONS,
   QUEST_KIND_LABELS,
@@ -221,7 +222,8 @@ export const GameHud: React.FC<GameHudProps> = ({
   );
   const dailyWage = calculateDailyWage(campaign.roster);
   const clanInfo = calculateClanTier(campaign.renown);
-  const partyCapacity = 45 + clanInfo.maxPartyBonus;
+  // Tek kaynak (10.5): parti kapasitesi partySystem'den gelir; eski `45 + kademe` uydurmaydı.
+  const partyCapacity = getPartyLimit(campaign);
 
   // Bannerlord Takvimi: 1 Mevsim = 21 Gün, 1 Yıl = 84 Gün (Başlangıç Yılı: 1084)
   const dayInSeason = ((Math.max(1, campaign.day) - 1) % 21) + 1;

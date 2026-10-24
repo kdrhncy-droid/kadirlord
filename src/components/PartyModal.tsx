@@ -429,14 +429,6 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                     <span>İaşeci (İdare):</span>
                     <span className="text-white font-mono">+{partyCapBreakdown.quartermasterBonus}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Liderlik:</span>
-                    <span className="text-white font-mono">+{partyCapBreakdown.leadershipBonus}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Nam Bonusu:</span>
-                    <span className="text-white font-mono">+{partyCapBreakdown.renownBonus}</span>
-                  </div>
                   <div className="border-t border-[#855e2d]/30 pt-1 flex justify-between font-bold text-[#fde68a]">
                     <span>Toplam Sınır:</span>
                     <span className="font-mono">{partyCapBreakdown.total}</span>
@@ -446,16 +438,11 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                 <div className="bg-[#1c150e] p-3 rounded border border-[#855e2d]/20 space-y-2">
                   <div className="font-bold text-[#f5ebd7] text-sm">Tutsak Kapasitesi</div>
                   <div className="flex justify-between">
-                    <span>Taban:</span>
-                    <span className="text-white font-mono">+{prisonerCapBreakdown.base}</span>
+                    <span>Sağlıklı Asker:</span>
+                    <span className="text-white font-mono">{prisonerCapBreakdown.healthyTroops}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Ordu Boyutu Oranı:</span>
-                    <span className="text-white font-mono">+{prisonerCapBreakdown.partyCapacityBonus}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Haydutluk:</span>
-                    <span className="text-white font-mono">+{prisonerCapBreakdown.rogueryBonus}</span>
+                  <div className="text-[11px] text-[#9ca3af]">
+                    Sınır, yaralı olmayan asker sayısının yarısıdır; yaralılar iyileşene dek sınır düşer.
                   </div>
                   <div className="border-t border-[#855e2d]/30 pt-1 flex justify-between font-bold text-sky-400">
                     <span>Toplam Sınır:</span>

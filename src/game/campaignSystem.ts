@@ -64,6 +64,7 @@ export function calculateBannerlordPartySpeed(params: {
   inventoryItems?: InventoryItem[];
   perks?: string[];
   state?: Pick<CampaignState, 'customItemDefinitions'>;
+  culture?: string | null;
 }): BannerlordSpeedBreakdown {
   const result = calculatePartyLogistics({
     x: params.x,
@@ -76,6 +77,7 @@ export function calculateBannerlordPartySpeed(params: {
     morale: params.morale,
     perks: params.perks,
     state: params.state,
+    culture: params.culture,
     legacyFoodUnits: params.foodUnits,
     legacyHerdAnimals: params.herdAnimals,
   });

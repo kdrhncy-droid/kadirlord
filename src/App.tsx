@@ -1101,7 +1101,7 @@ export default function App() {
         });
         // Fetih bildirimi, vakayinameye düşen en yeni olaydan türetilir (aşağıdaki effect).
         const next = tick.state;
-        // Faz 8: gönüllü havuzları her 3 günde bir tazelenir.
+        // Gönüllü üretimi günlük tik içindedir (10.7); toplu tazeleme yok.
         return { ...next, settlements: refreshRecruitPools(next.settlements, next.day) };
       });
     }, intervalMs);
@@ -1266,7 +1266,7 @@ export default function App() {
           }
           return {
             ...s,
-            lastRecruitDay: prev.day,
+            // Günlük kilit yok (10.7): alınan yuvalar boş kalır, günlük üretimle dolar.
             recruitedSlotKeys: mergedKeys,
             recruitPool: nextPool,
           };

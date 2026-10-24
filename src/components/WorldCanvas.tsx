@@ -50,6 +50,7 @@ import {
   isWithinSpottingRange,
   stepLordCampaignRoute,
 } from '../game/campaignSystem';
+import { getPlayerCulture } from '../game/cultureBonuses';
 import {
   ENCOUNTER_COOLDOWN_SEC,
   type EncounterScenario,
@@ -1747,6 +1748,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         prisonerCount: camp.prisoners,
         foodUnits: camp.food,
         morale: camp.morale,
+        culture: getPlayerCulture(camp),
       });
       tooltipCard.innerHTML = `
         <div class="font-display font-bold text-xs text-[#fbbf24] border-b border-[#c6a15b]/30 pb-1 mb-1">
@@ -2523,6 +2525,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           morale: camp.morale,
           perks: camp.unlockedPerks,
           state: camp,
+          culture: getPlayerCulture(camp),
         });
         const cavRatio = camp.roster.cavalry / totalTroops;
         const speedInfo = getPartySpeedInfo(playerOverworldX, playerOverworldZ, cavRatio);
