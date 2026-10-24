@@ -26,7 +26,6 @@ import {
   type CampaignState,
   type LordAgent,
   type Settlement,
-  type TacticalOrder,
   type TroopRoster,
   type UnitTierId,
 } from '../game/rules';
@@ -50,6 +49,7 @@ import {
   clampToDeployZone,
   computeDivisionSlots,
   defaultPerRow,
+  formationCycleFor,
   nextFormation,
   type DeployFormation,
 } from '../game/deployment';
@@ -62,7 +62,6 @@ interface BattlefieldViewProps {
   campaign: CampaignState;
   targetLord: LordAgent | null;
   targetSettlement: Settlement | null;
-  activeOrder: TacticalOrder;
   onBattleTelemetry: (telemetry: BattleTelemetry) => void;
   onBattleComplete: (
     victory: boolean,
@@ -73,6 +72,35 @@ interface BattlefieldViewProps {
 
 type ActorTeam = 'ally' | 'enemy';
 type ActorArchetype = 'CHASER' | 'KITER' | 'CHARGER';
+
+/** B4: bölük hareket emirleri (Bannerlord F1 menüsü). Dur/Fallback da HOLD'a
+ *  iner (yeni çapa hedefiyle); ayrıca bak. step() bölük güncellemesi. */
+type DivisionMoveOrder = 'HOLD' | 'FOLLOW' | 'CHARGE' | 'ADVANCE' | 'RETREAT';
+
+const MOVE_ORDER_LABEL: Record<DivisionMoveOrder, string> = {
+  HOLD: 'Konumu Tut',
+  FOLLOW: 'Beni Takip Et',
+  CHARGE: 'Hücum',
+  ADVANCE: 'İlerle',
+  RETREAT: 'Ricat',
+};
+
+interface CmdUiCard {
+  cls: UnitTierId;
+  num: number;
+  alive: number;
+  total: number;
+  formation: DeployFormation;
+  order: DivisionMoveOrder;
+  delegated: boolean;
+  holdFire: boolean;
+}
+
+interface CmdUiData {
+  selection: 'ALL' | UnitTierId;
+  menu: 'MOVE' | 'FACE' | 'FORM' | null;
+  cards: CmdUiCard[];
+}
 
 interface MissionActor {
   id: string;
@@ -99,6 +127,14 @@ interface MissionActor {
   hitFlashTimer: number;
   koTimer: number;
   gone: boolean;
+  /** B4: bölük üstündeyken her kare doldurulan formasyon slotu (dünya). */
+  hasSlot: boolean;
+  slotX: number;
+  slotZ: number;
+  slotFacing: number;
+  /** B4: süvari çevrim hücumu durumu. */
+  cyclePhase: 'ATTACK' | 'REGROUP';
+  cycleTimer: number;
   homeX: number;
   homeZ: number;
   handles: WarriorMeshHandles;
@@ -220,6 +256,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     cards: DeployCardData[];
     selected: UnitTierId;
   } | null>(null);
+  const [cmdUi, setCmdUi] = useState<CmdUiData | null>(null);
   const deployApiRef = useRef<DeployApi | null>(null);
 
   useEffect(() => {
@@ -389,6 +426,12 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
             hitFlashTimer: 0,
             koTimer: 0,
             gone: false,
+            hasSlot: false,
+            slotX: 0,
+            slotZ: 0,
+            slotFacing: 0,
+            cyclePhase: 'ATTACK',
+            cycleTimer: 0,
             homeX: x,
             homeZ: z,
             handles,
@@ -440,6 +483,12 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
         hitFlashTimer: 0,
         koTimer: 0,
         gone: false,
+        hasSlot: false,
+        slotX: 0,
+        slotZ: 0,
+        slotFacing: 0,
+        cyclePhase: 'ATTACK',
+        cycleTimer: 0,
         homeX: x,
         homeZ: z,
         handles,
@@ -488,6 +537,12 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       hitFlashTimer: 0,
       koTimer: 0,
       gone: false,
+      hasSlot: false,
+      slotX: 0,
+      slotZ: 0,
+      slotFacing: 0,
+      cyclePhase: 'ATTACK',
+      cycleTimer: 0,
       homeX: profile.allySpawn.x,
       homeZ: profile.allySpawn.z + 8,
       handles: playerHandles,
@@ -508,6 +563,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     let phase: 'deploy' | 'battle' = deployEnabled ? 'deploy' : 'battle';
 
     interface DivisionState {
+      team: ActorTeam;
       cls: UnitTierId;
       x: number;
       z: number;
@@ -515,8 +571,21 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       formation: DeployFormation;
       perRow: number;
       members: MissionActor[];
-      marker: THREE.Group;
-      markerMat: THREE.MeshBasicMaterial;
+      marker: THREE.Group | null;
+      markerMat: THREE.MeshBasicMaterial | null;
+      /** B4 emir durumu */
+      moveOrder: DivisionMoveOrder;
+      facingMode: 'ENEMY' | 'DIRECTION';
+      holdFire: boolean;
+      /** Kaptan AI yönetiyor (F6); düşman bölükleri hep devredilmiştir. */
+      delegated: boolean;
+      targetX: number;
+      targetZ: number;
+      aiTimer: number;
+      /** Çapa bu kare hareket ediyor mu + hareket yönü (slot bakışı için). */
+      moving: boolean;
+      moveDirX: number;
+      moveDirZ: number;
     }
     const divisions: DivisionState[] = [];
     let selectedCls: UnitTierId = 'infantry';
@@ -557,19 +626,25 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
         actor.z = clamped.z;
         actor.homeX = clamped.x;
         actor.homeZ = clamped.z;
+        actor.slotX = clamped.x;
+        actor.slotZ = clamped.z;
+        actor.slotFacing = s.facing;
+        actor.hasSlot = true;
         actor.vx = 0;
         actor.vz = 0;
         actor.facing = s.facing;
         actor.handles.root.position.set(clamped.x, groundY(clamped.x, clamped.z), clamped.z);
         actor.handles.root.rotation.y = s.facing;
       });
-      div.marker.position.set(div.x, groundY(div.x, div.z) + 0.2, div.z);
-      div.marker.rotation.y = div.facing;
+      if (div.marker) {
+        div.marker.position.set(div.x, groundY(div.x, div.z) + 0.2, div.z);
+        div.marker.rotation.y = div.facing;
+      }
     };
 
     const refreshDeployUi = () => {
       for (const d of divisions) {
-        d.markerMat.color.setHex(d.cls === selectedCls ? 0xfbbf24 : FACTION_INFO.player.hex);
+        d.markerMat?.color.setHex(d.cls === selectedCls ? 0xfbbf24 : FACTION_INFO.player.hex);
       }
       setDeployUi({
         cards: divisions.map((d) => ({
@@ -588,14 +663,88 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       phase = 'battle';
       for (const d of divisions) {
         deploymentPrefs[d.cls] = { formation: d.formation, perRow: d.perRow };
-        d.marker.visible = false;
+        if (d.marker) d.marker.visible = false;
       }
       zoneGroup.visible = false;
       deployApiRef.current = null;
       setDeployUi(null);
+      cmdSelection = 'ALL';
+      cmdMenu = null;
+      refreshCmdUi();
     };
 
     const zoneGroup = new THREE.Group();
+    /* B4: Bölükler her meydan savaşında ve İKİ takım için de kurulur — emir
+       sistemi bölük üstünden işler. Konuşlanma arayüzü (B3) yalnız ≥20 askerde
+       açılır; bölük kurgusu hep vardır. Varsayılan çapalar B1 şerit düzeniyle
+       aynıdır (piyade önde, okçu geride, atlı okçu sol, süvari sağ kanatta),
+       düşman aynalanır: dokunmadan başlanırsa diziliş eski hâliyle aynıdır. */
+    const anchorDefaults: Record<UnitTierId, { x: number; z: number }> = {
+      infantry: { x: profile.allySpawn.x, z: profile.allySpawn.z },
+      archer: { x: profile.allySpawn.x, z: profile.allySpawn.z + 9 },
+      horseArcher: { x: profile.allySpawn.x - 30, z: profile.allySpawn.z + 4 },
+      cavalry: { x: profile.allySpawn.x + 30, z: profile.allySpawn.z + 4 },
+    };
+    const enemyAnchorDefaults: Record<UnitTierId, { x: number; z: number }> = {
+      infantry: { x: profile.enemySpawn.x, z: profile.enemySpawn.z },
+      archer: { x: profile.enemySpawn.x, z: profile.enemySpawn.z - 9 },
+      horseArcher: { x: profile.enemySpawn.x + 30, z: profile.enemySpawn.z - 4 },
+      cavalry: { x: profile.enemySpawn.x - 30, z: profile.enemySpawn.z - 4 },
+    };
+    const buildDivision = (
+      team: ActorTeam,
+      cls: UnitTierId,
+      anchor: { x: number; z: number },
+      facing: number,
+      withMarker: boolean,
+    ): DivisionState | null => {
+      const members = actors.filter((a) => a.team === team && a.unitType === cls);
+      if (members.length === 0) return null;
+      const marker = withMarker ? createDivisionMarker() : null;
+      if (marker) scene.add(marker.group);
+      const pref = team === 'ally' ? deploymentPrefs[cls] : undefined;
+      const div: DivisionState = {
+        team,
+        cls,
+        x: anchor.x,
+        z: anchor.z,
+        facing,
+        formation: pref?.formation ?? 'LINE',
+        perRow: pref?.perRow ?? defaultPerRow(cls),
+        members,
+        marker: marker?.group ?? null,
+        markerMat: marker?.mat ?? null,
+        moveOrder: 'HOLD',
+        facingMode: 'ENEMY',
+        holdFire: false,
+        delegated: team === 'enemy',
+        targetX: anchor.x,
+        targetZ: anchor.z,
+        aiTimer: 0.4 + Math.random() * 0.8,
+        moving: false,
+        moveDirX: 0,
+        moveDirZ: 0,
+      };
+      applyDivision(div);
+      return div;
+    };
+    const enemyDivisions: DivisionState[] = [];
+    const actorDivision = new Map<string, DivisionState>();
+    for (const cls of DIVISION_ORDER) {
+      const ally = buildDivision('ally', cls, anchorDefaults[cls], profile.allySpawn.facing, true);
+      if (ally) {
+        divisions.push(ally);
+        for (const m of ally.members) actorDivision.set(m.id, ally);
+        if (!deployEnabled && ally.marker) ally.marker.visible = false;
+      }
+      const foe = buildDivision('enemy', cls, enemyAnchorDefaults[cls], profile.enemySpawn.facing, false);
+      if (foe) {
+        enemyDivisions.push(foe);
+        for (const m of foe.members) actorDivision.set(m.id, foe);
+      }
+    }
+    selectedCls = divisions[0]?.cls ?? 'infantry';
+
     if (deployEnabled) {
       const zonePoints: THREE.Vector3[] = [];
       const zoneEdges: Array<[number, number, number, number]> = [
@@ -619,36 +768,6 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       );
       zoneGroup.add(zoneLine);
       scene.add(zoneGroup);
-
-      // Varsayılan çapalar B1 şerit düzeniyle aynı (piyade önde, okçu geride,
-      // atlı okçu sol, süvari sağ kanatta) — dokunmadan başlanırsa diziliş eski hâliyle aynıdır.
-      const anchorDefaults: Record<UnitTierId, { x: number; z: number }> = {
-        infantry: { x: profile.allySpawn.x, z: profile.allySpawn.z },
-        archer: { x: profile.allySpawn.x, z: profile.allySpawn.z + 9 },
-        horseArcher: { x: profile.allySpawn.x - 30, z: profile.allySpawn.z + 4 },
-        cavalry: { x: profile.allySpawn.x + 30, z: profile.allySpawn.z + 4 },
-      };
-      for (const cls of DIVISION_ORDER) {
-        const members = actors.filter((a) => a.team === 'ally' && a.unitType === cls);
-        if (members.length === 0) continue;
-        const pref = deploymentPrefs[cls];
-        const marker = createDivisionMarker();
-        scene.add(marker.group);
-        const div: DivisionState = {
-          cls,
-          x: anchorDefaults[cls].x,
-          z: anchorDefaults[cls].z,
-          facing: profile.allySpawn.facing,
-          formation: pref?.formation ?? 'LINE',
-          perRow: pref?.perRow ?? defaultPerRow(cls),
-          members,
-          marker: marker.group,
-          markerMat: marker.mat,
-        };
-        divisions.push(div);
-        applyDivision(div);
-      }
-      selectedCls = divisions[0]?.cls ?? 'infantry';
 
       deployApiRef.current = {
         select: (cls) => {
@@ -697,6 +816,212 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     let deployCamTx = profile.allySpawn.x;
     let deployCamTz = profile.allySpawn.z - 6;
     let deployCamDist = 105;
+
+    /* ── B4: Bölük emirleri (Bannerlord F1–F6 komuta ağacı) ──────────────
+       Seçim: 0 Herkes, 1 Piyade, 2 Okçu, 3 Süvari, 4 Atlı Okçu.
+       F1 Hareket (Konuma Git/Beni Takip Et/Hücum/İlerle/Geri Çekil/Dur/Ricat),
+       F2 Yön (Sancak yönüne/Düşmana), F3 Diziliş, F4 Ateş Serbest/Ateş Kes,
+       F6 Komutayı Devret (kaptan AI), F9 Geri. Elle verilen emir devri bozar.
+       Düşman bölükleri baştan devredilmiştir (şablon AI aşağıda). */
+    let cmdSelection: 'ALL' | UnitTierId = 'ALL';
+    let cmdMenu: 'MOVE' | 'FACE' | 'FORM' | null = null;
+
+    // Konum sancağı: F1 menüsü açıkken oyuncunun baktığı yerdeki yeşil işaret.
+    const positionFlag = new THREE.Group();
+    {
+      const pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.07, 0.07, 3.4, 6),
+        new THREE.MeshBasicMaterial({ color: 0xd9d9d9 }),
+      );
+      pole.position.y = 1.7;
+      positionFlag.add(pole);
+      const cloth = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.5, 0.9),
+        new THREE.MeshBasicMaterial({ color: 0x4ade80, side: THREE.DoubleSide }),
+      );
+      cloth.position.set(0.78, 2.9, 0);
+      positionFlag.add(cloth);
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.9, 1.25, 28),
+        new THREE.MeshBasicMaterial({
+          color: 0x4ade80,
+          transparent: true,
+          opacity: 0.8,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.15;
+      positionFlag.add(ring);
+      positionFlag.visible = false;
+      scene.add(positionFlag);
+    }
+
+    const lookGroundPoint = (): { x: number; z: number } | null => {
+      deployRaycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      const hits = deployRaycaster.intersectObject(terrain.group, true);
+      return hits.length > 0 ? { x: hits[0].point.x, z: hits[0].point.z } : null;
+    };
+
+    const selectedDivisions = (): DivisionState[] =>
+      cmdSelection === 'ALL' ? divisions : divisions.filter((d) => d.cls === cmdSelection);
+
+    const refreshCmdUi = () => {
+      setCmdUi({
+        selection: cmdSelection,
+        menu: cmdMenu,
+        cards: divisions.map((d) => ({
+          cls: d.cls,
+          num: DIVISION_NUMBER[d.cls],
+          alive: d.members.filter((m) => m.hp > 0 && !m.gone).length,
+          total: d.members.length,
+          formation: d.formation,
+          order: d.moveOrder,
+          delegated: d.delegated,
+          holdFire: d.holdFire,
+        })),
+      });
+    };
+
+    const computeOrderSummary = (): string => {
+      if (divisions.length === 0) return '—';
+      if (cmdSelection !== 'ALL') {
+        const d = divisions.find((x) => x.cls === cmdSelection);
+        return d
+          ? `${DIVISION_NUMBER[d.cls]} ${DIVISION_LABEL[d.cls]}: ${MOVE_ORDER_LABEL[d.moveOrder]}`
+          : '—';
+      }
+      const first = divisions[0].moveOrder;
+      return divisions.every((d) => d.moveOrder === first)
+        ? `Tümü: ${MOVE_ORDER_LABEL[first]}`
+        : 'Tümü: Karışık emir';
+    };
+
+    const nearestEnemyTo = (
+      team: ActorTeam,
+      x: number,
+      z: number,
+    ): { x: number; z: number; dist: number } | null => {
+      let best: MissionActor | null = null;
+      let bd = Infinity;
+      for (const a of actors) {
+        if (a.team === team || a.hp <= 0 || a.gone) continue;
+        const d = Math.hypot(a.x - x, a.z - z);
+        if (d < bd) {
+          bd = d;
+          best = a;
+        }
+      }
+      return best ? { x: best.x, z: best.z, dist: bd } : null;
+    };
+
+    const resetChargeCycle = (div: DivisionState) => {
+      for (const m of div.members) {
+        m.cyclePhase = 'ATTACK';
+        m.cycleTimer = 5 + Math.random() * 3;
+      }
+    };
+
+    /* Bölük çapası emre göre yürür; slotlar her Karede tazelenir, aktörler
+       slotlarını koruyarak hareket eder (Bannerlord formasyon hareketi).
+       Devredilmiş bölükte kaptan AI emri günceller: piyade yaklaşınca hücum,
+       okçu menzil bandında tutar, süvari yakında hücum, atlı okçu taciz. */
+    const updateDivision = (div: DivisionState, dt: number) => {
+      div.moving = false;
+      if (!div.members.some((m) => m.hp > 0 && !m.gone)) return;
+      const stats = classStats(div.cls);
+
+      if (div.delegated) {
+        div.aiTimer -= dt;
+        if (div.aiTimer <= 0) {
+          div.aiTimer = 0.8 + Math.random() * 0.8;
+          const near = nearestEnemyTo(div.team, div.x, div.z);
+          if (near) {
+            const prev = div.moveOrder;
+            if (div.cls === 'infantry') {
+              div.moveOrder = near.dist > 42 ? 'ADVANCE' : 'CHARGE';
+            } else if (div.cls === 'archer') {
+              if (near.dist > stats.range * 0.85) div.moveOrder = 'ADVANCE';
+              else {
+                div.moveOrder = 'HOLD';
+                div.targetX = div.x;
+                div.targetZ = div.z;
+              }
+            } else if (div.cls === 'cavalry') {
+              div.moveOrder = near.dist > 55 ? 'ADVANCE' : 'CHARGE';
+            } else {
+              div.moveOrder = 'CHARGE';
+            }
+            if (div.moveOrder === 'CHARGE' && prev !== 'CHARGE') resetChargeCycle(div);
+          }
+        }
+      }
+
+      if (div.moveOrder === 'CHARGE') return; // çapa sabit, aktörler serbest
+
+      let desiredX = div.x;
+      let desiredZ = div.z;
+      if (div.moveOrder === 'FOLLOW' && div.team === 'ally' && player.hp > 0) {
+        desiredX = player.x - Math.sin(player.facing) * 9;
+        desiredZ = player.z - Math.cos(player.facing) * 9;
+      } else if (div.moveOrder === 'ADVANCE') {
+        const near = nearestEnemyTo(div.team, div.x, div.z);
+        if (near) {
+          const standOff = stats.range > 6 ? stats.range * 0.8 : 3;
+          if (near.dist > standOff) {
+            const d = Math.max(0.01, near.dist);
+            desiredX = near.x - ((near.x - div.x) / d) * standOff;
+            desiredZ = near.z - ((near.z - div.z) / d) * standOff;
+          }
+        }
+      } else if (div.moveOrder === 'RETREAT') {
+        desiredX = div.team === 'ally' ? profile.allySpawn.x : profile.enemySpawn.x;
+        desiredZ =
+          div.team === 'ally' ? profile.allySpawn.z + 60 : profile.enemySpawn.z - 60;
+      } else {
+        desiredX = div.targetX;
+        desiredZ = div.targetZ;
+      }
+
+      const clamped = clampToBattlefield(profile, desiredX, desiredZ);
+      const dx = clamped.x - div.x;
+      const dz = clamped.z - div.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 0.6) {
+        const stepLen = Math.min(dist, stats.speed * 0.95 * dt);
+        div.moveDirX = dx / dist;
+        div.moveDirZ = dz / dist;
+        div.x += div.moveDirX * stepLen;
+        div.z += div.moveDirZ * stepLen;
+        div.moving = true;
+      }
+
+      if (div.moving) div.facing = Math.atan2(div.moveDirX, div.moveDirZ);
+      else if (div.facingMode === 'ENEMY') {
+        const near = nearestEnemyTo(div.team, div.x, div.z);
+        if (near) div.facing = Math.atan2(near.x - div.x, near.z - div.z);
+      }
+
+      const slots = computeDivisionSlots(
+        div.cls,
+        div.members.length,
+        div,
+        div.formation,
+        div.perRow,
+      );
+      div.members.forEach((m, i) => {
+        const s = slots[i];
+        if (!s) return;
+        const cs = clampToBattlefield(profile, s.x, s.z);
+        m.slotX = cs.x;
+        m.slotZ = cs.z;
+        m.slotFacing = s.facing;
+        m.hasSlot = true;
+        m.homeX = cs.x;
+        m.homeZ = cs.z;
+      });
+    };
 
 
     /* ── Basit parçacık havuzu (vuruş geri bildirimi) ── */
@@ -793,6 +1118,135 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     };
     const onContextMenu = (e: Event) => e.preventDefault();
     const onDeployKeyDown = (e: KeyboardEvent) => {
+      /* B4: savaş fazı bölük emirleri (capture + preventDefault: F1 yardımı vb. engellenir) */
+      if (phase === 'battle') {
+        if (propsRef.current.paused) return;
+        const code = e.code;
+        let handled = true;
+        const issue = (fn: (d: DivisionState) => void) => {
+          for (const d of selectedDivisions()) fn(d);
+          sound.playWarhorn();
+        };
+        if (cmdMenu) {
+          if (code === 'F9') {
+            cmdMenu = null;
+          } else if (cmdMenu === 'MOVE') {
+            if (code === 'F1') {
+              const p = lookGroundPoint();
+              if (p) {
+                const cl = clampToBattlefield(profile, p.x, p.z);
+                issue((d) => {
+                  d.delegated = false;
+                  d.moveOrder = 'HOLD';
+                  d.targetX = cl.x;
+                  d.targetZ = cl.z;
+                });
+              }
+            } else if (code === 'F2') {
+              issue((d) => { d.delegated = false; d.moveOrder = 'FOLLOW'; });
+            } else if (code === 'F3') {
+              issue((d) => {
+                d.delegated = false;
+                if (d.moveOrder !== 'CHARGE') resetChargeCycle(d);
+                d.moveOrder = 'CHARGE';
+              });
+            } else if (code === 'F4') {
+              issue((d) => { d.delegated = false; d.moveOrder = 'ADVANCE'; });
+            } else if (code === 'F5') {
+              issue((d) => {
+                d.delegated = false;
+                const near = nearestEnemyTo('ally', d.x, d.z);
+                let tx = d.x;
+                let tz = d.z + 12;
+                if (near && near.dist > 0.5) {
+                  tx = d.x - ((near.x - d.x) / near.dist) * 12;
+                  tz = d.z - ((near.z - d.z) / near.dist) * 12;
+                }
+                const cl = clampToBattlefield(profile, tx, tz);
+                d.moveOrder = 'HOLD';
+                d.targetX = cl.x;
+                d.targetZ = cl.z;
+              });
+            } else if (code === 'F6') {
+              issue((d) => {
+                d.delegated = false;
+                d.moveOrder = 'HOLD';
+                d.targetX = d.x;
+                d.targetZ = d.z;
+              });
+            } else if (code === 'F7') {
+              issue((d) => { d.delegated = false; d.moveOrder = 'RETREAT'; });
+            } else handled = false;
+            if (handled) cmdMenu = null;
+          } else if (cmdMenu === 'FACE') {
+            if (code === 'F1') {
+              const p = lookGroundPoint();
+              issue((d) => {
+                d.delegated = false;
+                d.facingMode = 'DIRECTION';
+                if (p) d.facing = Math.atan2(p.x - d.x, p.z - d.z);
+              });
+            } else if (code === 'F2') {
+              issue((d) => { d.delegated = false; d.facingMode = 'ENEMY'; });
+            } else handled = false;
+            if (handled) cmdMenu = null;
+          } else {
+            const byKey: Record<string, DeployFormation> = {
+              F1: 'LINE', F2: 'SHIELD_WALL', F3: 'LOOSE', F4: 'CIRCLE',
+              F5: 'SQUARE', F6: 'WEDGE', F7: 'COLUMN',
+            };
+            const f = byKey[code];
+            if (f) {
+              issue((d) => {
+                d.delegated = false;
+                if (formationCycleFor(d.cls).includes(f)) d.formation = f;
+              });
+            } else handled = false;
+            if (handled) cmdMenu = null;
+          }
+        } else if (code === 'Digit0') {
+          cmdSelection = 'ALL';
+        } else if (
+          code === 'Digit1' || code === 'Digit2' || code === 'Digit3' || code === 'Digit4'
+        ) {
+          const num = Number(code.slice(-1));
+          const div = divisions.find((d) => DIVISION_NUMBER[d.cls] === num);
+          if (div) cmdSelection = div.cls;
+          else handled = false;
+        } else if (code === 'F1') {
+          cmdMenu = 'MOVE';
+        } else if (code === 'F2') {
+          cmdMenu = 'FACE';
+        } else if (code === 'F3') {
+          cmdMenu = 'FORM';
+        } else if (code === 'F4') {
+          const next = !(selectedDivisions()[0]?.holdFire ?? false);
+          issue((d) => { d.holdFire = next; });
+        } else if (code === 'F6') {
+          const next = !(selectedDivisions()[0]?.delegated ?? false);
+          issue((d) => {
+            d.delegated = next;
+            d.aiTimer = Math.min(d.aiTimer, 0.15);
+          });
+        } else if (code === 'BracketLeft' || code === 'BracketRight') {
+          const delta = code === 'BracketLeft' ? -1 : 1;
+          for (const d of selectedDivisions()) {
+            d.perRow = THREE.MathUtils.clamp(d.perRow + delta, MIN_PER_ROW, MAX_PER_ROW);
+          }
+        } else if (code === 'KeyQ' || code === 'KeyE') {
+          const dir = code === 'KeyQ' ? 1 : -1;
+          for (const d of selectedDivisions()) {
+            d.facingMode = 'DIRECTION';
+            d.facing += dir * (Math.PI / 12);
+          }
+        } else handled = false;
+        if (handled) {
+          e.preventDefault();
+          e.stopPropagation();
+          refreshCmdUi();
+        }
+        return;
+      }
       if (phase !== 'deploy' || propsRef.current.paused) return;
       const api = deployApiRef.current;
       if (!api) return;
@@ -870,7 +1324,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     const finish = () => {
       if (completed) return;
       completed = true;
-      const enemiesAlive = actors.filter((a) => a.team === 'enemy' && a.hp > 0).length;
+      const enemiesAlive = actors.filter((a) => a.team === 'enemy' && a.hp > 0 && !a.gone).length;
       const victory = enemiesAlive === 0;
       // Kayıplar sınıf bazında orantılı yazılır (B5'te 1:1 olacak).
       const losses: Partial<TroopRoster> = {};
@@ -897,7 +1351,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       let best: MissionActor | null = null;
       let bestD = Infinity;
       for (const other of actors) {
-        if (other.team === actor.team || other.hp <= 0) continue;
+        if (other.team === actor.team || other.hp <= 0 || other.gone) continue;
         const d = Math.hypot(other.x - actor.x, other.z - actor.z);
         if (d < bestD) {
           bestD = d;
@@ -953,6 +1407,10 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
         }
         mouseLeftPressed = false;
 
+        /* B4: bölük çapaları + formasyon slotları (aktör döngüsünden önce) */
+        for (const d of divisions) updateDivision(d, dt);
+        for (const d of enemyDivisions) updateDivision(d, dt);
+
         /* Aktör güncellemesi */
         for (let i = 0; i < actors.length; i++) {
           const actor = actors[i];
@@ -979,91 +1437,79 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
           }
 
           if (actor.id !== 'player-commander') {
+            const div = actorDivision.get(actor.id);
             const near = nearestOpponent(actor);
             actor.cooldownTimer = Math.max(0, actor.cooldownTimer - dt);
-            if (near) {
+            let moveX = 0;
+            let moveZ = 0;
+            let speedMul = 1;
+            const order: DivisionMoveOrder = div ? div.moveOrder : 'CHARGE';
+            const holdFire = div?.holdFire ?? false;
+            const slotSteer = !!div && order !== 'CHARGE' && actor.hasSlot;
+            const engageRange = actor.isRanged ? actor.range : 3.4;
+            const engaged = !!near && near.dist <= engageRange && order !== 'RETREAT';
+
+            // Kalkan duvarındaki yaya kalkanını kaldırır.
+            actor.isBlocking =
+              !!div && div.formation === 'SHIELD_WALL' && !actor.isMounted;
+
+            if (near && order !== 'RETREAT') {
               const { opp, dist } = near;
               const dx = opp.x - actor.x;
               const dz = opp.z - actor.z;
               const d = Math.max(0.01, dist);
               const dirX = dx / d;
               const dirZ = dz / d;
-              actor.facing = Math.atan2(dirX, dirZ);
 
-              let moveX = 0;
-              let moveZ = 0;
-              let speedMul = 1;
-              const stopDist = actor.isRanged ? actor.range * 0.82 : 2.2;
-
-              if (actor.team === 'ally') {
-                const order = propsRef.current.activeOrder;
-                if (order === 'SHIELD_WALL' || (order === 'HOLD_VOLLEY' && actor.isRanged)) {
-                  actor.isBlocking = !actor.isRanged && order === 'SHIELD_WALL';
-                  const hx = actor.homeX - actor.x;
-                  const hz = actor.homeZ - actor.z;
-                  const hd = Math.hypot(hx, hz);
-                  if (hd > 1.4 && dist > 11) {
-                    moveX = hx / hd;
-                    moveZ = hz / hd;
-                    speedMul = 0.7;
-                  } else if (dist <= 11 && !actor.isRanged) {
-                    moveX = dirX;
-                    moveZ = dirZ;
-                    speedMul = 0.85;
+              if (!slotSteer) {
+                /* HÜCUM: düzen bozulur, herkes en yakın düşmanı kovalar.
+                   Süvari hattı geçip geride toplanarak çevrim hücumu yapar. */
+                actor.facing = Math.atan2(dirX, dirZ);
+                if (actor.archetype === 'CHARGER') {
+                  actor.cycleTimer -= dt;
+                  if (actor.cyclePhase === 'ATTACK') {
+                    if (actor.cycleTimer <= 0 || dist < 2.6) {
+                      actor.cyclePhase = 'REGROUP';
+                      actor.cycleTimer = 2.2 + Math.random();
+                    } else if (dist > 2.4) {
+                      moveX = dirX;
+                      moveZ = dirZ;
+                      speedMul = dist > 6 ? 1.25 : 1;
+                    }
+                  } else {
+                    const gx = opp.x + dirX * 18 - actor.x;
+                    const gz = opp.z + dirZ * 18 - actor.z;
+                    const gd = Math.max(0.01, Math.hypot(gx, gz));
+                    moveX = gx / gd;
+                    moveZ = gz / gd;
+                    actor.facing = Math.atan2(moveX, moveZ);
+                    if (actor.cycleTimer <= 0) {
+                      actor.cyclePhase = 'ATTACK';
+                      actor.cycleTimer = 5 + Math.random() * 3;
+                    }
                   }
-                } else if (order === 'FOLLOW_ME' && player.hp > 0 && dist > 26) {
-                  const slotX = player.x + ((i % 7) - 3) * 2.6;
-                  const slotZ = player.z + Math.floor(i / 7) * 2.6 + 3;
-                  const sx = slotX - actor.x;
-                  const sz = slotZ - actor.z;
-                  const sd = Math.hypot(sx, sz);
-                  if (sd > 2.4) {
-                    moveX = sx / sd;
-                    moveZ = sz / sd;
-                    actor.facing = Math.atan2(sx, sz);
-                  }
-                } else {
-                  actor.isBlocking = false;
-                  if (actor.archetype === 'KITER') {
-                    if (dist < actor.range * 0.55) { moveX = -dirX; moveZ = -dirZ; }
-                    else if (dist > actor.range * 0.9) { moveX = dirX; moveZ = dirZ; }
-                    else { moveX = -dirZ; moveZ = dirX; speedMul = 0.5; }
-                  } else if (dist > stopDist) {
-                    moveX = dirX;
-                    moveZ = dirZ;
-                    if (actor.archetype === 'CHARGER' && dist > 6 && dist < 30) speedMul = 1.25;
-                  }
-                }
-              } else {
-                // Düşman: sınıfa göre sade ilerleme (kaptan AI B4'te).
-                if (actor.archetype === 'KITER') {
+                } else if (actor.archetype === 'KITER') {
                   if (dist < actor.range * 0.55) { moveX = -dirX; moveZ = -dirZ; }
                   else if (dist > actor.range * 0.9) { moveX = dirX; moveZ = dirZ; }
                   else { moveX = -dirZ; moveZ = dirX; speedMul = 0.5; }
-                } else if (dist > stopDist) {
+                } else if (dist > 2.2) {
                   moveX = dirX;
                   moveZ = dirZ;
-                  if (actor.archetype === 'CHARGER' && dist > 6 && dist < 30) speedMul = 1.25;
+                }
+              } else if (engaged) {
+                /* Formasyonda temas: bireysel dövüş (slotu bırakma). */
+                actor.facing = Math.atan2(dirX, dirZ);
+                if (!actor.isRanged && dist > 2.1) {
+                  moveX = dirX;
+                  moveZ = dirZ;
+                  speedMul = 0.8;
                 }
               }
 
-              // Arazi etkisi: suda yavaşla, dik yokuşta yavaşla.
-              const yHere = groundY(actor.x, actor.z);
-              if (profile.waterY !== null && yHere < profile.waterY + 0.05) {
-                speedMul *= actor.isMounted ? 0.7 : 0.55;
-              }
-              if (moveX !== 0 || moveZ !== 0) {
-                const yAhead = groundY(actor.x + moveX * 2.5, actor.z + moveZ * 2.5);
-                const climb = (yAhead - yHere) / 2.5;
-                if (climb > 0) speedMul *= Math.max(0.45, 1 - climb * 0.9);
-                actor.vx = moveX * actor.speed * speedMul;
-                actor.vz = moveZ * actor.speed * speedMul;
-              } else {
-                actor.vx *= 0.4;
-                actor.vz *= 0.4;
-              }
-
+              // Ateş Kes menzilli birimi susturur (yakın dövüş sürer).
+              const fireOK = !(actor.isRanged && holdFire);
               if (
+                fireOK &&
                 dist <= actor.range &&
                 actor.attackPhase === 'IDLE' &&
                 actor.cooldownTimer <= 0
@@ -1071,6 +1517,45 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
                 actor.attackPhase = 'WINDUP';
                 actor.attackTimer = actor.isRanged ? 0.5 : 0.3;
               }
+            }
+
+            if (slotSteer && moveX === 0 && moveZ === 0 && !engaged) {
+              const sx = actor.slotX - actor.x;
+              const sz = actor.slotZ - actor.z;
+              const sd = Math.hypot(sx, sz);
+              if (sd > 0.9) {
+                moveX = sx / sd;
+                moveZ = sz / sd;
+                speedMul = sd > 8 ? 1.45 : sd > 3 ? 1.1 : 0.75;
+                actor.facing = Math.atan2(moveX, moveZ);
+              } else {
+                actor.facing = actor.slotFacing;
+              }
+            }
+
+            // Ricat: kendi kenarına varan aktör sahneden ayrılır (kayıp sayılmaz).
+            if (order === 'RETREAT') {
+              if (
+                (actor.team === 'ally' && actor.z >= profile.allySpawn.z + 24) ||
+                (actor.team === 'enemy' && actor.z <= profile.enemySpawn.z - 24)
+              ) {
+                actor.gone = true;
+                actor.handles.root.visible = false;
+                continue;
+              }
+            }
+
+            // Arazi etkisi: suda yavaşla, dik yokuşta yavaşla.
+            const yHere = groundY(actor.x, actor.z);
+            if (profile.waterY !== null && yHere < profile.waterY + 0.05) {
+              speedMul *= actor.isMounted ? 0.7 : 0.55;
+            }
+            if (moveX !== 0 || moveZ !== 0) {
+              const yAhead = groundY(actor.x + moveX * 2.5, actor.z + moveZ * 2.5);
+              const climb = (yAhead - yHere) / 2.5;
+              if (climb > 0) speedMul *= Math.max(0.45, 1 - climb * 0.9);
+              actor.vx = moveX * actor.speed * speedMul;
+              actor.vz = moveZ * actor.speed * speedMul;
             } else {
               actor.vx *= 0.4;
               actor.vz *= 0.4;
@@ -1097,7 +1582,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
               } else {
                 const reach = actor.range + 0.7;
                 for (const o of actors) {
-                  if (o.team === actor.team || o.hp <= 0) continue;
+                  if (o.team === actor.team || o.hp <= 0 || o.gone) continue;
                   const dx = o.x - actor.x;
                   const dz = o.z - actor.z;
                   const d = Math.hypot(dx, dz);
@@ -1199,8 +1684,8 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
         pGeo.attributes.position.needsUpdate = true;
 
         /* Telemetri + bitiş */
-        const alliesAlive = actors.filter((a) => a.team === 'ally' && a.hp > 0).length;
-        const enemiesAlive = actors.filter((a) => a.team === 'enemy' && a.hp > 0).length;
+        const alliesAlive = actors.filter((a) => a.team === 'ally' && a.hp > 0 && !a.gone).length;
+        const enemiesAlive = actors.filter((a) => a.team === 'enemy' && a.hp > 0 && !a.gone).length;
         hudTimer += dt;
         if (hudTimer >= 0.12) {
           hudTimer = 0;
@@ -1212,8 +1697,9 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
             enemiesAlive,
             enemiesTotal,
             enemyCommanderName,
-            activeOrder: propsRef.current.activeOrder,
+            orderSummary: computeOrderSummary(),
           });
+          refreshCmdUi();
         }
         // Bir taraf tamamen düşmeden savaş bitmez; oyuncu bayılırsa tarafı
         // savaşmaya devam eder (kumanda devri B7'de kurallaşacak).
@@ -1290,6 +1776,25 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
         camera.lookAt(0, 0, 0);
       }
 
+      /* B4: seçili bölük işareti + konum sancağı */
+      if (phase === 'battle') {
+        for (const d of divisions) {
+          if (!d.marker) continue;
+          const show = cmdSelection !== 'ALL' && d.cls === cmdSelection;
+          d.marker.visible = show;
+          if (show) {
+            d.markerMat?.color.setHex(0xfbbf24);
+            d.marker.position.set(d.x, groundY(d.x, d.z) + 0.2, d.z);
+            d.marker.rotation.y = d.facing;
+          }
+        }
+        const flagP = cmdMenu === 'MOVE' ? lookGroundPoint() : null;
+        positionFlag.visible = flagP !== null;
+        if (flagP) {
+          positionFlag.position.set(flagP.x, groundY(flagP.x, flagP.z) + 0.1, flagP.z);
+        }
+      }
+
       renderer.render(scene, camera);
     };
     propsRef.current.onBattleTelemetry({
@@ -1300,8 +1805,9 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       enemiesAlive: enemiesTotal,
       enemiesTotal,
       enemyCommanderName,
-      activeOrder: propsRef.current.activeOrder,
+      orderSummary: computeOrderSummary(),
     });
+    if (!deployEnabled) refreshCmdUi();
     rafId = requestAnimationFrame(tick);
 
     return () => {
@@ -1423,6 +1929,97 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
               <br />
               BAŞLA
             </button>
+          </div>
+        </>
+      ) : cmdUi ? (
+        <>
+          <div
+            data-testid="command-panel"
+            className="pointer-events-none absolute bottom-28 left-1/2 z-10 -translate-x-1/2"
+          >
+            <div className="flex items-stretch justify-center gap-2">
+              <div
+                className={`flex w-20 flex-col items-center justify-center rounded border px-2 py-2 text-center ${
+                  cmdUi.selection === 'ALL'
+                    ? 'border-amber-300 bg-amber-950/70'
+                    : 'border-[#8a6d3b]/50 bg-black/55'
+                }`}
+              >
+                <span className="rounded bg-[#8a6d3b]/70 px-1 text-[11px] font-bold text-black">0</span>
+                <span className="mt-0.5 text-[11px] font-bold text-[#f3d98b]">Tümü</span>
+              </div>
+              {cmdUi.cards.map((card) => {
+                const selected = cmdUi.selection === 'ALL' || cmdUi.selection === card.cls;
+                return (
+                  <div
+                    key={card.cls}
+                    data-testid={`cmd-card-${card.cls}`}
+                    data-order={card.order}
+                    data-formation={card.formation}
+                    className={`w-40 rounded border px-3 py-2 ${
+                      selected
+                        ? 'border-amber-300/80 bg-amber-950/60'
+                        : 'border-[#8a6d3b]/50 bg-black/55 opacity-75'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-[12px] font-bold text-[#f3d98b]">
+                        <span className="rounded bg-[#8a6d3b]/70 px-1 text-[11px] text-black">
+                          {card.num}
+                        </span>
+                        {DIVISION_LABEL[card.cls]}
+                      </span>
+                      <span className="text-[11px] text-[#e8dcc3]">
+                        {card.alive}/{card.total}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-[#e8dcc3]">
+                      <span className="text-[#f3d98b]">{MOVE_ORDER_LABEL[card.order]}</span>
+                      <span>{DEPLOY_FORMATION_LABEL[card.formation]}</span>
+                    </div>
+                    {(card.delegated || card.holdFire) && (
+                      <div className="mt-0.5 flex gap-1 text-[10px] tracking-wide">
+                        {card.delegated && <span className="text-sky-300">Kaptan yönetiyor</span>}
+                        {card.holdFire && <span className="text-red-300">Ateş Kes</span>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div
+              data-testid="command-menu"
+              className="mx-auto mt-2 w-fit rounded border border-[#8a6d3b]/60 bg-black/65 px-4 py-1.5 text-center text-[12px] tracking-wide text-[#e8dcc3]"
+            >
+              {cmdUi.menu === 'MOVE' ? (
+                <span>
+                  <span className="font-bold text-[#f3d98b]">Hareket:</span> F1 Konuma Git · F2 Beni
+                  Takip Et · F3 Hücum · F4 İlerle · F5 Geri Çekil · F6 Dur · F7 Ricat · F9 Geri
+                </span>
+              ) : cmdUi.menu === 'FACE' ? (
+                <span>
+                  <span className="font-bold text-[#f3d98b]">Yön:</span> F1 Sancak Yönüne Dön · F2
+                  Düşmana Dön · F9 Geri
+                </span>
+              ) : cmdUi.menu === 'FORM' ? (
+                <span>
+                  <span className="font-bold text-[#f3d98b]">Diziliş:</span> F1{' '}
+                  {DEPLOY_FORMATION_LABEL.LINE} · F2 {DEPLOY_FORMATION_LABEL.SHIELD_WALL} · F3{' '}
+                  {DEPLOY_FORMATION_LABEL.LOOSE} · F4 {DEPLOY_FORMATION_LABEL.CIRCLE} · F5{' '}
+                  {DEPLOY_FORMATION_LABEL.SQUARE} · F6 {DEPLOY_FORMATION_LABEL.WEDGE} · F7{' '}
+                  {DEPLOY_FORMATION_LABEL.COLUMN} · F9 Geri
+                </span>
+              ) : (
+                <span>
+                  F1 Hareket · F2 Yön · F3 Diziliş · F4 Ateş Serbest/Ateş Kes · F6 Komutayı
+                  Devret
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded bg-black/45 px-3 py-1 text-[11px] tracking-wide text-[#e8dcc3]">
+            Tıkla: nişan kilidi · WASD: sür · Sol tık: saldır · Sağ tık (basılı): blok · 0-4
+            bölük seç · F1-F6 emir
           </div>
         </>
       ) : (

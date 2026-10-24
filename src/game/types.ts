@@ -1,5 +1,3 @@
-import type { TacticalOrder } from './rules';
-
 export interface BattleTelemetry {
   playerHp: number;
   playerMaxHp: number;
@@ -8,7 +6,8 @@ export interface BattleTelemetry {
   enemiesAlive: number;
   enemiesTotal: number;
   enemyCommanderName: string;
-  activeOrder: TacticalOrder;
+  /** Seçili bölüğün güncel emrinin okunur özeti (B4 bölük emirleri). */
+  orderSummary: string;
 }
 
 export interface ProjectedMapLabel {

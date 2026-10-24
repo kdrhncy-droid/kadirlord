@@ -40,6 +40,16 @@ Bu kural her görevden önce gelir; aşağıdaki teknik kurallarla çelişirse b
    geçerlidir: yanlış/eksik Bannerlord karşılığını fark edip düzeltmeden (veya
    en azından kanonik listeye kanıtıyla işlemeden) geçmek bu kuralın ihlâlidir.
 
+## ⏳ KAPSAM İLKESİ — Öncelik önemli olanda (kullanıcı kararı, 2026-10-24)
+
+> Bannerlord'un her özelliği hemen yapılmak zorunda değil. Zor/derin
+> özellikler sonraya bırakılabilir; **önce önemli ve oyun hissini değiştiren
+> işler** yapılır. Ertelenen her parça gerekçesi ve bağlandığı faz ile
+> `YAPILACAKLAR_LISTESI.md`'ye işlenir; yerine sahte/yarım arayüz veya
+> çalışmıyormuş gibi yapan yer tutucu konmaz. Altın Kural geçerliliğini
+> korur: yapılan her şey araştırılmış Bannerlord karşılığına dayanır —
+> ilke "ne zaman" sorusunu düzenler, "ne kadar doğru" sorusunu gevşetmez.
+
 ## Oyun nedir?
 
 **Sancak-ı Kalradya: Taht ve Kılıç**, Mount & Blade II: Bannerlord'dan

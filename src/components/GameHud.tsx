@@ -7,7 +7,6 @@ import {
   FACTION_INFO,
   LordAgent,
   Settlement,
-  TacticalOrder,
   UNIT_DEFINITIONS,
   UnitTierId,
   calculateClanTier,
@@ -39,14 +38,12 @@ interface GameHudProps {
   nearLord: LordAgent | null;
   mapTelemetry: MapCameraTelemetry;
   cameraActionsRef: React.MutableRefObject<CameraControlActions | null>;
-  activeOrder: TacticalOrder;
   battleTelemetry: BattleTelemetry;
   muted: boolean;
   onSetTimeScale: (scale: 0 | 1 | 2 | 4) => void;
   onToggleMute: () => void;
   onPause: () => void;
   onRestart: () => void;
-  onSetTacticalOrder: (order: TacticalOrder) => void;
   onOpenSettlement: (s: Settlement) => void;
   onOpenDiplomacy: (l: LordAgent) => void;
   /** Faz 6: yüz yüze diyalog ekranı. */
@@ -110,14 +107,12 @@ export const GameHud: React.FC<GameHudProps> = ({
   nearLord,
   mapTelemetry,
   cameraActionsRef,
-  activeOrder,
   battleTelemetry,
   muted,
   onSetTimeScale,
   onToggleMute,
   onPause,
   onRestart,
-  onSetTacticalOrder,
   onOpenSettlement,
   onOpenDiplomacy,
   onTalkToLord,
@@ -559,14 +554,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                   MEYDAN SAVAŞI
                 </span>
                 <span className="text-[11px] text-[#d1c5b0]">
-                  Emir:{' '}
-                  {activeOrder === 'CHARGE'
-                    ? 'Hücum'
-                    : activeOrder === 'SHIELD_WALL'
-                      ? 'Kalkan Duvarı'
-                      : activeOrder === 'FOLLOW_ME'
-                        ? 'Takip Et'
-                        : 'Ok Yağmuru'}
+                  Emir: {battleTelemetry.orderSummary}
                 </span>
               </div>
 
@@ -1609,35 +1597,19 @@ export const GameHud: React.FC<GameHudProps> = ({
               ) : (
                 <div className="hud-panel rounded-lg px-4 py-2.5 w-full flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    {(
-                      [
-                        { id: 'CHARGE', label: '[1] Hücum · Tam Taarruz' },
-                        { id: 'SHIELD_WALL', label: '[2] Kalkan Duvarı · Savunma Hattı' },
-                        { id: 'FOLLOW_ME', label: '[3] Beni Takip Et · Muhafız' },
-                        { id: 'HOLD_VOLLEY', label: '[4] Ok Yağmuru · Menzilli' },
-                      ] as Array<{ id: TacticalOrder; label: string }>
-                    ).map((ord) => (
-                      <button
-                        key={ord.id}
-                        type="button"
-                        onClick={(e) => {
-                          e.currentTarget.blur();
-                          onSetTacticalOrder(ord.id);
-                        }}
-                        className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                          activeOrder === ord.id
-                            ? 'bg-[#b45309] text-white border border-[#fbbf24]'
-                            : 'bg-[#1c1914] text-[#d1c5b0] hover:bg-[#2a241c]'
-                        }`}
-                      >
-                        {ord.label}
-                      </button>
-                    ))}
+                    <span className="text-xs text-[#d1c5b0]">
+                      Bölük emirleri: <span className="text-[#f3d98b]">0-4</span> bölük seç ·{' '}
+                      <span className="text-[#f3d98b]">F1</span> Hareket ·{' '}
+                      <span className="text-[#f3d98b]">F2</span> Yön ·{' '}
+                      <span className="text-[#f3d98b]">F3</span> Diziliş ·{' '}
+                      <span className="text-[#f3d98b]">F4</span> Ateş ·{' '}
+                      <span className="text-[#f3d98b]">F6</span> Devret
+                    </span>
                   </div>
 
                   <div className="flex items-center gap-3">
                     <span className="text-xs font-mono-tabular text-[#d1c5b0]">
-                      WASD: Sür · Sol Tık: Saldır · Sağ Tık (basılı): Blok · 1-4: Emir
+                      WASD: Sür · Sol Tık: Saldır · Sağ Tık (basılı): Blok
                     </span>
                   </div>
                 </div>

@@ -9,7 +9,6 @@ import {
   Settlement,
   SettlementDailyDefault,
   SiegeEngineType,
-  TacticalOrder,
   TroopRoster,
   UnitTierId,
   WorkshopTypeId,
@@ -240,7 +239,6 @@ export default function App() {
   // Battle State & Pre-Allocated Object Pool
   const campaignBattlePoolRef = useRef<BattleMemoryPool>(new BattleMemoryPool());
   const [battlePrewarmStages, setBattlePrewarmStages] = useState<PrewarmStageReport[] | null>(null);
-  const [activeOrder, setActiveOrder] = useState<TacticalOrder>('CHARGE');
   const [battleTargetLordId, setBattleTargetLordId] = useState<string | null>(null);
   const [battleTargetSettlementId, setBattleTargetSettlementId] = useState<string | null>(null);
   const [battleTelemetry, setBattleTelemetry] = useState<BattleTelemetry>({
@@ -251,7 +249,7 @@ export default function App() {
     enemiesAlive: 11,
     enemiesTotal: 11,
     enemyCommanderName: 'Kara Geçit Yağmacıları',
-    activeOrder: 'CHARGE',
+    orderSummary: '—',
   });
 
   const [outcomeSnapshot, setOutcomeSnapshot] = useState<{
@@ -1054,12 +1052,8 @@ export default function App() {
         }
       }
 
-      if (gameState === 'playing' && subMode === 'battle') {
-        if (e.code === 'Digit1') setActiveOrder('CHARGE');
-        if (e.code === 'Digit2') setActiveOrder('SHIELD_WALL');
-        if (e.code === 'Digit3') setActiveOrder('FOLLOW_ME');
-        if (e.code === 'Digit4') setActiveOrder('HOLD_VOLLEY');
-      }
+      // Savaş içi bölük emirleri (0-4 + F tuşları) BattlefieldView'de
+      // capture aşamasında işlenir (B4); burada rakam tuşlarına dokunulmaz.
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -1533,7 +1527,6 @@ export default function App() {
     setActiveSettlementModal(null);
     setBattleTargetLordId(lord.id);
     setBattleTargetSettlementId(null);
-    setActiveOrder('CHARGE');
     const stages = campaignBattlePoolRef.current.prewarmMemoryPages();
     setBattlePrewarmStages(stages);
     setSubMode('battle');
@@ -1545,7 +1538,6 @@ export default function App() {
     setActiveDiplomacyLord(null);
     setBattleTargetSettlementId(settlement.id);
     setBattleTargetLordId(null);
-    setActiveOrder('CHARGE');
     const stages = campaignBattlePoolRef.current.prewarmMemoryPages();
     setBattlePrewarmStages(stages);
     setSubMode('battle');
@@ -1556,7 +1548,6 @@ export default function App() {
     setActiveDiplomacyLord(null);
     setBattleTargetLordId('lord-kargi');
     setBattleTargetSettlementId(null);
-    setActiveOrder('CHARGE');
     const stages = campaignBattlePoolRef.current.prewarmMemoryPages();
     setBattlePrewarmStages(stages);
     setSubMode('battle');
@@ -1682,7 +1673,6 @@ export default function App() {
               ? (campaign.settlements.find((s) => s.id === battleTargetSettlementId) ?? null)
               : null
           }
-          activeOrder={activeOrder}
           onBattleTelemetry={setBattleTelemetry}
           onBattleComplete={handleBattleComplete}
         />
@@ -1881,7 +1871,6 @@ export default function App() {
           nearLord={nearLord}
           mapTelemetry={mapTelemetry}
           cameraActionsRef={cameraActionsRef}
-          activeOrder={activeOrder}
           battleTelemetry={battleTelemetry}
           muted={muted}
           onSetTimeScale={setMapTimeScale}
@@ -1891,10 +1880,6 @@ export default function App() {
           }}
           onPause={() => setGameState('paused')}
           onRestart={startGame}
-          onSetTacticalOrder={(ord) => {
-            setActiveOrder(ord);
-            sound.playWarhorn();
-          }}
           onOpenSettlement={handleOpenSettlement}
           onOpenDiplomacy={(l) => {
             setActiveDiplomacyLord(l);

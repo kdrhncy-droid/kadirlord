@@ -59,8 +59,6 @@ export type FactionId =
  */
 export type UnitTierId = 'infantry' | 'archer' | 'cavalry' | 'horseArcher';
 
-export type TacticalOrder = 'CHARGE' | 'SHIELD_WALL' | 'FOLLOW_ME' | 'HOLD_VOLLEY';
-
 export interface UnitDefinition {
   id: UnitTierId;
   name: string;
