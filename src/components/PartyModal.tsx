@@ -64,7 +64,7 @@ function deriveTroopVisuals(def: TroopDefinition): HeroMannequinVisualOptions {
   let weaponText = 'Thamaskene İmparatorluk Spathası (Kesici: 84)';
   if (def.battleClass === 'archer') weaponText = 'Bozkır Refleks Yayı (Yay)';
   else if (def.battleClass === 'cavalry') weaponText = 'Ağır Kontos Kargısı (Mızrak)';
-  else if (def.battleClass === 'guard') weaponText = 'İki Elli Savaş Baltası (Balta)';
+  else if (def.battleClass === 'horseArcher') weaponText = 'Bozkır Refleks Yayı ve At (Atlı Okçu)';
 
   const armorText =
     def.tier >= 4
@@ -86,11 +86,11 @@ function deriveTroopVisuals(def: TroopDefinition): HeroMannequinVisualOptions {
     BODY: armorText,
     GLOVES: 'Deri Eldiven',
     LEG: def.tier >= 4 ? 'Çelik Çizme' : 'Deri Bot',
-    MOUNT: def.battleClass === 'cavalry' ? 'Savaş Küheylanı' : 'Yok',
-    HARNESS: def.battleClass === 'cavalry' && def.tier >= 4 ? 'Pullu At Zırhı' : 'Yok',
+    MOUNT: def.isMounted ? 'Savaş Küheylanı' : 'Yok',
+    HARNESS: def.isMounted && def.tier >= 4 ? 'Pullu At Zırhı' : 'Yok',
     BANNER: 'Sancak',
     WEAPON1: weaponText,
-    WEAPON2: def.battleClass === 'archer' ? 'Ok Sadağı' : 'Yok',
+    WEAPON2: def.battleClass === 'archer' || def.battleClass === 'horseArcher' ? 'Ok Sadağı' : 'Yok',
     WEAPON3: 'Yok',
     WEAPON4: 'Yok',
   };
@@ -198,7 +198,7 @@ export const PartyModal: React.FC<PartyModalProps> = ({
       const activeSet = selectedEntity.hero.activeEquipmentSet ?? 'BATTLE';
       return Boolean(selectedEntity.hero.equipment?.[activeSet]?.MOUNT);
     }
-    return selectedEntity.definition.battleClass === 'cavalry';
+    return selectedEntity.definition.isMounted;
   }, [selectedEntity]);
 
   // Terfi Seçenekleri
@@ -728,7 +728,7 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                             <div>
                               <div className="font-bold text-xs">{def.name}</div>
                               <div className="text-[10px] text-[#a89274]">
-                                {def.battleClass === 'cavalry' ? '🐎 Süvari' : def.battleClass === 'archer' ? '🏹 Okçu' : '🛡️ Piyade'}
+                                {def.battleClass === 'horseArcher' ? '🏹🐎 Atlı Okçu' : def.battleClass === 'cavalry' ? '🐎 Süvari' : def.battleClass === 'archer' ? '🏹 Okçu' : '🛡️ Piyade'}
                               </div>
                             </div>
                           </div>

@@ -11,6 +11,7 @@ import {
   isHostileToPlayer,
 } from './encounter.ts';
 import { computeLandPath, isNavigableLandAt, stepAlongLandOnly } from './navigation.ts';
+import { factionHasHorseArchers } from './rules.ts';
 import type { LordAgent, Settlement, TroopRoster } from './rules.ts';
 import { getArmyEscortSlotPoint } from './armySystem.ts';
 import { getSiegeCampPoint, getSiegeCampSlotPoint } from './siegeMechanics.ts';
@@ -108,15 +109,18 @@ export function getLordDetailedIntel(
   liveAction?: string,
 ): LordDetailedIntel {
   const seed = lord.id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const horseArcherShare = Math.max(1, Math.floor(lord.armySize * 0.15));
+  const hasHorseArchers = factionHasHorseArchers(lord.faction);
   const roster: TroopRoster = lord.roster || {
-    militia: Math.max(2, Math.floor(lord.armySize * 0.35)),
+    infantry:
+      Math.max(2, Math.floor(lord.armySize * 0.35)) + (hasHorseArchers ? 0 : horseArcherShare),
     archer: Math.max(2, Math.floor(lord.armySize * 0.28)),
     cavalry: Math.max(1, Math.floor(lord.armySize * 0.22)),
-    guard: Math.max(1, Math.floor(lord.armySize * 0.15)),
+    horseArcher: hasHorseArchers ? horseArcherShare : 0,
   };
   const totalHealthy = Math.max(
     0,
-    roster.militia + roster.archer + roster.cavalry + roster.guard,
+    roster.infantry + roster.archer + roster.cavalry + roster.horseArcher,
   );
 
   const wounded = lord.wounded ?? ((seed % 4) + (totalHealthy >= 34 ? 3 : 1));

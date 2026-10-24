@@ -89,10 +89,10 @@ export function calculatePrisonerLimitBreakdown(state: CampaignState): PrisonerL
       ? Math.max(0, troopStackTotal(stacks) - troopStackWoundedTotal(stacks))
       : Math.max(
           0,
-          (state.roster.militia ?? 0) +
+          (state.roster.infantry ?? 0) +
             (state.roster.archer ?? 0) +
             (state.roster.cavalry ?? 0) +
-            (state.roster.guard ?? 0),
+            (state.roster.horseArcher ?? 0),
         );
 
   return {
@@ -145,6 +145,8 @@ export function getTroopUpgradeOptions(
           upgradeXp: 999,
           upgradeGold: 20,
           horseRequirement: 'NONE',
+          isNobleLine: false,
+          isMounted: false,
           upgrades: [],
           maxHp: 80,
           attack: 20,

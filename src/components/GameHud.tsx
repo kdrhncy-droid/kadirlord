@@ -57,7 +57,6 @@ interface GameHudProps {
   onAllocateAttribute?: (attrId: AttributeId) => string | null;
   onAllocateFocus?: (skillId: BannerlordSkillId) => string | null;
   onOpenInventoryModal?: () => void;
-  onUpgradeTroop?: (fromTier: UnitTierId, toTier: UnitTierId) => string | null;
   onRecruitPrisoners?: () => string | null;
   onOpenMarketModal?: () => void;
   /**
@@ -129,7 +128,6 @@ export const GameHud: React.FC<GameHudProps> = ({
   onAllocateAttribute,
   onAllocateFocus,
   onOpenInventoryModal,
-  onUpgradeTroop,
   onRecruitPrisoners,
   onOpenMarketModal,
   canTrade = false,
@@ -695,14 +693,6 @@ export const GameHud: React.FC<GameHudProps> = ({
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {Object.values(UNIT_DEFINITIONS).map((u) => {
-                const nextTier: UnitTierId | null =
-                  u.id === 'militia'
-                    ? 'archer'
-                    : u.id === 'archer'
-                      ? 'cavalry'
-                      : u.id === 'cavalry'
-                        ? 'guard'
-                        : null;
                 return (
                   <div
                     key={u.id}
@@ -715,22 +705,6 @@ export const GameHud: React.FC<GameHudProps> = ({
                         {campaign.roster[u.id]} Birlik
                       </div>
                     </div>
-                    {nextTier && onUpgradeTroop && (
-                      <button
-                        type="button"
-                        disabled={campaign.roster[u.id] <= 0}
-                        onClick={() => {
-                          const err = onUpgradeTroop(u.id, nextTier);
-                          setHudFeedback(
-                            err ||
-                              `🎖️ 1 ${u.name} üst kademeye (${UNIT_DEFINITIONS[nextTier].name}) terfi ettirildi!`,
-                          );
-                        }}
-                        className="w-full py-1 rounded text-[11px] font-bold bg-[#b45309] hover:bg-[#d97706] text-white disabled:opacity-35 transition-colors"
-                      >
-                        + Terfi: {UNIT_DEFINITIONS[nextTier].name.split(' ')[0]}
-                      </button>
-                    )}
                   </div>
                 );
               })}

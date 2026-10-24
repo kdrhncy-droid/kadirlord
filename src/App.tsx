@@ -43,7 +43,6 @@ import {
   sellSurplusLootAtMarket,
   setSettlementDailyDefault,
   upgradeSettlementBuilding,
-  upgradeTroopTier,
 } from './game/rules';
 import type {
   BattleTelemetry,
@@ -1259,10 +1258,10 @@ export default function App() {
           const mergedKeys = Array.from(new Set([...(s.recruitedSlotKeys ?? []), ...newSlotKeys]));
           const nextPool = { ...s.recruitPool };
           for (let i = 0; i < validRecruits.length; i++) {
-            if (nextPool.militia > 0) nextPool.militia -= 1;
+            if (nextPool.infantry > 0) nextPool.infantry -= 1;
             else if (nextPool.archer > 0) nextPool.archer -= 1;
             else if (nextPool.cavalry > 0) nextPool.cavalry -= 1;
-            else if (nextPool.guard > 0) nextPool.guard -= 1;
+            else if (nextPool.horseArcher > 0) nextPool.horseArcher -= 1;
           }
           return {
             ...s,
@@ -1910,11 +1909,6 @@ export default function App() {
           }}
           onOpenCharacterModal={() => {
             setIsCharacterModalOpen((prev) => !prev);
-          }}
-          onUpgradeTroop={(fromTier, toTier) => {
-            const res = upgradeTroopTier(campaign, fromTier, toTier, 1);
-            if (res.success) setCampaign(res.nextState);
-            return res.reason || null;
           }}
           onRecruitPrisoners={() => {
             const res = recruitCapturedPrisoners(campaign, 1);

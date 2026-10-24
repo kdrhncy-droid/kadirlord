@@ -187,10 +187,10 @@ export const ArmyModal: React.FC<ArmyModalProps> = ({
           sum +
           calculatePartyStrength(
             l.roster ?? {
-              militia: Math.floor(l.armySize * 0.4),
+              infantry: Math.floor(l.armySize * 0.4),
               archer: Math.floor(l.armySize * 0.3),
               cavalry: Math.floor(l.armySize * 0.2),
-              guard: Math.floor(l.armySize * 0.1),
+              horseArcher: Math.floor(l.armySize * 0.1),
             },
             1.0,
           ),

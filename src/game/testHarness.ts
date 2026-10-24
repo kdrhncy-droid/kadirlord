@@ -472,7 +472,7 @@ export function buildE2EScenario(
     case 'bandit-caught-player': {
       const campaign: CampaignState = {
         ...base,
-        roster: { militia: 6, archer: 0, cavalry: 0, guard: 0 },
+        roster: { infantry: 6, archer: 0, cavalry: 0, horseArcher: 0 },
         playerHp: base.playerMaxHp,
       };
       const result = replacePreferredLord(
@@ -483,7 +483,7 @@ export function buildE2EScenario(
           nearPlayer(
             withRoster(
               { ...lord, isAtWarWithPlayer: true, relation: -60 },
-              { militia: 16, archer: 8, cavalry: 6, guard: 2 },
+              { infantry: 16, archer: 8, cavalry: 6, horseArcher: 2 },
             ),
             campaign,
           ),
@@ -494,7 +494,7 @@ export function buildE2EScenario(
     case 'player-caught-bandit': {
       const campaign: CampaignState = {
         ...base,
-        roster: { militia: 20, archer: 20, cavalry: 15, guard: 15 },
+        roster: { infantry: 20, archer: 20, cavalry: 15, horseArcher: 15 },
         playerHp: base.playerMaxHp,
       };
       const result = replacePreferredLord(
@@ -505,7 +505,7 @@ export function buildE2EScenario(
           nearPlayer(
             withRoster(
               { ...lord, isAtWarWithPlayer: true, relation: -35 },
-              { militia: 6, archer: 2, cavalry: 0, guard: 0 },
+              { infantry: 6, archer: 2, cavalry: 0, horseArcher: 0 },
             ),
             campaign,
           ),
@@ -516,7 +516,7 @@ export function buildE2EScenario(
     case 'lord-caught-player': {
       const campaign: CampaignState = {
         ...base,
-        roster: { militia: 6, archer: 0, cavalry: 0, guard: 0 },
+        roster: { infantry: 6, archer: 0, cavalry: 0, horseArcher: 0 },
         playerHp: base.playerMaxHp,
       };
       const result = replacePreferredLord(
@@ -527,7 +527,7 @@ export function buildE2EScenario(
           nearPlayer(
             withRoster(
               { ...lord, isAtWarWithPlayer: true, relation: -55 },
-              { militia: 16, archer: 14, cavalry: 10, guard: 8 },
+              { infantry: 16, archer: 14, cavalry: 10, horseArcher: 8 },
             ),
             campaign,
           ),

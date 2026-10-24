@@ -98,10 +98,10 @@ export function getPartyFoodUnits(inventoryItems: InventoryItem[] | undefined): 
  */
 export function calculateDailyFoodDemand(roster: TroopRoster, unlockedPerks: string[] = []): number {
   const totalTroops =
-    Math.max(0, Math.floor(roster.militia)) +
+    Math.max(0, Math.floor(roster.infantry)) +
     Math.max(0, Math.floor(roster.archer)) +
     Math.max(0, Math.floor(roster.cavalry)) +
-    Math.max(0, Math.floor(roster.guard));
+    Math.max(0, Math.floor(roster.horseArcher));
   const base = Math.max(1, Math.ceil((totalTroops + 1) / 20));
   if (unlockedPerks.includes('spartan_rations')) {
     return Math.max(1, Math.ceil(base * 0.8));
@@ -216,7 +216,7 @@ export function advanceDailyPartyFood(state: CampaignState): DailyFoodAdvanceRes
   if (starving) {
     moraleDelta -= 15;
     const totalTroops =
-      state.roster.militia + state.roster.archer + state.roster.cavalry + state.roster.guard;
+      state.roster.infantry + state.roster.archer + state.roster.cavalry + state.roster.horseArcher;
     if (totalTroops > 0) {
       woundedCount = Math.min(3, Math.max(1, Math.floor(demanded / 3)));
     }

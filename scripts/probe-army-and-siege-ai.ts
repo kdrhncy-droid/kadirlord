@@ -49,7 +49,7 @@ console.log('=== PROBE: Görev 2 (Ordu & Uyum) + Çoklu Kuşatma Yay Çemberi + 
 
   const threeLords = state.lords.slice(0, 3).map((l, idx) => ({
     ...l,
-    roster: { militia: 10 + idx * 2, archer: 8, cavalry: 6, guard: 4 },
+    roster: { infantry: 10 + idx * 2, archer: 8, cavalry: 6, horseArcher: 4 },
     armySize: 28 + idx * 2,
     order: {
       kind: 'SIEGE' as const,
@@ -129,7 +129,7 @@ console.log('=== PROBE: Görev 2 (Ordu & Uyum) + Çoklu Kuşatma Yay Çemberi + 
     ...simState,
     playerX: settlement.x + 18,
     playerZ: settlement.z + 10,
-    roster: { militia: 45, archer: 40, cavalry: 35, guard: 30 }, // Çok güçlü oyuncu ordusu
+    roster: { infantry: 45, archer: 40, cavalry: 35, horseArcher: 30 }, // Çok güçlü oyuncu ordusu
     lords: simState.lords.map((l, i) =>
       i === 0
         ? {
@@ -138,7 +138,7 @@ console.log('=== PROBE: Görev 2 (Ordu & Uyum) + Çoklu Kuşatma Yay Çemberi + 
             isAtWarWithPlayer: true,
             x: settlement.x + 20,
             z: settlement.z,
-            roster: { militia: 8, archer: 6, cavalry: 4, guard: 2 },
+            roster: { infantry: 8, archer: 6, cavalry: 4, horseArcher: 2 },
             armySize: 20,
             order: {
               kind: 'SIEGE',

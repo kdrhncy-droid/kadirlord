@@ -91,10 +91,10 @@ export function combineBesiegerForces(besiegers: readonly LordAgent[]): LordAgen
   if (besiegers.length === 1) {
     const single = besiegers[0];
     const roster: TroopRoster = single.roster ?? {
-      militia: Math.max(2, Math.floor(single.armySize * 0.35)),
+      infantry: Math.max(2, Math.floor(single.armySize * 0.35)),
       archer: Math.max(2, Math.floor(single.armySize * 0.28)),
       cavalry: Math.max(1, Math.floor(single.armySize * 0.22)),
-      guard: Math.max(1, Math.floor(single.armySize * 0.15)),
+      horseArcher: Math.max(1, Math.floor(single.armySize * 0.15)),
     };
     return {
       ...single,
@@ -104,10 +104,10 @@ export function combineBesiegerForces(besiegers: readonly LordAgent[]): LordAgen
   }
 
   const combinedRoster: TroopRoster = {
-    militia: 0,
+    infantry: 0,
     archer: 0,
     cavalry: 0,
-    guard: 0,
+    horseArcher: 0,
   };
   let totalWounded = 0;
   let totalPrisoners = 0;
@@ -115,15 +115,15 @@ export function combineBesiegerForces(besiegers: readonly LordAgent[]): LordAgen
 
   for (const lord of besiegers) {
     const r: TroopRoster = lord.roster ?? {
-      militia: Math.max(2, Math.floor(lord.armySize * 0.35)),
+      infantry: Math.max(2, Math.floor(lord.armySize * 0.35)),
       archer: Math.max(2, Math.floor(lord.armySize * 0.28)),
       cavalry: Math.max(1, Math.floor(lord.armySize * 0.22)),
-      guard: Math.max(1, Math.floor(lord.armySize * 0.15)),
+      horseArcher: Math.max(1, Math.floor(lord.armySize * 0.15)),
     };
-    combinedRoster.militia += Math.max(0, r.militia);
+    combinedRoster.infantry += Math.max(0, r.infantry);
     combinedRoster.archer += Math.max(0, r.archer);
     combinedRoster.cavalry += Math.max(0, r.cavalry);
-    combinedRoster.guard += Math.max(0, r.guard);
+    combinedRoster.horseArcher += Math.max(0, r.horseArcher);
     totalWounded += lord.wounded ?? 0;
     totalPrisoners += lord.prisoners ?? 0;
     moraleSum += lord.morale ?? 75;
@@ -171,10 +171,10 @@ export function distributeCombinedBesiegerCasualties(
     if (!isBesieger) return lord;
 
     const currentRoster: TroopRoster = lord.roster ?? {
-      militia: Math.max(2, Math.floor(lord.armySize * 0.35)),
+      infantry: Math.max(2, Math.floor(lord.armySize * 0.35)),
       archer: Math.max(2, Math.floor(lord.armySize * 0.28)),
       cavalry: Math.max(1, Math.floor(lord.armySize * 0.22)),
-      guard: Math.max(1, Math.floor(lord.armySize * 0.15)),
+      horseArcher: Math.max(1, Math.floor(lord.armySize * 0.15)),
     };
     const lordTroops = Math.max(1, getTotalTroops(currentRoster));
     const share = lordTroops / totalInitialTroops;
@@ -193,7 +193,7 @@ export function distributeCombinedBesiegerCasualties(
         updatedTotal = getTotalTroops(updatedRoster);
       }
       if (updatedTotal <= 0) {
-        updatedRoster = { militia: 1, archer: 0, cavalry: 0, guard: 0 };
+        updatedRoster = { infantry: 1, archer: 0, cavalry: 0, horseArcher: 0 };
         updatedTotal = 1;
       }
       const retreatPt = snapToNearestLand(lord.x + 20, lord.z - 20);
@@ -523,13 +523,13 @@ export function applyBreakInCasualties(state: CampaignState): CampaignState {
   }
 
   const next: TroopRoster = {
-    militia: scale(state.roster.militia),
+    infantry: scale(state.roster.infantry),
     archer: scale(state.roster.archer),
     cavalry: scale(state.roster.cavalry),
-    guard: scale(state.roster.guard),
+    horseArcher: scale(state.roster.horseArcher),
   };
   if (getTotalTroops(next) === 0) {
-    next.militia = 1;
+    next.infantry = 1;
   }
   return { ...state, roster: next };
 }

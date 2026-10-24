@@ -9,6 +9,7 @@
  * aynı kampanya her açılışta aynı dünyayı verir (save tutarlılığı için şart).
  */
 import type { FactionId, LordAgent, Settlement, TroopRoster } from './rules.ts';
+import { cultureHasClass } from './troops';
 import { hash32 } from './heroes.ts';
 
 interface CulturePool {
@@ -128,13 +129,19 @@ const CULTURE_TROOP_DOCTRINE: Record<
 
 function makeCultureRoster(faction: FactionId, targetSize: number): { roster: TroopRoster; armySize: number } {
   const doc = CULTURE_TROOP_DOCTRINE[faction] ?? CULTURE_TROOP_DOCTRINE.empire;
-  const [rMilitia, rArcher, rCavalry] = doc.ratios;
-  const militia = Math.max(1, Math.round(targetSize * rMilitia));
+  const [rInfantry, rArcher, rCavalry] = doc.ratios;
+  let infantry = Math.max(1, Math.round(targetSize * rInfantry));
   const archer = Math.max(1, Math.round(targetSize * rArcher));
   const cavalry = Math.max(1, Math.round(targetSize * rCavalry));
-  const guard = Math.max(1, targetSize - (militia + archer + cavalry));
-  const roster: TroopRoster = { militia, archer, cavalry, guard };
-  const exactTotal = roster.militia + roster.archer + roster.cavalry + roster.guard;
+  let horseArcher = Math.max(1, targetSize - (infantry + archer + cavalry));
+  // 10.9: kültürün ağacında atlı okçu yoksa payı piyadeye gider (Bannerlord'da
+  // Vlandiya/Sturgiya/Batanya ordularında atlı okçu bulunmaz).
+  if (!cultureHasClass(faction, 'horseArcher')) {
+    infantry += horseArcher;
+    horseArcher = 0;
+  }
+  const roster: TroopRoster = { infantry, archer, cavalry, horseArcher };
+  const exactTotal = roster.infantry + roster.archer + roster.cavalry + roster.horseArcher;
   return { roster, armySize: exactTotal };
 }
 

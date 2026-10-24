@@ -11,6 +11,7 @@ import {
   TroopRoster,
   computeMeleeDamage,
   getSettlementArrivalRadius,
+  factionHasHorseArchers,
   getTotalTroops,
   getVillagePrimaryProduction,
   getWallSections,
@@ -132,7 +133,7 @@ interface WorldCanvasProps {
 interface BattleActor {
   id: string;
   team: 'ally' | 'enemy';
-  unitType: 'militia' | 'archer' | 'cavalry' | 'guard' | 'commander';
+  unitType: 'infantry' | 'archer' | 'cavalry' | 'horseArcher' | 'commander';
   archetype: 'CHASER' | 'KITER' | 'SHIELDED' | 'CHARGER';
   x: number;
   z: number;
@@ -1441,7 +1442,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           })</span>
         </div>
         <div class="text-[9px] text-[#e2e8f0] font-mono">
-          Piyade: ${intel.roster.militia} · Okçu: ${intel.roster.archer} · Süvari: ${intel.roster.cavalry} · Muhafız: ${intel.roster.guard}
+          Piyade: ${intel.roster.infantry} · Okçu: ${intel.roster.archer} · Süvari: ${intel.roster.cavalry} · Muhafız: ${intel.roster.horseArcher}
         </div>
         <div class="mt-1 pt-1 border-t border-[#c6a15b]/20 flex items-center justify-between text-[9px] text-[#fde68a] font-mono">
           <span>Esirler: ${intel.prisoners} (+${intel.prisoners}e)</span>
@@ -1589,7 +1590,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               Refah: ${liveS.prosperity} · Garnizon: ${liveS.garrison} · Erzak: ${liveS.foodStock}
             </div>
             <div class="text-[9px] text-[#d1d5db]">
-              Piyade: ${liveS.recruitPool.militia + liveS.recruitPool.guard} · Okçu: ${liveS.recruitPool.archer} · Süvari: ${liveS.recruitPool.cavalry}
+              Piyade: ${liveS.recruitPool.infantry + liveS.recruitPool.horseArcher} · Okçu: ${liveS.recruitPool.archer} · Süvari: ${liveS.recruitPool.cavalry}
             </div>
           `
           : `
@@ -1761,7 +1762,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           Toplam Asker: ${totalHealthy} · Esirler: ${camp.prisoners}
         </div>
         <div class="text-[9px] text-[#e2e8f0] font-mono">
-          Piyade: ${camp.roster.militia} · Okçu: ${camp.roster.archer} · Süvari: ${camp.roster.cavalry} · Muhafız: ${camp.roster.guard}
+          Piyade: ${camp.roster.infantry} · Okçu: ${camp.roster.archer} · Süvari: ${camp.roster.cavalry} · Muhafız: ${camp.roster.horseArcher}
         </div>
         <div class="mt-1 pt-1 border-t border-[#c6a15b]/20 text-[9px] text-[#fde68a] font-mono">
           Hız: ${pSpeed.finalSpeed} (${pSpeed.terrainLabel})
@@ -2193,19 +2194,19 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       // Scale player battle actors proportionally from real campaign roster (up to 28 allies)
       const totalPlayerTroops = Math.max(1, getTotalTroops(camp.roster));
       const allyScale = totalPlayerTroops > 28 ? 28 / totalPlayerTroops : 1;
-      const allyTypes: Array<{ type: 'militia' | 'archer' | 'cavalry' | 'guard'; count: number }> = [
-        { type: 'militia', count: camp.roster.militia > 0 ? Math.max(1, Math.round(camp.roster.militia * allyScale)) : 0 },
+      const allyTypes: Array<{ type: 'infantry' | 'archer' | 'cavalry' | 'horseArcher'; count: number }> = [
+        { type: 'infantry', count: camp.roster.infantry > 0 ? Math.max(1, Math.round(camp.roster.infantry * allyScale)) : 0 },
         { type: 'archer', count: camp.roster.archer > 0 ? Math.max(1, Math.round(camp.roster.archer * allyScale)) : 0 },
         { type: 'cavalry', count: camp.roster.cavalry > 0 ? Math.max(1, Math.round(camp.roster.cavalry * allyScale)) : 0 },
-        { type: 'guard', count: camp.roster.guard > 0 ? Math.max(1, Math.round(camp.roster.guard * allyScale)) : 0 },
+        { type: 'horseArcher', count: camp.roster.horseArcher > 0 ? Math.max(1, Math.round(camp.roster.horseArcher * allyScale)) : 0 },
       ];
 
       let allyIdx = 0;
       allyTypes.forEach(({ type, count }) => {
         for (let i = 0; i < count; i++) {
-          const isMounted = type === 'cavalry';
-          const isRanged = type === 'archer';
-          const isHeavy = type === 'guard';
+          const isMounted = type === 'cavalry' || type === 'horseArcher';
+          const isRanged = type === 'archer' || type === 'horseArcher';
+          const isHeavy = false;
           const h = createWarriorModel({
             factionHex: FACTION_INFO.player.hex,
             isMounted,
@@ -2219,7 +2220,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             id: `ally-${allyIdx}`,
             team: 'ally',
             unitType: type,
-            archetype: isRanged ? 'KITER' : isMounted ? 'CHARGER' : isHeavy ? 'SHIELDED' : 'CHASER',
+            archetype: isRanged ? 'KITER' : isMounted ? 'CHARGER' : 'CHASER',
             x: battleArenaCenterX + col * 2.8,
             z: battleArenaCenterZ + 17 + row * 2.6,
             vx: 0,
@@ -2250,23 +2251,29 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       const rawEnemyRoster = targetLord
         ? targetLord.roster
         : targetSettlement
-          ? {
-              militia: Math.max(4, Math.round((targetSettlement.militia || 20) * 0.4)),
-              archer: Math.max(3, Math.round(((targetSettlement.garrison || 0) + (targetSettlement.militia || 10)) * 0.25)),
-              cavalry: Math.max(1, Math.round((targetSettlement.garrison || 0) * 0.15)),
-              guard: Math.max(2, Math.round((targetSettlement.garrison || 0) * 0.25)),
-            }
-          : { militia: 5, archer: 3, cavalry: 2, guard: 1 };
+          ? (() => {
+              const haShare = Math.max(2, Math.round((targetSettlement.garrison || 0) * 0.25));
+              const hasHA = factionHasHorseArchers(targetSettlement.faction);
+              return {
+                infantry:
+                  Math.max(4, Math.round((targetSettlement.militia || 20) * 0.4)) +
+                  (hasHA ? 0 : haShare),
+                archer: Math.max(3, Math.round(((targetSettlement.garrison || 0) + (targetSettlement.militia || 10)) * 0.25)),
+                cavalry: Math.max(1, Math.round((targetSettlement.garrison || 0) * 0.15)),
+                horseArcher: hasHA ? haShare : 0,
+              };
+            })()
+          : { infantry: 5, archer: 3, cavalry: 2, horseArcher: 1 };
 
       const totalEnemyTroops = Math.max(1, getTotalTroops(rawEnemyRoster));
       const enemyScale = totalEnemyTroops > 28 ? 28 / totalEnemyTroops : 1;
       const enemyArchetypes: Array<{
-        unitType: 'militia' | 'archer' | 'cavalry' | 'guard';
+        unitType: 'infantry' | 'archer' | 'cavalry' | 'horseArcher';
         archetype: 'CHASER' | 'KITER' | 'SHIELDED' | 'CHARGER';
       }> = [];
 
       const pushEnemySpec = (
-        unitType: 'militia' | 'archer' | 'cavalry' | 'guard',
+        unitType: 'infantry' | 'archer' | 'cavalry' | 'horseArcher',
         archetype: 'CHASER' | 'KITER' | 'SHIELDED' | 'CHARGER',
         rawCount: number,
       ) => {
@@ -2276,17 +2283,17 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         }
       };
 
-      pushEnemySpec('militia', 'CHASER', rawEnemyRoster.militia);
-      pushEnemySpec('guard', 'SHIELDED', rawEnemyRoster.guard);
+      pushEnemySpec('infantry', 'CHASER', rawEnemyRoster.infantry);
+      pushEnemySpec('horseArcher', 'KITER', rawEnemyRoster.horseArcher);
       pushEnemySpec('archer', 'KITER', rawEnemyRoster.archer);
       pushEnemySpec('cavalry', 'CHARGER', rawEnemyRoster.cavalry);
       // Always include enemy commander at the end
-      enemyArchetypes.push({ unitType: 'guard', archetype: 'CHARGER' });
+      enemyArchetypes.push({ unitType: 'cavalry', archetype: 'CHARGER' });
 
       enemyArchetypes.forEach((spec, idx) => {
-        const isMounted = spec.unitType === 'cavalry';
-        const isRanged = spec.unitType === 'archer';
-        const isHeavy = spec.unitType === 'guard' || idx === enemyArchetypes.length - 1;
+        const isMounted = spec.unitType === 'cavalry' || spec.unitType === 'horseArcher';
+        const isRanged = spec.unitType === 'archer' || spec.unitType === 'horseArcher';
+        const isHeavy = idx === enemyArchetypes.length - 1;
         const h = createWarriorModel({
           factionHex: enemyHex,
           isMounted,
@@ -3832,10 +3839,10 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               (a) => a.team === 'ally' && a.id !== 'player-commander' && a.hp <= 0,
             );
             const lostByType = {
-              militia: fallenAllies.filter((a) => a.unitType === 'militia').length,
+              infantry: fallenAllies.filter((a) => a.unitType === 'infantry').length,
               archer: fallenAllies.filter((a) => a.unitType === 'archer').length,
               cavalry: fallenAllies.filter((a) => a.unitType === 'cavalry').length,
-              guard: fallenAllies.filter((a) => a.unitType === 'guard').length,
+              horseArcher: fallenAllies.filter((a) => a.unitType === 'horseArcher').length,
             };
             stateRef.current.onBattleComplete(
               victory,

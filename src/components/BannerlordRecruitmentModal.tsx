@@ -73,8 +73,10 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
   }, [faction]);
 
   const recruitTroop = cultureTroops.find((t) => t.tier === 1) || cultureTroops[0];
-  const tier2Troops = cultureTroops.filter((t) => t.tier === 2);
-  const tier3Troops = cultureTroops.filter((t) => t.tier === 3);
+  const tier2Troops = cultureTroops.filter((t) => t.tier === 2 && !t.isNobleLine);
+  // 10.9/10.7: soylu hattın kökü (T2) yalnız Güçlü (200+) toprak sahiplerinden
+  // devşirilebilir; soylu hat ara kademeleri gönüllü olarak verilmez.
+  const nobleRecruit = cultureTroops.find((t) => t.isNobleLine && t.tier === 2);
 
   // 3. Build initial 6 slots for each notable deterministically (emptying already-recruited slots & varying count per village)
   const initialRows = useMemo<NotableRecruiterRow[]>(() => {
@@ -120,9 +122,9 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
             baseCost = 20;
           }
         } else {
-          // Slot 4 & 5: Higher tier / noble units if landowner
-          if (isLandowner && isPowerful && tier3Troops.length > 0) {
-            targetTroop = tier3Troops[(nIdx + sIdx) % tier3Troops.length];
+          // Slot 4 & 5: Güçlü toprak sahibi soylu hattın kökünü (T2) verir.
+          if (isLandowner && isPowerful && nobleRecruit) {
+            targetTroop = nobleRecruit;
             baseCost = 120;
           } else if (tier2Troops.length > 0) {
             targetTroop = tier2Troops[nIdx % tier2Troops.length];
@@ -152,7 +154,7 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
         slots,
       };
     });
-  }, [notables, recruitTroop, tier2Troops, tier3Troops, settlement.id, settlement.type, settlement.recruitedSlotKeys]);
+  }, [notables, recruitTroop, tier2Troops, nobleRecruit, settlement.id, settlement.type, settlement.recruitedSlotKeys]);
 
   // 4. Session State: which slot recruits have been picked into pending basket
   // Key: `${notableId}_${slotIndex}`
@@ -424,8 +426,8 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
                         <div className="text-xl mt-0.5">
                           {slot.troopDef.battleClass === 'cavalry' && '🐎'}
                           {slot.troopDef.battleClass === 'archer' && '🏹'}
-                          {slot.troopDef.battleClass === 'guard' && '🛡️'}
-                          {slot.troopDef.battleClass === 'militia' && '⚔️'}
+                          {slot.troopDef.battleClass === 'horseArcher' && '🏹🐎'}
+                          {slot.troopDef.battleClass === 'infantry' && '⚔️'}
                         </div>
                         <span className="text-[10px] font-semibold text-center truncate w-full text-[#fef08a]">
                           {slot.troopDef.name}
