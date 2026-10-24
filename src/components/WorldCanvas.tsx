@@ -2642,7 +2642,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         const cw = cachedCanvasWidth;
         const ch = cachedCanvasHeight;
         const scoutRadius = playerSpottingRange * 1.15;
+        // Kuşatma yalnız kurulu kamplarda görünür (emir alıp yola çıkan ordu
+        // henüz kamp kurmadı). Ayrıca uzaktan yalnız rozet görünür; kamp/ motor
+        // detayları Bannerlord'daki gibi yakın zoom'da belirir.
         const besiegedIds = besiegedSettlementIdSet(camp);
+        const showSiegeCamp = camZoomDist <= 320;
+        const showSiegeDetails = camZoomDist <= 175;
 
         for (let i = 0; i < settlementLabelRecords.length; i++) {
           const rec = settlementLabelRecords[i];
@@ -2702,8 +2707,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
 
           const isBesieged = besiegedIds.has(s.id);
+          const showCampHere = isBesieged && showSiegeCamp;
           const campRing = siegeCampRings.get(s.id);
-          if (isBesieged && campRing) {
+          if (showCampHere && campRing) {
             if (!campRing.userData.staticCampBuilt) {
               const besiegerLord = camp.lords.find(
                 (lord) =>
@@ -2797,12 +2803,17 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
                 const wallHealth = wallSections[wallIndex] ?? 100;
                 const healthColor =
                   wallHealth < 25 ? '#ef4444' : wallHealth < 50 ? '#facc15' : '#4ade80';
-                marker.fill.style.width = `${wallHealth}%`;
-                marker.fill.style.backgroundColor = healthColor;
+                const nextWidth = `${wallHealth}%`;
+                if (marker.fill.style.width !== nextWidth) {
+                  marker.fill.style.width = nextWidth;
+                }
+                if (marker.fill.style.backgroundColor !== healthColor) {
+                  marker.fill.style.backgroundColor = healthColor;
+                }
               }
               _projVec.set(marker.x, marker.y, marker.z).project(camera);
               const markerOnScreen =
-                isSettlementLabelVisible(s.type, camZoomDist) &&
+                showSiegeDetails &&
                 _projVec.z >= -1 &&
                 _projVec.z <= 1 &&
                 Math.abs(_projVec.x) <= 1.05 &&
@@ -2813,9 +2824,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               }
               const markerX = Math.round(((_projVec.x + 1) / 2) * cw);
               const markerY = Math.round(((-_projVec.y + 1) / 2) * ch);
-              marker.element.style.display = 'flex';
-              marker.element.style.transform =
-                `translate3d(${markerX}px, ${markerY}px, 0) translate(-50%, -50%)`;
+              if (marker.element.style.display !== 'flex') {
+                marker.element.style.display = 'flex';
+              }
+              const nextTransform = `translate3d(${markerX}px, ${markerY}px, 0) translate(-50%, -50%)`;
+              if (marker.element.style.transform !== nextTransform) {
+                marker.element.style.transform = nextTransform;
+              }
             });
             const t = performance.now() * 0.0015;
             campRing.children.forEach((child, index) => {
@@ -2828,7 +2843,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           } else if (campRing?.visible) {
             campRing.visible = false;
             hideSiegeMapMarkers(rec.siegeMarkers);
-          } else if (!isBesieged) {
+          } else if (!showCampHere) {
             hideSiegeMapMarkers(rec.siegeMarkers);
           }
           if (rec.lastBesieged !== isBesieged) {

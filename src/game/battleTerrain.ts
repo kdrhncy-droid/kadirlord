@@ -189,6 +189,60 @@ function buildScatter(profile: BattlefieldProfile): THREE.Group {
   return group;
 }
 
+/**
+ * Çim/calı tutamları: yakın çekimde çıplak zemin yerine bitki örtüsü hissi.
+ * İki çapraz üçgen şerit tek InstancedMesh'te; konumlar profil tohumu ile
+ * deterministik serpilir, su üstü ve dik yamaçlar elenir. Renk biyomdan.
+ */
+function buildGroundCover(profile: BattlefieldProfile): THREE.InstancedMesh | null {
+  if (profile.biome === 'NORTH_SNOW_PEAKS') return null; // kar altında tutam yok
+  const COUNT = 700;
+  // Çift çapraz şerit geometrisi (X biçiminde iki üçgen çift).
+  const positions: number[] = [];
+  const pushQuad = (angle: number) => {
+    const dx = Math.cos(angle) * 0.34;
+    const dz = Math.sin(angle) * 0.34;
+    const tx = dx * 0.22; // üst kenar daralır: ot tutamı silueti, kart değil
+    const tz = dz * 0.22;
+    positions.push(-dx, 0, -dz, dx, 0, dz, tx, 0.62, tz, -dx, 0, -dz, tx, 0.62, tz, -tx, 0.62, -tz);
+  };
+  pushQuad(0);
+  pushQuad(Math.PI / 2);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  const color = profile.biome === 'SOUTH_DESERT' ? 0xa89a55 : 0x6f8f44;
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.95, side: THREE.DoubleSide });
+  const mesh = new THREE.InstancedMesh(geo, mat, COUNT);
+  const dummy = new THREE.Object3D();
+  // Deterministik serpme (profil her seferinde aynı düzeni verir).
+  let state = 2166136261;
+  const nextRand = () => {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return ((state >>> 0) % 10000) / 10000;
+  };
+  let placed = 0;
+  for (let i = 0; i < COUNT * 3 && placed < COUNT; i++) {
+    const x = (nextRand() * 2 - 1) * profile.halfExtent * 0.97;
+    const z = (nextRand() * 2 - 1) * profile.halfExtent * 0.97;
+    const y = sampleBattleHeight(profile, x, z);
+    if (profile.waterY !== null && y < profile.waterY + 0.1) continue;
+    const slope = Math.abs(sampleBattleHeight(profile, x + 1.5, z) - y);
+    if (slope > 0.9) continue;
+    dummy.position.set(x, y - 0.05, z);
+    dummy.rotation.set(0, nextRand() * Math.PI, 0);
+    dummy.scale.setScalar(0.5 + nextRand() * 0.55);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(placed, dummy.matrix);
+    placed++;
+  }
+  mesh.count = placed;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
 /** Kırmızı yumuşak sınır: kenarlarda araziyi izleyen yarı saydam kırmızı şeritler. */
 function buildBorder(profile: BattlefieldProfile): THREE.Group {
   const group = new THREE.Group();
@@ -196,7 +250,7 @@ function buildBorder(profile: BattlefieldProfile): THREE.Group {
   const mat = new THREE.MeshBasicMaterial({
     color: 0xff2a2a,
     transparent: true,
-    opacity: 0.32,
+    opacity: 0.14,
     side: THREE.DoubleSide,
     depthWrite: false,
   });
@@ -213,7 +267,7 @@ function buildBorder(profile: BattlefieldProfile): THREE.Group {
     for (let i = 0; i <= segments; i++) {
       const p = edge(i / segments);
       const y = sampleBattleHeight(profile, p.x, p.z);
-      positions.push(p.x, y - 0.6, p.z, p.x, y + 4.2, p.z);
+      positions.push(p.x, y - 0.4, p.z, p.x, y + 2.1, p.z);
       if (i < segments) {
         const a = i * 2;
         indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
@@ -240,6 +294,8 @@ export function createBattleTerrain(profile: BattlefieldProfile): BattleTerrainH
   const houses = buildHouses(profile);
   if (houses) group.add(houses);
   group.add(buildScatter(profile));
+  const cover = buildGroundCover(profile);
+  if (cover) group.add(cover);
   group.add(buildBorder(profile));
 
   const dispose = () => {

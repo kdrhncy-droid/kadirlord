@@ -226,8 +226,17 @@ export function buildBattlefieldProfile(input: BattlefieldInput): BattlefieldPro
   const hasWater = hasRiver || rawMin < WATER_LEVEL + 0.02;
   const waterY = hasWater ? waterRawY + 0.12 : null;
 
-  // 3) Köşe renkleri (dünya arazi renklendirmesiyle aynı kaynak).
+  // 3) Köşe renkleri (dünya arazi renklendirmesiyle aynı kaynak) + iki ölçekli
+  // deterministik detay gürültüsü: düz renk zemini "plastik" gösterir; çim
+  // benekleri ve toprak lekeleri yakın çekimde doku hissi verir (Bannerlord
+  // sahnelerindeki yer dokusu katmanlamasının karşılığı — değerler çıkarım).
   const colors = new Float32Array(n * n * 3);
+  const detailHash = (a: number, b: number) => {
+    let h = (a * 374761393 + b * 668265263) | 0;
+    h = (h ^ (h >> 13)) | 0;
+    h = Math.imul(h, 1274126177);
+    return ((h ^ (h >> 16)) >>> 0) / 4294967295;
+  };
   for (let iz = 0; iz < n; iz++) {
     const bz = -half + (iz / (n - 1)) * half * 2;
     for (let ix = 0; ix < n; ix++) {
@@ -235,9 +244,12 @@ export function buildBattlefieldProfile(input: BattlefieldInput): BattlefieldPro
       const w = toWorld(bx, bz);
       const c = getTerrainSlopeAndColorAt(w.x, w.z);
       const idx = (iz * n + ix) * 3;
-      colors[idx] = c.r / 255;
-      colors[idx + 1] = c.g / 255;
-      colors[idx + 2] = c.b / 255;
+      const fine = detailHash(Math.round(w.x * 8), Math.round(w.z * 8)); // çim tanesi
+      const coarse = detailHash(Math.round(w.x * 0.9), Math.round(w.z * 0.9)); // leke
+      const shade = 0.88 + fine * 0.16 + (coarse - 0.5) * 0.12;
+      colors[idx] = Math.min(1, (c.r / 255) * shade);
+      colors[idx + 1] = Math.min(1, (c.g / 255) * (0.9 + coarse * 0.1 + fine * 0.08));
+      colors[idx + 2] = Math.min(1, (c.b / 255) * shade);
     }
   }
 

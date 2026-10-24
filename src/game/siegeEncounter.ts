@@ -14,6 +14,7 @@ import {
   Settlement,
   TroopRoster,
   deductCasualtiesFromRoster,
+  getSettlementArrivalRadius,
   getTotalTroops,
 } from './rules';
 import {
@@ -227,8 +228,19 @@ export function distributeCombinedBesiegerCasualties(
 export function besiegedSettlementIdSet(state: CampaignState): Set<string> {
   const ids = new Set<string>();
   for (const lord of state.lords) {
+    // Kuşatma, ordu hedefe VARIP kampı kurduğunda başlar (Bannerlord): emir
+    // verilmiş ama lord hâlâ yoldayken yerleşim "kuşatma altında" sayılmaz —
+    // kamp halkası/motor görselleri erken beliriyordu. Varış ölçütü
+    // worldSim'in ilerleme kapısıyla aynıdır: kurulu yarıçap içinde olma
+    // veya ilerleme birikmiş olma (kamp kurulduktan sonra lord itilse bile).
     if (lord.order?.kind === 'SIEGE' && lord.order.targetSettlementId) {
-      ids.add(lord.order.targetSettlementId);
+      const target = state.settlements.find((s) => s.id === lord.order?.targetSettlementId);
+      if (!target) continue;
+      const radius = Math.max(getSettlementArrivalRadius(target.type) + 3, SIEGE_CAMP_STANDOFF + 4);
+      const dist = Math.hypot(lord.x - target.x, lord.z - target.z);
+      if (dist <= radius || (lord.order.siegeProgress ?? 0) > 0) {
+        ids.add(target.id);
+      }
     }
   }
   if (state.playerSiege?.settlementId) {

@@ -41,6 +41,8 @@ import { createWarriorModel, type WarriorMeshHandles } from '../game/proceduralM
 import { sound } from '../game/sound';
 
 interface BattlefieldViewProps {
+  /** Duraklatma menüsü açıkken simülasyon donar (bileşen sökülmez). */
+  paused?: boolean;
   campaign: CampaignState;
   targetLord: LordAgent | null;
   targetSettlement: Settlement | null;
@@ -109,6 +111,48 @@ function classStats(unitType: UnitTierId): {
     default:
       return { hp: 95, attack: 18, defense: 12, speed: 5.0, range: 2.6, archetype: 'CHASER' };
   }
+}
+
+function hexToCss(hex: number): string {
+  return `#${hex.toString(16).padStart(6, '0')}`;
+}
+
+/**
+ * Bölük sancağı: uzun direk + altın tepelik + enine seren + dikey sancak bezi.
+ * Bannerlord misyonlarında her formasyonun önünde taşıdığı sancağın karşılığı;
+ * Bannerlord'da sancaklar bölüğü uzaktan okunur kılar. Bez, dalgalanma için
+ * ayrı mesh olarak döner. (Arena'daki createTacticalBannerMesh zincirini
+ * buraya taşımak yerine aynı ölçülerde yerel üretim; karakter rig'i B6'da.)
+ */
+function createFormationBanner(factionHex: number): { group: THREE.Group; cloth: THREE.Mesh } {
+  const group = new THREE.Group();
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x5c3d24, roughness: 0.85, metalness: 0.05 });
+  const goldMat = new THREE.MeshStandardMaterial({ color: 0xeab308, roughness: 0.3, metalness: 0.8 });
+  const clothMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(hexToCss(factionHex)),
+    roughness: 0.8,
+    side: THREE.DoubleSide,
+  });
+
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 3.4, 8), woodMat);
+  pole.position.y = 1.7;
+  pole.castShadow = true;
+  group.add(pole);
+
+  const finial = new THREE.Mesh(new THREE.OctahedronGeometry(0.13, 0), goldMat);
+  finial.position.y = 3.48;
+  group.add(finial);
+
+  const crossbar = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.95, 6), woodMat);
+  crossbar.rotation.z = Math.PI / 2;
+  crossbar.position.set(0.4, 3.15, 0);
+  group.add(crossbar);
+
+  const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.25, 0.03), clothMat);
+  cloth.position.set(0.42, 2.5, 0);
+  cloth.castShadow = true;
+  group.add(cloth);
+  return { group, cloth };
 }
 
 /** Kadro sınıf sayılarını aktör bütçesine orantılı böler (her sınıftan en az 1, varsa). */
@@ -185,6 +229,13 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Güneş sabit: gölge haritası her Karede değil, 0.5 sn'de bir tazelenir
+    // (aşağıda needsUpdate). Hareketli aktör gölgeleri bu aralıkta güncellenir;
+    // statik sahnenin her kare tam gölge geçişi bedeli düşer.
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = true;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -224,6 +275,9 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
 
     /* ── Aktörler ── */
     const actors: MissionActor[] = [];
+    // Bölük sancakları: her sınıf şeridinin ilk neferi taşır; dalgalanma için
+    // bez mesh'leri ayrı listede tutulur (Bannerlord'da formasyon sancağı).
+    const bannerCloths: THREE.Mesh[] = [];
     const groundY = (x: number, z: number) => battleGroundY(profile, x, z);
 
     const spawnSide = (
@@ -235,11 +289,13 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       const counts = allocateActors(roster);
       const forward = team === 'ally' ? -1 : 1; // müttefik -Z'ye, düşman +Z'ye bakar
       // Sınıf şeritleri: piyade önde, okçu geride, atlı okçu sol, süvari sağ kanatta.
+      // Bannerlord hatları sıktır (kalkan duvarı omuz omuza): piyade 1.35,
+      // okçu 1.7 aralık; süvari at genişliği ister (2.6). Sıra derinliği 1.7.
       const lanes: Array<{ cls: UnitTierId; cx: number; cz: number; perRow: number; gap: number }> = [
-        { cls: 'infantry', cx: 0, cz: 0, perRow: 10, gap: 2.0 },
-        { cls: 'archer', cx: 0, cz: -10, perRow: 10, gap: 2.2 },
-        { cls: 'horseArcher', cx: -34, cz: -4, perRow: 6, gap: 3.0 },
-        { cls: 'cavalry', cx: 34, cz: -4, perRow: 6, gap: 3.0 },
+        { cls: 'infantry', cx: 0, cz: 0, perRow: 12, gap: 1.35 },
+        { cls: 'archer', cx: 0, cz: -9, perRow: 12, gap: 1.7 },
+        { cls: 'horseArcher', cx: -30, cz: -4, perRow: 6, gap: 2.6 },
+        { cls: 'cavalry', cx: 30, cz: -4, perRow: 6, gap: 2.6 },
       ];
       for (const lane of lanes) {
         const count = counts[lane.cls];
@@ -248,13 +304,22 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
           const col = i % lane.perRow;
           const row = Math.floor(i / lane.perRow);
           const x = spawn.x + lane.cx + (col - (lane.perRow - 1) / 2) * lane.gap;
-          const z = spawn.z + forward * lane.cz - forward * row * 2.4;
+          const z = spawn.z + forward * lane.cz - forward * row * 1.7;
           const handles = createWarriorModel({
             factionHex,
             isMounted: lane.cls === 'cavalry' || lane.cls === 'horseArcher',
             isRanged: lane.cls === 'archer' || lane.cls === 'horseArcher',
           });
-          (handles.telegraphRing.material as THREE.MeshBasicMaterial).opacity = 0;
+          handles.telegraphRing.visible = false;
+          // Şeridin ilk neferi bölük sancağını taşır (sağ kolda uzun direk).
+          if (i === 0 && count >= 3) {
+            const banner = createFormationBanner(factionHex);
+            banner.group.position.set(0.42, 0.55, 0.1);
+            banner.group.rotation.x = -0.08;
+            banner.group.scale.setScalar(0.8);
+            handles.rightArm.add(banner.group);
+            bannerCloths.push(banner.cloth);
+          }
           handles.root.position.set(x, groundY(x, z), z);
           scene.add(handles.root);
           actors.push({
@@ -302,7 +367,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
         isHeavy: true,
         isCommander: true,
       });
-      (handles.telegraphRing.material as THREE.MeshBasicMaterial).opacity = 0;
+      handles.telegraphRing.visible = false;
       const x = profile.enemySpawn.x;
       const z = profile.enemySpawn.z - 6;
       handles.root.position.set(x, groundY(x, z), z);
@@ -345,8 +410,17 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       isMounted: true,
       isCommander: true,
     });
-    (playerHandles.telegraphRing.material as THREE.MeshBasicMaterial).opacity = 0;
+    playerHandles.telegraphRing.visible = false;
     playerHandles.root.scale.setScalar(1.18);
+    // Oyuncu kumanda sancağı taşır (kendi bölüğünün önünde görünür işaret).
+    {
+      const banner = createFormationBanner(FACTION_INFO.player.hex);
+      banner.group.position.set(0.42, 0.55, 0.1);
+      banner.group.rotation.x = -0.08;
+      banner.group.scale.setScalar(0.8);
+      playerHandles.rightArm.add(banner.group);
+      bannerCloths.push(banner.cloth);
+    }
     const player: MissionActor = {
       id: 'player-commander',
       team: 'ally',
@@ -507,10 +581,15 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       return best ? { opp: best, dist: bestD } : null;
     };
 
-    const tick = (now: number) => {
-      rafId = requestAnimationFrame(tick);
-      const dt = Math.min(0.033, Math.max(0.001, (now - lastNow) / 1000));
-      lastNow = now;
+    // Sabit adımlı alt adım akümülatörü: simülasyon 1/60 sn adımlarla ilerler.
+    // Kare süresi uzadığında (düşük FPS) oyun yavaş çekime dönmez, eksik
+    // adımlar telafi edilir (en çok 6 adım/Karede — spiral koruması; aşan
+    // birikim atılır). paused iken simülasyon donar ama sahne çizilir.
+    const STEP_DT = 1 / 60;
+    let accumulator = 0;
+    let shadowTimer = 0;
+
+    const step = (dt: number) => {
       elapsed += dt;
 
       if (battleEnded) {
@@ -527,8 +606,8 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
           let mz = 0;
           if (keys.has('KeyW')) { mx += fwdX; mz += fwdZ; }
           if (keys.has('KeyS')) { mx -= fwdX; mz -= fwdZ; }
-          if (keys.has('KeyD')) { mx -= rightXv; mz -= rightZv; }
-          if (keys.has('KeyA')) { mx += rightXv; mz += rightZv; }
+          if (keys.has('KeyD')) { mx += rightXv; mz += rightZv; }
+          if (keys.has('KeyA')) { mx -= rightXv; mz -= rightZv; }
           player.isBlocking = mouseRightHeld;
           player.facing = camYaw;
           const mLen = Math.hypot(mx, mz);
@@ -818,6 +897,32 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
           if (enemiesAlive === 0) sound.playVictoryFanfare();
           else sound.playDefeatSting();
         }
+      }
+    };
+
+    const tick = (now: number) => {
+      rafId = requestAnimationFrame(tick);
+      const frameDt = Math.min(0.25, Math.max(0.001, (now - lastNow) / 1000));
+      lastNow = now;
+
+      if (!propsRef.current.paused) {
+        accumulator = Math.min(accumulator + frameDt, STEP_DT * 6);
+        while (accumulator >= STEP_DT) {
+          step(STEP_DT);
+          accumulator -= STEP_DT;
+        }
+      }
+
+      // Sancak bezleri rüzgârda dalgalanır (hafif salınım, fazlar bez başına ayrı).
+      for (let ci = 0; ci < bannerCloths.length; ci++) {
+        bannerCloths[ci].rotation.y = Math.sin(elapsed * 2.3 + ci * 1.7) * 0.22;
+        bannerCloths[ci].rotation.x = Math.sin(elapsed * 1.7 + ci * 2.3) * 0.06;
+      }
+
+      shadowTimer += frameDt;
+      if (shadowTimer >= 0.5) {
+        shadowTimer = 0;
+        renderer.shadowMap.needsUpdate = true;
       }
 
       /* Kamera */

@@ -1615,8 +1615,9 @@ export default function App() {
       data-e2e-enabled={e2eRequest.enabled ? 'true' : 'false'}
       data-e2e-scenario={e2eRequest.enabled ? e2eRequest.scenario : undefined}
     >
-      {/* Persistent 3D WebGL Continental Map Canvas (sefer haritası) */}
-      {subMode !== 'battle' && (
+      {/* Persistent 3D WebGL Continental Map Canvas (sefer haritası): savaş
+          sırasında da takılı kalır (isRenderPaused ile donar) — sökülüp yeniden
+          kurulması saniyeler süren kasılmaya yol açıyordu. */}
       <WorldCanvas
         gameState={gameState}
         subMode={subMode}
@@ -1630,6 +1631,7 @@ export default function App() {
         activeDialogueLordId={dialogueLord?.id ?? null}
         activeSettlementModalId={activeSettlementModal?.id ?? null}
         isRenderPaused={
+          subMode === 'battle' ||
           Boolean(loadingScreen?.active) ||
           isCharacterCreatorOpen ||
           isTitleLoadOpen ||
@@ -1663,12 +1665,12 @@ export default function App() {
           );
         }}
       />
-      )}
 
       {/* 10.2/B1: meydan savaşı ayrı misyon sahnesinde (arazi profili sefer
           haritasındaki karşılaşma noktasından kurulur) */}
-      {subMode === 'battle' && gameState === 'playing' && (
+      {subMode === 'battle' && (gameState === 'playing' || gameState === 'paused') && (
         <BattlefieldView
+          paused={gameState === 'paused'}
           campaign={campaign}
           targetLord={
             battleTargetLordId
