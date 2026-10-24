@@ -1083,23 +1083,33 @@ export function createWarriorModel(options: {
 
   const armorMat = new THREE.MeshStandardMaterial({
     color: options.factionHex,
-    roughness: options.isHeavy || options.isCommander ? 0.28 : 0.62,
-    metalness: options.isHeavy || options.isCommander ? 0.78 : 0.35,
+    roughness: options.isHeavy || options.isCommander ? 0.4 : 0.62,
+    // Ortam haritası yok: yüksek metalness parçaları simsiyah gösterir
+    // ("ışığı kapalı" görünümü) — metalik his parlaklıkla verilir.
+    metalness: options.isHeavy || options.isCommander ? 0.45 : 0.3,
+  });
+  // Gövde kumaşı hizi renginin solmuş hâli: tam turuncu gövde yerine
+  // hizi rengi kalkan/sancak/bardakta kimlik olarak kalır.
+  const clothColor = new THREE.Color(options.factionHex).lerp(new THREE.Color(0x7d6c56), 0.52);
+  const clothMat = new THREE.MeshStandardMaterial({
+    color: clothColor,
+    roughness: 0.88,
+    metalness: 0.05,
   });
   const steelMat = new THREE.MeshStandardMaterial({
     color: 0xd6d3d1,
-    roughness: 0.22,
-    metalness: 0.88,
+    roughness: 0.38,
+    metalness: 0.35,
   });
   const leatherMat = new THREE.MeshStandardMaterial({
-    color: 0x452c1e,
+    color: 0x6e4a2c,
     roughness: 0.85,
     metalness: 0.08,
   });
   const goldMat = new THREE.MeshStandardMaterial({
     color: 0xf59e0b,
-    roughness: 0.25,
-    metalness: 0.85,
+    roughness: 0.4,
+    metalness: 0.35,
   });
 
   let riderYOffset = 0;
@@ -1107,38 +1117,94 @@ export function createWarriorModel(options: {
   if (options.isMounted) {
     riderYOffset = 0.75;
     const horseGroup = new THREE.Group();
+    const coatMat = new THREE.MeshStandardMaterial({
+      color: 0x7b5233,
+      roughness: 0.9,
+      metalness: 0.02,
+    });
+    const maneMat = new THREE.MeshStandardMaterial({
+      color: 0x3a2a1c,
+      roughness: 0.95,
+      metalness: 0.0,
+    });
 
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.62, 1.45), leatherMat);
-    barrel.position.set(0, 0.72, 0);
+    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.62, 1.45), coatMat);
+    barrel.position.set(0, 0.98, 0);
     barrel.castShadow = true;
     horseGroup.add(barrel);
 
-    const barding = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.42, 1.32), armorMat);
-    barding.position.set(0, 0.78, 0);
+    // Dört bacak (alt yarı koyu çorap) — bacaksız "uçan kutu" görünümü biter.
+    const legGeo = new THREE.CylinderGeometry(0.09, 0.07, 0.78, 7);
+    const sockGeo = new THREE.CylinderGeometry(0.075, 0.08, 0.3, 7);
+    for (const [lx, lz] of [
+      [-0.24, 0.52],
+      [0.24, 0.52],
+      [-0.24, -0.52],
+      [0.24, -0.52],
+    ] as const) {
+      const leg = new THREE.Mesh(legGeo, coatMat);
+      leg.position.set(lx, 0.39, lz);
+      leg.castShadow = true;
+      horseGroup.add(leg);
+      const sock = new THREE.Mesh(sockGeo, maneMat);
+      sock.position.set(lx, 0.15, lz);
+      horseGroup.add(sock);
+    }
+
+    // Eyer altı hizi örtüsü (caparison) + eyer
+    const barding = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.34, 0.95), armorMat);
+    barding.position.set(0, 1.05, -0.05);
     horseGroup.add(barding);
+    const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.14, 0.55), leatherMat);
+    saddle.position.set(0, 1.3, -0.02);
+    horseGroup.add(saddle);
 
-    const neck = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.65, 0.42), leatherMat);
-    neck.position.set(0, 1.18, 0.58);
-    neck.rotation.x = 0.35;
+    const neck = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.68, 0.4), coatMat);
+    neck.position.set(0, 1.42, 0.6);
+    neck.rotation.x = 0.42;
     horseGroup.add(neck);
+    const mane = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.6, 0.34), maneMat);
+    mane.position.set(0, 1.52, 0.47);
+    mane.rotation.x = 0.42;
+    horseGroup.add(mane);
 
-    const head = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.55, 6), steelMat);
-    head.position.set(0, 1.42, 0.82);
-    head.rotation.x = Math.PI / 2 + 0.25;
+    // Baş: eğik kafa bloğu + ağızlık + kulaklar
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.34, 0.52), coatMat);
+    head.position.set(0, 1.66, 0.92);
+    head.rotation.x = 0.5;
+    head.castShadow = true;
     horseGroup.add(head);
+    const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.28), coatMat);
+    muzzle.position.set(0, 1.52, 1.16);
+    muzzle.rotation.x = 0.5;
+    horseGroup.add(muzzle);
+    const earGeo = new THREE.ConeGeometry(0.06, 0.2, 5);
+    for (const ex of [-0.1, 0.1]) {
+      const ear = new THREE.Mesh(earGeo, coatMat);
+      ear.position.set(ex, 1.86, 0.8);
+      horseGroup.add(ear);
+    }
+
+    const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.04, 0.62, 6), maneMat);
+    tail.position.set(0, 1.05, -0.82);
+    tail.rotation.x = 0.4;
+    horseGroup.add(tail);
 
     bodyGroup.add(horseGroup);
   }
 
+  const legSpreadX = options.isMounted ? 0.42 : 0.18;
   const leftLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.11, 0.68, 8), leatherMat);
-  leftLeg.position.set(-0.18, 0.34 + riderYOffset * 0.4, 0);
+  leftLeg.position.set(-legSpreadX, 0.34 + riderYOffset * 0.4, 0);
+  leftLeg.rotation.z = options.isMounted ? 0.32 : 0;
   bodyGroup.add(leftLeg);
 
   const rightLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.11, 0.68, 8), leatherMat);
-  rightLeg.position.set(0.18, 0.34 + riderYOffset * 0.4, 0);
+  rightLeg.position.set(legSpreadX, 0.34 + riderYOffset * 0.4, 0);
+  rightLeg.rotation.z = options.isMounted ? -0.32 : 0;
   bodyGroup.add(rightLeg);
 
-  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.29, 0.86, 8), armorMat);
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.29, 0.86, 8), clothMat);
   torso.position.set(0, 0.98 + riderYOffset, 0);
   torso.castShadow = true;
   bodyGroup.add(torso);

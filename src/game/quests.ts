@@ -51,6 +51,8 @@ export interface Quest {
   giverClanId?: string;
   /** Hedef yerleşim (teslim/escort). */
   targetSettlementId?: string;
+  /** Çıkış yerleşimi (escort: kervanın beklediği yer). */
+  originSettlementId?: string;
   targetSettlementName?: string;
   faction: FactionId;
   /** Görevin kabul edildiği gün (0 = başlangıçta verilmiş). */
@@ -211,6 +213,7 @@ export function buildQuestLog(campaign: CampaignState, nowDay = campaign.day): Q
       faction: escortFrom.faction,
       targetSettlementId: escortTo.id,
       targetSettlementName: escortTo.name,
+      originSettlementId: escortFrom.id,
       startDay: day,
       deadlineDay: day + 8,
       status: 'ACTIVE',

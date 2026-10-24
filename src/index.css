@@ -55,3 +55,20 @@
   border: 1px solid rgba(198, 161, 91, 0.24);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.68);
 }
+
+/* Menü açılış animasyonu: tam ekran kök öğenin çocuğu (panel) hafifçe
+   kayarak belirir. Kökte pahalı backdrop-blur kullanılmaz (canlı WebGL
+   tuvali üzerinde bulanıklaştırma FPS düşürüyordu). */
+@keyframes kadir-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.modal-anim-in > * {
+  animation: kadir-modal-in 0.22s ease-out both;
+}

@@ -532,7 +532,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
               <div className="text-[#6ee7b7] font-semibold shrink-0">
                 {campaign.playerName} ({playerTroops} Asker · Güç {playerPower})
               </div>
-              <div className="flex-1 h-2 rounded-full bg-[#451a1a] overflow-hidden flex border border-[#c6a15b]/35">
+              <div className="flex-1 h-2 rounded-full bg-[#451a1a] overflow-hidden flex">
                 <div
                   className="h-full bg-gradient-to-r from-[#059669] to-[#34d399] transition-all duration-300"
                   style={{ width: `${playerPowerPct}%` }}

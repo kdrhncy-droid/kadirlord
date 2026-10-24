@@ -194,7 +194,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   return (
     <div
       data-testid="bannerlord-character-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md pointer-events-auto select-none animate-fadeIn"
+      className="fixed inset-0 modal-anim-in z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-none pointer-events-auto select-none animate-fadeIn"
       role="dialog"
       aria-modal="true"
     >

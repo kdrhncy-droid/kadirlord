@@ -1104,7 +1104,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     {n.name}
                   </div>
                   {hasIssue && (
-                    <div className="text-[#fde68a] font-semibold mb-0.5">
+                    <div className="text-cyan-300 font-semibold mb-0.5">
                       Mevcut bir sorunu var
                     </div>
                   )}

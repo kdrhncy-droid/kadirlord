@@ -73,6 +73,7 @@ import {
   createTerrainTextures,
   createWarriorModel,
 } from '../game/proceduralModels';
+import { buildQuestLog } from '../game/quests';
 import { sound } from '../game/sound';
 
 export type {
@@ -1084,6 +1085,31 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       stateRef.current.campaign.playerZ,
     );
     overworldGroup.add(overworldPlayer.root);
+
+    /* Kervan Koruma görevi görseli (Bannerlord eşlik görevi): kervan çıkış
+       köyünde bekler; oyuncu yanına varınca arkasına takılır ve hedefe dek
+       izler. Görev bitince görünmez olur. Yalnızca görseldir. */
+    interface CaravanFollower {
+      handles: ReturnType<typeof createWarriorModel>;
+      x: number;
+      z: number;
+    }
+    const caravanFollowers: CaravanFollower[] = [];
+    for (const mounted of [true, true, false, true]) {
+      const handles = createWarriorModel({ factionHex: 0x8a6d3b, isMounted: mounted });
+      handles.telegraphRing.visible = false;
+      handles.root.scale.setScalar(1.35);
+      handles.root.visible = false;
+      overworldGroup.add(handles.root);
+      caravanFollowers.push({
+        handles,
+        x: stateRef.current.campaign.playerX,
+        z: stateRef.current.campaign.playerZ,
+      });
+    }
+    let caravanPickedUp = false;
+    let caravanCheckTimer = 0;
+    let caravanOrigin: { x: number; z: number } | null = null;
 
     // Destination Waypoint Ring & Golden March Path Line on Overworld
     const destRing = new THREE.Mesh(
@@ -2132,6 +2158,20 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           // Diyalog/karşılaşma kapandığında aynı lord 6.5 sn boyunca tekrar yakalamasın
           encounterCooldowns.set(lastActiveTalkingLordId, elapsedTotal + ENCOUNTER_COOLDOWN_SEC);
         }
+        if (activeTalkingLordId && activeTalkingLordId !== lastActiveTalkingLordId) {
+          // Diyalog açılınca kamera lordun birliğine yakınlaşır: görüşme yüz
+          // yüze olur; birlik haritada o an görünür olmasa bile Karede
+          // oyuncuyla lordun birliği birlikte görünür (Bannerlord düzeni).
+          const route = lordLiveRoutes.get(activeTalkingLordId);
+          const lx = route?.x ?? playerOverworldX;
+          const lz = route?.z ?? playerOverworldZ;
+          targetCamFocusX = playerOverworldX + (lx - playerOverworldX) * 0.55;
+          targetCamFocusZ = playerOverworldZ + (lz - playerOverworldZ) * 0.55;
+          targetCamZoomDist = 36;
+          const safe = clampCameraFocus(targetCamFocusX, targetCamFocusZ, targetCamZoomDist);
+          targetCamFocusX = safe.x;
+          targetCamFocusZ = safe.z;
+        }
         lastActiveTalkingLordId = activeTalkingLordId;
 
         const isDialogueOpen = Boolean(activeTalkingLordId);
@@ -2557,6 +2597,56 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         overworldPlayer.bodyGroup.position.y = isPartyMoving
           ? Math.abs(Math.sin(walkPhase)) * 0.14
           : 0;
+
+        /* Kervan takipçileri: görev aktifken çıkışta bekler, buluşunca izler */
+        {
+          caravanCheckTimer -= dt;
+          if (caravanCheckTimer <= 0) {
+            caravanCheckTimer = 1;
+            const escort = buildQuestLog(camp).active.find((q) => q.kind === 'ESCORT');
+            if (escort?.originSettlementId) {
+              const origin = camp.settlements.find((s) => s.id === escort.originSettlementId);
+              caravanOrigin = origin ? { x: origin.x, z: origin.z } : null;
+            } else {
+              caravanOrigin = null;
+              caravanPickedUp = false;
+            }
+            if (
+              caravanOrigin &&
+              !caravanPickedUp &&
+              Math.hypot(playerOverworldX - caravanOrigin.x, playerOverworldZ - caravanOrigin.z) < 14
+            ) {
+              caravanPickedUp = true;
+              for (const f of caravanFollowers) {
+                f.x = caravanOrigin.x;
+                f.z = caravanOrigin.z;
+              }
+            }
+          }
+          const caravanVisible = caravanOrigin !== null;
+          let leadX = caravanPickedUp ? playerOverworldX : (caravanOrigin?.x ?? 0);
+          let leadZ = caravanPickedUp ? playerOverworldZ : (caravanOrigin?.z ?? 0);
+          caravanFollowers.forEach((f, idx) => {
+            f.handles.root.visible = caravanVisible;
+            if (!caravanVisible) return;
+            const tx = leadX - Math.sin(playerOverworldFacing) * (caravanPickedUp ? 0 : idx * 0.5);
+            const tz = leadZ - Math.cos(playerOverworldFacing) * (caravanPickedUp ? 0 : idx * 0.5);
+            const dx = tx - f.x;
+            const dz = tz - f.z;
+            const dist = Math.hypot(dx, dz);
+            const spacing = idx === 0 ? 3.2 : 2.4;
+            if (dist > spacing) {
+              const step = Math.min(dist - spacing, dt * 14);
+              f.x += (dx / dist) * step;
+              f.z += (dz / dist) * step;
+              f.handles.root.rotation.y = Math.atan2(dx, dz);
+              f.handles.bodyGroup.position.y = Math.abs(Math.sin(walkPhase + idx)) * 0.12;
+            }
+            f.handles.root.position.set(f.x, Math.max(0.15, groundHeightAt(f.x, f.z)), f.z);
+            leadX = f.x;
+            leadZ = f.z;
+          });
+        }
 
         // Animate Settlement Flags using pre-cached handles (skip micro flag wave at macro zoom > 240m)
         const animateFlags = camZoomDist <= 240;

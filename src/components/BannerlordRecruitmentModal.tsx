@@ -272,7 +272,7 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
   return (
     <div
       data-testid="bannerlord-recruitment-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md pointer-events-auto select-none"
+      className="fixed inset-0 modal-anim-in z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-none pointer-events-auto select-none"
       role="dialog"
       aria-modal="true"
     >

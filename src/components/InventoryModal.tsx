@@ -460,7 +460,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-2 sm:p-4 select-none">
+    <div className="fixed inset-0 modal-anim-in z-50 flex items-center justify-center bg-black/85 backdrop-blur-none p-2 sm:p-4 select-none">
       <div
         className="bg-[#171410] border border-[#c6a15b]/40 rounded-lg w-full max-w-[1500px] h-[97vh] lg:h-[94vh] flex flex-col shadow-[0_20px_60px_rgba(0,0,0,0.9)] overflow-hidden"
         data-testid="inventory-modal"

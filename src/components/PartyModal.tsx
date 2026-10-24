@@ -106,6 +106,7 @@ export const PartyModal: React.FC<PartyModalProps> = ({
 }) => {
   const [draftCampaign, setDraftCampaign] = useState<CampaignState>(committedCampaign);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [hoveredTroopId, setHoveredTroopId] = useState<string | null>(null);
 
   // Garnizon taslağı (yerleşim varsa)
   const [garrisonStacks, setGarrisonStacks] = useState<TroopStack[]>(() => {
@@ -268,7 +269,7 @@ export const PartyModal: React.FC<PartyModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 md:p-4 animate-fade-in font-display select-none"
+      className="fixed inset-0 modal-anim-in z-50 flex items-center justify-center bg-black/85 backdrop-blur-none p-2 md:p-4 animate-fade-in font-display select-none"
       data-testid="party-screen-modal"
     >
       <div className="relative flex flex-col w-full h-full max-w-[1440px] max-h-[920px] bg-[#120e0a] border-2 border-[#855e2d]/60 rounded-lg shadow-2xl overflow-hidden text-[#e6d8c3]">
@@ -713,6 +714,8 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                       <div
                         key={stack.troopId}
                         data-testid={`party-troop-row-${stack.troopId}`}
+                        onMouseEnter={() => setHoveredTroopId(stack.troopId)}
+                        onMouseLeave={() => setHoveredTroopId(null)}
                         onClick={() => setSelectedEntity({ kind: 'TROOP', stack, definition: def })}
                         className={`flex flex-col p-2 rounded cursor-pointer border transition-all ${
                           isSelected
@@ -753,7 +756,7 @@ export const PartyModal: React.FC<PartyModalProps> = ({
 
                         {/* XP İlerleme Çubuğu */}
                         {def.upgrades.length > 0 && (
-                          <div className="mt-1.5 w-full bg-[#120e0a] h-1 rounded-full overflow-hidden border border-[#855e2d]/20">
+                          <div className="mt-1.5 w-full bg-[#120e0a] h-1 rounded-full overflow-hidden">
                             <div
                               className="bg-gradient-to-r from-[#d97706] to-[#fde68a] h-full transition-all duration-300"
                               style={{ width: `${xpProgress}%` }}
@@ -765,6 +768,76 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                   })}
                 </div>
               </div>
+
+              {/* Asker detay kartı: satırın üstüne gelince tam bilgi (Bannerlord ipucu kartı) */}
+              {hoveredTroopId &&
+                (() => {
+                  const hs = troopStacks.find((s) => s.troopId === hoveredTroopId);
+                  const hd = hs ? getTroopDefinition(hs.troopId) : null;
+                  if (!hs || !hd) return null;
+                  const ready = Math.min(
+                    hs.count,
+                    Math.floor((hs.xp ?? 0) / Math.max(1, hd.upgradeXp)),
+                  );
+                  const classLabel =
+                    hd.battleClass === 'horseArcher'
+                      ? 'Atlı Okçu'
+                      : hd.battleClass === 'cavalry'
+                        ? 'Süvari'
+                        : hd.battleClass === 'archer'
+                          ? 'Okçu'
+                          : 'Piyade';
+                  return (
+                    <div
+                      data-testid="troop-hover-card"
+                      className="pointer-events-none fixed right-5 top-24 z-[70] w-72 rounded-sm border-2 border-[#8b6b36] bg-[#0d0b08]/97 p-3 text-[11px] text-[#e7d8b9] shadow-[0_16px_40px_rgba(0,0,0,0.95)]"
+                    >
+                      <div className="border-b border-[#8b6b36]/40 pb-1.5 mb-2">
+                        <div className="font-display text-sm font-bold text-[#fbbf24]">{hd.name}</div>
+                        <div className="text-[10px] text-[#a89b84]">
+                          Kademe {romanNumeral(hd.tier)} · {classLabel}
+                          {hd.isNobleLine ? ' · Asil hat' : ''}
+                          {hd.isMounted ? ' · Atlı' : ''}
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex justify-between"><span className="text-[#a89b84]">Mevcut</span><span className="font-mono font-bold">{hs.count}{hs.wounded > 0 ? ` (${hs.wounded} yaralı)` : ''}</span></div>
+                        <div className="flex justify-between"><span className="text-[#a89b84]">Günlük maaş (kişi)</span><span className="font-mono">{hd.wage} dinar</span></div>
+                        <div className="flex justify-between"><span className="text-[#a89b84]">Sağlık</span><span className="font-mono">{hd.maxHp}</span></div>
+                        <div className="flex justify-between"><span className="text-[#a89b84]">Saldırı</span><span className="font-mono">{hd.attack}</span></div>
+                        <div className="flex justify-between"><span className="text-[#a89b84]">Savunma</span><span className="font-mono">{hd.defense}</span></div>
+                        <div className="flex justify-between"><span className="text-[#a89b84]">Hız</span><span className="font-mono">{hd.speed}</span></div>
+                        <div className="flex justify-between"><span className="text-[#a89b84]">Deneyim</span><span className="font-mono">{Math.floor(hs.xp ?? 0)} XP</span></div>
+                        {hd.upgrades.length > 0 ? (
+                          <>
+                            <div className="flex justify-between"><span className="text-[#a89b84]">Terfiye hazır</span><span className="font-mono font-bold text-[#fbbf24]">{ready} asker</span></div>
+                            <div className="border-t border-[#8b6b36]/30 pt-1.5 mt-1.5">
+                              <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#c6a15b]">Terfi yolları</div>
+                              {hd.upgrades.map((uid) => {
+                                const ud = getTroopDefinition(uid);
+                                return (
+                                  <div key={uid} className="flex justify-between">
+                                    <span>{ud ? ud.name : uid}</span>
+                                    <span className="font-mono text-[#a89b84]">
+                                      {hd.upgradeGold} dinar
+                                      {ud && ud.horseRequirement !== 'NONE'
+                                        ? ud.horseRequirement === 'WAR_HORSE'
+                                          ? ' + savaş atı'
+                                          : ' + at'
+                                        : ''}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-[#a89b84]">Ağacın son kademesi — terfi yok.</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
               {/* 3. TUTSAKLAR */}
               {prisonerStacks.length > 0 && (

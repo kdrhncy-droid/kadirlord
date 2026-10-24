@@ -230,6 +230,12 @@ export function buildBattlefieldProfile(input: BattlefieldInput): BattlefieldPro
   // deterministik detay gürültüsü: düz renk zemini "plastik" gösterir; çim
   // benekleri ve toprak lekeleri yakın çekimde doku hissi verir (Bannerlord
   // sahnelerindeki yer dokusu katmanlamasının karşılığı — değerler çıkarım).
+  // Zemin tonu: koyu yeşil "çorba" yerine açık, kırmızımsı kuru kum/bozkır
+  // tonu (kullanıcı geri bildirimi). Dünya rengi taban alınır ama kuru tona
+  // çekilip hafifçe açılır; kar biyomu olduğu gibi kalır.
+  const groundBiome = getBiomeAt(input.worldX, input.worldZ);
+  const dryMix =
+    groundBiome === 'NORTH_SNOW_PEAKS' ? 0 : groundBiome === 'SOUTH_DESERT' ? 0.5 : 0.34;
   const colors = new Float32Array(n * n * 3);
   const detailHash = (a: number, b: number) => {
     let h = (a * 374761393 + b * 668265263) | 0;
@@ -246,10 +252,22 @@ export function buildBattlefieldProfile(input: BattlefieldInput): BattlefieldPro
       const idx = (iz * n + ix) * 3;
       const fine = detailHash(Math.round(w.x * 8), Math.round(w.z * 8)); // çim tanesi
       const coarse = detailHash(Math.round(w.x * 0.9), Math.round(w.z * 0.9)); // leke
-      const shade = 0.88 + fine * 0.16 + (coarse - 0.5) * 0.12;
-      colors[idx] = Math.min(1, (c.r / 255) * shade);
-      colors[idx + 1] = Math.min(1, (c.g / 255) * (0.9 + coarse * 0.1 + fine * 0.08));
-      colors[idx + 2] = Math.min(1, (c.b / 255) * shade);
+      const shade = 0.86 + fine * 0.22 + (coarse - 0.5) * 0.18;
+      let r = (c.r / 255) * shade;
+      let g = (c.g / 255) * (0.9 + coarse * 0.1 + fine * 0.08);
+      let b = (c.b / 255) * shade;
+      if (dryMix > 0) {
+        r += (0.67 - r) * dryMix;
+        g += (0.52 - g) * dryMix;
+        b += (0.33 - b) * dryMix;
+        const lift = 0.09;
+        r += (1 - r) * lift;
+        g += (1 - g) * lift;
+        b += (1 - b) * lift;
+      }
+      colors[idx] = Math.min(1, r);
+      colors[idx + 1] = Math.min(1, g);
+      colors[idx + 2] = Math.min(1, b);
     }
   }
 

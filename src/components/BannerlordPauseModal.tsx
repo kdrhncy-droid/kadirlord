@@ -86,7 +86,7 @@ export const BannerlordPauseModal: React.FC<BannerlordPauseModalProps> = ({
   return (
     <div
       data-testid="bannerlord-pause-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm pointer-events-auto select-none"
+      className="fixed inset-0 modal-anim-in z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-none pointer-events-auto select-none"
       role="dialog"
       aria-modal="true"
     >

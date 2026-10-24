@@ -756,7 +756,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   return (
     <div
       data-testid="character-creator-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 md:p-6 select-none animate-fadeIn"
+      className="fixed inset-0 modal-anim-in z-50 flex items-center justify-center bg-black/85 backdrop-blur-none p-2 md:p-6 select-none animate-fadeIn"
     >
       {/* Outer Bannerlord Parchment / Iron Frame */}
       <div className="relative w-full max-w-7xl h-[94vh] bg-[#14100c] border-2 border-[#c6a15b]/60 rounded-xl shadow-2xl flex flex-col md:flex-row overflow-hidden font-sans">

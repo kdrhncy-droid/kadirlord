@@ -373,7 +373,7 @@ export const BattleLootModal: React.FC<BattleLootModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/90 backdrop-blur-sm"
+      className="fixed inset-0 modal-anim-in z-50 flex items-center justify-center p-3 sm:p-5 bg-black/90 backdrop-blur-none"
       role="dialog"
       aria-modal="true"
       aria-labelledby="loot-modal-title"

@@ -196,7 +196,7 @@ function buildScatter(profile: BattlefieldProfile): THREE.Group {
  */
 function buildGroundCover(profile: BattlefieldProfile): THREE.InstancedMesh | null {
   if (profile.biome === 'NORTH_SNOW_PEAKS') return null; // kar altında tutam yok
-  const COUNT = 700;
+  const COUNT = 1600;
   // Çift çapraz şerit geometrisi (X biçiminde iki üçgen çift).
   const positions: number[] = [];
   const pushQuad = (angle: number) => {
@@ -211,7 +211,7 @@ function buildGroundCover(profile: BattlefieldProfile): THREE.InstancedMesh | nu
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.computeVertexNormals();
-  const color = profile.biome === 'SOUTH_DESERT' ? 0xa89a55 : 0x6f8f44;
+  const color = profile.biome === 'SOUTH_DESERT' ? 0xa89a55 : 0x9a8848;
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.95, side: THREE.DoubleSide });
   const mesh = new THREE.InstancedMesh(geo, mat, COUNT);
   const dummy = new THREE.Object3D();
@@ -233,7 +233,7 @@ function buildGroundCover(profile: BattlefieldProfile): THREE.InstancedMesh | nu
     if (slope > 0.9) continue;
     dummy.position.set(x, y - 0.05, z);
     dummy.rotation.set(0, nextRand() * Math.PI, 0);
-    dummy.scale.setScalar(0.5 + nextRand() * 0.55);
+    dummy.scale.setScalar(0.55 + nextRand() * 0.65);
     dummy.updateMatrix();
     mesh.setMatrixAt(placed, dummy.matrix);
     placed++;
