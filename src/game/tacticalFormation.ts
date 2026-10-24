@@ -121,16 +121,26 @@ export const FORMATION_ORDER_LABELS: Record<FormationOrder, string> = {
  * Computes world-space formation slots around `anchor` for `count` soldiers
  * according to the given Bannerlord `arrangement`.
  */
+export interface FormationSlotOptions {
+  /** Nefer arası yan aralık (varsayılan: düzen meta değeri). */
+  spacingX?: number;
+  /** Sıra arası derinlik aralığı (varsayılan: düzen meta değeri). */
+  spacingZ?: number;
+  /** Cephe genişliği: sıra başına nefer (varsayılan: sayıdan türetilir). */
+  maxCols?: number;
+}
+
 export function computeFormationSlots(
   count: number,
   anchor: FormationAnchor,
   arrangement: FormationArrangement,
+  options?: FormationSlotOptions,
 ): FormationSlot[] {
   if (count <= 0) return [];
   const slots: FormationSlot[] = [];
   const meta = FORMATION_ARRANGEMENT_META[arrangement].modifier;
-  const sx = meta.spacingX;
-  const sz = meta.spacingZ;
+  const sx = options?.spacingX ?? meta.spacingX;
+  const sz = options?.spacingZ ?? meta.spacingZ;
 
   // Forward direction in world space: (+sin(facing), +cos(facing))
   const fwdX = Math.sin(anchor.facing);
@@ -164,12 +174,13 @@ export function computeFormationSlots(
   }
 
   // Standard rectangular ranks (LINE, SHIELD_WALL, LOOSE)
-  const maxCols =
+  const derivedMaxCols =
     arrangement === 'SHIELD_WALL'
       ? Math.max(3, Math.ceil(Math.sqrt(count * 2.5)))
       : arrangement === 'LOOSE'
         ? Math.max(2, Math.ceil(Math.sqrt(count * 1.6)))
         : Math.max(3, Math.ceil(Math.sqrt(count * 2.2)));
+  const maxCols = Math.max(1, options?.maxCols ?? derivedMaxCols);
 
   for (let idx = 0; idx < count; idx++) {
     const rank = Math.floor(idx / maxCols);

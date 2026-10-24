@@ -7,15 +7,16 @@
  * dünya haritasında ne varsa sahnede de o vardır; doğuş kenarları yaklaşma
  * vektöründen türer; alan 460×460 ve kırmızı yumuşak sınırla çevrilidir).
  *
- * B1 kapsamı sahne + taşınan aktör çekirdeğidir. Sonraki fazlar burada
- * büyüyecek: B3 Order of Battle dizilişi, B4 bölük emirleri, B5 1 aktör =
+ * B1 kapsamı sahne + taşınan aktör çekirdeğidir. B3 ile Order of Battle
+ * konuşlanma fazı eklendi (saf mantık: deployment.ts). Sonraki fazlar:
+ * B4 bölük emirleri, B5 1 aktör =
  * 1 asker + takviye dalgaları (şu an taraflar en çok 60 aktöre ölçeklenir
  * ve kayıplar sınıf bazında orantılı yazılır), B6 yönlü şahsi dövüş,
  * B7 moral/bozgun/esaret. Eski arenanın Bannerlord'a yabancı katmanı
  * (dash, stamina, kombo, hitstop, telegraph halkası, kamera sarsıntısı)
  * bu misyona taşınmadı.
  */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import {
   FACTION_INFO,
@@ -37,6 +38,21 @@ import {
   type BattlefieldProfile,
 } from '../game/battlefield';
 import { createBattleTerrain } from '../game/battleTerrain';
+import {
+  DEPLOY_FORMATION_LABEL,
+  DEPLOY_ZONE,
+  DEPLOYMENT_MIN_TROOPS,
+  DIVISION_LABEL,
+  DIVISION_NUMBER,
+  DIVISION_ORDER,
+  MAX_PER_ROW,
+  MIN_PER_ROW,
+  clampToDeployZone,
+  computeDivisionSlots,
+  defaultPerRow,
+  nextFormation,
+  type DeployFormation,
+} from '../game/deployment';
 import { createWarriorModel, type WarriorMeshHandles } from '../game/proceduralModels';
 import { sound } from '../game/sound';
 
@@ -175,10 +191,36 @@ function allocateActors(roster: TroopRoster): Record<UnitTierId, number> {
   return out;
 }
 
+/** Konuşlanma diziliş tercihleri savaşlar arasında hatırlanır (Bannerlord'da kalıcıdır). */
+const deploymentPrefs: Partial<
+  Record<UnitTierId, { formation: DeployFormation; perRow: number }>
+> = {};
+
+interface DeployCardData {
+  cls: UnitTierId;
+  num: number;
+  count: number;
+  formation: DeployFormation;
+  perRow: number;
+}
+
+interface DeployApi {
+  select: (cls: UnitTierId) => void;
+  cycleFormation: (cls: UnitTierId) => void;
+  adjustWidth: (cls: UnitTierId, delta: number) => void;
+  rotate: (cls: UnitTierId, dir: 1 | -1) => void;
+  start: () => void;
+}
+
 export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const propsRef = useRef(props);
   propsRef.current = props;
+  const [deployUi, setDeployUi] = useState<{
+    cards: DeployCardData[];
+    selected: UnitTierId;
+  } | null>(null);
+  const deployApiRef = useRef<DeployApi | null>(null);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -457,6 +499,206 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     const alliesTotal = actors.filter((a) => a.team === 'ally').length;
     const enemiesTotal = actors.filter((a) => a.team === 'enemy').length;
 
+    /* ── B3: Order of Battle konuşlanma fazı ──────────────────────────────
+       Oyuncu tarafında ≥20 asker varsa savaş konuşlanmayla açılır (Bannerlord
+       eşiği ~20): kamera sahneyi üstten görür, bölükler (1 Piyade, 2 Okçu,
+       3 Süvari, 4 Atlı Okçu) diziliş bölgesi içinde yerleştirilir. Düşman
+       kendi şablonuyla dizilmiş bekler. Simülasyon bu fazda koşmaz. */
+    const deployEnabled = getTotalTroops(campaign.roster) >= DEPLOYMENT_MIN_TROOPS;
+    let phase: 'deploy' | 'battle' = deployEnabled ? 'deploy' : 'battle';
+
+    interface DivisionState {
+      cls: UnitTierId;
+      x: number;
+      z: number;
+      facing: number;
+      formation: DeployFormation;
+      perRow: number;
+      members: MissionActor[];
+      marker: THREE.Group;
+      markerMat: THREE.MeshBasicMaterial;
+    }
+    const divisions: DivisionState[] = [];
+    let selectedCls: UnitTierId = 'infantry';
+    let facingDrag = false;
+
+    const createDivisionMarker = (): { group: THREE.Group; mat: THREE.MeshBasicMaterial } => {
+      const mat = new THREE.MeshBasicMaterial({
+        color: FACTION_INFO.player.hex,
+        transparent: true,
+        opacity: 0.85,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const group = new THREE.Group();
+      const ring = new THREE.Mesh(new THREE.RingGeometry(1.7, 2.15, 40), mat);
+      ring.rotation.x = -Math.PI / 2;
+      group.add(ring);
+      const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.85, 3.2, 4), mat);
+      arrow.rotation.x = Math.PI / 2; // koni ucu +Y → yerel +Z (bölük bakış yönü)
+      arrow.position.set(0, 0, 3.6);
+      group.add(arrow);
+      return { group, mat };
+    };
+
+    const applyDivision = (div: DivisionState) => {
+      const slots = computeDivisionSlots(
+        div.cls,
+        div.members.length,
+        div,
+        div.formation,
+        div.perRow,
+      );
+      div.members.forEach((actor, i) => {
+        const s = slots[i];
+        if (!s) return;
+        const clamped = clampToBattlefield(profile, s.x, s.z);
+        actor.x = clamped.x;
+        actor.z = clamped.z;
+        actor.homeX = clamped.x;
+        actor.homeZ = clamped.z;
+        actor.vx = 0;
+        actor.vz = 0;
+        actor.facing = s.facing;
+        actor.handles.root.position.set(clamped.x, groundY(clamped.x, clamped.z), clamped.z);
+        actor.handles.root.rotation.y = s.facing;
+      });
+      div.marker.position.set(div.x, groundY(div.x, div.z) + 0.2, div.z);
+      div.marker.rotation.y = div.facing;
+    };
+
+    const refreshDeployUi = () => {
+      for (const d of divisions) {
+        d.markerMat.color.setHex(d.cls === selectedCls ? 0xfbbf24 : FACTION_INFO.player.hex);
+      }
+      setDeployUi({
+        cards: divisions.map((d) => ({
+          cls: d.cls,
+          num: DIVISION_NUMBER[d.cls],
+          count: d.members.length,
+          formation: d.formation,
+          perRow: d.perRow,
+        })),
+        selected: selectedCls,
+      });
+    };
+
+    const startBattle = () => {
+      if (phase !== 'deploy') return;
+      phase = 'battle';
+      for (const d of divisions) {
+        deploymentPrefs[d.cls] = { formation: d.formation, perRow: d.perRow };
+        d.marker.visible = false;
+      }
+      zoneGroup.visible = false;
+      deployApiRef.current = null;
+      setDeployUi(null);
+    };
+
+    const zoneGroup = new THREE.Group();
+    if (deployEnabled) {
+      const zonePoints: THREE.Vector3[] = [];
+      const zoneEdges: Array<[number, number, number, number]> = [
+        [DEPLOY_ZONE.minX, DEPLOY_ZONE.minZ, DEPLOY_ZONE.maxX, DEPLOY_ZONE.minZ],
+        [DEPLOY_ZONE.maxX, DEPLOY_ZONE.minZ, DEPLOY_ZONE.maxX, DEPLOY_ZONE.maxZ],
+        [DEPLOY_ZONE.maxX, DEPLOY_ZONE.maxZ, DEPLOY_ZONE.minX, DEPLOY_ZONE.maxZ],
+        [DEPLOY_ZONE.minX, DEPLOY_ZONE.maxZ, DEPLOY_ZONE.minX, DEPLOY_ZONE.minZ],
+      ];
+      for (const [x0, z0, x1, z1] of zoneEdges) {
+        const segs = Math.max(2, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 12));
+        for (let i = 0; i <= segs; i++) {
+          const t = i / segs;
+          const x = x0 + (x1 - x0) * t;
+          const z = z0 + (z1 - z0) * t;
+          zonePoints.push(new THREE.Vector3(x, groundY(x, z) + 0.3, z));
+        }
+      }
+      const zoneLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(zonePoints),
+        new THREE.LineBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.7 }),
+      );
+      zoneGroup.add(zoneLine);
+      scene.add(zoneGroup);
+
+      // Varsayılan çapalar B1 şerit düzeniyle aynı (piyade önde, okçu geride,
+      // atlı okçu sol, süvari sağ kanatta) — dokunmadan başlanırsa diziliş eski hâliyle aynıdır.
+      const anchorDefaults: Record<UnitTierId, { x: number; z: number }> = {
+        infantry: { x: profile.allySpawn.x, z: profile.allySpawn.z },
+        archer: { x: profile.allySpawn.x, z: profile.allySpawn.z + 9 },
+        horseArcher: { x: profile.allySpawn.x - 30, z: profile.allySpawn.z + 4 },
+        cavalry: { x: profile.allySpawn.x + 30, z: profile.allySpawn.z + 4 },
+      };
+      for (const cls of DIVISION_ORDER) {
+        const members = actors.filter((a) => a.team === 'ally' && a.unitType === cls);
+        if (members.length === 0) continue;
+        const pref = deploymentPrefs[cls];
+        const marker = createDivisionMarker();
+        scene.add(marker.group);
+        const div: DivisionState = {
+          cls,
+          x: anchorDefaults[cls].x,
+          z: anchorDefaults[cls].z,
+          facing: profile.allySpawn.facing,
+          formation: pref?.formation ?? 'LINE',
+          perRow: pref?.perRow ?? defaultPerRow(cls),
+          members,
+          marker: marker.group,
+          markerMat: marker.mat,
+        };
+        divisions.push(div);
+        applyDivision(div);
+      }
+      selectedCls = divisions[0]?.cls ?? 'infantry';
+
+      deployApiRef.current = {
+        select: (cls) => {
+          selectedCls = cls;
+          refreshDeployUi();
+        },
+        cycleFormation: (cls) => {
+          const div = divisions.find((d) => d.cls === cls);
+          if (!div) return;
+          selectedCls = cls;
+          div.formation = nextFormation(cls, div.formation);
+          applyDivision(div);
+          refreshDeployUi();
+        },
+        adjustWidth: (cls, delta) => {
+          const div = divisions.find((d) => d.cls === cls);
+          if (!div) return;
+          div.perRow = THREE.MathUtils.clamp(div.perRow + delta, MIN_PER_ROW, MAX_PER_ROW);
+          applyDivision(div);
+          refreshDeployUi();
+        },
+        rotate: (cls, dir) => {
+          const div = divisions.find((d) => d.cls === cls);
+          if (!div) return;
+          div.facing += dir * (Math.PI / 12);
+          applyDivision(div);
+        },
+        start: startBattle,
+      };
+      refreshDeployUi();
+    }
+
+    const deployRaycaster = new THREE.Raycaster();
+    const groundPointFromEvent = (e: MouseEvent): { x: number; z: number } | null => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const nx = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
+      const ny = -(((e.clientY - rect.top) / Math.max(1, rect.height)) * 2 - 1);
+      deployRaycaster.setFromCamera(new THREE.Vector2(nx, ny), camera);
+      const hits = deployRaycaster.intersectObject(terrain.group, true);
+      return hits.length > 0 ? { x: hits[0].point.x, z: hits[0].point.z } : null;
+    };
+    const selectedDivision = (): DivisionState | undefined =>
+      divisions.find((d) => d.cls === selectedCls);
+
+    // Konuşlanma kamerası: müttefik gerisinden yukarıdan bakan taktik görünüm.
+    let deployCamTx = profile.allySpawn.x;
+    let deployCamTz = profile.allySpawn.z - 6;
+    let deployCamDist = 105;
+
+
     /* ── Basit parçacık havuzu (vuruş geri bildirimi) ── */
     const P_COUNT = 360;
     const pPos = new Float32Array(P_COUNT * 3);
@@ -501,6 +743,23 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     const onMouseDown = (e: MouseEvent) => {
       if (e.target !== renderer.domElement) return;
       sound.unlock();
+      if (phase === 'deploy') {
+        if (propsRef.current.paused) return;
+        const div = selectedDivision();
+        if (!div) return;
+        if (e.button === 0) {
+          const p = groundPointFromEvent(e);
+          if (p) {
+            const clamped = clampToDeployZone(p.x, p.z);
+            div.x = clamped.x;
+            div.z = clamped.z;
+            applyDivision(div);
+          }
+        } else if (e.button === 2) {
+          facingDrag = true;
+        }
+        return;
+      }
       if (document.pointerLockElement !== renderer.domElement) {
         renderer.domElement.requestPointerLock();
         return;
@@ -509,14 +768,79 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       if (e.button === 2) mouseRightHeld = true;
     };
     const onMouseUp = (e: MouseEvent) => {
-      if (e.button === 2) mouseRightHeld = false;
+      if (e.button === 2) {
+        mouseRightHeld = false;
+        facingDrag = false;
+      }
     };
     const onMouseMove = (e: MouseEvent) => {
+      if (phase === 'deploy' && facingDrag) {
+        const div = selectedDivision();
+        const p = div ? groundPointFromEvent(e) : null;
+        if (div && p) {
+          const dx = p.x - div.x;
+          const dz = p.z - div.z;
+          if (Math.hypot(dx, dz) > 1.5) {
+            div.facing = Math.atan2(dx, dz);
+            applyDivision(div);
+          }
+        }
+        return;
+      }
       if (document.pointerLockElement !== renderer.domElement) return;
       camYaw -= e.movementX * 0.0021;
       camPitch = THREE.MathUtils.clamp(camPitch + e.movementY * 0.0021, -0.12, 1.0);
     };
     const onContextMenu = (e: Event) => e.preventDefault();
+    const onDeployKeyDown = (e: KeyboardEvent) => {
+      if (phase !== 'deploy' || propsRef.current.paused) return;
+      const api = deployApiRef.current;
+      if (!api) return;
+      let handled = true;
+      switch (e.code) {
+        case 'Digit1':
+        case 'Digit2':
+        case 'Digit3':
+        case 'Digit4': {
+          const num = Number(e.code.slice(-1));
+          const div = divisions.find((d) => DIVISION_NUMBER[d.cls] === num);
+          if (div) api.select(div.cls);
+          break;
+        }
+        case 'KeyF':
+          api.cycleFormation(selectedCls);
+          break;
+        case 'KeyQ':
+          api.rotate(selectedCls, 1);
+          break;
+        case 'KeyE':
+          api.rotate(selectedCls, -1);
+          break;
+        case 'BracketLeft':
+          api.adjustWidth(selectedCls, -1);
+          break;
+        case 'BracketRight':
+          api.adjustWidth(selectedCls, 1);
+          break;
+        case 'Enter':
+          api.start();
+          break;
+        default:
+          handled = false;
+      }
+      if (handled) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    const onDeployWheel = (e: WheelEvent) => {
+      if (phase !== 'deploy' || e.target !== renderer.domElement) return;
+      deployCamDist = THREE.MathUtils.clamp(
+        deployCamDist + Math.sign(e.deltaY) * 9,
+        42,
+        165,
+      );
+    };
     const onResize = () => {
       const w = mount.clientWidth;
       const h = Math.max(1, mount.clientHeight);
@@ -525,6 +849,8 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       camera.updateProjectionMatrix();
     };
     window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onDeployKeyDown, true);
+    window.addEventListener('wheel', onDeployWheel, { passive: true });
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mouseup', onMouseUp);
@@ -905,7 +1231,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       const frameDt = Math.min(0.25, Math.max(0.001, (now - lastNow) / 1000));
       lastNow = now;
 
-      if (!propsRef.current.paused) {
+      if (!propsRef.current.paused && phase === 'battle') {
         accumulator = Math.min(accumulator + frameDt, STEP_DT * 6);
         while (accumulator >= STEP_DT) {
           step(STEP_DT);
@@ -914,9 +1240,10 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       }
 
       // Sancak bezleri rüzgârda dalgalanır (hafif salınım, fazlar bez başına ayrı).
+      const clothT = now * 0.001;
       for (let ci = 0; ci < bannerCloths.length; ci++) {
-        bannerCloths[ci].rotation.y = Math.sin(elapsed * 2.3 + ci * 1.7) * 0.22;
-        bannerCloths[ci].rotation.x = Math.sin(elapsed * 1.7 + ci * 2.3) * 0.06;
+        bannerCloths[ci].rotation.y = Math.sin(clothT * 2.3 + ci * 1.7) * 0.22;
+        bannerCloths[ci].rotation.x = Math.sin(clothT * 1.7 + ci * 2.3) * 0.06;
       }
 
       shadowTimer += frameDt;
@@ -926,7 +1253,23 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       }
 
       /* Kamera */
-      if (player.hp > 0) {
+      if (phase === 'deploy') {
+        // Konuşlanma: WASD ile kayan, tekerlekle yakınlaşan taktik kamera.
+        const pan = 62 * frameDt;
+        if (keys.has('KeyW')) deployCamTz -= pan;
+        if (keys.has('KeyS')) deployCamTz += pan;
+        if (keys.has('KeyA')) deployCamTx -= pan;
+        if (keys.has('KeyD')) deployCamTx += pan;
+        deployCamTx = THREE.MathUtils.clamp(deployCamTx, -205, 205);
+        deployCamTz = THREE.MathUtils.clamp(deployCamTz, -60, 228);
+        const gy = groundY(deployCamTx, deployCamTz);
+        camera.position.set(
+          deployCamTx,
+          gy + deployCamDist * 0.62,
+          deployCamTz + deployCamDist * 0.78,
+        );
+        camera.lookAt(deployCamTx, gy, deployCamTz - deployCamDist * 0.22);
+      } else if (player.hp > 0) {
         const px = player.x;
         const pz = player.z;
         const py = groundY(px, pz);
@@ -949,12 +1292,25 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
 
       renderer.render(scene, camera);
     };
+    propsRef.current.onBattleTelemetry({
+      playerHp: Math.round(player.hp),
+      playerMaxHp: player.maxHp,
+      alliesAlive: alliesTotal,
+      alliesTotal,
+      enemiesAlive: enemiesTotal,
+      enemiesTotal,
+      enemyCommanderName,
+      activeOrder: propsRef.current.activeOrder,
+    });
     rafId = requestAnimationFrame(tick);
 
     return () => {
       cancelAnimationFrame(rafId);
       window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onDeployKeyDown, true);
+      window.removeEventListener('wheel', onDeployWheel);
       window.removeEventListener('keyup', onKeyUp);
+      deployApiRef.current = null;
       window.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('mousemove', onMouseMove);
@@ -979,9 +1335,101 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
 
   return (
     <div ref={mountRef} className="absolute inset-0 h-full w-full">
-      <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded bg-black/45 px-3 py-1 text-[11px] tracking-wide text-[#e8dcc3]">
-        Tıkla: nişan kilidi · WASD: sür · Sol tık: saldır · Sağ tık (basılı): blok
-      </div>
+      {deployUi ? (
+        <>
+          <div className="pointer-events-none absolute left-1/2 top-24 z-10 -translate-x-1/2 rounded border border-[#8a6d3b]/60 bg-black/60 px-4 py-2 text-center">
+            <div className="text-[13px] font-bold tracking-[0.22em] text-[#f3d98b]">
+              SAVAŞ DÜZENİ · KONUŞLANMA
+            </div>
+            <div className="mt-0.5 text-[11px] tracking-wide text-[#e8dcc3]">
+              Bölük seç (kart ya da 1-4) · Sol tık: yerleştir · Sağ tık sürükle: yön · F: diziliş · [ ]:
+              cephe · Q/E: döndür · WASD + tekerlek: kamera · Enter: başla
+            </div>
+          </div>
+          <div
+            data-testid="deployment-panel"
+            className="absolute bottom-28 left-1/2 z-10 flex -translate-x-1/2 items-stretch gap-2"
+          >
+            {deployUi.cards.map((card) => {
+              const selected = deployUi.selected === card.cls;
+              return (
+                <div
+                  key={card.cls}
+                  data-testid={`deployment-card-${card.cls}`}
+                  onClick={() => deployApiRef.current?.select(card.cls)}
+                  className={`w-40 cursor-pointer rounded border px-3 py-2 ${
+                    selected
+                      ? 'border-amber-300 bg-amber-950/70'
+                      : 'border-[#8a6d3b]/50 bg-black/55'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-[12px] font-bold text-[#f3d98b]">
+                      <span className="rounded bg-[#8a6d3b]/70 px-1 text-[11px] text-black">
+                        {card.num}
+                      </span>
+                      {DIVISION_LABEL[card.cls]}
+                    </span>
+                    <span className="text-[11px] text-[#e8dcc3]">{card.count} nefer</span>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid={`deployment-formation-${card.cls}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deployApiRef.current?.cycleFormation(card.cls);
+                    }}
+                    className="mt-1.5 w-full rounded border border-[#8a6d3b]/60 bg-black/40 px-2 py-0.5 text-[11px] text-[#e8dcc3] hover:bg-black/70"
+                  >
+                    {DEPLOY_FORMATION_LABEL[card.formation]} ▸
+                  </button>
+                  <div className="mt-1.5 flex items-center justify-between text-[11px] text-[#e8dcc3]">
+                    <button
+                      type="button"
+                      aria-label="Cepheyi daralt"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deployApiRef.current?.adjustWidth(card.cls, -1);
+                      }}
+                      className="rounded border border-[#8a6d3b]/60 px-1.5 hover:bg-black/70"
+                    >
+                      −
+                    </button>
+                    <span>
+                      Cephe: <span className="text-[#f3d98b]">{card.perRow}</span>
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Cepheyi genişlet"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deployApiRef.current?.adjustWidth(card.cls, 1);
+                      }}
+                      className="rounded border border-[#8a6d3b]/60 px-1.5 hover:bg-black/70"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              data-testid="deployment-start"
+              onClick={() => deployApiRef.current?.start()}
+              className="rounded border border-amber-300/80 bg-amber-700/80 px-5 text-[13px] font-bold tracking-widest text-amber-50 hover:bg-amber-600/90"
+            >
+              SAVAŞA
+              <br />
+              BAŞLA
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded bg-black/45 px-3 py-1 text-[11px] tracking-wide text-[#e8dcc3]">
+          Tıkla: nişan kilidi · WASD: sür · Sol tık: saldır · Sağ tık (basılı): blok
+        </div>
+      )}
     </div>
   );
 };
