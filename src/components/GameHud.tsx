@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { WorldWarPanel } from './WorldWarPanel';
 import {
   AttributeId,
@@ -136,6 +136,16 @@ export const GameHud: React.FC<GameHudProps> = ({
   const [rightBarCollapsed, setRightBarCollapsed] = useState(false);
   /** J menüsü: Görevler ve Raporlar sekmeleri. */
   const [worldPane, setWorldPane] = useState<'chronicle' | 'quests'>('quests');
+  // Sol alt rapor şeridi Bannerlord'daki gibi geçicidir: yeni olayda
+  // belirir, bir süre sonra solar (kalıcı kayıt "Raporlar" panelindedir).
+  const [feedVisible, setFeedVisible] = useState(true);
+  const lastChronicleId = campaign.chronicle[campaign.chronicle.length - 1]?.id;
+  useEffect(() => {
+    if (!lastChronicleId) return;
+    setFeedVisible(true);
+    const timer = setTimeout(() => setFeedVisible(false), 7000);
+    return () => clearTimeout(timer);
+  }, [lastChronicleId]);
   const [activeTab, setActiveTab] = useState<'none' | 'army' | 'character' | 'world'>('none');
   const [hudFeedback, setHudFeedback] = useState<string | null>(null);
   const [hoveredLabelId, setHoveredLabelId] = useState<string | null>(null);
@@ -1121,7 +1131,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                   {/* Event Log / Chronicle Ticker (Bannerlord Vakanüvis Akışı — Sol Alt) */}
                   <div
                     data-testid="hud-event-feed"
-                    className="absolute bottom-16 left-4 max-w-sm flex flex-col gap-1 pointer-events-none select-none z-30 mb-1"
+                    className={`absolute bottom-16 left-4 max-w-sm flex flex-col gap-1 pointer-events-none select-none z-30 mb-1 transition-opacity duration-700 ${feedVisible ? 'opacity-100' : 'opacity-0'}`}
                   >
                     {campaign.chronicle.slice(-4).reverse().map((ev) => (
                       <div

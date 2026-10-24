@@ -1110,6 +1110,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     let caravanPickedUp = false;
     let caravanCheckTimer = 0;
     let caravanOrigin: { x: number; z: number } | null = null;
+    // Takipçilerin hâlihazırda yerleştirildiği çıkış yerleşimi; doğuş
+    // konumları oyuncunun yanı olduğu için, çıkış ilk çözüldüğünde
+    // oraya ışınlanırlar (yoksa harita açılır açılmaz oyuncunun yanından
+    // köye koşan isimsiz figürler görünüyordu — kullanıcı bildirimi).
+    let caravanPlacedFor: string | null = null;
 
     // Destination Waypoint Ring & Golden March Path Line on Overworld
     const destRing = new THREE.Mesh(
@@ -2607,9 +2612,18 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             if (escort?.originSettlementId) {
               const origin = camp.settlements.find((s) => s.id === escort.originSettlementId);
               caravanOrigin = origin ? { x: origin.x, z: origin.z } : null;
+              if (origin && !caravanPickedUp && caravanPlacedFor !== origin.id) {
+                caravanPlacedFor = origin.id;
+                caravanFollowers.forEach((f, idx) => {
+                  const ang = (idx / Math.max(1, caravanFollowers.length)) * Math.PI * 2;
+                  f.x = origin.x + Math.cos(ang) * 1.6;
+                  f.z = origin.z + Math.sin(ang) * 1.6;
+                });
+              }
             } else {
               caravanOrigin = null;
               caravanPickedUp = false;
+              caravanPlacedFor = null;
             }
             if (
               caravanOrigin &&

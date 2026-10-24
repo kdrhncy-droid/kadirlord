@@ -213,6 +213,12 @@ export interface LordLiveRouteState {
   orderKey?: string;
   /** Gerçek zamanlı kovalama / kaçma durumu (harita rozetleri ve animasyon hızı için). */
   tacticalState?: 'PURSUE' | 'FLEE' | null;
+  /**
+   * Sıkışma bekçisi: rota noktası varken net ilerleme yoksa (kıyıda kayma
+   * salınımı vb.) geçen sim süresi; eşik aşılınca mevcut rota noktası
+   * atlanır, birlik sonsuza dek aynı yerde takılı kalmaz.
+   */
+  stuckWatch?: { x: number; z: number; elapsed: number };
 }
 
 /**
@@ -315,6 +321,25 @@ export function stepLordCampaignRoute(
       }
     } else {
       route.waypoints.shift();
+    }
+
+    // Sıkışma bekçisi: stepAlongLandOnly kıyıda teğet kaymasıyla her
+    // karede minik ama net ilerlemesiz hareket üretebilir; bu durumda
+    // shift() hiç tetiklenmez ve birlik aynı noktada salınır. 4 sim
+    // saniyesinde 2 birimden az net yol alındıysa rota noktasını atla.
+    const watch = (route.stuckWatch ??= { x: route.x, z: route.z, elapsed: 0 });
+    if (Math.hypot(route.x - watch.x, route.z - watch.z) > 2) {
+      watch.x = route.x;
+      watch.z = route.z;
+      watch.elapsed = 0;
+    } else {
+      watch.elapsed += dt * timeScale;
+      if (watch.elapsed > 4) {
+        route.waypoints.shift();
+        watch.x = route.x;
+        watch.z = route.z;
+        watch.elapsed = 0;
+      }
     }
   }
 }
@@ -449,11 +474,17 @@ export function applyLordOrderToRoute(
         targetX = target.x + 4.5;
         targetZ = target.z + 4.5;
         key = `set:${target.id}`;
+        // "Asker topluyor" ancak varış noktasındayken doğrudur; yoldayken
+        // aynı metin yazılıyordu ve lord yolda (örn. açlıktan) asker
+        // kaybederse oyuncuya "topluyor ama azalıyor" görünüyordu.
+        const distToGate = Math.hypot(route.x - targetX, route.z - targetZ);
         action =
           order.kind === 'DEFEND'
             ? `${target.name} savunmasına koşuyor`
             : order.kind === 'REINFORCE'
-              ? `${target.name} garnizonunda asker topluyor`
+              ? distToGate <= 7
+                ? `${target.name} garnizonunda asker topluyor`
+                : `${target.name} garnizonuna takviye almaya gidiyor`
               : `${target.name} bölgesini denetliyor`;
       }
     }
