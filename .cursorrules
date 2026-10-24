@@ -7,7 +7,17 @@ Detaylı matematiksel formüller, 11 atölye türü, ordu uyum denklemleri ve ku
 
 ## 1. GÖRSEL OTORİTE VE BANNERLORD ÖZGÜNLÜK KURALI (EN KRİTİK KURAL)
 
-1. **ASLA KAFANDAN UYDURMA:** Bannerlord'da olan bir ekranı, paneli, butonu veya menüyü yaparken nasıl göründüğünü tam olarak bilmiyorsan **ASLA kafana göre uydurma veya sıradan bir web formu yapma.**
+> **ALTIN KURAL (kullanıcı talimatı; UNUTULMAZ):** *Kod yazarken, yazacağımız
+> kodun Bannerlord'daki hâlini hem görsel hem metin olarak araştırıp öyle
+> yazarız. Bannerlord'la alâkası olmayan bir sistem görürsek doğrusunu
+> araştırıp düzeltiriz. Eksik bir Bannerlord sistemi görürsek doğrusunu
+> araştırıp düzeltiriz.* (Bütün hâli: `AGENTS.md` → "ALTIN KURAL".)
+>
+> Yani: (a) araştırmadan kod yok; (b) yanlış/uydurma sistem görünce üzerine
+> inşa etme, doğrusuyla değiştir; (c) eksik Bannerlord sistemi görünce
+> doğrusunu araştırıp tamamla (görev dışıysa `YAPILACAKLAR_LISTESI.md`ye işle).
+
+1. **ASLA KAFANDAN UYDURMA:** Bannerlord'da olan bir ekranı, paneli, butonu veya menüyü yaparken nasıl göründüğünü tam olarak bilmiyorsan **ASLA kafana göre uydurma veya sıradan bir web formu yapma.** Aynı yasak görselin ötesinde mekanikler için de geçerlidir: bir sistemin kurallarını, formüllerini, sayılarını, terim ve diyalog/menü metinlerini de metin kaynaklarından (wiki/rehber/yama notları) teyit etmeden yazma; ezbere/tahmine dayalı sistem kurma.
 2. **GÖRSELİ ÖNCE ARAŞTIR VE GÖR:** 
    - Bannerlord UI ile ilgili görsel gerektiren bir iş yapıyorsan, Google Görsellerde veya Steam topluluk rehberlerinde `"Mount & Blade II: Bannerlord [özellik adı] UI screenshot"` araması yap.
    - Örneğin:
