@@ -7,9 +7,6 @@ import {
   LordAgent,
   Settlement,
   SiegeEngineType,
-  TacticalOrder,
-  TroopRoster,
-  computeMeleeDamage,
   getSettlementArrivalRadius,
   factionHasHorseArchers,
   getTotalTroops,
@@ -98,9 +95,6 @@ interface WorldCanvasProps {
   subMode: 'overworld' | 'battle';
   campaignTimeScale: 0 | 1 | 2 | 4;
   campaign: CampaignState;
-  activeOrder: TacticalOrder;
-  battleTargetLordId: string | null;
-  battleTargetSettlementId: string | null;
   activeDiplomacyLordId?: string | null;
   activeDialogueLordId?: string | null;
   activeSettlementModalId?: string | null;
@@ -122,53 +116,6 @@ interface WorldCanvasProps {
   onOpenSettlement: (settlement: Settlement) => void;
   onOpenDiplomacy: (lord: LordAgent) => void;
   onHostileEncounter?: (lord: LordAgent, scenario: EncounterScenario) => void;
-  onBattleTelemetry: (telemetry: BattleTelemetry) => void;
-  onBattleComplete: (
-    victory: boolean,
-    losses: Partial<TroopRoster>,
-    enemiesDefeated: number,
-  ) => void;
-}
-
-interface BattleActor {
-  id: string;
-  team: 'ally' | 'enemy';
-  unitType: 'infantry' | 'archer' | 'cavalry' | 'horseArcher' | 'commander';
-  archetype: 'CHASER' | 'KITER' | 'SHIELDED' | 'CHARGER';
-  x: number;
-  z: number;
-  vx: number;
-  vz: number;
-  facing: number;
-  hp: number;
-  maxHp: number;
-  attack: number;
-  defense: number;
-  speed: number;
-  isRanged: boolean;
-  isMounted: boolean;
-  isBlocking: boolean;
-  attackPhase: 'IDLE' | 'WINDUP' | 'ACTIVE' | 'RECOVERY';
-  attackTimer: number;
-  cooldownTimer: number;
-  hitFlashTimer: number;
-  koTimer: number;
-  spliced: boolean;
-  handles: WarriorMeshHandles;
-}
-
-interface PooledParticle {
-  active: boolean;
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  life: number;
-  maxLife: number;
-  scale: number;
-  colorHex: number;
 }
 
 interface SiegeMapMarker {
@@ -872,9 +819,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   subMode,
   campaignTimeScale,
   campaign,
-  activeOrder,
-  battleTargetLordId,
-  battleTargetSettlementId,
   activeDiplomacyLordId,
   activeDialogueLordId,
   activeSettlementModalId,
@@ -888,8 +832,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   onOpenSettlement,
   onOpenDiplomacy,
   onHostileEncounter,
-  onBattleTelemetry,
-  onBattleComplete,
 }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
@@ -898,9 +840,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     subMode,
     campaignTimeScale,
     campaign,
-    activeOrder,
-    battleTargetLordId,
-    battleTargetSettlementId,
     activeDiplomacyLordId,
     activeDialogueLordId,
     activeSettlementModalId,
@@ -910,8 +849,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     onOpenSettlement,
     onOpenDiplomacy,
     onHostileEncounter,
-    onBattleTelemetry,
-    onBattleComplete,
   });
 
   useEffect(() => {
@@ -920,9 +857,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       subMode,
       campaignTimeScale,
       campaign,
-      activeOrder,
-      battleTargetLordId,
-      battleTargetSettlementId,
       activeDiplomacyLordId,
       activeDialogueLordId,
       activeSettlementModalId,
@@ -932,17 +866,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       onOpenSettlement,
       onOpenDiplomacy,
       onHostileEncounter,
-      onBattleTelemetry,
-      onBattleComplete,
     };
   }, [
     gameState,
     subMode,
     campaignTimeScale,
     campaign,
-    activeOrder,
-    battleTargetLordId,
-    battleTargetSettlementId,
     activeDiplomacyLordId,
     activeDialogueLordId,
     activeSettlementModalId,
@@ -952,8 +881,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     onOpenSettlement,
     onOpenDiplomacy,
     onHostileEncounter,
-    onBattleTelemetry,
-    onBattleComplete,
   ]);
 
   useEffect(() => {
@@ -1055,10 +982,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     // Overworld vs Battle Layer Groups
     const overworldGroup = new THREE.Group();
-    const battleGroup = new THREE.Group();
-    battleGroup.visible = false;
     scene.add(overworldGroup);
-    scene.add(battleGroup);
 
     const settlementMeshes = new Map<string, THREE.Group>();
     const siegeCampRings = new Map<string, THREE.Group>();
@@ -1184,67 +1108,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     const marchPathLine = new THREE.Line(pathGeo, pathMat);
     marchPathLine.frustumCulled = false;
     overworldGroup.add(marchPathLine);
-
-    // Pooled Zero-GC Instanced Particle Ring Buffer
-    const PARTICLE_POOL_SIZE = 64;
-    const particleGeo = new THREE.DodecahedronGeometry(0.18, 0);
-    const particleMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const particleInst = new THREE.InstancedMesh(particleGeo, particleMat, PARTICLE_POOL_SIZE);
-    particleInst.frustumCulled = false;
-    scene.add(particleInst);
-
-    const particlePool: PooledParticle[] = Array.from({ length: PARTICLE_POOL_SIZE }, () => ({
-      active: false,
-      x: 0,
-      y: -100,
-      z: 0,
-      vx: 0,
-      vy: 0,
-      vz: 0,
-      life: 0,
-      maxLife: 0.4,
-      scale: 1,
-      colorHex: 0xfbbf24,
-    }));
-    let particleCursor = 0;
-    let hasActiveParticles = false;
-
-    // Initialize particle matrices off-screen once so we never re-upload when idle
-    _dummy.position.set(0, -100, 0);
-    _dummy.scale.setScalar(0.001);
-    _dummy.updateMatrix();
-    for (let i = 0; i < PARTICLE_POOL_SIZE; i++) {
-      particleInst.setMatrixAt(i, _dummy.matrix);
-    }
-    particleInst.instanceMatrix.needsUpdate = true;
-
-    function spawnParticles(
-      x: number,
-      y: number,
-      z: number,
-      count: number,
-      colorHex: number,
-      speedScale = 1,
-    ) {
-      hasActiveParticles = true;
-      for (let i = 0; i < count; i++) {
-        const p = particlePool[particleCursor];
-        particleCursor = (particleCursor + 1) % PARTICLE_POOL_SIZE;
-        p.active = true;
-        p.x = x + (Math.random() - 0.5) * 0.5;
-        p.y = y + (Math.random() - 0.5) * 0.4;
-        p.z = z + (Math.random() - 0.5) * 0.5;
-        const ang = Math.random() * Math.PI * 2;
-        const spd = (2.2 + Math.random() * 4.5) * speedScale;
-        p.vx = Math.cos(ang) * spd;
-        p.vy = 2.0 + Math.random() * 4.2;
-        p.vz = Math.sin(ang) * spd;
-        p.life = 0;
-        p.maxLife = 0.28 + Math.random() * 0.25;
-        p.scale = 0.7 + Math.random() * 0.9;
-        p.colorHex = colorHex;
-      }
-    }
 
     // ============================================================================
     // BANNERLORD STRATEGIC CAMPAIGN MAP CAMERA STATE & INPUTS
@@ -2104,240 +1967,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     renderer.compile(scene, camera);
 
-    // Battle Mode State
-    let currentSubMode: 'overworld' | 'battle' = 'overworld';
-    let battleActors: BattleActor[] = [];
-    let playerBattleActor: BattleActor | null = null;
-    let battleInitialAllies = 0;
-    let battleInitialEnemies = 0;
-    let battleEnemyName = 'Kara Geçit Ordusu';
-    let battleEnded = false;
-    let battleEndDelayTimer = 0;
-    let hitstopTimer = 0;
-    let cameraTrauma = 0;
-    let playerStamina = 100;
-    let playerCombo = 0;
-    let hudSyncTimer = 0;
-
-    let battleArenaCenterX = -18;
-    let battleArenaCenterZ = 0;
-
-    function initBattleArena() {
-      while (battleGroup.children.length > 0) {
-        battleGroup.remove(battleGroup.children[0]);
-      }
-      battleActors = [];
-      battleEnded = false;
-      battleEndDelayTimer = 0;
-      hitstopTimer = 0;
-      cameraTrauma = 0;
-      playerStamina = 100;
-      playerCombo = 0;
-
-      battleArenaCenterX = THREE.MathUtils.clamp(playerOverworldX, -220, 220);
-      battleArenaCenterZ = THREE.MathUtils.clamp(playerOverworldZ, -180, 180);
-
-      const camp = stateRef.current.campaign;
-      const targetLord = camp.lords.find((l) => l.id === stateRef.current.battleTargetLordId);
-      const targetSettlement = camp.settlements.find(
-        (s) => s.id === stateRef.current.battleTargetSettlementId,
-      );
-
-      const enemyFaction = targetLord
-        ? targetLord.faction
-        : targetSettlement
-          ? targetSettlement.faction
-          : 'bandits';
-      const enemyHex = FACTION_INFO[enemyFaction].hex;
-      battleEnemyName = targetLord
-        ? `${targetLord.title} ${targetLord.name} Ordusu`
-        : targetSettlement
-          ? `${targetSettlement.name} Garnizonu`
-          : 'Kara Geçit Yağmacıları';
-
-      const cmdMesh = createWarriorModel({
-        factionHex: FACTION_INFO.player.hex,
-        isMounted: true,
-        isCommander: true,
-      });
-      cmdMesh.root.scale.setScalar(1.18);
-      battleGroup.add(cmdMesh.root);
-
-      playerBattleActor = {
-        id: 'player-commander',
-        team: 'ally',
-        unitType: 'commander',
-        archetype: 'CHARGER',
-        x: battleArenaCenterX,
-        z: battleArenaCenterZ + 14,
-        vx: 0,
-        vz: 0,
-        facing: Math.PI,
-        hp: camp.playerHp,
-        maxHp: camp.playerMaxHp,
-        attack: 38,
-        defense: 22,
-        speed: 9.2,
-        isRanged: false,
-        isMounted: true,
-        isBlocking: false,
-        attackPhase: 'IDLE',
-        attackTimer: 0,
-        cooldownTimer: 0,
-        hitFlashTimer: 0,
-        koTimer: 0,
-        spliced: false,
-        handles: cmdMesh,
-      };
-      battleActors.push(playerBattleActor);
-
-      // Scale player battle actors proportionally from real campaign roster (up to 28 allies)
-      const totalPlayerTroops = Math.max(1, getTotalTroops(camp.roster));
-      const allyScale = totalPlayerTroops > 28 ? 28 / totalPlayerTroops : 1;
-      const allyTypes: Array<{ type: 'infantry' | 'archer' | 'cavalry' | 'horseArcher'; count: number }> = [
-        { type: 'infantry', count: camp.roster.infantry > 0 ? Math.max(1, Math.round(camp.roster.infantry * allyScale)) : 0 },
-        { type: 'archer', count: camp.roster.archer > 0 ? Math.max(1, Math.round(camp.roster.archer * allyScale)) : 0 },
-        { type: 'cavalry', count: camp.roster.cavalry > 0 ? Math.max(1, Math.round(camp.roster.cavalry * allyScale)) : 0 },
-        { type: 'horseArcher', count: camp.roster.horseArcher > 0 ? Math.max(1, Math.round(camp.roster.horseArcher * allyScale)) : 0 },
-      ];
-
-      let allyIdx = 0;
-      allyTypes.forEach(({ type, count }) => {
-        for (let i = 0; i < count; i++) {
-          const isMounted = type === 'cavalry' || type === 'horseArcher';
-          const isRanged = type === 'archer' || type === 'horseArcher';
-          const isHeavy = false;
-          const h = createWarriorModel({
-            factionHex: FACTION_INFO.player.hex,
-            isMounted,
-            isRanged,
-            isHeavy,
-          });
-          battleGroup.add(h.root);
-          const col = (allyIdx % 7) - 3;
-          const row = Math.floor(allyIdx / 7);
-          battleActors.push({
-            id: `ally-${allyIdx}`,
-            team: 'ally',
-            unitType: type,
-            archetype: isRanged ? 'KITER' : isMounted ? 'CHARGER' : 'CHASER',
-            x: battleArenaCenterX + col * 2.8,
-            z: battleArenaCenterZ + 17 + row * 2.6,
-            vx: 0,
-            vz: 0,
-            facing: Math.PI,
-            hp: isHeavy ? 140 : isMounted ? 120 : 85,
-            maxHp: isHeavy ? 140 : isMounted ? 120 : 85,
-            attack: isHeavy ? 28 : isMounted ? 25 : 18,
-            defense: isHeavy ? 18 : 10,
-            speed: isMounted ? 8.8 : 5.8,
-            isRanged,
-            isMounted,
-            isBlocking: false,
-            attackPhase: 'IDLE',
-            attackTimer: 0,
-            cooldownTimer: Math.random() * 0.5,
-            hitFlashTimer: 0,
-            koTimer: 0,
-            spliced: false,
-            handles: h,
-          });
-          allyIdx++;
-        }
-      });
-      battleInitialAllies = allyIdx + 1;
-
-      // Build enemy roster dynamically from targetLord.roster or targetSettlement garrison/militia
-      const rawEnemyRoster = targetLord
-        ? targetLord.roster
-        : targetSettlement
-          ? (() => {
-              const haShare = Math.max(2, Math.round((targetSettlement.garrison || 0) * 0.25));
-              const hasHA = factionHasHorseArchers(targetSettlement.faction);
-              return {
-                infantry:
-                  Math.max(4, Math.round((targetSettlement.militia || 20) * 0.4)) +
-                  (hasHA ? 0 : haShare),
-                archer: Math.max(3, Math.round(((targetSettlement.garrison || 0) + (targetSettlement.militia || 10)) * 0.25)),
-                cavalry: Math.max(1, Math.round((targetSettlement.garrison || 0) * 0.15)),
-                horseArcher: hasHA ? haShare : 0,
-              };
-            })()
-          : { infantry: 5, archer: 3, cavalry: 2, horseArcher: 1 };
-
-      const totalEnemyTroops = Math.max(1, getTotalTroops(rawEnemyRoster));
-      const enemyScale = totalEnemyTroops > 28 ? 28 / totalEnemyTroops : 1;
-      const enemyArchetypes: Array<{
-        unitType: 'infantry' | 'archer' | 'cavalry' | 'horseArcher';
-        archetype: 'CHASER' | 'KITER' | 'SHIELDED' | 'CHARGER';
-      }> = [];
-
-      const pushEnemySpec = (
-        unitType: 'infantry' | 'archer' | 'cavalry' | 'horseArcher',
-        archetype: 'CHASER' | 'KITER' | 'SHIELDED' | 'CHARGER',
-        rawCount: number,
-      ) => {
-        const scaled = rawCount > 0 ? Math.max(1, Math.round(rawCount * enemyScale)) : 0;
-        for (let i = 0; i < scaled; i++) {
-          enemyArchetypes.push({ unitType, archetype });
-        }
-      };
-
-      pushEnemySpec('infantry', 'CHASER', rawEnemyRoster.infantry);
-      pushEnemySpec('horseArcher', 'KITER', rawEnemyRoster.horseArcher);
-      pushEnemySpec('archer', 'KITER', rawEnemyRoster.archer);
-      pushEnemySpec('cavalry', 'CHARGER', rawEnemyRoster.cavalry);
-      // Always include enemy commander at the end
-      enemyArchetypes.push({ unitType: 'cavalry', archetype: 'CHARGER' });
-
-      enemyArchetypes.forEach((spec, idx) => {
-        const isMounted = spec.unitType === 'cavalry' || spec.unitType === 'horseArcher';
-        const isRanged = spec.unitType === 'archer' || spec.unitType === 'horseArcher';
-        const isHeavy = idx === enemyArchetypes.length - 1;
-        const h = createWarriorModel({
-          factionHex: enemyHex,
-          isMounted,
-          isRanged,
-          isHeavy,
-          isCommander: idx === enemyArchetypes.length - 1,
-        });
-        battleGroup.add(h.root);
-        const col = (idx % 7) - 3;
-        const row = Math.floor(idx / 7);
-        battleActors.push({
-          id: `enemy-${idx}`,
-          team: 'enemy',
-          unitType: spec.unitType,
-          archetype: spec.archetype,
-          x: battleArenaCenterX + col * 3.0,
-          z: battleArenaCenterZ - 18 - row * 2.8,
-          vx: 0,
-          vz: 0,
-          facing: 0,
-          hp: isHeavy ? 125 : isMounted ? 110 : 75,
-          maxHp: isHeavy ? 125 : isMounted ? 110 : 75,
-          attack: isHeavy ? 24 : 16,
-          defense: spec.archetype === 'SHIELDED' ? 20 : 9,
-          speed: isMounted ? 8.2 : spec.archetype === 'CHASER' ? 6.4 : 5.2,
-          isRanged,
-          isMounted,
-          isBlocking: spec.archetype === 'SHIELDED',
-          attackPhase: 'IDLE',
-          attackTimer: 0,
-          cooldownTimer: 0.4 + idx * 0.12,
-          hitFlashTimer: 0,
-          koTimer: 0,
-          spliced: false,
-          handles: h,
-        });
-      });
-      battleInitialEnemies = enemyArchetypes.length;
-    }
-
     // Main 60Hz Loop
     let rafId = 0;
     let lastTime = performance.now();
     let elapsedTotal = 0;
+    let hudSyncTimer = 0;
     let headlessFrameSkip = 0;
     let headlessRenderedFrames = 0;
 
@@ -2378,18 +2012,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         campaign: camp,
       } = stateRef.current;
 
-      if (sMode !== currentSubMode) {
-        currentSubMode = sMode;
-        if (sMode === 'battle') {
-          overworldGroup.visible = false;
-          battleGroup.visible = true;
-          initBattleArena();
-        } else {
-          battleGroup.visible = false;
-          overworldGroup.visible = true;
-        }
-      }
-
       // 1. TITLE SCREEN: Smooth low-overhead Continental Camera Flyover
       if (gState === 'title') {
         const tourAngle = elapsedTotal * 0.11;
@@ -2411,42 +2033,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         mouseLeftJustPressed = false;
         return;
       }
-
-      // Update Pooled Particles ONLY when at least one particle is active
-      if (hasActiveParticles) {
-        let anyStillActive = false;
-        for (let i = 0; i < PARTICLE_POOL_SIZE; i++) {
-          const p = particlePool[i];
-          if (p.active) {
-            p.life += dt;
-            if (p.life >= p.maxLife) {
-              p.active = false;
-              _dummy.position.set(0, -100, 0);
-              _dummy.scale.setScalar(0.001);
-              _dummy.updateMatrix();
-              particleInst.setMatrixAt(i, _dummy.matrix);
-            } else {
-              anyStillActive = true;
-              p.vy -= 9.8 * dt;
-              p.x += p.vx * dt;
-              p.y += p.vy * dt;
-              p.z += p.vz * dt;
-              const s = p.scale * (1 - p.life / p.maxLife);
-              _dummy.position.set(p.x, p.y, p.z);
-              _dummy.scale.setScalar(Math.max(0.05, s));
-              _dummy.updateMatrix();
-              particleInst.setMatrixAt(i, _dummy.matrix);
-              _color.setHex(p.colorHex);
-              particleInst.setColorAt(i, _color);
-            }
-          }
-        }
-        particleInst.instanceMatrix.needsUpdate = true;
-        if (particleInst.instanceColor) particleInst.instanceColor.needsUpdate = true;
-        hasActiveParticles = anyStillActive;
-      }
-
-      cameraTrauma = Math.max(0, cameraTrauma - dt * 2.2);
 
       // 2. OVERWORLD CONTINENTAL MAP & BANNERLORD STRATEGIC CAMERA
       if (sMode === 'overworld') {
@@ -3423,449 +3009,6 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               labels: [],
             },
           );
-        }
-      } else {
-        labelOverlay.style.display = 'none';
-        // 3. 3D REAL-TIME TACTICAL BATTLE SIMULATION
-        if (hitstopTimer > 0) {
-          hitstopTimer -= dt;
-        } else if (playerBattleActor && !battleEnded) {
-          const simDt = dt;
-          playerStamina = Math.min(100, playerStamina + 16 * simDt);
-
-          let mx = 0;
-          let mz = 0;
-          if (keysHeld.has('KeyW') || keysHeld.has('ArrowUp')) mz -= 1;
-          if (keysHeld.has('KeyS') || keysHeld.has('ArrowDown')) mz += 1;
-          if (keysHeld.has('KeyA') || keysHeld.has('ArrowLeft')) mx -= 1;
-          if (keysHeld.has('KeyD') || keysHeld.has('ArrowRight')) mx += 1;
-
-          playerBattleActor.isBlocking =
-            mouseRightHeld || keysHeld.has('ShiftLeft') || keysHeld.has('KeyQ');
-
-          if (keysJustPressed.has('Space') && playerStamina >= 25) {
-            playerStamina -= 25;
-            const dashDirX = Math.sin(playerBattleActor.facing);
-            const dashDirZ = Math.cos(playerBattleActor.facing);
-            playerBattleActor.vx = dashDirX * 16;
-            playerBattleActor.vz = dashDirZ * 16;
-            sound.playSwordSwing();
-            spawnParticles(
-              playerBattleActor.x,
-              groundHeightAt(playerBattleActor.x, playerBattleActor.z) + 0.4,
-              playerBattleActor.z,
-              8,
-              0xd97706,
-              1.1,
-            );
-          }
-
-          if (
-            (mouseLeftJustPressed || keysJustPressed.has('KeyF')) &&
-            playerBattleActor.attackPhase === 'IDLE'
-          ) {
-            playerBattleActor.attackPhase = 'WINDUP';
-            playerBattleActor.attackTimer = 0.14;
-            sound.playSwordSwing();
-          }
-
-          if (mx !== 0 || mz !== 0) {
-            const len = Math.hypot(mx, mz);
-            const nx = mx / len;
-            const nz = mz / len;
-            const spd = playerBattleActor.isBlocking
-              ? playerBattleActor.speed * 0.55
-              : playerBattleActor.speed;
-            playerBattleActor.vx = THREE.MathUtils.lerp(playerBattleActor.vx, nx * spd, 10 * simDt);
-            playerBattleActor.vz = THREE.MathUtils.lerp(playerBattleActor.vz, nz * spd, 10 * simDt);
-            playerBattleActor.facing = Math.atan2(nx, nz);
-          } else {
-            playerBattleActor.vx *= Math.exp(-8 * simDt);
-            playerBattleActor.vz *= Math.exp(-8 * simDt);
-          }
-
-          let activeEnemyAttackers = 0;
-          for (const a of battleActors) {
-            if (a.team === 'enemy' && a.hp > 0 && a.attackPhase !== 'IDLE') {
-              activeEnemyAttackers++;
-            }
-          }
-
-          for (let i = 0; i < battleActors.length; i++) {
-            const actor = battleActors[i];
-            if (actor.spliced) continue;
-
-            if (actor.hp <= 0) {
-              actor.koTimer += simDt;
-              actor.handles.root.rotation.x = Math.min(
-                Math.PI / 2,
-                (actor.koTimer / 0.35) * (Math.PI / 2),
-              );
-              (actor.handles.telegraphRing.material as THREE.MeshBasicMaterial).opacity = 0;
-              if (actor.koTimer >= 0.42) {
-                actor.spliced = true;
-                actor.handles.root.visible = false;
-              }
-              continue;
-            }
-
-            if (actor.hitFlashTimer > 0) {
-              actor.hitFlashTimer -= simDt;
-              actor.handles.armorMat.emissive.setHex(actor.hitFlashTimer > 0 ? 0xffffff : 0x000000);
-              actor.handles.armorMat.emissiveIntensity = actor.hitFlashTimer > 0 ? 0.75 : 0;
-            }
-
-            if (actor.id !== 'player-commander') {
-              let nearestOpp: BattleActor | null = null;
-              let minDist = Infinity;
-              for (let j = 0; j < battleActors.length; j++) {
-                const other = battleActors[j];
-                if (other.team !== actor.team && other.hp > 0) {
-                  const d = Math.hypot(other.x - actor.x, other.z - actor.z);
-                  if (d < minDist) {
-                    minDist = d;
-                    nearestOpp = other;
-                  }
-                }
-              }
-
-              if (nearestOpp) {
-                const dx = nearestOpp.x - actor.x;
-                const dz = nearestOpp.z - actor.z;
-                const dist = Math.max(0.01, Math.hypot(dx, dz));
-                const dirX = dx / dist;
-                const dirZ = dz / dist;
-
-                if (actor.team === 'ally') {
-                  const order = stateRef.current.activeOrder;
-                  if (order === 'FOLLOW_ME' && playerBattleActor) {
-                    const pdx = playerBattleActor.x + ((i % 5) - 2) * 2.2 - actor.x;
-                    const pdz = playerBattleActor.z + 2.5 - actor.z;
-                    const pDist = Math.hypot(pdx, pdz);
-                    if (pDist > 2.2 && dist > 3.5) {
-                      actor.vx = (pdx / pDist) * actor.speed;
-                      actor.vz = (pdz / pDist) * actor.speed;
-                      actor.facing = Math.atan2(pdx, pdz);
-                    } else {
-                      actor.vx = dirX * actor.speed * 0.6;
-                      actor.vz = dirZ * actor.speed * 0.6;
-                      actor.facing = Math.atan2(dirX, dirZ);
-                    }
-                  } else if (order === 'SHIELD_WALL') {
-                    actor.isBlocking = !actor.isRanged;
-                    const formX = battleArenaCenterX + ((i % 6) - 2.5) * 2.1;
-                    const formZ = battleArenaCenterZ + 6;
-                    const fdx = formX - actor.x;
-                    const fdz = formZ - actor.z;
-                    const fDist = Math.hypot(fdx, fdz);
-                    if (fDist > 1.2 && dist > 2.8) {
-                      actor.vx = (fdx / fDist) * actor.speed * 0.65;
-                      actor.vz = (fdz / fDist) * actor.speed * 0.65;
-                    } else {
-                      actor.vx *= 0.5;
-                      actor.vz *= 0.5;
-                    }
-                    actor.facing = Math.atan2(dirX, dirZ);
-                  } else if (order === 'HOLD_VOLLEY' && actor.isRanged) {
-                    actor.vx *= 0.4;
-                    actor.vz *= 0.4;
-                    actor.facing = Math.atan2(dirX, dirZ);
-                  } else {
-                    actor.isBlocking = false;
-                    const stopDist = actor.isRanged ? 14.0 : 2.1;
-                    if (dist > stopDist) {
-                      actor.vx = dirX * actor.speed;
-                      actor.vz = dirZ * actor.speed;
-                    } else {
-                      actor.vx *= 0.4;
-                      actor.vz *= 0.4;
-                    }
-                    actor.facing = Math.atan2(dirX, dirZ);
-                  }
-                } else {
-                  actor.facing = Math.atan2(dirX, dirZ);
-                  if (actor.archetype === 'KITER') {
-                    if (dist < 8.5) {
-                      actor.vx = -dirX * actor.speed * 0.75;
-                      actor.vz = -dirZ * actor.speed * 0.75;
-                    } else if (dist > 15.5) {
-                      actor.vx = dirX * actor.speed * 0.8;
-                      actor.vz = dirZ * actor.speed * 0.8;
-                    } else {
-                      actor.vx = -dirZ * actor.speed * 0.45;
-                      actor.vz = dirX * actor.speed * 0.45;
-                    }
-                  } else if (actor.archetype === 'SHIELDED') {
-                    actor.isBlocking = actor.attackPhase === 'IDLE';
-                    if (dist > 2.1) {
-                      actor.vx = dirX * actor.speed * 0.65;
-                      actor.vz = dirZ * actor.speed * 0.65;
-                    } else {
-                      actor.vx *= 0.3;
-                      actor.vz *= 0.3;
-                    }
-                  } else if (actor.archetype === 'CHARGER') {
-                    const boost = dist > 5.0 && dist < 16.0 ? 1.35 : 1.0;
-                    if (dist > 2.2) {
-                      actor.vx = dirX * actor.speed * boost;
-                      actor.vz = dirZ * actor.speed * boost;
-                    } else {
-                      actor.vx *= 0.5;
-                      actor.vz *= 0.5;
-                    }
-                  } else {
-                    if (dist > 2.0) {
-                      actor.vx = dirX * actor.speed;
-                      actor.vz = dirZ * actor.speed;
-                    } else {
-                      actor.vx *= 0.4;
-                      actor.vz *= 0.4;
-                    }
-                  }
-                }
-
-                actor.cooldownTimer = Math.max(0, actor.cooldownTimer - simDt);
-                const attackRange = actor.isRanged ? 16.5 : 2.65;
-                const canClaimToken = actor.team === 'ally' || activeEnemyAttackers < 3;
-                if (
-                  dist <= attackRange &&
-                  actor.attackPhase === 'IDLE' &&
-                  actor.cooldownTimer <= 0 &&
-                  canClaimToken
-                ) {
-                  actor.attackPhase = 'WINDUP';
-                  actor.attackTimer = actor.team === 'enemy' ? 0.42 : 0.25;
-                  if (actor.team === 'enemy') {
-                    activeEnemyAttackers++;
-                    if (dist < 4.5) sound.playTelegraphCue();
-                  }
-                }
-              }
-            }
-
-            if (actor.attackPhase === 'WINDUP') {
-              actor.attackTimer -= simDt;
-              actor.handles.rightArm.rotation.x = -1.35;
-              if (actor.team === 'enemy') {
-                (actor.handles.telegraphRing.material as THREE.MeshBasicMaterial).opacity = 0.75;
-              }
-              if (actor.attackTimer <= 0) {
-                actor.attackPhase = 'ACTIVE';
-                actor.attackTimer = 0.14;
-                (actor.handles.telegraphRing.material as THREE.MeshBasicMaterial).opacity = 0;
-
-                if (actor.isRanged) {
-                  sound.playBowShot();
-                  let target: BattleActor | null = null;
-                  let bestD = 18.0;
-                  for (const o of battleActors) {
-                    if (o.team !== actor.team && o.hp > 0) {
-                      const d = Math.hypot(o.x - actor.x, o.z - actor.z);
-                      if (d < bestD) {
-                        bestD = d;
-                        target = o;
-                      }
-                    }
-                  }
-                  if (target) {
-                    const dmg = computeMeleeDamage(
-                      actor.attack,
-                      target.defense,
-                      false,
-                      target.isBlocking,
-                      1,
-                    );
-                    target.hp = Math.max(0, target.hp - dmg);
-                    target.hitFlashTimer = 0.06;
-                    spawnParticles(
-                      target.x,
-                      groundHeightAt(target.x, target.z) + 1.2,
-                      target.z,
-                      5,
-                      target.isBlocking ? 0x93c5fd : 0xef4444,
-                      0.8,
-                    );
-                  }
-                } else {
-                  const reach = actor.id === 'player-commander' ? 3.4 : 2.8;
-                  for (const o of battleActors) {
-                    if (o.team !== actor.team && o.hp > 0) {
-                      const dx = o.x - actor.x;
-                      const dz = o.z - actor.z;
-                      const d = Math.hypot(dx, dz);
-                      if (d <= reach) {
-                        const isHeavy =
-                          actor.id === 'player-commander' || actor.archetype === 'CHARGER';
-                        const speedMult = 1 + Math.hypot(actor.vx, actor.vz) * 0.04;
-                        const dmg = computeMeleeDamage(
-                          actor.attack,
-                          o.defense,
-                          isHeavy,
-                          o.isBlocking,
-                          speedMult,
-                        );
-                        o.hp = Math.max(0, o.hp - dmg);
-                        o.hitFlashTimer = 0.06;
-
-                        const nx = dx / Math.max(0.1, d);
-                        const nz = dz / Math.max(0.1, d);
-                        o.vx += nx * (isHeavy ? 6.5 : 3.5);
-                        o.vz += nz * (isHeavy ? 6.5 : 3.5);
-
-                        if (actor.id === 'player-commander' || o.id === 'player-commander') {
-                          sound.playHeavyHit(o.isBlocking);
-                          hitstopTimer = 0.045;
-                          cameraTrauma = Math.min(1.0, cameraTrauma + (o.hp <= 0 ? 0.65 : 0.42));
-                          if (actor.id === 'player-commander') {
-                            playerCombo++;
-                          }
-                        }
-
-                        spawnParticles(
-                          o.x,
-                          groundHeightAt(o.x, o.z) + 1.2,
-                          o.z,
-                          isHeavy ? 16 : 7,
-                          o.isBlocking ? 0xfbbf24 : 0xef4444,
-                          isHeavy ? 1.25 : 0.85,
-                        );
-                      }
-                    }
-                  }
-                }
-              }
-            } else if (actor.attackPhase === 'ACTIVE') {
-              actor.attackTimer -= simDt;
-              actor.handles.rightArm.rotation.x = 1.15;
-              if (actor.attackTimer <= 0) {
-                actor.attackPhase = 'RECOVERY';
-                actor.attackTimer = 0.22;
-              }
-            } else if (actor.attackPhase === 'RECOVERY') {
-              actor.attackTimer -= simDt;
-              actor.handles.rightArm.rotation.x = THREE.MathUtils.lerp(
-                actor.handles.rightArm.rotation.x,
-                0,
-                10 * simDt,
-              );
-              if (actor.attackTimer <= 0) {
-                actor.attackPhase = 'IDLE';
-                actor.cooldownTimer = 0.55 + Math.random() * 0.35;
-              }
-            } else {
-              actor.handles.rightArm.rotation.x = THREE.MathUtils.lerp(
-                actor.handles.rightArm.rotation.x,
-                0,
-                8 * simDt,
-              );
-            }
-
-            actor.handles.leftArm.rotation.y = actor.isBlocking ? 0.55 : 0;
-
-            actor.x = THREE.MathUtils.clamp(
-              actor.x + actor.vx * simDt,
-              battleArenaCenterX - 55,
-              battleArenaCenterX + 55,
-            );
-            actor.z = THREE.MathUtils.clamp(
-              actor.z + actor.vz * simDt,
-              battleArenaCenterZ - 55,
-              battleArenaCenterZ + 55,
-            );
-
-            for (let j = i + 1; j < battleActors.length; j++) {
-              const b = battleActors[j];
-              if (b.hp <= 0) continue;
-              const sdx = b.x - actor.x;
-              const sdz = b.z - actor.z;
-              const sDist = Math.hypot(sdx, sdz);
-              const minSep = 1.25;
-              if (sDist > 0.001 && sDist < minSep) {
-                const push = (minSep - sDist) * 0.5;
-                const px = (sdx / sDist) * push;
-                const pz = (sdz / sDist) * push;
-                actor.x -= px;
-                actor.z -= pz;
-                b.x += px;
-                b.z += pz;
-              }
-            }
-
-            const ay = Math.max(0.0, groundHeightAt(actor.x, actor.z));
-            actor.handles.root.position.set(actor.x, ay, actor.z);
-            actor.handles.root.rotation.y = actor.facing;
-
-            const moveSpd = Math.hypot(actor.vx, actor.vz);
-            actor.handles.bodyGroup.position.y =
-              moveSpd > 0.4 ? Math.abs(Math.sin(elapsedTotal * moveSpd * 1.4 + i)) * 0.1 : 0;
-          }
-
-          const alliesAlive = battleActors.filter((a) => a.team === 'ally' && a.hp > 0).length;
-          const enemiesAlive = battleActors.filter((a) => a.team === 'enemy' && a.hp > 0).length;
-
-          hudSyncTimer += simDt;
-          if (hudSyncTimer >= 0.1) {
-            hudSyncTimer = 0;
-            stateRef.current.onBattleTelemetry({
-              playerHp: Math.round(playerBattleActor.hp),
-              playerMaxHp: playerBattleActor.maxHp,
-              playerStamina: Math.round(playerStamina),
-              alliesAlive,
-              alliesTotal: battleInitialAllies,
-              enemiesAlive,
-              enemiesTotal: battleInitialEnemies,
-              enemyCommanderName: battleEnemyName,
-              activeOrder: stateRef.current.activeOrder,
-              comboCount: playerCombo,
-            });
-          }
-
-          if (enemiesAlive === 0 || playerBattleActor.hp <= 0) {
-            battleEnded = true;
-            battleEndDelayTimer = 0.55;
-            if (enemiesAlive === 0) {
-              sound.playVictoryFanfare();
-            } else {
-              sound.playDefeatSting();
-            }
-          }
-        } else if (battleEnded) {
-          battleEndDelayTimer -= dt;
-          if (battleEndDelayTimer <= 0) {
-            battleEnded = false;
-            const enemiesAlive = battleActors.filter((a) => a.team === 'enemy' && a.hp > 0).length;
-            const victory = enemiesAlive === 0;
-            const fallenAllies = battleActors.filter(
-              (a) => a.team === 'ally' && a.id !== 'player-commander' && a.hp <= 0,
-            );
-            const lostByType = {
-              infantry: fallenAllies.filter((a) => a.unitType === 'infantry').length,
-              archer: fallenAllies.filter((a) => a.unitType === 'archer').length,
-              cavalry: fallenAllies.filter((a) => a.unitType === 'cavalry').length,
-              horseArcher: fallenAllies.filter((a) => a.unitType === 'horseArcher').length,
-            };
-            stateRef.current.onBattleComplete(
-              victory,
-              lostByType,
-              battleInitialEnemies - enemiesAlive,
-            );
-          }
-        }
-
-        if (playerBattleActor) {
-          const py = Math.max(0.0, groundHeightAt(playerBattleActor.x, playerBattleActor.z));
-          const shake = cameraTrauma * cameraTrauma;
-          const shakeX = (Math.random() - 0.5) * shake * 1.2;
-          const shakeY = (Math.random() - 0.5) * shake * 1.2;
-
-          _camDesired.set(
-            playerBattleActor.x + shakeX,
-            py + 9.5 + shakeY,
-            playerBattleActor.z + 13.5,
-          );
-          camera.position.lerp(_camDesired, 1 - Math.exp(-7 * dt));
-          _camTarget.set(playerBattleActor.x, py + 2.0, playerBattleActor.z - 4.0);
-          camera.lookAt(_camTarget);
         }
       }
 

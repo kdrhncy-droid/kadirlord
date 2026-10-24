@@ -52,7 +52,6 @@ interface GameHudProps {
   /** Faz 6: yüz yüze diyalog ekranı. */
   onTalkToLord?: (l: LordAgent) => void;
   onStartQuickBattle: () => void;
-  onRetreatBattle: () => void;
   onAdvanceDay: () => void;
   onAllocateAttribute?: (attrId: AttributeId) => string | null;
   onAllocateFocus?: (skillId: BannerlordSkillId) => string | null;
@@ -123,7 +122,6 @@ export const GameHud: React.FC<GameHudProps> = ({
   onOpenDiplomacy,
   onTalkToLord,
   onStartQuickBattle,
-  onRetreatBattle,
   onAdvanceDay,
   onAllocateAttribute,
   onAllocateFocus,
@@ -1639,15 +1637,8 @@ export const GameHud: React.FC<GameHudProps> = ({
 
                   <div className="flex items-center gap-3">
                     <span className="text-xs font-mono-tabular text-[#d1c5b0]">
-                      Sol Tık/F: Kılıç Savur · Sağ Tık: Kalkan · Space: Hücum
+                      WASD: Sür · Sol Tık: Saldır · Sağ Tık (basılı): Blok · 1-4: Emir
                     </span>
-                    <button
-                      type="button"
-                      onClick={onRetreatBattle}
-                      className="px-3 py-1.5 rounded text-xs font-semibold bg-[#29221a] hover:bg-[#3b3126] text-[#fca5a5] border border-[#f87171]/30 whitespace-nowrap shrink-0"
-                    >
-                      Haritaya Çekil
-                    </button>
                   </div>
                 </div>
               )}

@@ -3,14 +3,12 @@ import type { TacticalOrder } from './rules';
 export interface BattleTelemetry {
   playerHp: number;
   playerMaxHp: number;
-  playerStamina: number;
   alliesAlive: number;
   alliesTotal: number;
   enemiesAlive: number;
   enemiesTotal: number;
   enemyCommanderName: string;
   activeOrder: TacticalOrder;
-  comboCount: number;
 }
 
 export interface ProjectedMapLabel {

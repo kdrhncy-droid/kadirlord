@@ -16,11 +16,15 @@ interface BattlePrewarmModalProps {
   onComplete: () => void;
 }
 
+// İpuçları Bannerlord'un gerçek savaş davranışlarını anlatır; uydurma
+// yüzde/tuş iddiası içermez (Altın Kural — eski "%82 koruma", "[M] +45 ezme"
+// gibi icat satırlar kaldırıldı).
 const BANNERLORD_BATTLE_TIPS = [
-  'Nesne Havuzlama (Object Pooling): 10.000 ok ve 10.000 ceset matrisi savaş başlamadan önce RAM ve VRAM üzerinde sabitlenir; savaş anında tek bir byte bile (new Object) tahsis edilmez.',
-  'Kalkan Duvarı [F2]: Piyadeleriniz kalkan duvarı düzenindeyken düşman ok yağmurlarına karşı %82 ek koruma kazanır.',
-  'Kuşatma Taarruzu: Koçbaşı (Battering Ram) kale kapısına ulaştığında meşe kapıları kırar; Kuşatma Kuleleri ise surlara rampa indirir.',
-  'Süvari Hücumu [M]: Savaş atınızla dörtnala (Shift) koşarken düşman piyade hatlarına çarpmak yıkıcı ezme hasarı (+45) verir.',
+  'Yüksek Zemin: Okçular tepeden daha uzağa atar; süvari yokuş yukarıyken hız ve hamle gücünü kaybeder. Tepeyi tutan taraf avantajlıdır.',
+  'Kalkan Duvarı: Piyade kalkan duvarındayken ok yağmuruna karşı çok daha dayanıklıdır, ancak yavaş ilerler ve hücum gücü düşer.',
+  'Arazi Seçimi: Süvari açık ovada yıkıcıdır; orman, nehir geçidi ve dik yamaç süvariyi yavaşlatır. Savaşın yerini sefer haritasındaki konumunuz belirler.',
+  'Atlı Okçular: Yakın dövüşe girmezler; atış mesafesini koruyup düşmanın çevresinde daire çizerler. Onları kovalamak yerine okçularla karşılayın.',
+  'Köprü ve Geçitler: Dar geçitler sayıca üstün ordunun geniş cephe kurmasını engeller; az sayıda seçkin piyade köprü başında ordu tutabilir.',
 ];
 
 export const BattlePrewarmModal: React.FC<BattlePrewarmModalProps> = ({

@@ -50,6 +50,7 @@ import type {
   MapCameraTelemetry,
 } from './game/types';
 import { WorldCanvas } from './components/WorldCanvas';
+import { BattlefieldView } from './components/BattlefieldView';
 import { GameHud } from './components/GameHud';
 import { SettlementModal } from './components/SettlementModal';
 import { SiegeEncounterModal } from './components/SiegeEncounterModal';
@@ -245,14 +246,12 @@ export default function App() {
   const [battleTelemetry, setBattleTelemetry] = useState<BattleTelemetry>({
     playerHp: 120,
     playerMaxHp: 120,
-    playerStamina: 100,
     alliesAlive: 17,
     alliesTotal: 17,
     enemiesAlive: 11,
     enemiesTotal: 11,
     enemyCommanderName: 'Kara Geçit Yağmacıları',
     activeOrder: 'CHARGE',
-    comboCount: 0,
   });
 
   const [outcomeSnapshot, setOutcomeSnapshot] = useState<{
@@ -1616,15 +1615,13 @@ export default function App() {
       data-e2e-enabled={e2eRequest.enabled ? 'true' : 'false'}
       data-e2e-scenario={e2eRequest.enabled ? e2eRequest.scenario : undefined}
     >
-      {/* Persistent 3D WebGL Continental Map & Tactical Battlefield Canvas */}
+      {/* Persistent 3D WebGL Continental Map Canvas (sefer haritası) */}
+      {subMode !== 'battle' && (
       <WorldCanvas
         gameState={gameState}
         subMode={subMode}
         campaignTimeScale={campaignTimeScale}
         campaign={campaign}
-        activeOrder={activeOrder}
-        battleTargetLordId={battleTargetLordId}
-        battleTargetSettlementId={battleTargetSettlementId}
         cameraActionsRef={cameraActionsRef}
         lordPositionsRef={lordPositionsRef}
         lordPositionCommandsRef={lordPositionCommandsRef}
@@ -1665,9 +1662,29 @@ export default function App() {
               : `${l.title} ${l.name} sancağınızı kıstırdı!`,
           );
         }}
-        onBattleTelemetry={setBattleTelemetry}
-        onBattleComplete={handleBattleComplete}
       />
+      )}
+
+      {/* 10.2/B1: meydan savaşı ayrı misyon sahnesinde (arazi profili sefer
+          haritasındaki karşılaşma noktasından kurulur) */}
+      {subMode === 'battle' && gameState === 'playing' && (
+        <BattlefieldView
+          campaign={campaign}
+          targetLord={
+            battleTargetLordId
+              ? (campaign.lords.find((l) => l.id === battleTargetLordId) ?? null)
+              : null
+          }
+          targetSettlement={
+            battleTargetSettlementId
+              ? (campaign.settlements.find((s) => s.id === battleTargetSettlementId) ?? null)
+              : null
+          }
+          activeOrder={activeOrder}
+          onBattleTelemetry={setBattleTelemetry}
+          onBattleComplete={handleBattleComplete}
+        />
+      )}
 
       {/* 1. BANNERLORD MAIN MENU OVERLAY */}
       {gameState === 'title' && (
@@ -1884,7 +1901,6 @@ export default function App() {
             setIsEncyclopediaOpen(true);
           }}
           onStartQuickBattle={handleStartQuickBattle}
-          onRetreatBattle={() => setSubMode('overworld')}
           onAdvanceDay={() => {
             sound.playCoinChime();
             setCampaign((prev) => advanceDailyEconomyAndWorld(prev));
