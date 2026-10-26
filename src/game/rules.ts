@@ -19,11 +19,13 @@ import {
   ensureBannerlordFoundation,
   equipInventoryItemForHero,
   PLAYER_HERO_ID,
+  getTroopDefinition,
 } from './bannerlordFoundation';
 import {
   advanceDailyPartyFood,
   calculateDailyFoodDemand,
 } from './foodSystem.ts';
+import { getPlayerCultureModifiers } from './cultureBonuses.ts';
 import type { ArmyRecord } from './armySystem';
 import {
   SIEGE_MELEE_SLOTS,
@@ -51,9 +53,12 @@ export type FactionId =
   | 'aserai'
   | 'bandits';
 
-export type UnitTierId = 'militia' | 'archer' | 'cavalry' | 'guard';
-
-export type TacticalOrder = 'CHARGE' | 'SHIELD_WALL' | 'FOLLOW_ME' | 'HOLD_VOLLEY';
+/**
+ * Savaş sınıfı kimliği (10.9): Bannerlord'un dört sınıfı — piyade, okçu
+ * (menzilli), süvari, atlı okçu. Eski `militia`/`guard` ayrımı Bannerlord'da
+ * yoktur; "muhafız" bazı birliklerin adıdır, sınıfı değil.
+ */
+export type UnitTierId = 'infantry' | 'archer' | 'cavalry' | 'horseArcher';
 
 export interface UnitDefinition {
   id: UnitTierId;
@@ -71,10 +76,10 @@ export interface UnitDefinition {
 }
 
 export interface TroopRoster {
-  militia: number;
+  infantry: number;
   archer: number;
   cavalry: number;
-  guard: number;
+  horseArcher: number;
 }
 
 export type BuildingProjectId =
@@ -254,6 +259,10 @@ export interface TroopDefinition {
   upgradeGold: number;
   horseRequirement: HorseRequirement;
   upgrades: string[];
+  /** Soylu (noble) hattı mı? Kök T2'den başlar, T6'da biter; yalnız güçlü köy eşrafından devşirilir. */
+  isNobleLine: boolean;
+  /** Birlik atlı mı? (süvari/atlı okçu görseli ve ücretleri için) */
+  isMounted: boolean;
   maxHp: number;
   attack: number;
   defense: number;
@@ -314,8 +323,6 @@ export interface Settlement {
   merchantGold?: number;
   /** P2: ticaret söylentileri yalnız ziyaret edilmiş yerleşimler için görünür. */
   visited?: boolean;
-  /** Yerleşimden en son gönüllü asker toplanan sefer günü (1 gün bekleme kuralı). */
-  lastRecruitDay?: number;
   /** Bannerlord 6-slot asker toplama ekranında bu yerleşimden toplanmış (boşaltılmış) slot anahtarları. */
   recruitedSlotKeys?: string[];
 }
@@ -551,16 +558,20 @@ export const FACTION_INFO: Record<
   },
 };
 
+/**
+ * Sınıf bazlı genel tanımlar (kültürsüz yedek ad/istatistik). İsimler sınıf
+ * adlarıdır; kültürel birlik adları `troops.ts` + birlik ağaçlarındadır (10.9).
+ */
 export const UNIT_DEFINITIONS: Record<UnitTierId, UnitDefinition> = {
-  militia: {
-    id: 'militia',
-    name: 'Acemi Mızrakçı',
+  infantry: {
+    id: 'infantry',
+    name: 'Piyade',
     role: 'Yakın Dövüş · Kalkan Hattı',
     recruitCost: 25,
     dailyWage: 3,
-    maxHp: 85,
-    attack: 16,
-    defense: 12,
+    maxHp: 95,
+    attack: 18,
+    defense: 14,
     speed: 5.8,
     isRanged: false,
     isMounted: false,
@@ -568,7 +579,7 @@ export const UNIT_DEFINITIONS: Record<UnitTierId, UnitDefinition> = {
   },
   archer: {
     id: 'archer',
-    name: 'Kıdemli Uzun Okçu',
+    name: 'Okçu',
     role: 'Menzilli · Ok Yağmuru',
     recruitCost: 45,
     dailyWage: 5,
@@ -582,7 +593,7 @@ export const UNIT_DEFINITIONS: Record<UnitTierId, UnitDefinition> = {
   },
   cavalry: {
     id: 'cavalry',
-    name: 'Zırhlı Bozkır Süvarisi',
+    name: 'Süvari',
     role: 'Atlı Hücum · Kanat Kırıcı',
     recruitCost: 85,
     dailyWage: 9,
@@ -594,52 +605,88 @@ export const UNIT_DEFINITIONS: Record<UnitTierId, UnitDefinition> = {
     isMounted: true,
     keyHint: '3',
   },
-  guard: {
-    id: 'guard',
-    name: 'Saray Muhafızı',
-    role: 'Ağır Zırhlı · Çift Elli Kılıç',
-    recruitCost: 110,
-    dailyWage: 12,
-    maxHp: 155,
-    attack: 34,
-    defense: 24,
-    speed: 5.4,
-    isRanged: false,
-    isMounted: false,
+  horseArcher: {
+    id: 'horseArcher',
+    name: 'Atlı Okçu',
+    role: 'Atlı Menzilli · Vur-Kaç',
+    recruitCost: 75,
+    dailyWage: 8,
+    maxHp: 100,
+    attack: 24,
+    defense: 10,
+    speed: 9.6,
+    isRanged: true,
+    isMounted: true,
     keyHint: '4',
   },
 };
 
+/**
+ * Atlı okçu hattına sahip kültürler (10.9, Bannerlord ağaçları). Vlandiya,
+ * Batanya, Sturgiya ve haydutlarda atlı okçu yoktur; havuzları da üretemez.
+ * `troops.ts` temsilci adları ve foundation ağaçlarıyla tutarlılığını
+ * probe-troops doğrular.
+ */
+export const CULTURES_WITH_HORSE_ARCHERS: readonly FactionId[] = [
+  'empire',
+  'khuzait',
+  'aserai',
+  'player',
+];
+
+export function factionHasHorseArchers(faction: FactionId): boolean {
+  return CULTURES_WITH_HORSE_ARCHERS.includes(faction);
+}
+
 export function getTotalTroops(roster: TroopRoster): number {
   return (
-    Math.max(0, Math.floor(roster.militia)) +
+    Math.max(0, Math.floor(roster.infantry)) +
     Math.max(0, Math.floor(roster.archer)) +
     Math.max(0, Math.floor(roster.cavalry)) +
-    Math.max(0, Math.floor(roster.guard))
+    Math.max(0, Math.floor(roster.horseArcher))
   );
 }
 
 export function calculatePartyStrength(roster: TroopRoster, commanderHpRatio = 1): number {
   const unitScore =
-    roster.militia * 12 +
+    roster.infantry * 14 +
     roster.archer * 18 +
     roster.cavalry * 32 +
-    roster.guard * 40;
+    roster.horseArcher * 28;
   const commanderScore = Math.round(45 * Math.max(0.2, Math.min(1, commanderHpRatio)));
   return Math.max(0, Math.round(unitScore + commanderScore));
 }
 
 export function calculateDailyWage(roster: TroopRoster): number {
   return (
-    roster.militia * UNIT_DEFINITIONS.militia.dailyWage +
+    roster.infantry * UNIT_DEFINITIONS.infantry.dailyWage +
     roster.archer * UNIT_DEFINITIONS.archer.dailyWage +
     roster.cavalry * UNIT_DEFINITIONS.cavalry.dailyWage +
-    roster.guard * UNIT_DEFINITIONS.guard.dailyWage
+    roster.horseArcher * UNIT_DEFINITIONS.horseArcher.dailyWage
   );
 }
 
 export function calculateDailyFoodConsumption(roster: TroopRoster): number {
   return calculateDailyFoodDemand(roster);
+}
+
+/**
+ * Günlük parti maaşı — tek kaynak. Yığınlar (troopStacks) varsa maaş her
+ * birlik türünün kendi tanım ücretinden hesaplanır: Bannerlord'da maaş
+ * kademeyle artar; eskiden sınıf başına düz ücret elit kadroyu acemi
+ * fiyatına çalıştırıyordu. Yığın yoksa (eski kayıt) kadro-sınıf ücreti.
+ */
+export function calculatePartyDailyWage(state: CampaignState): number {
+  const stacks = state.troopStacks;
+  if (stacks && stacks.length > 0) {
+    let total = 0;
+    for (const stack of stacks) {
+      const def = getTroopDefinition(stack.troopId);
+      if (def) total += def.wage * Math.max(0, stack.count);
+    }
+    return total;
+  }
+  return calculateDailyWage(state.roster);
 }
 
 export function recruitUnit(
@@ -1162,7 +1209,7 @@ export function forcePeasantsRecruits(
   const vIdx = state.settlements.findIndex((item) => item.id === villageId);
   if (vIdx === -1) return { nextState: state, success: false, reason: 'Köy bulunamadı.', recruitsGained: 0 };
   const v = state.settlements[vIdx];
-  if (v.recruitPool.militia < 2) {
+  if (v.recruitPool.infantry < 2) {
     return { nextState: state, success: false, reason: 'Köyde silah altına alınabilecek genç kalmamış.', recruitsGained: 0 };
   }
 
@@ -1172,7 +1219,7 @@ export function forcePeasantsRecruits(
     ...v,
     recruitPool: {
       ...v.recruitPool,
-      militia: Math.max(0, v.recruitPool.militia - recruitsGained),
+      infantry: Math.max(0, v.recruitPool.infantry - recruitsGained),
     },
     prosperity: Math.max(10, v.prosperity - 12),
   };
@@ -1184,7 +1231,7 @@ export function forcePeasantsRecruits(
       ...state,
       roster: {
         ...state.roster,
-        militia: state.roster.militia + recruitsGained,
+        infantry: state.roster.infantry + recruitsGained,
       },
       settlements: updatedSettlements,
       chronicle: [
@@ -1222,7 +1269,10 @@ export function settlementWorkshopIncome(settlement: Settlement): number {
 export const SIEGE_GARRISON_FOOD_PER_DAY = 3;
 
 export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState {
-  const wage = calculateDailyWage(state.roster);
+  // 10.8: Aserai kültürel cezası — parti ücretleri +%5 (cultureBonuses tek kaynak).
+  const wage = Math.round(
+    calculatePartyDailyWage(state) * getPlayerCultureModifiers(state).wageMultiplier,
+  );
   const foodResult = advanceDailyPartyFood(state);
   const stateAfterFood = foodResult.nextState;
 
@@ -1235,7 +1285,12 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
         (lord) => lord.order?.kind === 'SIEGE' && lord.order.targetSettlementId === s.id,
       );
     if (s.faction === 'player') {
-      playerSettlementTaxes += Math.round(s.prosperity * 0.25);
+      // 10.8: Kuzait kültürel cezası — şehir vergisi %20 az (yalnız kasabalar).
+      playerSettlementTaxes += Math.round(
+        s.prosperity *
+          0.25 *
+          (s.type === 'TOWN' ? getPlayerCultureModifiers(state).townTaxMultiplier : 1),
+      );
     }
     // Faz B0: oyuncunun atölyesi refaha bağlı günlük gelir üretir.
     if (s.workshopOwner === 'player') {
@@ -1249,10 +1304,12 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
         ? Math.max(0, s.foodStock - SIEGE_GARRISON_FOOD_PER_DAY)
         : Math.min(60, s.foodStock + 3),
       recruitPool: {
-        militia: Math.min(12, s.recruitPool.militia + 2),
+        infantry: Math.min(12, s.recruitPool.infantry + 2),
         archer: Math.min(8, s.recruitPool.archer + 1),
         cavalry: Math.min(5, s.recruitPool.cavalry + 1),
-        guard: Math.min(4, s.recruitPool.guard + (s.type !== 'VILLAGE' ? 1 : 0)),
+        horseArcher: factionHasHorseArchers(s.faction)
+          ? Math.min(4, s.recruitPool.horseArcher + (s.type !== 'VILLAGE' ? 1 : 0))
+          : 0,
       },
       recruitedSlotKeys:
         s.recruitedSlotKeys && s.recruitedSlotKeys.length > 0
@@ -1313,13 +1370,13 @@ export function deductCasualtiesFromRoster(
   casualties: number,
 ): TroopRoster {
   const next: TroopRoster = {
-    militia: Math.max(0, roster.militia),
+    infantry: Math.max(0, roster.infantry),
     archer: Math.max(0, roster.archer),
     cavalry: Math.max(0, roster.cavalry),
-    guard: Math.max(0, roster.guard),
+    horseArcher: Math.max(0, roster.horseArcher),
   };
   let remaining = Math.max(0, Math.round(casualties));
-  const order: UnitTierId[] = ['militia', 'archer', 'cavalry', 'guard'];
+  const order: UnitTierId[] = ['infantry', 'archer', 'cavalry', 'horseArcher'];
   let guardLoop = 0;
   while (remaining > 0 && guardLoop < 2000) {
     guardLoop++;
@@ -1346,20 +1403,20 @@ export function resolveBattleOutcome(
   conqueredSettlementId?: string | null,
 ): CampaignState {
   const nextRoster: TroopRoster = {
-    militia: Math.max(0, state.roster.militia - (playerTroopLosses.militia || 0)),
+    infantry: Math.max(0, state.roster.infantry - (playerTroopLosses.infantry || 0)),
     archer: Math.max(0, state.roster.archer - (playerTroopLosses.archer || 0)),
     cavalry: Math.max(0, state.roster.cavalry - (playerTroopLosses.cavalry || 0)),
-    guard: Math.max(0, state.roster.guard - (playerTroopLosses.guard || 0)),
+    horseArcher: Math.max(0, state.roster.horseArcher - (playerTroopLosses.horseArcher || 0)),
   };
 
   const nextLords = state.lords.map((l) => {
     if (l.id !== enemyLordId) return l;
 
     const currentRoster: TroopRoster = l.roster || {
-      militia: Math.max(2, Math.floor(l.armySize * 0.35)),
+      infantry: Math.max(2, Math.floor(l.armySize * 0.35)),
       archer: Math.max(2, Math.floor(l.armySize * 0.28)),
       cavalry: Math.max(1, Math.floor(l.armySize * 0.22)),
-      guard: Math.max(1, Math.floor(l.armySize * 0.15)),
+      horseArcher: Math.max(1, Math.floor(l.armySize * 0.15)),
     };
 
     // Deduct every enemy killed during the battle from the Lord's actual roster
@@ -1367,18 +1424,11 @@ export function resolveBattleOutcome(
     let updatedTotal = getTotalTroops(updatedRoster);
 
     if (victory) {
-      // On total battlefield victory, routed/captured troops also reduce the Lord's active retinue
-      const maxSurvivingOnDefeat = Math.max(2, Math.floor(l.armySize * 0.25));
-      if (updatedTotal > maxSurvivingOnDefeat) {
-        updatedRoster = deductCasualtiesFromRoster(
-          updatedRoster,
-          updatedTotal - maxSurvivingOnDefeat,
-        );
-        updatedTotal = getTotalTroops(updatedRoster);
-      }
-      // Ensure defeated Lord keeps at least 1 battered retainer on the map while rebuilding
+      // B5: mağlup ordunun kadrosu yalnızca gerçek kayıplarla düşer.
+      // (Eski "zorla %25 sağ kalan" cezası Bannerlord'da yok; kaldırıldı.)
+      // Ordusu tümüyle düşen lord haritada tek başına kalır, yeniden toplar.
       if (updatedTotal <= 0) {
-        updatedRoster = { militia: 1, archer: 0, cavalry: 0, guard: 0 };
+        updatedRoster = { infantry: 1, archer: 0, cavalry: 0, horseArcher: 0 };
         updatedTotal = 1;
       }
       const safeRetreat = snapToNearestLand(l.x + 18, l.z - 18);
@@ -1427,7 +1477,11 @@ export function resolveBattleOutcome(
   const isSiegeVictory = Boolean(conqueredSettlementId);
   const goldLoot = battleGoldReward(enemiesDefeatedCount, isSiegeVictory);
   // Bannerlord dengeli muharebe namı: küçük çatışmalar +2..8, büyük meydan ve kuşatma zaferleri +12..45 Nam
-  const renownGain = Math.max(2, Math.min(48, Math.round((isSiegeVictory ? 12 : 3) + enemiesDefeatedCount * 0.65)));
+  // 10.8: Vlandiya feat'i — savaşlardan +%5 nam.
+  const renownGain = Math.round(
+    Math.max(2, Math.min(48, Math.round((isSiegeVictory ? 12 : 3) + enemiesDefeatedCount * 0.65))) *
+      getPlayerCultureModifiers(state).battleRenownMultiplier,
+  );
   const prisonersGain = Math.max(1, Math.floor(enemiesDefeatedCount * 0.35));
   // Faz B0: zafer artık eşya da bırakır (envantere düşer, pazarda satılır).
   const defeatedFaction =
@@ -1525,7 +1579,10 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
   if (cachedCanonicalSettlements) {
     return cachedCanonicalSettlements.map((s) => ({
       ...s,
-      recruitPool: { ...s.recruitPool },
+      recruitPool: {
+        ...s.recruitPool,
+        horseArcher: factionHasHorseArchers(s.faction) ? s.recruitPool.horseArcher : 0,
+      },
     }));
   }
 
@@ -1541,7 +1598,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 78,
       prosperity: 690,
       garrison: 65,
-      recruitPool: { militia: 10, archer: 7, cavalry: 3, guard: 4 },
+      recruitPool: { infantry: 10, archer: 7, cavalry: 3, horseArcher: 4 },
       foodStock: 52,
       description: 'Güney İmparatorluğunun sarp Lycaron sıradağları eteğindeki başkent şehri.',
     },
@@ -1554,7 +1611,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 98,
       prosperity: 340,
       garrison: 28,
-      recruitPool: { militia: 10, archer: 6, cavalry: 3, guard: 2 },
+      recruitPool: { infantry: 10, archer: 6, cavalry: 3, horseArcher: 2 },
       foodStock: 46,
       description: 'Lycaron vadisinde sancağınıza bağlı sadık köylülerin ve tahıl ambarlarının merkezi.',
       boundSettlementId: 'zeonica',
@@ -1569,7 +1626,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 118,
       prosperity: 310,
       garrison: 22,
-      recruitPool: { militia: 8, archer: 5, cavalry: 2, guard: 1 },
+      recruitPool: { infantry: 8, archer: 5, cavalry: 2, horseArcher: 1 },
       foodStock: 42,
       description: 'Lycaron nehir vadisinde zeytin ve buğday üretimiyle bilinen İmparatorluk köyü.',
       boundSettlementId: 'zeonica',
@@ -1584,7 +1641,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 142,
       prosperity: 620,
       garrison: 58,
-      recruitPool: { militia: 9, archer: 7, cavalry: 4, guard: 3 },
+      recruitPool: { infantry: 9, archer: 7, cavalry: 4, horseArcher: 3 },
       foodStock: 48,
       description: 'Perassic İç Denizi kuzey ovalarını kontrol eden zengin İmparatorluk ticaret kenti.',
     },
@@ -1597,7 +1654,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 138,
       prosperity: 650,
       garrison: 62,
-      recruitPool: { militia: 9, archer: 8, cavalry: 3, guard: 4 },
+      recruitPool: { infantry: 9, archer: 8, cavalry: 3, horseArcher: 4 },
       foodStock: 50,
       description: 'Batı İmparatorluğu tahıl ovalarının ve nehir ağzının incisi.',
     },
@@ -1610,7 +1667,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 56,
       prosperity: 610,
       garrison: 56,
-      recruitPool: { militia: 8, archer: 7, cavalry: 4, guard: 3 },
+      recruitPool: { infantry: 8, archer: 7, cavalry: 4, horseArcher: 3 },
       foodStock: 44,
       description: 'Orta Kalradya vadilerinin kavşağında yükselen tarihi İmparatorluk şehri.',
     },
@@ -1623,7 +1680,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 2,
       prosperity: 640,
       garrison: 60,
-      recruitPool: { militia: 9, archer: 7, cavalry: 4, guard: 4 },
+      recruitPool: { infantry: 9, archer: 7, cavalry: 4, horseArcher: 4 },
       foodStock: 47,
       description: 'Dağ geçitleri ve nehir vadileri arasında stratejik İmparatorluk şehri.',
     },
@@ -1636,7 +1693,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 86,
       prosperity: 590,
       garrison: 54,
-      recruitPool: { militia: 8, archer: 6, cavalry: 3, guard: 3 },
+      recruitPool: { infantry: 8, archer: 6, cavalry: 3, horseArcher: 3 },
       foodStock: 42,
       description: 'Batı İmparatorluk platolarının müstahkem garnizon şehri.',
     },
@@ -1649,7 +1706,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 102,
       prosperity: 670,
       garrison: 64,
-      recruitPool: { militia: 9, archer: 7, cavalry: 4, guard: 4 },
+      recruitPool: { infantry: 9, archer: 7, cavalry: 4, horseArcher: 4 },
       foodStock: 52,
       description: 'Batı boğazını ve Perassic Denizi ticaretini tutan zengin liman kenti.',
     },
@@ -1662,7 +1719,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -5,
       prosperity: 560,
       garrison: 52,
-      recruitPool: { militia: 8, archer: 6, cavalry: 3, guard: 3 },
+      recruitPool: { infantry: 8, archer: 6, cavalry: 3, horseArcher: 3 },
       foodStock: 40,
       description: 'Battaniya yaylaları sınırındaki müstahkem İmparatorluk sancağı.',
     },
@@ -1675,7 +1732,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -125,
       prosperity: 610,
       garrison: 58,
-      recruitPool: { militia: 9, archer: 7, cavalry: 3, guard: 4 },
+      recruitPool: { infantry: 9, archer: 7, cavalry: 3, horseArcher: 4 },
       foodStock: 45,
       description: 'Kuzey körfezi kıyısında demir madenleriyle ünlü İmparatorluk şehri.',
     },
@@ -1688,7 +1745,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -128,
       prosperity: 580,
       garrison: 54,
-      recruitPool: { militia: 8, archer: 7, cavalry: 3, guard: 3 },
+      recruitPool: { infantry: 8, archer: 7, cavalry: 3, horseArcher: 3 },
       foodStock: 43,
       description: 'Kuzey İmparatorluğunun nehir deltası ve kıyı ticareti merkezi.',
     },
@@ -1701,7 +1758,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -158,
       prosperity: 595,
       garrison: 56,
-      recruitPool: { militia: 8, archer: 7, cavalry: 4, guard: 3 },
+      recruitPool: { infantry: 8, archer: 7, cavalry: 4, horseArcher: 3 },
       foodStock: 44,
       description: 'Sturgia sınırı ve kuzey nehir vadilerini koruyan İmparatorluk kenti.',
     },
@@ -1714,7 +1771,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -128,
       prosperity: 575,
       garrison: 54,
-      recruitPool: { militia: 8, archer: 7, cavalry: 4, guard: 3 },
+      recruitPool: { infantry: 8, archer: 7, cavalry: 4, horseArcher: 3 },
       foodStock: 42,
       description: 'Kuzeydoğu İmparatorluk sınırında Makeb geçidine bakan müstahkem şehir.',
     },
@@ -1727,7 +1784,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -58,
       prosperity: 600,
       garrison: 55,
-      recruitPool: { militia: 8, archer: 7, cavalry: 4, guard: 3 },
+      recruitPool: { infantry: 8, archer: 7, cavalry: 4, horseArcher: 3 },
       foodStock: 44,
       description: 'Kuzey vadilerini Orta Kalradya ovalarına bağlayan yüksek plato şehri.',
     },
@@ -1740,7 +1797,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -52,
       prosperity: 570,
       garrison: 52,
-      recruitPool: { militia: 8, archer: 7, cavalry: 3, guard: 3 },
+      recruitPool: { infantry: 8, archer: 7, cavalry: 3, horseArcher: 3 },
       foodStock: 41,
       description: 'Doğu sıradağlarının eteğinde yükselen Kuzey İmparatorluğu kenti.',
     },
@@ -1753,7 +1810,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 62,
       prosperity: 615,
       garrison: 57,
-      recruitPool: { militia: 9, archer: 7, cavalry: 4, guard: 3 },
+      recruitPool: { infantry: 9, archer: 7, cavalry: 4, horseArcher: 3 },
       foodStock: 46,
       description: 'Lycaron ile doğu gölü arasındaki bereketli vadinin koruyucu şehri.',
     },
@@ -1766,7 +1823,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -4,
       prosperity: 590,
       garrison: 55,
-      recruitPool: { militia: 8, archer: 7, cavalry: 4, guard: 3 },
+      recruitPool: { infantry: 8, archer: 7, cavalry: 4, horseArcher: 3 },
       foodStock: 44,
       description: 'Doğu iç gölünün güneybatı kıyısında Khuzait akınlarına karşı duran sınır şehri.',
     },
@@ -1779,7 +1836,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 88,
       prosperity: 585,
       garrison: 53,
-      recruitPool: { militia: 8, archer: 7, cavalry: 4, guard: 3 },
+      recruitPool: { infantry: 8, archer: 7, cavalry: 4, horseArcher: 3 },
       foodStock: 42,
       description: 'Güney iç göl boğazına bakan kervan ve ipek yolu merkezi.',
     },
@@ -1792,7 +1849,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 158,
       prosperity: 660,
       garrison: 62,
-      recruitPool: { militia: 9, archer: 8, cavalry: 4, guard: 4 },
+      recruitPool: { infantry: 9, archer: 8, cavalry: 4, horseArcher: 4 },
       foodStock: 50,
       description: 'Doğu berzahını ve Perassic Denizi geçidini tutan stratejik İmparatorluk kenti.',
     },
@@ -1805,7 +1862,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 162,
       prosperity: 645,
       garrison: 60,
-      recruitPool: { militia: 9, archer: 7, cavalry: 4, guard: 4 },
+      recruitPool: { infantry: 9, archer: 7, cavalry: 4, horseArcher: 4 },
       foodStock: 49,
       description: 'Güney İmparatorluğunun Perassic Denizi kıyısındaki büyük liman şehri.',
     },
@@ -1818,7 +1875,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -165,
       prosperity: 420,
       garrison: 48,
-      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 3 },
+      recruitPool: { infantry: 7, archer: 6, cavalry: 3, horseArcher: 3 },
       foodStock: 36,
       description: 'Argoron ile Amprela arasındaki sarp kuzey dağ geçidini tutan İmparatorluk hisarı.',
     },
@@ -1831,7 +1888,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 18,
       prosperity: 390,
       garrison: 42,
-      recruitPool: { militia: 7, archer: 5, cavalry: 3, guard: 2 },
+      recruitPool: { infantry: 7, archer: 5, cavalry: 3, horseArcher: 2 },
       foodStock: 34,
       description: 'Rhotae ile Amitatys arasındaki dağ boğazını tutan İmparatorluk kalesi.',
     },
@@ -1844,7 +1901,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 112,
       prosperity: 405,
       garrison: 44,
-      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 2 },
+      recruitPool: { infantry: 7, archer: 6, cavalry: 3, horseArcher: 2 },
       foodStock: 35,
       description: 'Jalmarys ve Poros nehir kavşağını gözeten İmparatorluk hisarı.',
     },
@@ -1857,7 +1914,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 122,
       prosperity: 410,
       garrison: 45,
-      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 3 },
+      recruitPool: { infantry: 7, archer: 6, cavalry: 3, horseArcher: 3 },
       foodStock: 36,
       description: 'Vostrum ile Danustica arasındaki kıyı ovasını koruyan kale.',
     },
@@ -1870,7 +1927,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -52,
       prosperity: 395,
       garrison: 43,
-      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 2 },
+      recruitPool: { infantry: 7, archer: 6, cavalry: 3, horseArcher: 2 },
       foodStock: 34,
       description: 'Epicrotea ve Rhotae arasındaki sarp vadiyi tutan İmparatorluk kalesi.',
     },
@@ -1883,7 +1940,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -98,
       prosperity: 390,
       garrison: 42,
-      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 2 },
+      recruitPool: { infantry: 7, archer: 6, cavalry: 3, horseArcher: 2 },
       foodStock: 34,
       description: 'Diathma ile Saneopa arasındaki kuzey sırtlarını gözetleyen hisar.',
     },
@@ -1896,7 +1953,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -28,
       prosperity: 400,
       garrison: 44,
-      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 2 },
+      recruitPool: { infantry: 7, archer: 6, cavalry: 3, horseArcher: 2 },
       foodStock: 35,
       description: 'Myzea ve Syronea arasındaki doğu sıradağ geçidini koruyan İmparatorluk kalesi.',
     },
@@ -1909,7 +1966,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 22,
       prosperity: 395,
       garrison: 43,
-      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 2 },
+      recruitPool: { infantry: 7, archer: 6, cavalry: 3, horseArcher: 2 },
       foodStock: 35,
       description: 'Lycaron ve Phycaon kuzeyindeki sarp vadileri tutan İmparatorluk kalesi.',
     },
@@ -1922,7 +1979,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 112,
       prosperity: 390,
       garrison: 42,
-      recruitPool: { militia: 7, archer: 6, cavalry: 3, guard: 2 },
+      recruitPool: { infantry: 7, archer: 6, cavalry: 3, horseArcher: 2 },
       foodStock: 34,
       description: 'Ortysia ile Zeonica arasındaki güneybatı kıyı geçidini tutan kale.',
     },
@@ -1937,7 +1994,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -242,
       prosperity: 545,
       garrison: 52,
-      recruitPool: { militia: 8, archer: 6, cavalry: 4, guard: 2 },
+      recruitPool: { infantry: 8, archer: 6, cavalry: 4, horseArcher: 2 },
       foodStock: 41,
       description: 'Vlandiya kuzeybatı yarımadasının en uç burnunu tutan müstahkem liman kenti.',
     },
@@ -1950,7 +2007,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -238,
       prosperity: 560,
       garrison: 54,
-      recruitPool: { militia: 8, archer: 6, cavalry: 4, guard: 2 },
+      recruitPool: { infantry: 8, archer: 6, cavalry: 4, horseArcher: 2 },
       foodStock: 42,
       description: 'Kuzeybatı kıyı şeridini ve Sturgia deniz yolunu gözetleyen Vlandiya kenti.',
     },
@@ -1963,7 +2020,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -162,
       prosperity: 575,
       garrison: 54,
-      recruitPool: { militia: 8, archer: 6, cavalry: 5, guard: 2 },
+      recruitPool: { infantry: 8, archer: 6, cavalry: 5, horseArcher: 2 },
       foodStock: 43,
       description: 'Vlandiya şövalye hanedanlarının ormanlık yayla kenti.',
     },
@@ -1976,7 +2033,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -122,
       prosperity: 630,
       garrison: 60,
-      recruitPool: { militia: 9, archer: 6, cavalry: 5, guard: 3 },
+      recruitPool: { infantry: 9, archer: 6, cavalry: 5, horseArcher: 3 },
       foodStock: 48,
       description: 'Vlandiya Krallığının batı ovaları ve nehir ağzındaki görkemli başkenti.',
     },
@@ -1989,7 +2046,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -32,
       prosperity: 580,
       garrison: 55,
-      recruitPool: { militia: 8, archer: 6, cavalry: 5, guard: 3 },
+      recruitPool: { infantry: 8, archer: 6, cavalry: 5, horseArcher: 3 },
       foodStock: 45,
       description: 'Batı Okyanusu kıyısında zeytinlikleri ve tersaneleriyle ünlü Vlandiya şehri.',
     },
@@ -2002,7 +2059,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 12,
       prosperity: 565,
       garrison: 53,
-      recruitPool: { militia: 8, archer: 6, cavalry: 5, guard: 2 },
+      recruitPool: { infantry: 8, archer: 6, cavalry: 5, horseArcher: 2 },
       foodStock: 43,
       description: 'Galend ile Sargot arasındaki nehir vadisini kontrol eden Vlandiya sancağı.',
     },
@@ -2015,7 +2072,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 28,
       prosperity: 590,
       garrison: 56,
-      recruitPool: { militia: 8, archer: 6, cavalry: 5, guard: 3 },
+      recruitPool: { infantry: 8, archer: 6, cavalry: 5, horseArcher: 3 },
       foodStock: 45,
       description: 'Güney Vlandiya vadilerini ve taş yollarını kontrol eden müstahkem şehir.',
     },
@@ -2028,7 +2085,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 92,
       prosperity: 540,
       garrison: 50,
-      recruitPool: { militia: 8, archer: 6, cavalry: 4, guard: 2 },
+      recruitPool: { infantry: 8, archer: 6, cavalry: 4, horseArcher: 2 },
       foodStock: 42,
       description: 'Güneybatı körfezine ve takımadalara hakim Vlandiya deniz ticareti kenti.',
     },
@@ -2041,7 +2098,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -195,
       prosperity: 380,
       garrison: 42,
-      recruitPool: { militia: 7, archer: 5, cavalry: 4, guard: 2 },
+      recruitPool: { infantry: 7, archer: 5, cavalry: 4, horseArcher: 2 },
       foodStock: 34,
       description: 'Ostican Körfezi ile Ocs Hall arasındaki kıyı geçidini tutan Vlandiya kalesi.',
     },
@@ -2054,7 +2111,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 48,
       prosperity: 385,
       garrison: 43,
-      recruitPool: { militia: 7, archer: 5, cavalry: 4, guard: 2 },
+      recruitPool: { infantry: 7, archer: 5, cavalry: 4, horseArcher: 2 },
       foodStock: 35,
       description: 'Jaculan ve Charas arasındaki sırtları koruyan Vlandiya şövalye hisarı.',
     },
@@ -2067,7 +2124,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -222,
       prosperity: 375,
       garrison: 41,
-      recruitPool: { militia: 7, archer: 5, cavalry: 4, guard: 2 },
+      recruitPool: { infantry: 7, archer: 5, cavalry: 4, horseArcher: 2 },
       foodStock: 34,
       description: 'Rovalt ile Car Banseth sınırındaki kuzey geçidini tutan Vlandiya kalesi.',
     },
@@ -2080,7 +2137,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -78,
       prosperity: 380,
       garrison: 42,
-      recruitPool: { militia: 7, archer: 5, cavalry: 4, guard: 2 },
+      recruitPool: { infantry: 7, archer: 5, cavalry: 4, horseArcher: 2 },
       foodStock: 34,
       description: 'Pravend ile Galend arasındaki kıyı ovasını koruyan Vlandiya hisarı.',
     },
@@ -2093,7 +2150,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -155,
       prosperity: 295,
       garrison: 20,
-      recruitPool: { militia: 8, archer: 5, cavalry: 3, guard: 1 },
+      recruitPool: { infantry: 8, archer: 5, cavalry: 3, horseArcher: 1 },
       foodStock: 38,
       description: 'Pravend kuzeyinde balıkçılık ve tahıl tarımıyla geçinen kıyı köyü.',
       boundSettlementId: 'pravend',
@@ -2108,7 +2165,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -62,
       prosperity: 290,
       garrison: 20,
-      recruitPool: { militia: 8, archer: 5, cavalry: 3, guard: 1 },
+      recruitPool: { infantry: 8, archer: 5, cavalry: 3, horseArcher: 1 },
       foodStock: 38,
       description: 'Galend kuzeydoğusunda nehir mendereslerine bakan Vlandiya köyü.',
       boundSettlementId: 'galend',
@@ -2125,7 +2182,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -192,
       prosperity: 540,
       garrison: 52,
-      recruitPool: { militia: 7, archer: 9, cavalry: 2, guard: 3 },
+      recruitPool: { infantry: 7, archer: 9, cavalry: 2, horseArcher: 3 },
       foodStock: 40,
       description: 'Kuzey Battaniya ormanlarının ve sarp yayla geçitlerinin koruyucu kenti.',
     },
@@ -2138,7 +2195,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -142,
       prosperity: 530,
       garrison: 50,
-      recruitPool: { militia: 7, archer: 9, cavalry: 2, guard: 3 },
+      recruitPool: { infantry: 7, archer: 9, cavalry: 2, horseArcher: 3 },
       foodStock: 39,
       description: 'Battaniya gölü kuzeydoğu yakasında okçu klanların merkezi.',
     },
@@ -2151,7 +2208,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -132,
       prosperity: 545,
       garrison: 52,
-      recruitPool: { militia: 7, archer: 9, cavalry: 2, guard: 3 },
+      recruitPool: { infantry: 7, archer: 9, cavalry: 2, horseArcher: 3 },
       foodStock: 40,
       description: 'Sık çam ormanları ve sarp kayalıklarla çevrili Battaniya yayla şehri.',
     },
@@ -2164,7 +2221,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -85,
       prosperity: 525,
       garrison: 48,
-      recruitPool: { militia: 7, archer: 9, cavalry: 2, guard: 2 },
+      recruitPool: { infantry: 7, archer: 9, cavalry: 2, horseArcher: 2 },
       foodStock: 38,
       description: 'Kil madenleri ve sarp vadi geçitleriyle ünlü Battaniya şehri.',
     },
@@ -2177,7 +2234,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -68,
       prosperity: 560,
       garrison: 54,
-      recruitPool: { militia: 7, archer: 10, cavalry: 2, guard: 3 },
+      recruitPool: { infantry: 7, archer: 10, cavalry: 2, horseArcher: 3 },
       foodStock: 42,
       description: 'Battaniya dağ gölü güneydoğu vadisinde yükselen Ulu Orman kenti.',
     },
@@ -2190,7 +2247,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -162,
       prosperity: 375,
       garrison: 40,
-      recruitPool: { militia: 6, archer: 8, cavalry: 2, guard: 2 },
+      recruitPool: { infantry: 6, archer: 8, cavalry: 2, horseArcher: 2 },
       foodStock: 33,
       description: 'Car Banseth ile Seonon arasındaki orman sırtlarını koruyan Battaniya kalesi.',
     },
@@ -2203,7 +2260,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -85,
       prosperity: 370,
       garrison: 40,
-      recruitPool: { militia: 6, archer: 8, cavalry: 2, guard: 2 },
+      recruitPool: { infantry: 6, archer: 8, cavalry: 2, horseArcher: 2 },
       foodStock: 33,
       description: 'Battaniya yaylasından Lageta ve Rhotae ovalarına inen geçidi tutan kale.',
     },
@@ -2216,7 +2273,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -55,
       prosperity: 372,
       garrison: 40,
-      recruitPool: { militia: 6, archer: 8, cavalry: 2, guard: 2 },
+      recruitPool: { infantry: 6, archer: 8, cavalry: 2, horseArcher: 2 },
       foodStock: 33,
       description: 'Pen Cannoc batısında Vlandiya sınır boğazını gözetleyen Battaniya kalesi.',
     },
@@ -2229,7 +2286,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -158,
       prosperity: 375,
       garrison: 41,
-      recruitPool: { militia: 6, archer: 8, cavalry: 2, guard: 2 },
+      recruitPool: { infantry: 6, archer: 8, cavalry: 2, horseArcher: 2 },
       foodStock: 34,
       description: 'Seonon kuzeydoğusunda tarihi Pendraic Savaşı ovasına bakan kale.',
     },
@@ -2242,7 +2299,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -112,
       prosperity: 285,
       garrison: 19,
-      recruitPool: { militia: 6, archer: 8, cavalry: 1, guard: 1 },
+      recruitPool: { infantry: 6, archer: 8, cavalry: 1, horseArcher: 1 },
       foodStock: 36,
       description: 'Battaniya gölü doğu yamacında kereste ve yay yapımıyla ünlü orman köyü.',
       boundSettlementId: 'dunglanys',
@@ -2259,7 +2316,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -278,
       prosperity: 515,
       garrison: 52,
-      recruitPool: { militia: 9, archer: 4, cavalry: 2, guard: 4 },
+      recruitPool: { infantry: 9, archer: 4, cavalry: 2, horseArcher: 4 },
       foodStock: 37,
       description: 'Sturgia batı burnunda kuzey denizini ve fiyort girişini tutan kale-şehir.',
     },
@@ -2272,7 +2329,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -245,
       prosperity: 535,
       garrison: 54,
-      recruitPool: { militia: 9, archer: 4, cavalry: 2, guard: 4 },
+      recruitPool: { infantry: 9, archer: 4, cavalry: 2, horseArcher: 4 },
       foodStock: 38,
       description: 'Kuzey körfezinin batı yakasında Sturgia donanma ve kalkan duvarı merkezi.',
     },
@@ -2285,7 +2342,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -262,
       prosperity: 545,
       garrison: 55,
-      recruitPool: { militia: 9, archer: 5, cavalry: 2, guard: 4 },
+      recruitPool: { infantry: 9, archer: 5, cavalry: 2, horseArcher: 4 },
       foodStock: 39,
       description: 'Kuzey fiyort kanalı kıyısında yükselen karlı Sturgia kenti.',
     },
@@ -2298,7 +2355,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -192,
       prosperity: 560,
       garrison: 55,
-      recruitPool: { militia: 9, archer: 5, cavalry: 2, guard: 4 },
+      recruitPool: { infantry: 9, archer: 5, cavalry: 2, horseArcher: 4 },
       foodStock: 40,
       description: 'Kuzey iç körfezi doğu yakasında İmparatorluk sınırına bakan zengin Sturgia limanı.',
     },
@@ -2311,7 +2368,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -285,
       prosperity: 520,
       garrison: 52,
-      recruitPool: { militia: 10, archer: 4, cavalry: 2, guard: 4 },
+      recruitPool: { infantry: 10, archer: 4, cavalry: 2, horseArcher: 4 },
       foodStock: 36,
       description: 'Sturgia karlı sıradağlarının eteklerinde yükselen kuzey buzul kenti.',
     },
@@ -2324,7 +2381,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -228,
       prosperity: 530,
       garrison: 53,
-      recruitPool: { militia: 9, archer: 5, cavalry: 2, guard: 4 },
+      recruitPool: { infantry: 9, archer: 5, cavalry: 2, horseArcher: 4 },
       foodStock: 38,
       description: 'Kuzey fiyordunun doğu yakasında kürk ticaretiyle ünlü Sturgia şehri.',
     },
@@ -2337,7 +2394,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -265,
       prosperity: 530,
       garrison: 54,
-      recruitPool: { militia: 9, archer: 5, cavalry: 3, guard: 4 },
+      recruitPool: { infantry: 9, archer: 5, cavalry: 3, horseArcher: 4 },
       foodStock: 37,
       description: 'Doğu karlı sıradağ geçitlerine hükmeden müstahkem Sturgia kenti.',
     },
@@ -2350,7 +2407,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -235,
       prosperity: 365,
       garrison: 40,
-      recruitPool: { militia: 8, archer: 4, cavalry: 2, guard: 3 },
+      recruitPool: { infantry: 8, archer: 4, cavalry: 2, horseArcher: 3 },
       foodStock: 32,
       description: 'Omor Körfezi ile Balgard arasındaki buzul kıyı geçidini tutan kale.',
     },
@@ -2363,7 +2420,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -238,
       prosperity: 370,
       garrison: 41,
-      recruitPool: { militia: 8, archer: 4, cavalry: 2, guard: 3 },
+      recruitPool: { infantry: 8, archer: 4, cavalry: 2, horseArcher: 3 },
       foodStock: 32,
       description: 'Varnovapol ile Sibir arasındaki karlı vadiyi koruyan Sturgia hisarı.',
     },
@@ -2376,7 +2433,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -268,
       prosperity: 375,
       garrison: 42,
-      recruitPool: { militia: 8, archer: 4, cavalry: 2, guard: 3 },
+      recruitPool: { infantry: 8, archer: 4, cavalry: 2, horseArcher: 3 },
       foodStock: 33,
       description: 'Sibir ile Tyal arasındaki karlı sıradağ boğazını tutan Sturgia kalesi.',
     },
@@ -2389,7 +2446,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -198,
       prosperity: 368,
       garrison: 40,
-      recruitPool: { militia: 8, archer: 4, cavalry: 2, guard: 3 },
+      recruitPool: { infantry: 8, archer: 4, cavalry: 2, horseArcher: 3 },
       foodStock: 32,
       description: 'Varcheg güneyinde Epicrotea sınırını gözetleyen Sturgia kalesi.',
     },
@@ -2402,7 +2459,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -258,
       prosperity: 275,
       garrison: 18,
-      recruitPool: { militia: 8, archer: 4, cavalry: 1, guard: 2 },
+      recruitPool: { infantry: 8, archer: 4, cavalry: 1, horseArcher: 2 },
       foodStock: 34,
       description: 'Revyl yarımadası berzahında balıkçılık ve kürk avcılığı yapılan kuzey köyü.',
       boundSettlementId: 'revyl',
@@ -2417,7 +2474,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -255,
       prosperity: 280,
       garrison: 18,
-      recruitPool: { militia: 8, archer: 4, cavalry: 2, guard: 2 },
+      recruitPool: { infantry: 8, archer: 4, cavalry: 2, horseArcher: 2 },
       foodStock: 34,
       description: 'Tyal batısında demir ve çam kerestesi üreten karlı dağ köyü.',
       boundSettlementId: 'tyal',
@@ -2434,7 +2491,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -225,
       prosperity: 540,
       garrison: 54,
-      recruitPool: { militia: 6, archer: 8, cavalry: 7, guard: 2 },
+      recruitPool: { infantry: 6, archer: 8, cavalry: 7, horseArcher: 2 },
       foodStock: 41,
       description: 'Kuzeydoğu bozkır dağlarının eteğinde Khuzait at sürülerinin merkezi.',
     },
@@ -2447,7 +2504,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -125,
       prosperity: 580,
       garrison: 56,
-      recruitPool: { militia: 6, archer: 8, cavalry: 7, guard: 2 },
+      recruitPool: { infantry: 6, archer: 8, cavalry: 7, horseArcher: 2 },
       foodStock: 44,
       description: 'Khuzait iç gölünün doğu yakasını tutan müstahkem bozkır şehri.',
     },
@@ -2460,7 +2517,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -78,
       prosperity: 545,
       garrison: 52,
-      recruitPool: { militia: 5, archer: 8, cavalry: 7, guard: 2 },
+      recruitPool: { infantry: 5, archer: 8, cavalry: 7, horseArcher: 2 },
       foodStock: 42,
       description: 'Uçsuz bucaksız doğu bozkır platosunun ortasında yükselen hanlık kenti.',
     },
@@ -2473,7 +2530,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -48,
       prosperity: 640,
       garrison: 62,
-      recruitPool: { militia: 6, archer: 9, cavalry: 8, guard: 3 },
+      recruitPool: { infantry: 6, archer: 9, cavalry: 8, horseArcher: 3 },
       foodStock: 48,
       description: 'Khuzait Hanlığının iç göl doğu kıyısındaki başkent otağı ve süvari merkezi.',
     },
@@ -2486,7 +2543,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 25,
       prosperity: 530,
       garrison: 50,
-      recruitPool: { militia: 5, archer: 8, cavalry: 7, guard: 2 },
+      recruitPool: { infantry: 5, archer: 8, cavalry: 7, horseArcher: 2 },
       foodStock: 40,
       description: 'Güney bozkır geçitlerini kontrol eden Khuzait atlı okçu sancağı.',
     },
@@ -2499,7 +2556,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 88,
       prosperity: 525,
       garrison: 50,
-      recruitPool: { militia: 5, archer: 8, cavalry: 7, guard: 2 },
+      recruitPool: { infantry: 5, archer: 8, cavalry: 7, horseArcher: 2 },
       foodStock: 39,
       description: 'Güneydoğu kanyonları ve bozkır sınırında yükselen Khuzait kervan şehri.',
     },
@@ -2512,7 +2569,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -162,
       prosperity: 375,
       garrison: 42,
-      recruitPool: { militia: 5, archer: 7, cavalry: 6, guard: 2 },
+      recruitPool: { infantry: 5, archer: 7, cavalry: 6, horseArcher: 2 },
       foodStock: 34,
       description: 'Baltakhand ile Makeb arasındaki kuzey bozkır yolunu tutan Khuzait kalesi.',
     },
@@ -2525,7 +2582,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 62,
       prosperity: 370,
       garrison: 41,
-      recruitPool: { militia: 5, archer: 7, cavalry: 6, guard: 2 },
+      recruitPool: { infantry: 5, archer: 7, cavalry: 6, horseArcher: 2 },
       foodStock: 33,
       description: 'Akkalat ve Odokh arasındaki güney bozkır geçidini koruyan hisar.',
     },
@@ -2538,7 +2595,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -102,
       prosperity: 372,
       garrison: 41,
-      recruitPool: { militia: 5, archer: 7, cavalry: 6, guard: 2 },
+      recruitPool: { infantry: 5, archer: 7, cavalry: 6, horseArcher: 2 },
       foodStock: 33,
       description: 'Makeb ile Ortongard arasındaki bozkır sırtlarını gözetleyen Khuzait hisarı.',
     },
@@ -2551,7 +2608,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -8,
       prosperity: 374,
       garrison: 42,
-      recruitPool: { militia: 5, archer: 7, cavalry: 6, guard: 2 },
+      recruitPool: { infantry: 5, archer: 7, cavalry: 6, horseArcher: 2 },
       foodStock: 34,
       description: 'Chaikand güneyinde iç göl çıkışını ve bozkır yolunu koruyan kale.',
     },
@@ -2564,7 +2621,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: -18,
       prosperity: 290,
       garrison: 20,
-      recruitPool: { militia: 5, archer: 7, cavalry: 6, guard: 1 },
+      recruitPool: { infantry: 5, archer: 7, cavalry: 6, horseArcher: 1 },
       foodStock: 37,
       description: 'Chaikand ile Akkalat arasındaki otlaklarda yılkı yetiştiren bozkır obası.',
       boundSettlementId: 'makeb',
@@ -2581,7 +2638,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 202,
       prosperity: 600,
       garrison: 56,
-      recruitPool: { militia: 7, archer: 7, cavalry: 5, guard: 3 },
+      recruitPool: { infantry: 7, archer: 7, cavalry: 5, horseArcher: 3 },
       foodStock: 45,
       description: 'Batı boğazının güney yakasını tutan Aserai kıyı kalesi ve limanı.',
     },
@@ -2594,7 +2651,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 238,
       prosperity: 615,
       garrison: 58,
-      recruitPool: { militia: 7, archer: 7, cavalry: 6, guard: 3 },
+      recruitPool: { infantry: 7, archer: 7, cavalry: 6, horseArcher: 3 },
       foodStock: 47,
       description: 'Batı Nahasa vahalarında Aserai süvari kabilelerinin ve at yetiştiricilerinin şehri.',
     },
@@ -2607,7 +2664,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 248,
       prosperity: 685,
       garrison: 64,
-      recruitPool: { militia: 8, archer: 7, cavalry: 5, guard: 4 },
+      recruitPool: { infantry: 8, archer: 7, cavalry: 5, horseArcher: 4 },
       foodStock: 54,
       description: 'Perassic Denizi güney kıyısında Aserai Sultanlığının en zengin vaha şehri.',
     },
@@ -2620,7 +2677,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 268,
       prosperity: 590,
       garrison: 54,
-      recruitPool: { militia: 7, archer: 7, cavalry: 5, guard: 3 },
+      recruitPool: { infantry: 7, archer: 7, cavalry: 5, horseArcher: 3 },
       foodStock: 44,
       description: 'İç deniz güney sahilinde hurma vahaları ve kervansaraylarıyla ünlü şehir.',
     },
@@ -2633,7 +2690,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 262,
       prosperity: 580,
       garrison: 53,
-      recruitPool: { militia: 7, archer: 7, cavalry: 5, guard: 3 },
+      recruitPool: { infantry: 7, archer: 7, cavalry: 5, horseArcher: 3 },
       foodStock: 43,
       description: 'Nahasa çölü ile doğu iç deniz körfezi arasındaki stratejik Aserai kenti.',
     },
@@ -2646,7 +2703,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 218,
       prosperity: 625,
       garrison: 58,
-      recruitPool: { militia: 7, archer: 7, cavalry: 5, guard: 3 },
+      recruitPool: { infantry: 7, archer: 7, cavalry: 5, horseArcher: 3 },
       foodStock: 48,
       description: 'Güneydoğu nehir deltasını ve doğu berzahını koruyan müstahkem vaha şehri.',
     },
@@ -2659,7 +2716,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 218,
       prosperity: 385,
       garrison: 42,
-      recruitPool: { militia: 6, archer: 6, cavalry: 4, guard: 2 },
+      recruitPool: { infantry: 6, archer: 6, cavalry: 4, horseArcher: 2 },
       foodStock: 35,
       description: 'Quyaz ile Askar arasındaki kıyı yolunu koruyan Aserai sahil kalesi.',
     },
@@ -2672,7 +2729,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 262,
       prosperity: 382,
       garrison: 42,
-      recruitPool: { militia: 6, archer: 6, cavalry: 4, guard: 2 },
+      recruitPool: { infantry: 6, archer: 6, cavalry: 4, horseArcher: 2 },
       foodStock: 35,
       description: 'Sanala ile Qasira arasındaki çöl geçidini tutan Aserai kalesi.',
     },
@@ -2685,7 +2742,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 265,
       prosperity: 380,
       garrison: 42,
-      recruitPool: { militia: 6, archer: 6, cavalry: 4, guard: 2 },
+      recruitPool: { infantry: 6, archer: 6, cavalry: 4, horseArcher: 2 },
       foodStock: 35,
       description: 'Qasira ile Razih arasındaki vaha nehrini tutan Aserai kalesi.',
     },
@@ -2698,7 +2755,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 255,
       prosperity: 295,
       garrison: 20,
-      recruitPool: { militia: 6, archer: 6, cavalry: 4, guard: 1 },
+      recruitPool: { infantry: 6, archer: 6, cavalry: 4, horseArcher: 1 },
       foodStock: 39,
       description: 'Sanala doğusunda hurma bahçeleri ve kervan kuyularıyla ünlü vaha köyü.',
       boundSettlementId: 'sanala',
@@ -2713,7 +2770,7 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       z: 102,
       prosperity: 260,
       garrison: 30,
-      recruitPool: { militia: 7, archer: 4, cavalry: 2, guard: 1 },
+      recruitPool: { infantry: 7, archer: 4, cavalry: 2, horseArcher: 1 },
       foodStock: 28,
       description: 'Orta Kalradya sarp dağ geçidini tutan asi savaş ağalarının müstahkem kalesi.',
     },
@@ -2814,10 +2871,10 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
         prosperity: 270 + ((pIdx * 17 + v * 13) % 55),
         garrison: 0,
         recruitPool: {
-          militia: Math.max(5, basePool.militia - 1),
+          infantry: Math.max(5, basePool.infantry - 1),
           archer: Math.max(4, basePool.archer - 1),
           cavalry: Math.max(1, basePool.cavalry - 1),
-          guard: 1,
+          horseArcher: factionHasHorseArchers(parent.faction) ? 1 : 0,
         },
         foodStock: 34 + ((pIdx * 7 + v * 5) % 12),
         description: `${parent.name} mülküne bağlı, erzak ve gönüllü asker sağlayan kırsal köy yerleşimi.`,
@@ -2861,7 +2918,11 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
   cachedCanonicalSettlements = allSettlements;
   return allSettlements.map((s) => ({
     ...s,
-    recruitPool: { ...s.recruitPool },
+    recruitPool: {
+      ...s.recruitPool,
+      // 10.9: kültürün ağacında olmayan sınıf gönüllü veremez.
+      horseArcher: factionHasHorseArchers(s.faction) ? s.recruitPool.horseArcher : 0,
+    },
   }));
 }
 
@@ -3080,12 +3141,12 @@ export function createInitialCampaignState(
   const isRealistic = Boolean(options?.realisticBannerlordStart);
 
   const initialRoster: TroopRoster = isRealistic
-    ? { militia: 0, archer: 0, cavalry: 0, guard: 0 }
+    ? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 }
     : backgroundId === 'steppe'
-      ? { militia: 4, archer: 5, cavalry: 6, guard: 1 }
+      ? { infantry: 4, archer: 5, cavalry: 6, horseArcher: 1 }
       : backgroundId === 'tactician'
-        ? { militia: 6, archer: 7, cavalry: 2, guard: 3 }
-        : { militia: 6, archer: 4, cavalry: 4, guard: 3 };
+        ? { infantry: 6, archer: 7, cavalry: 2, horseArcher: 3 }
+        : { infantry: 6, archer: 4, cavalry: 4, horseArcher: 3 };
 
   const initialGold = isRealistic
     ? 1000
@@ -3112,7 +3173,7 @@ export function createInitialCampaignState(
       targetX: 24,
       targetZ: 78,
       armySize: 28,
-      roster: { militia: 10, archer: 8, cavalry: 5, guard: 5 },
+      roster: { infantry: 10, archer: 8, cavalry: 5, horseArcher: 5 },
       wounded: 2,
       prisoners: 4,
       morale: 86,
@@ -3134,7 +3195,7 @@ export function createInitialCampaignState(
       targetX: -38,
       targetZ: 112,
       armySize: 16,
-      roster: { militia: 7, archer: 4, cavalry: 4, guard: 1 },
+      roster: { infantry: 7, archer: 4, cavalry: 4, horseArcher: 1 },
       wounded: 1,
       prisoners: 5,
       morale: 74,
@@ -3156,7 +3217,7 @@ export function createInitialCampaignState(
       targetX: -105,
       targetZ: 138,
       armySize: 36,
-      roster: { militia: 14, archer: 10, cavalry: 6, guard: 6 },
+      roster: { infantry: 14, archer: 10, cavalry: 6, horseArcher: 6 },
       wounded: 3,
       prisoners: 6,
       morale: 84,
@@ -3178,7 +3239,7 @@ export function createInitialCampaignState(
       targetX: 18,
       targetZ: -58,
       armySize: 34,
-      roster: { militia: 12, archer: 10, cavalry: 6, guard: 6 },
+      roster: { infantry: 12, archer: 10, cavalry: 6, horseArcher: 6 },
       wounded: 2,
       prisoners: 3,
       morale: 82,
@@ -3200,7 +3261,7 @@ export function createInitialCampaignState(
       targetX: -438,
       targetZ: -122,
       armySize: 40,
-      roster: { militia: 14, archer: 10, cavalry: 10, guard: 6 },
+      roster: { infantry: 14, archer: 10, cavalry: 10, horseArcher: 6 },
       wounded: 4,
       prisoners: 7,
       morale: 88,
@@ -3222,7 +3283,7 @@ export function createInitialCampaignState(
       targetX: -258,
       targetZ: -68,
       armySize: 34,
-      roster: { militia: 10, archer: 16, cavalry: 3, guard: 5 },
+      roster: { infantry: 10, archer: 16, cavalry: 3, horseArcher: 5 },
       wounded: 2,
       prisoners: 4,
       morale: 85,
@@ -3244,7 +3305,7 @@ export function createInitialCampaignState(
       targetX: 68,
       targetZ: -285,
       armySize: 36,
-      roster: { militia: 16, archer: 8, cavalry: 4, guard: 8 },
+      roster: { infantry: 16, archer: 8, cavalry: 4, horseArcher: 8 },
       wounded: 3,
       prisoners: 5,
       morale: 80,
@@ -3266,7 +3327,7 @@ export function createInitialCampaignState(
       targetX: 252,
       targetZ: -48,
       armySize: 42,
-      roster: { militia: 10, archer: 12, cavalry: 15, guard: 5 },
+      roster: { infantry: 10, archer: 12, cavalry: 15, horseArcher: 5 },
       wounded: 3,
       prisoners: 8,
       morale: 89,
@@ -3288,7 +3349,7 @@ export function createInitialCampaignState(
       targetX: -108,
       targetZ: 248,
       armySize: 38,
-      roster: { militia: 12, archer: 10, cavalry: 10, guard: 6 },
+      roster: { infantry: 12, archer: 10, cavalry: 10, horseArcher: 6 },
       wounded: 2,
       prisoners: 5,
       morale: 87,
@@ -3549,6 +3610,14 @@ export function createInitialCampaignState(
     armies: [],
   });
 
+  // 10.8: Karakter yaratmada seçilen kültür oyuncu kahramanına yazılır; kültürel
+  // feat'ler (cultureBonuses.ts) buradan okunur. Önceden seçim yalnız kardeşe gidiyordu.
+  if (options?.culture && founded.heroes) {
+    founded.heroes = founded.heroes.map((h) =>
+      h.id === PLAYER_HERO_ID ? { ...h, culture: options.culture! } : h,
+    );
+  }
+
   if (isRealistic) {
     // Bannerlord hikaye başlangıcı: Oyuncu 0 askerle fakat yanında ailesinden ağabeyi (Niasen) ile başlar!
     const playerHero = founded.heroes?.find((h) => h.id === PLAYER_HERO_ID);
@@ -3598,7 +3667,7 @@ export function createInitialCampaignState(
     const existingHeroes = (founded.heroes ?? []).filter((h) => h.id !== 'hero_family_brother');
     const realisticLords = founded.lords.map((l) => {
       if (l.faction !== 'bandits') return l;
-      const smallRoster: TroopRoster = { militia: 5, archer: 2, cavalry: 1, guard: 0 };
+      const smallRoster: TroopRoster = { infantry: 5, archer: 2, cavalry: 1, horseArcher: 0 };
       return {
         ...l,
         roster: smallRoster,
@@ -3608,7 +3677,7 @@ export function createInitialCampaignState(
     return {
       ...founded,
       lords: realisticLords,
-      roster: { militia: 0, archer: 0, cavalry: 0, guard: 0 },
+      roster: { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 },
       troopStacks: [],
       prisoners: 0,
       prisonerStacks: [],
@@ -3628,10 +3697,16 @@ export function createInitialCampaignState(
   return founded;
 }
 
+/**
+ * Bannerlord yumuşak öğrenme sınırı: Odak × 30 + (Nitelik − 1) × 10.
+ * Kanonik kaynak `bannerlordFoundation.calculateLearningSoftCap`tır; bu kopya
+ * döngüsel importu önlemek için formülü tekrarlar ve eşitliği `rules.test.ts`
+ * kilitler (10.6). Eski `(N−1)×14 + O×40 + 10` sert tavan ailesindendi, yanlıştı.
+ */
 export function calculateLearningLimit(attributeValue: number, focusPoints: number): number {
   const safeAttr = Math.max(1, Math.min(10, attributeValue));
   const safeFocus = Math.max(0, Math.min(5, focusPoints));
-  return (safeAttr - 1) * 14 + safeFocus * 40 + 10;
+  return safeFocus * 30 + (safeAttr - 1) * 10;
 }
 
 export function calculateClanTier(renown: number): {
@@ -3640,13 +3715,15 @@ export function calculateClanTier(renown: number): {
   nextRenown: number;
   title: string;
 } {
-  if (renown >= 6150) return { tier: 6, maxPartyBonus: 150, nextRenown: 10000, title: 'İmparatorluk Hanedanı (Kademe 6)' };
-  if (renown >= 2350) return { tier: 5, maxPartyBonus: 125, nextRenown: 6150, title: 'Ulu Soylu Klan (Kademe 5)' };
-  if (renown >= 900) return { tier: 4, maxPartyBonus: 100, nextRenown: 2350, title: 'Krallık Kurucu Klan (Kademe 4)' };
-  if (renown >= 350) return { tier: 3, maxPartyBonus: 75, nextRenown: 900, title: 'Sancakbeyi Klanı (Kademe 3)' };
-  if (renown >= 150) return { tier: 2, maxPartyBonus: 50, nextRenown: 350, title: 'Derebeyi / Vasal Klanı (Kademe 2)' };
+  // Bannerlord klan kademesi parti bonusu (10.5): Kademe 1'de +25, sonra kademe
+  // başına +15 birikimli (25/40/55/70/85/100); Kademe 0 bonusu yoktur.
+  if (renown >= 6150) return { tier: 6, maxPartyBonus: 100, nextRenown: 10000, title: 'İmparatorluk Hanedanı (Kademe 6)' };
+  if (renown >= 2350) return { tier: 5, maxPartyBonus: 85, nextRenown: 6150, title: 'Ulu Soylu Klan (Kademe 5)' };
+  if (renown >= 900) return { tier: 4, maxPartyBonus: 70, nextRenown: 2350, title: 'Krallık Kurucu Klan (Kademe 4)' };
+  if (renown >= 350) return { tier: 3, maxPartyBonus: 55, nextRenown: 900, title: 'Sancakbeyi Klanı (Kademe 3)' };
+  if (renown >= 150) return { tier: 2, maxPartyBonus: 40, nextRenown: 350, title: 'Derebeyi / Vasal Klanı (Kademe 2)' };
   if (renown >= 50) return { tier: 1, maxPartyBonus: 25, nextRenown: 150, title: 'Paralı Asker Sancağı (Kademe 1)' };
-  return { tier: 0, maxPartyBonus: 15, nextRenown: 50, title: 'Gezgin Sancak (Kademe 0)' };
+  return { tier: 0, maxPartyBonus: 0, nextRenown: 50, title: 'Gezgin Sancak (Kademe 0)' };
 }
 
 export function allocateAttributePoint(
@@ -4127,43 +4204,6 @@ export function bombardSettlementWalls(
   };
 }
 
-export function upgradeTroopTier(
-  state: CampaignState,
-  fromTier: UnitTierId,
-  toTier: UnitTierId,
-  count = 1,
-): { success: boolean; reason?: string; nextState: CampaignState } {
-  const safeCount = Math.max(1, count);
-  if (state.roster[fromTier] < safeCount) {
-    return {
-      success: false,
-      reason: `Terfi ettirmek için yeterli ${UNIT_DEFINITIONS[fromTier].name} yok.`,
-      nextState: state,
-    };
-  }
-  const upgradeCostPerUnit = Math.max(15, UNIT_DEFINITIONS[toTier].recruitCost - UNIT_DEFINITIONS[fromTier].recruitCost + 10);
-  const totalCost = upgradeCostPerUnit * safeCount;
-  if (state.gold < totalCost) {
-    return {
-      success: false,
-      reason: `Terfi ekipmanı ve savaş atı için ${totalCost} Dinar gerekiyor.`,
-      nextState: state,
-    };
-  }
-  return {
-    success: true,
-    nextState: {
-      ...state,
-      gold: state.gold - totalCost,
-      roster: {
-        ...state.roster,
-        [fromTier]: state.roster[fromTier] - safeCount,
-        [toTier]: state.roster[toTier] + safeCount,
-      },
-      morale: Math.min(100, state.morale + 1),
-    },
-  };
-}
 
 export function recruitCapturedPrisoners(
   state: CampaignState,
@@ -4180,7 +4220,7 @@ export function recruitCapturedPrisoners(
       prisoners: state.prisoners - safeCount,
       roster: {
         ...state.roster,
-        militia: state.roster.militia + safeCount,
+        infantry: state.roster.infantry + safeCount,
       },
       morale: Math.max(40, state.morale - 1),
     },

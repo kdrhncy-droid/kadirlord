@@ -30,22 +30,25 @@ assert.equal(SKILL_ATTRIBUTE_MAP.scouting, 'CUNNING');
 assert.equal(SKILL_ATTRIBUTE_MAP.leadership, 'SOCIAL');
 assert.equal(SKILL_ATTRIBUTE_MAP.steward, 'INTELLIGENCE');
 
-// 2. Öğrenme Sınırı (Learning Limit)
-// Limit = (Attr - 1) * 14 + Focus * 40 + 10
-assert.equal(calculateLearningLimit(1, 0), 10);
-assert.equal(calculateLearningLimit(5, 4), (5 - 1) * 14 + 4 * 40 + 10); // 226
-assert.equal(calculateLearningLimit(10, 5), (10 - 1) * 14 + 5 * 40 + 10); // 336
-console.log('✓ Öğrenme sınırı formülü doğru (5 Nitelik, 4 Odak -> 226)');
+// 2. Öğrenme Sınırı (Learning Limit) — Bannerlord yumuşak tavan (10.6)
+// Limit = Odak * 30 + (Nitelik - 1) * 10; Sert Tavan = 4 + (Nitelik - 1) * 14 + Odak * 40
+assert.equal(calculateLearningLimit(1, 0), 0);
+assert.equal(calculateLearningLimit(5, 4), 4 * 30 + (5 - 1) * 10); // 160
+assert.equal(calculateLearningLimit(10, 5), 5 * 30 + (10 - 1) * 10); // 240 (sert tavan 330)
+console.log('✓ Öğrenme sınırı formülü doğru (5 Nitelik, 4 Odak -> 160)');
 
 // 3. Öğrenme Hızı (Learning Rate)
-const normalRate = calculateLearningRate(50, 5, 4); // limit 226, seviye 50
-assert.ok(normalRate >= 1.5, `Limit altı yüksek öğrenme hızı bekleniyor, gelen: ${normalRate}`);
+// Sınır altında: 0.5*N + 1.25*O + 1.25; üstünde: 0.5*N + 1.25*O - 0.125*(Seviye - Sınır)
+const normalRate = calculateLearningRate(50, 5, 4); // limit 160, seviye 50 -> 8.75
+assert.equal(normalRate, 0.5 * 5 + 1.25 * 4 + 1.25);
 
-const overflowRate = calculateLearningRate(240, 5, 4); // limit 226, seviye 240 (sınır aşımı)
+const overflowRate = calculateLearningRate(200, 5, 4); // limit 160, seviye 200 -> 2.5
+assert.equal(overflowRate, 2.5);
 assert.ok(overflowRate < normalRate && overflowRate > 0, `Sınır aşımı hızı düşmeli, gelen: ${overflowRate}`);
 
-const hardCappedRate = calculateLearningRate(290, 5, 4); // limit 226 + 60 = 286 (sert tavan)
-assert.equal(hardCappedRate, 0, 'Sert tavan aşılınca öğrenme hızı 0 olmalı');
+const hardCappedRate = calculateLearningRate(220, 5, 4); // sert tavan: 4 + 4*14 + 4*40 = 220
+assert.equal(hardCappedRate, 0, 'Sert tavanda öğrenme hızı 0 olmalı');
+assert.equal(calculateLearningRate(290, 5, 4), 0, 'Sert tavan üstünde hız 0 kalmalı');
 console.log('✓ Öğrenme hızı sınır ve tavan sönümlemesi doğru');
 
 // 4. Kahraman üzerinde beceri XP ve seviye atlama

@@ -10,6 +10,46 @@ araştırma/denetim belgelerine bakın.
 > oradan yapılır. Bağlayıcı sıra kanonik listede tanımlıdır: P2 → P3 → P4 → P5 → P6 →
 > teknik/içerik borçları → **P7 performans (sondan bir önceki)** → **P8 kayıt (en son)**.
 
+## ⭐ ALTIN KURAL — Bannerlord'a sadakat (kullanıcı talimatı; UNUTULMAZ)
+
+> *Kod yazarken, yazacağımız kodun Bannerlord'daki hâlini hem görsel hem metin
+> olarak araştırıp öyle yazarız. Bannerlord'la alâkası olmayan bir sistem
+> görürsek doğrusunu araştırıp düzeltiriz. Eksik bir Bannerlord sistemi
+> görürsek doğrusunu araştırıp düzeltiriz.*
+
+Bu kural her görevden önce gelir; aşağıdaki teknik kurallarla çelişirse bile
+önce bu kural uygulanır:
+
+1. **Araştırmadan kod yok.** Her mekanik/UI/veri işinde, kod yazmadan önce
+   gerçek Bannerlord karşılığını **iki koldan** araştır: (a) **metin** —
+   resmi/yarı-resmi wiki, forum/rehber, yamalar üzerinden mekaniğin kuralları,
+   formülleri, terimleri, menü/diyalog metinleri; (b) **görsel** — gerçek oyun
+   ekran görüntüleri üzerinden düzen, yerleşim, renk, ikon ve bilgi
+   hiyerarşisi. Kaynağını görev notuna/commit mesajına yaz. Ezbere, tahmine ve
+   "kabaca böyleydi"ye dayalı sistem, formül, sayı, menü veya görsel üretme.
+2. **Alâkasız/uydurma sistem görürsen düzelt.** Kodda Bannerlord'da olmayan,
+   Bannerlord'dakinden farklı çalışan ya da uydurulmuş bir sistem/mekanik/UI
+   fark edersen üzerine inşa etme ve görmezden gelme: doğrusunu (1)'deki gibi
+   araştır, mevcut sistemi doğru hâliyle değiştir, uyumsuz kalıntıyı geride
+   bırakma.
+3. **Eksik Bannerlord sistemi görürsen tamamla.** Bannerlord'da olup bizde
+   eksik/yarım olan bir sistem fark edersen doğrusunu araştır; görev
+   kapsamındaysa tamamla, değilse sessiz kalma — kanonik listeye
+   (`YAPILACAKLAR_LISTESI.md`) araştırma notuyla birlikte işle.
+4. **"Benim görevim değildi" yok.** (2) ve (3) hangi görevde olursa olsun
+   geçerlidir: yanlış/eksik Bannerlord karşılığını fark edip düzeltmeden (veya
+   en azından kanonik listeye kanıtıyla işlemeden) geçmek bu kuralın ihlâlidir.
+
+## ⏳ KAPSAM İLKESİ — Öncelik önemli olanda (kullanıcı kararı, 2026-10-24)
+
+> Bannerlord'un her özelliği hemen yapılmak zorunda değil. Zor/derin
+> özellikler sonraya bırakılabilir; **önce önemli ve oyun hissini değiştiren
+> işler** yapılır. Ertelenen her parça gerekçesi ve bağlandığı faz ile
+> `YAPILACAKLAR_LISTESI.md`'ye işlenir; yerine sahte/yarım arayüz veya
+> çalışmıyormuş gibi yapan yer tutucu konmaz. Altın Kural geçerliliğini
+> korur: yapılan her şey araştırılmış Bannerlord karşılığına dayanır —
+> ilke "ne zaman" sorusunu düzenler, "ne kadar doğru" sorusunu gevşetmez.
+
 ## Oyun nedir?
 
 **Sancak-ı Kalradya: Taht ve Kılıç**, Mount & Blade II: Bannerlord'dan
@@ -96,16 +136,16 @@ Detaylar: `tools/e2e/README.md`. E2E ekran görüntüleri
 8. **Üretimde kullanılan yolu test edin.** Bir helper yalnız probe'da
    çağrılıyorsa, üretimde kopyalanmış ikinci bir uygulama varsa test yeşil
    olsa bile özellik kanıtlanmış sayılmaz.
-9. **Bannerlord Web Araştırması ve Doğrulama Kuralı (Kullanıcı Talimatı):**
-   Herhangi bir oyun mekaniği, diyalog ağacı, ekonomi veya savaş sistemi
-   tasarlarken/değiştirirken *Mount & Blade II: Bannerlord* ile birebir aynı
-   olduğundan emin olmak için kod yazmadan önce mutlaka web aramasıyla
-   (`search_web` / Chrome araştırması) gerçek Bannerlord mekaniğini araştırıp
-   teyit edin; ezbere veya tahmine dayalı sistem kurmayın.
+9. **Bannerlord araştırması = Altın Kural (yukarıya bakın).** Herhangi bir oyun
+   mekaniği, diyalog ağacı, ekonomi veya savaş sistemi tasarlarken/değiştirirken
+   kod yazmadan önce gerçek Bannerlord karşılığını hem **metin** hem **görsel**
+   olarak araştırıp teyit edin; ezbere/tahmine dayalı sistem kurmayın. Yanlış
+   (Bannerlord'la alâkasız) veya eksik Bannerlord sistemi görürseniz doğrusunu
+   araştırıp düzeltin — bu, Altın Kural'ın 2 ve 3. maddeleridir.
 
 ## Değişiklik iş akışı
 
-1. Önce gerçek Bannerlord karşılığını web aramasıyla teyit edin; sorunu saf fonksiyon/probe ile tekrar üretin; iddiayı ölçün.
+1. Önce Altın Kural'ı uygulayın: gerçek Bannerlord karşılığını hem metin (kural/formül/terim) hem görsel (ekran görüntüsü/düzen/renk) olarak araştırıp teyit edin; incelediğiniz kodda Bannerlord'la alâkasız veya eksik bir sistem görürseniz önce onun doğrusunu da aynı şekilde çıkarın. Sonra sorunu saf fonksiyon/probe ile tekrar üretin; iddiayı ölçün.
 2. Değişiklikten sonra önce ilgili dar probe'u, sonra `verify:fast`i çalıştırın.
 3. UI/WebGL/akış değiştiyse `npm run test:e2e` ile gerçek Chromium kanıtı alın.
 4. Geniş sistem değişikliklerinde `verify:all` ve `npm run build` çalıştırın.
@@ -126,3 +166,12 @@ tekrar üretmeyi kolaylaştırır:
   `WorldCanvas` kendi yakalama döngüsünü kullanıyor.
 
 Yeni bir açık kapatıldığında bu listeyi ve ilgili denetim belgesini güncelleyin.
+## Kapsam İlkesi (kullanıcı, 2026-10-24)
+
+"Bannerlord'un her özelliğini yapmak zorunda değiliz hemen; özellikle zor olanları
+sonraya bırakabiliriz — önemli olanlara öncelik verelim."
+
+Bu ilke **ne zaman** yapılacağını düzenler, Bannerlord doğrusunu gevşetmez:
+yapılan her şey Altın Kural'a göre araştırılarak doğru yapılır; ertelenen iş
+gerekçesiyle `YAPILACAKLAR_LISTESI.md`ye işlenir, sahte/yarım arayüz konmaz.
+Öncelik: savaş meydanı, karakterler, ordular ve savaş hissi.

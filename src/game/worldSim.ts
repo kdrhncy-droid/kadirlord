@@ -675,10 +675,10 @@ function scaleRoster(
   if (!roster) return roster;
   const f = clamp(factor, 0.2, 1);
   return {
-    militia: Math.floor(roster.militia * f),
+    infantry: Math.floor(roster.infantry * f),
     archer: Math.floor(roster.archer * f),
     cavalry: Math.floor(roster.cavalry * f),
-    guard: Math.floor(roster.guard * f),
+    horseArcher: Math.floor(roster.horseArcher * f),
   };
 }
 
@@ -727,18 +727,9 @@ export function advanceUpkeep(
     const l = { ...lord, roster: lord.roster ? { ...lord.roster } : lord.roster };
     const pos = positionOf(positions, l);
 
-    // Erzak tüketimi.
-    l.foodDays = Math.max(0, (l.foodDays ?? 6) - 1);
-    if (l.foodDays <= 0) {
-      l.morale = Math.max(20, (l.morale ?? 70) - 3);
-      const army = getTotalTroops(l.roster ?? { militia: 0, archer: 0, cavalry: 0, guard: 0 });
-      if (army > 6) {
-        l.roster = scaleRoster(l.roster, 0.97);
-        l.armySize = Math.max(1, getTotalTroops(l.roster ?? { militia: 0, archer: 0, cavalry: 0, guard: 0 }));
-      }
-    }
-
-    // Kendi yerleşiminde takviye.
+    // Kendi yerleşiminde mi? (iaşe ve açlık kararı bundan önce bilinmeli:
+    // evindeki lord aynı tik içinde önce açlıktan eriyip sonra iaşe
+    // alıyordu.)
     const home = l.order?.targetSettlementId
       ? nextSettlements.find((s) => s.id === l.order?.targetSettlementId)
       : undefined;
@@ -747,16 +738,32 @@ export function advanceUpkeep(
       home.faction === l.faction &&
       distance(pos.x, pos.z, home.x, home.z) <= getSettlementArrivalRadius(home.type) + 3;
 
+    // Erzak tüketimi.
+    l.foodDays = Math.max(0, (l.foodDays ?? 6) - 1);
+    if (l.foodDays <= 0) {
+      l.morale = Math.max(20, (l.morale ?? 70) - 3);
+      const army = getTotalTroops(l.roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 });
+      if (army > 6 && !atHome) {
+        l.roster = scaleRoster(l.roster, 0.97);
+        l.armySize = Math.max(1, getTotalTroops(l.roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 }));
+      }
+    }
+
+    // Kendi yerleşiminde takviye.
+
     if (atHome && (l.order?.kind === 'REINFORCE' || l.order?.kind === 'DEFEND' || l.order?.kind === 'PATROL')) {
-      const army = getTotalTroops(l.roster ?? { militia: 0, archer: 0, cavalry: 0, guard: 0 });
+      const army = getTotalTroops(l.roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 });
       const cap = Math.max(24, Math.min(60, home.garrison + 22));
+      // Evinde olan lord asker sayısı tavanın üstünde olsa da iaşe alır;
+      // önceden erzak yalnız "asker alırken" doluyordu: tavan üstü lord
+      // garnizonunda beklerken açlıktan eriyordu (kullanıcı bildirimi).
+      l.foodDays = Math.max(l.foodDays ?? 0, Math.min(14, 6 + Math.round(home.foodStock * 0.1)));
+      l.morale = Math.min(100, (l.morale ?? 70) + 2);
+      l.wounded = Math.max(0, (l.wounded ?? 0) - 1);
       if (army < cap) {
         const gain = Math.max(1, Math.min(4, Math.round(home.garrison * 0.08) + 1));
         l.roster = growRoster(l.roster, gain, l.faction, rand);
-        l.armySize = getTotalTroops(l.roster ?? { militia: 0, archer: 0, cavalry: 0, guard: 0 });
-        l.foodDays = Math.max(l.foodDays ?? 0, Math.min(14, 6 + Math.round(home.foodStock * 0.1)));
-        l.morale = Math.min(100, (l.morale ?? 70) + 2);
-        l.wounded = Math.max(0, (l.wounded ?? 0) - 1);
+        l.armySize = getTotalTroops(l.roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 });
         reinforcements++;
       } else if (l.order?.kind === 'REINFORCE') {
         l.order = { kind: 'PATROL', targetSettlementId: home.id, sinceDay: state.day };
@@ -775,7 +782,7 @@ function growRoster(
   faction: FactionId,
   rand: () => number,
 ): LordAgent['roster'] {
-  const base = roster ?? { militia: 0, archer: 0, cavalry: 0, guard: 0 };
+  const base = roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 };
   const out = { ...base };
   // Kültüre göre eğilim (Khuzait/Aserai süvari, Battania okçu…).
   const cavalryBias = faction === 'khuzait' || faction === 'aserai' ? 0.4 : 0.22;
@@ -784,7 +791,7 @@ function growRoster(
     const roll = rand();
     if (roll < cavalryBias) out.cavalry += 1;
     else if (roll < cavalryBias + rangedBias) out.archer += 1;
-    else out.militia += 1;
+    else out.infantry += 1;
   }
   return out;
 }

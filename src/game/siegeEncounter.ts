@@ -14,6 +14,7 @@ import {
   Settlement,
   TroopRoster,
   deductCasualtiesFromRoster,
+  getSettlementArrivalRadius,
   getTotalTroops,
 } from './rules';
 import {
@@ -91,10 +92,10 @@ export function combineBesiegerForces(besiegers: readonly LordAgent[]): LordAgen
   if (besiegers.length === 1) {
     const single = besiegers[0];
     const roster: TroopRoster = single.roster ?? {
-      militia: Math.max(2, Math.floor(single.armySize * 0.35)),
+      infantry: Math.max(2, Math.floor(single.armySize * 0.35)),
       archer: Math.max(2, Math.floor(single.armySize * 0.28)),
       cavalry: Math.max(1, Math.floor(single.armySize * 0.22)),
-      guard: Math.max(1, Math.floor(single.armySize * 0.15)),
+      horseArcher: Math.max(1, Math.floor(single.armySize * 0.15)),
     };
     return {
       ...single,
@@ -104,10 +105,10 @@ export function combineBesiegerForces(besiegers: readonly LordAgent[]): LordAgen
   }
 
   const combinedRoster: TroopRoster = {
-    militia: 0,
+    infantry: 0,
     archer: 0,
     cavalry: 0,
-    guard: 0,
+    horseArcher: 0,
   };
   let totalWounded = 0;
   let totalPrisoners = 0;
@@ -115,15 +116,15 @@ export function combineBesiegerForces(besiegers: readonly LordAgent[]): LordAgen
 
   for (const lord of besiegers) {
     const r: TroopRoster = lord.roster ?? {
-      militia: Math.max(2, Math.floor(lord.armySize * 0.35)),
+      infantry: Math.max(2, Math.floor(lord.armySize * 0.35)),
       archer: Math.max(2, Math.floor(lord.armySize * 0.28)),
       cavalry: Math.max(1, Math.floor(lord.armySize * 0.22)),
-      guard: Math.max(1, Math.floor(lord.armySize * 0.15)),
+      horseArcher: Math.max(1, Math.floor(lord.armySize * 0.15)),
     };
-    combinedRoster.militia += Math.max(0, r.militia);
+    combinedRoster.infantry += Math.max(0, r.infantry);
     combinedRoster.archer += Math.max(0, r.archer);
     combinedRoster.cavalry += Math.max(0, r.cavalry);
-    combinedRoster.guard += Math.max(0, r.guard);
+    combinedRoster.horseArcher += Math.max(0, r.horseArcher);
     totalWounded += lord.wounded ?? 0;
     totalPrisoners += lord.prisoners ?? 0;
     moraleSum += lord.morale ?? 75;
@@ -171,10 +172,10 @@ export function distributeCombinedBesiegerCasualties(
     if (!isBesieger) return lord;
 
     const currentRoster: TroopRoster = lord.roster ?? {
-      militia: Math.max(2, Math.floor(lord.armySize * 0.35)),
+      infantry: Math.max(2, Math.floor(lord.armySize * 0.35)),
       archer: Math.max(2, Math.floor(lord.armySize * 0.28)),
       cavalry: Math.max(1, Math.floor(lord.armySize * 0.22)),
-      guard: Math.max(1, Math.floor(lord.armySize * 0.15)),
+      horseArcher: Math.max(1, Math.floor(lord.armySize * 0.15)),
     };
     const lordTroops = Math.max(1, getTotalTroops(currentRoster));
     const share = lordTroops / totalInitialTroops;
@@ -193,7 +194,7 @@ export function distributeCombinedBesiegerCasualties(
         updatedTotal = getTotalTroops(updatedRoster);
       }
       if (updatedTotal <= 0) {
-        updatedRoster = { militia: 1, archer: 0, cavalry: 0, guard: 0 };
+        updatedRoster = { infantry: 1, archer: 0, cavalry: 0, horseArcher: 0 };
         updatedTotal = 1;
       }
       const retreatPt = snapToNearestLand(lord.x + 20, lord.z - 20);
@@ -227,8 +228,19 @@ export function distributeCombinedBesiegerCasualties(
 export function besiegedSettlementIdSet(state: CampaignState): Set<string> {
   const ids = new Set<string>();
   for (const lord of state.lords) {
+    // Kuşatma, ordu hedefe VARIP kampı kurduğunda başlar (Bannerlord): emir
+    // verilmiş ama lord hâlâ yoldayken yerleşim "kuşatma altında" sayılmaz —
+    // kamp halkası/motor görselleri erken beliriyordu. Varış ölçütü
+    // worldSim'in ilerleme kapısıyla aynıdır: kurulu yarıçap içinde olma
+    // veya ilerleme birikmiş olma (kamp kurulduktan sonra lord itilse bile).
     if (lord.order?.kind === 'SIEGE' && lord.order.targetSettlementId) {
-      ids.add(lord.order.targetSettlementId);
+      const target = state.settlements.find((s) => s.id === lord.order?.targetSettlementId);
+      if (!target) continue;
+      const radius = Math.max(getSettlementArrivalRadius(target.type) + 3, SIEGE_CAMP_STANDOFF + 4);
+      const dist = Math.hypot(lord.x - target.x, lord.z - target.z);
+      if (dist <= radius || (lord.order.siegeProgress ?? 0) > 0) {
+        ids.add(target.id);
+      }
     }
   }
   if (state.playerSiege?.settlementId) {
@@ -523,13 +535,13 @@ export function applyBreakInCasualties(state: CampaignState): CampaignState {
   }
 
   const next: TroopRoster = {
-    militia: scale(state.roster.militia),
+    infantry: scale(state.roster.infantry),
     archer: scale(state.roster.archer),
     cavalry: scale(state.roster.cavalry),
-    guard: scale(state.roster.guard),
+    horseArcher: scale(state.roster.horseArcher),
   };
   if (getTotalTroops(next) === 0) {
-    next.militia = 1;
+    next.infantry = 1;
   }
   return { ...state, roster: next };
 }

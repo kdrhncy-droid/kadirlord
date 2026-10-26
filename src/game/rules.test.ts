@@ -5,6 +5,7 @@ import {
   getTotalTroops,
   calculatePartyStrength,
   calculateDailyWage,
+  calculatePartyDailyWage,
   recruitUnit,
   buyFoodAtSettlement,
   advanceDailyEconomyAndWorld,
@@ -33,7 +34,6 @@ import {
   constructSiegeEngine,
   deployReservedSiegeEngines,
   bombardSettlementWalls,
-  upgradeTroopTier,
   recruitCapturedPrisoners,
   attemptLordPersuasionStep,
   executeLordBarterOffer,
@@ -324,7 +324,7 @@ test('buyFoodAtSettlement increases party food and deducts gold', () => {
 
 test('advanceDailyEconomyAndWorld advances day, collects fief taxes from castle and bound village, and pays wages', () => {
   const state = createInitialCampaignState('Komutan Demirhan', 'noble');
-  const wage = calculateDailyWage(state.roster);
+  const wage = calculatePartyDailyWage(state);
   const playerFiefs = state.settlements.filter((s) => s.faction === 'player');
   const expectedTax = playerFiefs.reduce((sum, s) => sum + Math.round(s.prosperity * 0.25), 0);
   const next = advanceDailyEconomyAndWorld(state);
@@ -348,7 +348,7 @@ test('resolveBattleOutcome awards renown, gold loot, prisoners, and conquers set
     state,
     true,
     'lord-kargi',
-    { militia: 1 },
+    { infantry: 1 },
     12,
     'karagecit',
   );
@@ -370,7 +370,7 @@ test('resolveBattleOutcome awards renown, gold loot, prisoners, and conquers set
     afterCastleVictory,
     true,
     'lord-bozkurt',
-    { militia: 1 },
+    { infantry: 1 },
     18,
     'poros',
   );
@@ -593,7 +593,7 @@ test('Bannerlord settlement arrival radii and Town, Castle, Village menu systems
 
   // 6. Castle: Manage Garrison Transfer
   const castleGarrisonBefore = castle.garrison;
-  const garrisonRes = manageGarrisonTransfer(state, castle.id, 'militia', 'deposit', 1);
+  const garrisonRes = manageGarrisonTransfer(state, castle.id, 'infantry', 'deposit', 1);
   assert.equal(garrisonRes.success, true);
   const updatedCastle = garrisonRes.nextState.settlements.find((s) => s.id === castle.id)!;
   assert.equal(updatedCastle.garrison, castleGarrisonBefore + 1);
@@ -614,10 +614,10 @@ test('Bannerlord settlement arrival radii and Town, Castle, Village menu systems
   state = forceSupRes.nextState;
 
   // 9. Village: Hostile Actions - Force Recruits
-  const militiaBeforeRecruits = state.roster.militia;
+  const militiaBeforeRecruits = state.roster.infantry;
   const forceRecRes = forcePeasantsRecruits(state, sancaktepe.id);
   assert.equal(forceRecRes.success, true);
-  assert.equal(forceRecRes.nextState.roster.militia, militiaBeforeRecruits + 3);
+  assert.equal(forceRecRes.nextState.roster.infantry, militiaBeforeRecruits + 3);
   state = forceRecRes.nextState;
 
   // 10. Village: Hostile Actions - Raid and Pillage Village
@@ -632,8 +632,8 @@ test('Bannerlord settlement arrival radii and Town, Castle, Village menu systems
 test('Bannerlord Character Sheet, Inventory, Building Projects, Smithy, Siege Camp & Persuasion systems work deterministically', () => {
   let state = createInitialCampaignState('Komutan Demirhan', 'noble');
 
-  // 1. Learning Limit & Clan Tier math
-  assert.equal(calculateLearningLimit(5, 4), (5 - 1) * 14 + 4 * 40 + 10);
+  // 1. Learning Limit & Clan Tier math (10.6: yumuşak sınır = Odak×30 + (Nitelik−1)×10)
+  assert.equal(calculateLearningLimit(5, 4), 4 * 30 + (5 - 1) * 10); // 160
   assert.equal(calculateClanTier(65).tier, 1);
   assert.equal(calculateClanTier(950).tier, 4);
 
@@ -690,12 +690,7 @@ test('Bannerlord Character Sheet, Inventory, Building Projects, Smithy, Siege Ca
   assert.ok((bombardRes.wallHealthAfter ?? 100) < 100);
   state = bombardRes.nextState;
 
-  // 6. Party Troop Upgrade & Prisoner Recruitment
-  const archersBefore = state.roster.archer;
-  const upgRes = upgradeTroopTier(state, 'militia', 'archer', 1);
-  assert.equal(upgRes.success, true);
-  assert.equal(upgRes.nextState.roster.archer, archersBefore + 1);
-  state = upgRes.nextState;
+  // 6. Prisoner Recruitment (birlik terfisi ağaç üzerinden P3 testinde doğrulanır)
 
   const prisRes = recruitCapturedPrisoners(state, 1);
   assert.equal(prisRes.success, true);
@@ -1279,15 +1274,22 @@ test('P0/P1 Bannerlord foundation: canonical heroes, stacks, troop trees, migrat
   }
   assert.deepEqual(parseItemStats('+48 Baş Zırhı · +4 İtibar', 'HEAD', 'ARMOR'), { armorHead: 48 });
 
-  // Sekiz kültürün her biri dallanan ve bütünlüğü doğrulanabilir bir ağaca sahiptir.
-  assert.equal(TROOP_DEFINITIONS.length, 112);
+  // Sekiz kültürün her biri dallanan ve bütünlüğü doğrulanabilir gerçek bir
+  // ağaca sahiptir (10.9): T1 halk kökü + T2→T6 soylu hat.
+  assert.equal(TROOP_DEFINITIONS.length, 140);
   assert.deepEqual(validateTroopDefinitions(), []);
-  for (const definition of TROOP_DEFINITIONS.filter((troop) => troop.id.endsWith('_recruit'))) {
-    assert.equal(definition.upgrades.length, 3, definition.id);
+  const roots = TROOP_DEFINITIONS.filter((troop) => troop.tier === 1);
+  assert.equal(roots.length, 8);
+  for (const root of roots) {
+    assert.equal(root.upgrades.length, 2, root.id);
   }
   assert.equal(
-    TROOP_DEFINITIONS.find((troop) => troop.id === 'player_infantry_3')?.upgrades.length,
+    TROOP_DEFINITIONS.find((troop) => troop.id === 'empire_infantry_3')?.upgrades.length,
     2,
+  );
+  assert.equal(
+    TROOP_DEFINITIONS.find((troop) => troop.id === 'khuzait_khansguard_6')?.tier,
+    6,
   );
   assert.deepEqual(troopStackTotals(state.troopStacks), state.roster);
   assert.equal(prisonerStackTotal(state.prisonerStacks), state.prisoners);
@@ -1368,7 +1370,7 @@ test('P0/P1 Bannerlord foundation: canonical heroes, stacks, troop trees, migrat
   assert.deepEqual(troopStackTotals(repaired.troopStacks), repaired.roster);
   assert.equal(prisonerStackTotal(repaired.prisonerStacks), repaired.prisoners);
   const repairedInfantry = repaired.troopStacks?.find((stack) => stack.troopId === 'player_infantry_3')!;
-  assert.equal(repairedInfantry.count, state.roster.militia);
+  assert.equal(repairedInfantry.count, state.roster.infantry);
   assert.ok(repairedInfantry.wounded <= repairedInfantry.count);
   assert.ok(repairedInfantry.xp <= repairedInfantry.count * 200);
 
@@ -1454,6 +1456,10 @@ test('P0/P1 Bannerlord foundation: canonical heroes, stacks, troop trees, migrat
   assert.equal(calculateLearningHardCap(5, 4), 220);
   assert.equal(calculateLearningSoftCap(2, 0), 10);
   assert.equal(calculateLearningHardCap(2, 0), 18);
+  // 10.6: rules.ts kopyası kanonik yumuşak sınırla birebir aynı sonucu vermeli.
+  for (const [attr, focus] of [[1, 0], [2, 0], [5, 4], [10, 5], [7, 3]] as const) {
+    assert.equal(calculateLearningLimit(attr, focus), calculateLearningSoftCap(attr, focus));
+  }
 
   // Discard: değerin %50’si, resmi kademe tavanları, perk şartı ve taşma hesabı.
   assert.deepEqual([0, 1, 2, 3, 4, 6].map(discardXpCapForTier), [35, 75, 150, 250, 300, 300]);
@@ -1486,7 +1492,7 @@ test('P0/P1 Bannerlord foundation: canonical heroes, stacks, troop trees, migrat
 
   const tinyCapacityState = {
     ...armorPerkState,
-    roster: { militia: 1, archer: 0, cavalry: 0, guard: 0 },
+    roster: { infantry: 1, archer: 0, cavalry: 0, horseArcher: 0 },
     troopStacks: [{ troopId: 'player_recruit', count: 1, wounded: 0, xp: 49 }],
   };
   const overflowPreview = previewDiscardDonation(tinyCapacityState, [
@@ -1581,7 +1587,7 @@ test('P2 inventory core: pending transfers are atomic and Discard distributes re
   const armor = state.inventoryItems?.find((item) => item.definitionId === 'item_cataphract_armor')!;
   const armorPerkState = ensureBannerlordFoundation({
     ...state,
-    roster: { militia: 2, archer: 0, cavalry: 0, guard: 0 },
+    roster: { infantry: 2, archer: 0, cavalry: 0, horseArcher: 0 },
     troopStacks: [{ troopId: 'player_recruit', count: 2, wounded: 0, xp: 0 }],
     heroes: state.heroes?.map((hero) =>
       hero.id === PLAYER_HERO_ID
@@ -1812,7 +1818,7 @@ test('P2 battle loot: pending loot preparation, selection, take all, discard XP 
   const pending = prepareBattleLoot(initial, {
     enemyLordId: 'lord-kargi',
     enemiesDefeated: 24,
-    losses: { militia: 2 },
+    losses: { infantry: 2 },
     isSiege: false,
     seedKey: 'test-loot-seed-1',
   });
@@ -1875,7 +1881,7 @@ test('P2 battle loot: pending loot preparation, selection, take all, discard XP 
   assert.equal(commitRes.nextState.gold, initial.gold + pending.goldLoot);
   assert.equal(commitRes.nextState.renown, initial.renown + pending.renownGain);
   assert.equal(commitRes.nextState.battlesWon, initial.battlesWon + 1);
-  assert.equal(commitRes.nextState.roster.militia, Math.max(0, initial.roster.militia - 2));
+  assert.equal(commitRes.nextState.roster.infantry, Math.max(0, initial.roster.infantry - 2));
   assert.ok(commitRes.nextState.inventoryItems?.length);
 });
 
@@ -2058,15 +2064,17 @@ test('P2 erzak: envanter gıda yığınları, çeşitlilik morali, canlı tüket
   const summary = getPartyFoodSummary(stateWithFood.inventoryItems);
   assert.equal(summary.totalFood, 36);
   assert.equal(summary.distinctVarieties, 3);
-  assert.equal(summary.varietyMoraleBonus, 5); // 3 çeşit = +5 moral
+  assert.equal(summary.varietyMoraleBonus, 2); // 10.4: 3 tür = +(3-1) moral
 
-  // 2. Çeşitlilik moral bonusu eğrisi
+  // 2. Çeşitlilik moral bonusu eğrisi (10.4: tür başına ~+1, tavan +8; Gourmet ×2)
   assert.equal(calculateVarietyMoraleBonus(0), 0);
   assert.equal(calculateVarietyMoraleBonus(1), 0);
-  assert.equal(calculateVarietyMoraleBonus(2), 2);
-  assert.equal(calculateVarietyMoraleBonus(3), 5);
-  assert.equal(calculateVarietyMoraleBonus(4), 8);
-  assert.equal(calculateVarietyMoraleBonus(5), 12);
+  assert.equal(calculateVarietyMoraleBonus(2), 1);
+  assert.equal(calculateVarietyMoraleBonus(3), 2);
+  assert.equal(calculateVarietyMoraleBonus(4), 3);
+  assert.equal(calculateVarietyMoraleBonus(5), 4);
+  assert.equal(calculateVarietyMoraleBonus(9), 8);
+  assert.equal(calculateVarietyMoraleBonus(9, true), 16);
 
   // 3. Günlük tüketim envanterdeki gıda yığınlarından gerçek adetleri eksiltir
   const nextDayState = advanceDailyEconomyAndWorld(stateWithFood);
@@ -2130,8 +2138,8 @@ test('P3 party system: capacity breakdown, troopStacks single source of truth, b
   assert.equal(partyCap.total, getPartyLimit(state));
 
   const prisonerCap = calculatePrisonerLimitBreakdown(state);
-  assert.equal(prisonerCap.base, 10);
-  assert.equal(prisonerCap.total >= 10, true);
+  // 10.5: tutsak sınırı = sağlıklı mevcut askerin yarısı (yaralılar sayılmaz).
+  assert.equal(prisonerCap.total, Math.floor(prisonerCap.healthyTroops / 2));
   assert.equal(prisonerCap.total, getPrisonerLimit(state));
 
   // 2. troopStacks tek kaynak yapısı ve roster senkronu
@@ -2144,18 +2152,18 @@ test('P3 party system: capacity breakdown, troopStacks single source of truth, b
   const testStacksState: CampaignState = {
     ...state,
     gold: 500,
-    roster: { militia: 4, archer: 0, cavalry: 0, guard: 0 },
+    roster: { infantry: 4, archer: 0, cavalry: 0, horseArcher: 0 },
     troopStacks: [
       { troopId: 'empire_recruit', count: 4, wounded: 0, xp: 200 }, // upgradeXp: 50 -> 4 tanesi terfiye hazır
     ],
     inventoryItems: [],
   };
   const syncedState = ensureBannerlordFoundation(testStacksState);
-  assert.equal(syncedState.roster.militia, 4);
+  assert.equal(syncedState.roster.infantry, 4);
 
   const upgradeOpts = getTroopUpgradeOptions(syncedState, syncedState.troopStacks![0]);
   assert.ok(upgradeOpts.length >= 1, 'En az 1 terfi dalı olmalı');
-  const infantryUpgrade = upgradeOpts.find((o) => o.targetDefinition.battleClass === 'militia' || o.targetDefinition.battleClass === 'guard') ?? upgradeOpts[0];
+  const infantryUpgrade = upgradeOpts.find((o) => o.targetDefinition.battleClass === 'infantry' || o.targetDefinition.battleClass === 'horseArcher') ?? upgradeOpts[0];
   assert.equal(infantryUpgrade.readyCount, 4);
   assert.equal(infantryUpgrade.canUpgrade, true);
 

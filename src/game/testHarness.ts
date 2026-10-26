@@ -36,6 +36,7 @@ export const E2E_SCENARIOS = [
   'bandit-caught-player',
   'player-caught-bandit',
   'lord-caught-player',
+  'big-battle',
 ] as const;
 
 export type E2EScenarioName = (typeof E2E_SCENARIOS)[number];
@@ -288,6 +289,7 @@ const DIALOGUE_SCENARIOS = new Set<E2EScenarioName>([
   'bandit-caught-player',
   'player-caught-bandit',
   'lord-caught-player',
+  'big-battle',
 ]);
 
 function isScenario(value: string | null): value is E2EScenarioName {
@@ -472,7 +474,7 @@ export function buildE2EScenario(
     case 'bandit-caught-player': {
       const campaign: CampaignState = {
         ...base,
-        roster: { militia: 6, archer: 0, cavalry: 0, guard: 0 },
+        roster: { infantry: 6, archer: 0, cavalry: 0, horseArcher: 0 },
         playerHp: base.playerMaxHp,
       };
       const result = replacePreferredLord(
@@ -483,7 +485,7 @@ export function buildE2EScenario(
           nearPlayer(
             withRoster(
               { ...lord, isAtWarWithPlayer: true, relation: -60 },
-              { militia: 16, archer: 8, cavalry: 6, guard: 2 },
+              { infantry: 16, archer: 8, cavalry: 6, horseArcher: 2 },
             ),
             campaign,
           ),
@@ -494,7 +496,7 @@ export function buildE2EScenario(
     case 'player-caught-bandit': {
       const campaign: CampaignState = {
         ...base,
-        roster: { militia: 20, archer: 20, cavalry: 15, guard: 15 },
+        roster: { infantry: 20, archer: 20, cavalry: 15, horseArcher: 15 },
         playerHp: base.playerMaxHp,
       };
       const result = replacePreferredLord(
@@ -505,7 +507,31 @@ export function buildE2EScenario(
           nearPlayer(
             withRoster(
               { ...lord, isAtWarWithPlayer: true, relation: -35 },
-              { militia: 6, archer: 2, cavalry: 0, guard: 0 },
+              { infantry: 6, archer: 2, cavalry: 0, horseArcher: 0 },
+            ),
+            campaign,
+          ),
+      );
+      return dialogueSetup(result.campaign, result.lord);
+    }
+
+    case 'big-battle': {
+      // B5: 130v130 — toplam 260 > saha bütçesi 200; ilk dalga 100v100,
+      // taraf başına 30 yedek takviye dalgasını sınar.
+      const campaign: CampaignState = {
+        ...base,
+        roster: { infantry: 60, archer: 30, cavalry: 20, horseArcher: 20 },
+        playerHp: base.playerMaxHp,
+      };
+      const result = replacePreferredLord(
+        campaign,
+        'lord-kargi',
+        (lord) => lord.faction === 'bandits',
+        (lord) =>
+          nearPlayer(
+            withRoster(
+              { ...lord, isAtWarWithPlayer: true, relation: -35 },
+              { infantry: 60, archer: 30, cavalry: 20, horseArcher: 20 },
             ),
             campaign,
           ),
@@ -516,7 +542,7 @@ export function buildE2EScenario(
     case 'lord-caught-player': {
       const campaign: CampaignState = {
         ...base,
-        roster: { militia: 6, archer: 0, cavalry: 0, guard: 0 },
+        roster: { infantry: 6, archer: 0, cavalry: 0, horseArcher: 0 },
         playerHp: base.playerMaxHp,
       };
       const result = replacePreferredLord(
@@ -527,7 +553,7 @@ export function buildE2EScenario(
           nearPlayer(
             withRoster(
               { ...lord, isAtWarWithPlayer: true, relation: -55 },
-              { militia: 16, archer: 14, cavalry: 10, guard: 8 },
+              { infantry: 16, archer: 14, cavalry: 10, horseArcher: 8 },
             ),
             campaign,
           ),

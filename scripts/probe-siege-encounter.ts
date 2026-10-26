@@ -186,7 +186,7 @@ ok(resolveSiegeRole(inside, town.id) === 'defender', 'içeri girince defender');
 
 const afterBreak = applyBreakInCasualties({
   ...seed,
-  roster: { militia: 20, archer: 10, cavalry: 8, guard: 4 },
+  roster: { infantry: 20, archer: 10, cavalry: 8, horseArcher: 4 },
   troopStacks: [],
 });
 const afterCount = getTotalTroops(afterBreak.roster);

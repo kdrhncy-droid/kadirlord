@@ -46,6 +46,7 @@ import {
   inventoryTotalWeight,
   resolveItemDefinition,
 } from './bannerlordFoundation.ts';
+import { getCultureModifiers } from './cultureBonuses.ts';
 
 export interface PartyAnimalInventory {
   /** Katırlar ve yük hayvanları (horseKind === 'PACK'). */
@@ -83,6 +84,8 @@ export interface PartyLogisticsParams {
   morale?: number;
   perks?: string[];
   state?: Pick<CampaignState, 'customItemDefinitions'>;
+  /** Parti liderinin kültürü; kültürel arazi feat'leri uygulanır (10.8). */
+  culture?: string | null;
   /** Geriye dönük uyumluluk için eski alanlar (envanter verilmemişse kullanılır). */
   legacyFoodUnits?: number;
   legacyHerdAnimals?: number;
@@ -225,11 +228,13 @@ export function calculatePartyLogistics(params: PartyLogisticsParams): PartyLogi
     morale = 80,
     perks = [],
     state,
+    culture = null,
     legacyFoodUnits = 24,
     legacyHerdAnimals = 0,
   } = params;
 
   const baseSpeed = 5.0;
+  const cultureModifiers = getCultureModifiers(culture);
   const totalHealthy = Math.max(1, healthyTroops);
   const totalPeople = Math.max(1, totalHealthy + woundedCount);
 
@@ -311,11 +316,22 @@ export function calculatePartyLogistics(params: PartyLogisticsParams): PartyLogi
     terrainMultiplier = 0.78;
     terrainLabel = 'Karlı Dağ Geçidi (-%22)';
   } else if (forest > 0.35) {
-    terrainMultiplier = 0.76;
-    terrainLabel = 'Sık Orman (-%24)';
+    // Batanya feat'i (10.8): orman hız cezası %50 az.
+    const reduction = cultureModifiers.forestSpeedPenaltyReduction;
+    terrainMultiplier = 1 - (1 - 0.76) * (1 - reduction);
+    terrainLabel =
+      reduction > 0
+        ? `Sık Orman (Batanya: -%${Math.round((1 - terrainMultiplier) * 100)})`
+        : 'Sık Orman (-%24)';
   } else if (biome === 'SOUTH_DESERT') {
-    terrainMultiplier = 0.88;
-    terrainLabel = 'Çöl Kumulları (-%12)';
+    // Aserai feat'i (10.8): çölde hız cezası yok.
+    if (cultureModifiers.noDesertSpeedPenalty) {
+      terrainMultiplier = 1.0;
+      terrainLabel = 'Çöl Kumulları (Aserai: ceza yok)';
+    } else {
+      terrainMultiplier = 0.88;
+      terrainLabel = 'Çöl Kumulları (-%12)';
+    }
   } else if (info.slope > 0.32) {
     terrainMultiplier = 0.82;
     terrainLabel = 'Engebeli Yamaç (-%18)';

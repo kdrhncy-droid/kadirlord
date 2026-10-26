@@ -1585,10 +1585,10 @@ const CULTURE_PREFIX: Record<FactionId, string> = {
 };
 
 const TROOP_CLASS_BASE: Record<UnitTierId, { hp: number; attack: number; defense: number; speed: number; wage: number }> = {
-  militia: { hp: 85, attack: 12, defense: 10, speed: 5.6, wage: 3 },
+  infantry: { hp: 85, attack: 12, defense: 10, speed: 5.6, wage: 3 },
   archer: { hp: 70, attack: 15, defense: 6, speed: 5.8, wage: 4 },
   cavalry: { hp: 105, attack: 17, defense: 9, speed: 9.5, wage: 8 },
-  guard: { hp: 125, attack: 20, defense: 16, speed: 6, wage: 12 },
+  horseArcher: { hp: 90, attack: 16, defense: 7, speed: 9.5, wage: 9 },
 };
 
 function troopUpgradeXpForTier(tier: number): number {
@@ -1597,6 +1597,7 @@ function troopUpgradeXpForTier(tier: number): number {
     case 2: return 100;
     case 3: return 200;
     case 4: return 350;
+    case 5: return 500;
     default: return 0;
   }
 }
@@ -1607,6 +1608,7 @@ function troopUpgradeGoldForTier(tier: number): number {
     case 2: return 40;
     case 3: return 80;
     case 4: return 120;
+    case 5: return 200;
     default: return 0;
   }
 }
@@ -1619,6 +1621,8 @@ function makeTroopDefinition(options: {
   battleClass: UnitTierId;
   upgrades: string[];
   horseRequirement?: TroopDefinition['horseRequirement'];
+  isNobleLine?: boolean;
+  isMounted?: boolean;
 }): TroopDefinition {
   const base = TROOP_CLASS_BASE[options.battleClass];
   const tierSteps = Math.max(0, options.tier - 1);
@@ -1633,6 +1637,8 @@ function makeTroopDefinition(options: {
     upgradeGold: troopUpgradeGoldForTier(options.tier),
     horseRequirement: options.horseRequirement ?? 'NONE',
     upgrades: options.upgrades,
+    isNobleLine: options.isNobleLine ?? false,
+    isMounted: options.isMounted ?? false,
     maxHp: base.hp + tierSteps * 12,
     attack: base.attack + tierSteps * 4,
     defense: base.defense + tierSteps * 3,
@@ -1640,68 +1646,212 @@ function makeTroopDefinition(options: {
   };
 }
 
+/**
+ * 10.9 — gerçek kültür birlik ağaçları (Bannerlord vanilla).
+ *
+ * Her kültürde iki kök vardır: T1 halk kökü (acemi) ve T2 soylu kökü.
+ * Halk hatları T5'te, soylu hatlar T6'da biter. Sınıf dağılımı kültürün
+ * karakteridir: Batanya'da halk okçusu yoktur (okçu soylu Fian hattıdır),
+ * Vlandiya/Sturgiya/Batanya'da atlı okçu yoktur. Terfi bağlantıları tekil
+ * birlik sayfalarından doğrulandı (GamerGuides/Fandom "Upgrades to/via").
+ * `bandits` sadeleştirilmiş uyarlama, `player` genel yedek ağaçtır.
+ */
+interface TroopSpec {
+  suffix: string;
+  name: string;
+  tier: number;
+  battleClass: UnitTierId;
+  upgrades: string[];
+  noble?: boolean;
+  horse?: boolean;
+}
+
+const TROOP_TREES: Record<FactionId, TroopSpec[]> = {
+  empire: [
+    { suffix: 'recruit', name: 'İmparatorluk Acemi', tier: 1, battleClass: 'infantry', upgrades: ['infantry_2', 'archer_2'] },
+    { suffix: 'infantry_2', name: 'İmparatorluk Piyadesi', tier: 2, battleClass: 'infantry', upgrades: ['infantry_3'] },
+    { suffix: 'infantry_3', name: 'İmparatorluk Eğitimli Piyadesi', tier: 3, battleClass: 'infantry', upgrades: ['infantry_4', 'menavliaton_4'] },
+    { suffix: 'infantry_4', name: 'İmparatorluk Kıdemli Piyadesi', tier: 4, battleClass: 'infantry', upgrades: ['legionary_5'] },
+    { suffix: 'legionary_5', name: 'İmparatorluk Lejyoneri', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'menavliaton_4', name: 'İmparatorluk Menavliatonu', tier: 4, battleClass: 'infantry', upgrades: ['menavliaton_5'] },
+    { suffix: 'menavliaton_5', name: 'İmparatorluk Seçkin Menavliatonu', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'archer_2', name: 'İmparatorluk Okçusu', tier: 2, battleClass: 'archer', upgrades: ['archer_3'] },
+    { suffix: 'archer_3', name: 'İmparatorluk Eğitimli Okçusu', tier: 3, battleClass: 'archer', upgrades: ['archer_4', 'crossbow_4'] },
+    { suffix: 'archer_4', name: 'İmparatorluk Kıdemli Okçusu', tier: 4, battleClass: 'archer', upgrades: ['palatine_5', 'bucellarii_5'] },
+    { suffix: 'palatine_5', name: 'İmparatorluk Palatin Muhafızı', tier: 5, battleClass: 'archer', upgrades: [] },
+    { suffix: 'bucellarii_5', name: 'İmparatorluk Bukelları', tier: 5, battleClass: 'horseArcher', upgrades: [], horse: true },
+    { suffix: 'crossbow_4', name: 'İmparatorluk Arbaletçisi', tier: 4, battleClass: 'archer', upgrades: ['crossbow_5'] },
+    { suffix: 'crossbow_5', name: 'İmparatorluk Çavuş Arbaletçisi', tier: 5, battleClass: 'archer', upgrades: [] },
+    { suffix: 'vigla_2', name: 'İmparatorluk Vigla Acemi', tier: 2, battleClass: 'cavalry', upgrades: ['equite_3'], noble: true, horse: true },
+    { suffix: 'equite_3', name: 'İmparatorluk Ekvitesi', tier: 3, battleClass: 'cavalry', upgrades: ['horseman_4'], noble: true, horse: true },
+    { suffix: 'horseman_4', name: 'İmparatorluk Ağır Süvarisi', tier: 4, battleClass: 'cavalry', upgrades: ['cataphract_5'], noble: true, horse: true },
+    { suffix: 'cataphract_5', name: 'İmparatorluk Katafraktı', tier: 5, battleClass: 'cavalry', upgrades: ['cataphract_6'], noble: true, horse: true },
+    { suffix: 'cataphract_6', name: 'İmparatorluk Seçkin Katafraktı', tier: 6, battleClass: 'cavalry', upgrades: [], noble: true, horse: true },
+  ],
+  vlandia: [
+    { suffix: 'recruit', name: 'Vlandiya Acemi', tier: 1, battleClass: 'infantry', upgrades: ['crossbow_2', 'footman_2'] },
+    { suffix: 'crossbow_2', name: 'Vlandiya Görevli Arbaletçisi', tier: 2, battleClass: 'archer', upgrades: ['crossbow_3'] },
+    { suffix: 'crossbow_3', name: 'Vlandiya Arbaletçisi', tier: 3, battleClass: 'archer', upgrades: ['crossbow_4'] },
+    { suffix: 'crossbow_4', name: 'Vlandiya Sertleşmiş Arbaletçisi', tier: 4, battleClass: 'archer', upgrades: ['sharpshooter_5'] },
+    { suffix: 'sharpshooter_5', name: 'Vlandiya Keskin Nişancısı', tier: 5, battleClass: 'archer', upgrades: [] },
+    { suffix: 'footman_2', name: 'Vlandiya Yaya Askeri', tier: 2, battleClass: 'infantry', upgrades: ['spearman_3', 'infantry_3'] },
+    { suffix: 'spearman_3', name: 'Vlandiya Mızrakçısı', tier: 3, battleClass: 'infantry', upgrades: ['billman_4'] },
+    { suffix: 'billman_4', name: 'Vlandiya Kancalı Mızrakçısı', tier: 4, battleClass: 'infantry', upgrades: ['voulgier_5', 'pikeman_5'] },
+    { suffix: 'voulgier_5', name: 'Vlandiya Vujiyesi', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'pikeman_5', name: 'Vlandiya Kargıcısı', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'infantry_3', name: 'Vlandiya Piyadesi', tier: 3, battleClass: 'infantry', upgrades: ['swordsman_4', 'lightcav_4'] },
+    { suffix: 'swordsman_4', name: 'Vlandiya Kılıççısı', tier: 4, battleClass: 'infantry', upgrades: ['sergeant_5'] },
+    { suffix: 'sergeant_5', name: 'Vlandiya Çavuşu', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'lightcav_4', name: 'Vlandiya Hafif Süvarisi', tier: 4, battleClass: 'cavalry', upgrades: ['vanguard_5'], horse: true },
+    { suffix: 'vanguard_5', name: 'Vlandiya Öncüsü', tier: 5, battleClass: 'cavalry', upgrades: [], horse: true },
+    { suffix: 'squire_2', name: 'Vlandiya Şövalye Çırağı', tier: 2, battleClass: 'cavalry', upgrades: ['gallant_3'], noble: true, horse: true },
+    { suffix: 'gallant_3', name: 'Vlandiya Yiğidi', tier: 3, battleClass: 'cavalry', upgrades: ['knight_4'], noble: true, horse: true },
+    { suffix: 'knight_4', name: 'Vlandiya Şövalyesi', tier: 4, battleClass: 'cavalry', upgrades: ['champion_5'], noble: true, horse: true },
+    { suffix: 'champion_5', name: 'Vlandiya Şampiyonu', tier: 5, battleClass: 'cavalry', upgrades: ['bannerknight_6'], noble: true, horse: true },
+    { suffix: 'bannerknight_6', name: 'Vlandiya Sancak Şövalyesi', tier: 6, battleClass: 'cavalry', upgrades: [], noble: true, horse: true },
+  ],
+  battania: [
+    { suffix: 'volunteer', name: 'Battaniya Gönüllüsü', tier: 1, battleClass: 'infantry', upgrades: ['clanwarrior_2', 'woodrunner_2'] },
+    { suffix: 'clanwarrior_2', name: 'Battaniya Klan Savaşçısı', tier: 2, battleClass: 'infantry', upgrades: ['trained_3'] },
+    { suffix: 'trained_3', name: 'Battaniya Eğitimli Savaşçısı', tier: 3, battleClass: 'infantry', upgrades: ['picked_4', 'scout_4'] },
+    { suffix: 'picked_4', name: 'Battaniya Seçme Savaşçısı', tier: 4, battleClass: 'infantry', upgrades: ['oathsworn_5'] },
+    { suffix: 'oathsworn_5', name: 'Battaniya Yeminli Savaşçısı', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'scout_4', name: 'Battaniya Gözcüsü', tier: 4, battleClass: 'cavalry', upgrades: ['horseman_5'], horse: true },
+    { suffix: 'horseman_5', name: 'Battaniya Süvarisi', tier: 5, battleClass: 'cavalry', upgrades: [], horse: true },
+    { suffix: 'woodrunner_2', name: 'Battaniya Orman Koşucusu', tier: 2, battleClass: 'infantry', upgrades: ['raider_3', 'skirmisher_3'] },
+    { suffix: 'raider_3', name: 'Battaniya Yağmacısı', tier: 3, battleClass: 'infantry', upgrades: ['falxman_4'] },
+    { suffix: 'falxman_4', name: 'Battaniya Falkçısı', tier: 4, battleClass: 'infantry', upgrades: ['falxman_5'] },
+    { suffix: 'falxman_5', name: 'Battaniya Kıdemli Falkçısı', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'skirmisher_3', name: 'Battaniya Avcı Eri', tier: 3, battleClass: 'infantry', upgrades: ['skirmisher_4'] },
+    { suffix: 'skirmisher_4', name: 'Battaniya Kıdemli Avcı Eri', tier: 4, battleClass: 'infantry', upgrades: ['wildling_5', 'mountedskirmisher_5'] },
+    { suffix: 'wildling_5', name: 'Battaniya Yabanılı', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'mountedskirmisher_5', name: 'Battaniya Atlı Avcı Eri', tier: 5, battleClass: 'cavalry', upgrades: [], horse: true },
+    { suffix: 'highborn_2', name: 'Battaniya Asilzade Genci', tier: 2, battleClass: 'archer', upgrades: ['highborn_3'], noble: true },
+    { suffix: 'highborn_3', name: 'Battaniya Asilzade Savaşçısı', tier: 3, battleClass: 'archer', upgrades: ['hero_4'], noble: true },
+    { suffix: 'hero_4', name: 'Battaniya Kahramanı', tier: 4, battleClass: 'archer', upgrades: ['fian_5'], noble: true },
+    { suffix: 'fian_5', name: 'Battaniya Fianı', tier: 5, battleClass: 'archer', upgrades: ['fian_6'], noble: true },
+    { suffix: 'fian_6', name: 'Battaniya Fian Şampiyonu', tier: 6, battleClass: 'archer', upgrades: [], noble: true },
+  ],
+  sturgia: [
+    { suffix: 'recruit', name: 'Sturgiya Acemi', tier: 1, battleClass: 'infantry', upgrades: ['warrior_2', 'woodsman_2'] },
+    { suffix: 'warrior_2', name: 'Sturgiya Savaşçısı', tier: 2, battleClass: 'infantry', upgrades: ['soldier_3'] },
+    { suffix: 'soldier_3', name: 'Sturgiya Askeri', tier: 3, battleClass: 'infantry', upgrades: ['spearman_4', 'linebreaker_4'] },
+    { suffix: 'spearman_4', name: 'Sturgiya Mızrakçısı', tier: 4, battleClass: 'infantry', upgrades: ['heavyspear_5', 'heavyaxe_5'] },
+    { suffix: 'heavyspear_5', name: 'Sturgiya Ağır Mızrakçısı', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'heavyaxe_5', name: 'Sturgiya Ağır Baltacısı', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'linebreaker_4', name: 'Sturgiya Hat Kıranı', tier: 4, battleClass: 'infantry', upgrades: ['linebreaker_5'] },
+    { suffix: 'linebreaker_5', name: 'Sturgiya Kahraman Hat Kıranı', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'woodsman_2', name: 'Sturgiya Ormancısı', tier: 2, battleClass: 'infantry', upgrades: ['hunter_3', 'brigand_3'] },
+    { suffix: 'hunter_3', name: 'Sturgiya Avcısı', tier: 3, battleClass: 'archer', upgrades: ['archer_4'] },
+    { suffix: 'archer_4', name: 'Sturgiya Okçusu', tier: 4, battleClass: 'archer', upgrades: ['bowman_5'] },
+    { suffix: 'bowman_5', name: 'Sturgiya Kıdemli Okçusu', tier: 5, battleClass: 'archer', upgrades: [] },
+    { suffix: 'brigand_3', name: 'Sturgiya Eşkıyası', tier: 3, battleClass: 'infantry', upgrades: ['brigand_4'] },
+    { suffix: 'brigand_4', name: 'Sturgiya Sertleşmiş Eşkıyası', tier: 4, battleClass: 'cavalry', upgrades: ['horseraider_5'], horse: true },
+    { suffix: 'horseraider_5', name: 'Sturgiya Atlı Yağmacısı', tier: 5, battleClass: 'cavalry', upgrades: [], horse: true },
+    { suffix: 'warriorson_2', name: 'Sturgiya Savaşçı Oğlu', tier: 2, battleClass: 'infantry', upgrades: ['varyag_3'], noble: true },
+    { suffix: 'varyag_3', name: 'Sturgiya Varyagi', tier: 3, battleClass: 'infantry', upgrades: ['varyagveteran_4'], noble: true },
+    { suffix: 'varyagveteran_4', name: 'Sturgiya Kıdemli Varyagi', tier: 4, battleClass: 'cavalry', upgrades: ['druzhinnik_5'], noble: true, horse: true },
+    { suffix: 'druzhinnik_5', name: 'Sturgiya Drujiniki', tier: 5, battleClass: 'cavalry', upgrades: ['druzhinnik_6'], noble: true, horse: true },
+    { suffix: 'druzhinnik_6', name: 'Sturgiya Drujinik Şampiyonu', tier: 6, battleClass: 'cavalry', upgrades: [], noble: true, horse: true },
+  ],
+  khuzait: [
+    { suffix: 'nomad', name: 'Kuzeyit Göçeri', tier: 1, battleClass: 'infantry', upgrades: ['footman_2', 'tribal_2'] },
+    { suffix: 'footman_2', name: 'Kuzeyit Yaya Askeri', tier: 2, battleClass: 'infantry', upgrades: ['spearman_3', 'hunter_3'] },
+    { suffix: 'spearman_3', name: 'Kuzeyit Mızrakçısı', tier: 3, battleClass: 'infantry', upgrades: ['spearinfantry_4'] },
+    { suffix: 'spearinfantry_4', name: 'Kuzeyit Mızrak Piyadesi', tier: 4, battleClass: 'infantry', upgrades: ['darkhan_5'] },
+    { suffix: 'darkhan_5', name: 'Kuzeyit Darhanı', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'hunter_3', name: 'Kuzeyit Avcısı', tier: 3, battleClass: 'archer', upgrades: ['archer_4'] },
+    { suffix: 'archer_4', name: 'Kuzeyit Okçusu', tier: 4, battleClass: 'archer', upgrades: ['marksman_5'] },
+    { suffix: 'marksman_5', name: 'Kuzeyit Keskin Nişancısı', tier: 5, battleClass: 'archer', upgrades: [] },
+    { suffix: 'tribal_2', name: 'Kuzeyit Kabile Savaşçısı', tier: 2, battleClass: 'horseArcher', upgrades: ['raider_3', 'horseman_3'], horse: true },
+    { suffix: 'raider_3', name: 'Kuzeyit Yağmacısı', tier: 3, battleClass: 'horseArcher', upgrades: ['horsearcher_4'], horse: true },
+    { suffix: 'horsearcher_4', name: 'Kuzeyit Atlı Okçusu', tier: 4, battleClass: 'horseArcher', upgrades: ['heavyhorsearcher_5'], horse: true },
+    { suffix: 'heavyhorsearcher_5', name: 'Kuzeyit Ağır Atlı Okçusu', tier: 5, battleClass: 'horseArcher', upgrades: [], horse: true },
+    { suffix: 'horseman_3', name: 'Kuzeyit Süvarisi', tier: 3, battleClass: 'cavalry', upgrades: ['lancer_4'], horse: true },
+    { suffix: 'lancer_4', name: 'Kuzeyit Kargıcısı', tier: 4, battleClass: 'cavalry', upgrades: ['heavylancer_5'], horse: true },
+    { suffix: 'heavylancer_5', name: 'Kuzeyit Ağır Kargıcısı', tier: 5, battleClass: 'cavalry', upgrades: [], horse: true },
+    { suffix: 'noblesson_2', name: 'Kuzeyit Asilzade Oğlu', tier: 2, battleClass: 'horseArcher', upgrades: ['qanqli_3'], noble: true, horse: true },
+    { suffix: 'qanqli_3', name: 'Kuzeyit Kanglısı', tier: 3, battleClass: 'horseArcher', upgrades: ['torguud_4'], noble: true, horse: true },
+    { suffix: 'torguud_4', name: 'Kuzeyit Torgudu', tier: 4, battleClass: 'horseArcher', upgrades: ['kheshig_5'], noble: true, horse: true },
+    { suffix: 'kheshig_5', name: 'Kuzeyit Keşiği', tier: 5, battleClass: 'horseArcher', upgrades: ['khansguard_6'], noble: true, horse: true },
+    { suffix: 'khansguard_6', name: 'Kuzeyit Han Muhafızı', tier: 6, battleClass: 'horseArcher', upgrades: [], noble: true, horse: true },
+  ],
+  aserai: [
+    { suffix: 'recruit', name: 'Aserai Acemi', tier: 1, battleClass: 'infantry', upgrades: ['tribesman_2', 'mamluke_2'] },
+    { suffix: 'tribesman_2', name: 'Aserai Kabile Savaşçısı', tier: 2, battleClass: 'infantry', upgrades: ['footman_3', 'lightarcher_3'] },
+    { suffix: 'footman_3', name: 'Aserai Yaya Askeri', tier: 3, battleClass: 'infantry', upgrades: ['infantry_4'] },
+    { suffix: 'infantry_4', name: 'Aserai Piyadesi', tier: 4, battleClass: 'infantry', upgrades: ['infantry_5'] },
+    { suffix: 'infantry_5', name: 'Aserai Kıdemli Piyadesi', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'lightarcher_3', name: 'Aserai Hafif Okçusu', tier: 3, battleClass: 'archer', upgrades: ['archer_4'] },
+    { suffix: 'archer_4', name: 'Aserai Okçusu', tier: 4, battleClass: 'archer', upgrades: ['masterarcher_5'] },
+    { suffix: 'masterarcher_5', name: 'Aserai Usta Okçusu', tier: 5, battleClass: 'archer', upgrades: [] },
+    { suffix: 'mamluke_2', name: 'Aserai Memlük Askeri', tier: 2, battleClass: 'infantry', upgrades: ['mamlukeaxe_3', 'mamlukeregular_3'] },
+    { suffix: 'mamlukeaxe_3', name: 'Aserai Memlük Baltacısı', tier: 3, battleClass: 'infantry', upgrades: ['mamlukeguard_4'] },
+    { suffix: 'mamlukeguard_4', name: 'Aserai Memlük Muhafızı', tier: 4, battleClass: 'infantry', upgrades: ['mamlukepalace_5'] },
+    { suffix: 'mamlukepalace_5', name: 'Aserai Memlük Saray Muhafızı', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'mamlukeregular_3', name: 'Aserai Nizami Memlüğü', tier: 3, battleClass: 'cavalry', upgrades: ['mamlukecavalry_4'], horse: true },
+    { suffix: 'mamlukecavalry_4', name: 'Aserai Memlük Süvarisi', tier: 4, battleClass: 'horseArcher', upgrades: ['mamlukeheavy_5'], horse: true },
+    { suffix: 'mamlukeheavy_5', name: 'Aserai Ağır Memlük Süvarisi', tier: 5, battleClass: 'horseArcher', upgrades: [], horse: true },
+    { suffix: 'youth_2', name: 'Aserai Genci', tier: 2, battleClass: 'cavalry', upgrades: ['tribalhorseman_3'], noble: true, horse: true },
+    { suffix: 'tribalhorseman_3', name: 'Aserai Kabile Süvarisi', tier: 3, battleClass: 'cavalry', upgrades: ['faris_4'], noble: true, horse: true },
+    { suffix: 'faris_4', name: 'Aserai Farisi', tier: 4, battleClass: 'cavalry', upgrades: ['farisveteran_5'], noble: true, horse: true },
+    { suffix: 'farisveteran_5', name: 'Aserai Kıdemli Farisi', tier: 5, battleClass: 'cavalry', upgrades: ['farisvanguard_6'], noble: true, horse: true },
+    { suffix: 'farisvanguard_6', name: 'Aserai Öncü Farisi', tier: 6, battleClass: 'cavalry', upgrades: [], noble: true, horse: true },
+  ],
+  bandits: [
+    { suffix: 'recruit', name: 'Haydut', tier: 1, battleClass: 'infantry', upgrades: ['infantry_2', 'archer_2'] },
+    { suffix: 'infantry_2', name: 'Serseri', tier: 2, battleClass: 'infantry', upgrades: ['infantry_3', 'cavalry_3'] },
+    { suffix: 'infantry_3', name: 'Eşkıya', tier: 3, battleClass: 'infantry', upgrades: ['boss_4'] },
+    { suffix: 'boss_4', name: 'Haydut Reisi', tier: 4, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'archer_2', name: 'Pusucu', tier: 2, battleClass: 'archer', upgrades: ['archer_3'] },
+    { suffix: 'archer_3', name: 'Orman Haydutu', tier: 3, battleClass: 'archer', upgrades: [] },
+    { suffix: 'cavalry_3', name: 'Atlı Haydut', tier: 3, battleClass: 'cavalry', upgrades: [], horse: true },
+  ],
+  player: [
+    { suffix: 'recruit', name: 'Sancak Acemi', tier: 1, battleClass: 'infantry', upgrades: ['infantry_2', 'archer_2'] },
+    { suffix: 'infantry_2', name: 'Sancak Piyadesi', tier: 2, battleClass: 'infantry', upgrades: ['infantry_3', 'cavalry_3'] },
+    { suffix: 'infantry_3', name: 'Sancak Eğitimli Piyadesi', tier: 3, battleClass: 'infantry', upgrades: ['infantry_4'] },
+    { suffix: 'infantry_4', name: 'Sancak Kıdemli Piyadesi', tier: 4, battleClass: 'infantry', upgrades: ['infantry_5'] },
+    { suffix: 'infantry_5', name: 'Sancak Lejyoneri', tier: 5, battleClass: 'infantry', upgrades: [] },
+    { suffix: 'archer_2', name: 'Sancak Okçusu', tier: 2, battleClass: 'archer', upgrades: ['archer_3'] },
+    { suffix: 'archer_3', name: 'Sancak Eğitimli Okçusu', tier: 3, battleClass: 'archer', upgrades: ['archer_4', 'horsearcher_4'] },
+    { suffix: 'archer_4', name: 'Sancak Kıdemli Okçusu', tier: 4, battleClass: 'archer', upgrades: ['archer_5'] },
+    { suffix: 'archer_5', name: 'Sancak Usta Okçusu', tier: 5, battleClass: 'archer', upgrades: [] },
+    { suffix: 'horsearcher_4', name: 'Sancak Atlı Okçusu', tier: 4, battleClass: 'horseArcher', upgrades: ['horsearcher_5'], horse: true },
+    { suffix: 'horsearcher_5', name: 'Sancak Ağır Atlı Okçusu', tier: 5, battleClass: 'horseArcher', upgrades: [], horse: true },
+    { suffix: 'cavalry_3', name: 'Sancak Süvarisi', tier: 3, battleClass: 'cavalry', upgrades: ['cavalry_4'], horse: true },
+    { suffix: 'cavalry_4', name: 'Sancak Ağır Süvarisi', tier: 4, battleClass: 'cavalry', upgrades: ['cavalry_5'], horse: true },
+    { suffix: 'cavalry_5', name: 'Sancak Seçkin Süvarisi', tier: 5, battleClass: 'cavalry', upgrades: [], horse: true },
+  ],
+};
+
 function buildCultureTree(culture: FactionId): TroopDefinition[] {
-  const names = CULTURE_TROOPS[culture];
-  const prefix = CULTURE_PREFIX[culture];
-  const id = (suffix: string) => `${culture}_${suffix}`;
-  return [
-    makeTroopDefinition({
-      culture, suffix: 'recruit', name: `${prefix} Acemisi`, tier: 1, battleClass: 'militia',
-      upgrades: [id('infantry_2'), id('archer_2'), id('cavalry_2')],
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'infantry_2', name: `${prefix} Piyadesi`, tier: 2, battleClass: 'militia',
-      upgrades: [id('infantry_3')],
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'infantry_3', name: names.militia.name, tier: 3, battleClass: 'militia',
-      upgrades: [id('infantry_4'), id('guard_4')],
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'infantry_4', name: `Kıdemli ${names.militia.name}`, tier: 4, battleClass: 'militia',
-      upgrades: [id('guard_5')],
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'guard_4', name: names.guard.name, tier: 4, battleClass: 'guard',
-      upgrades: [id('guard_5')],
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'guard_5', name: `Seçkin ${names.guard.name}`, tier: 5, battleClass: 'guard',
-      upgrades: [],
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'archer_2', name: `Acemi ${names.archer.name}`, tier: 2, battleClass: 'archer',
-      upgrades: [id('archer_3')],
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'archer_3', name: names.archer.name, tier: 3, battleClass: 'archer',
-      upgrades: [id('archer_4')],
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'archer_4', name: `Kıdemli ${names.archer.name}`, tier: 4, battleClass: 'archer',
-      upgrades: [id('archer_5')],
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'archer_5', name: `Usta ${names.archer.name}`, tier: 5, battleClass: 'archer',
-      upgrades: [],
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'cavalry_2', name: `Acemi ${names.cavalry.name}`, tier: 2, battleClass: 'cavalry',
-      upgrades: [id('cavalry_3')], horseRequirement: 'HORSE',
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'cavalry_3', name: names.cavalry.name, tier: 3, battleClass: 'cavalry',
-      upgrades: [id('cavalry_4')],
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'cavalry_4', name: `Ağır ${names.cavalry.name}`, tier: 4, battleClass: 'cavalry',
-      upgrades: [id('cavalry_5')], horseRequirement: 'WAR_HORSE',
-    }),
-    makeTroopDefinition({
-      culture, suffix: 'cavalry_5', name: `Seçkin ${names.cavalry.name}`, tier: 5, battleClass: 'cavalry',
-      upgrades: [],
-    }),
-  ];
+  const specs = TROOP_TREES[culture] ?? [];
+  const bySuffix = new Map(specs.map((spec) => [spec.suffix, spec]));
+  const parentOf = new Map<string, TroopSpec>();
+  for (const spec of specs) {
+    for (const target of spec.upgrades) parentOf.set(target, spec);
+  }
+  return specs.map((spec) => {
+    const parent = parentOf.get(spec.suffix);
+    // Ata ilk kez binen birlik at ister; T4/T6 atlıları savaş atı ister.
+    let horseRequirement: TroopDefinition['horseRequirement'] = 'NONE';
+    if (spec.horse && parent) {
+      if (!parent.horse) horseRequirement = 'HORSE';
+      else if (spec.tier === 4 || spec.tier === 6) horseRequirement = 'WAR_HORSE';
+    }
+    return makeTroopDefinition({
+      culture,
+      suffix: spec.suffix,
+      name: spec.name,
+      tier: spec.tier,
+      battleClass: spec.battleClass,
+      upgrades: spec.upgrades.map((suffix) => `${culture}_${suffix}`),
+      horseRequirement,
+      isNobleLine: Boolean(spec.noble),
+      isMounted: Boolean(spec.horse),
+    });
+  });
 }
 
 export const TROOP_DEFINITIONS: readonly TroopDefinition[] = (
@@ -1712,22 +1862,67 @@ export const TROOP_DEFINITION_BY_ID: ReadonlyMap<string, TroopDefinition> = new 
 );
 
 export function getTroopDefinition(troopId: string): TroopDefinition | null {
-  return TROOP_DEFINITION_BY_ID.get(troopId) ?? null;
+  return (
+    TROOP_DEFINITION_BY_ID.get(troopId) ??
+    TROOP_DEFINITION_BY_ID.get(migrateLegacyTroopId(troopId)) ??
+    null
+  );
 }
 
+/** Kültürde sınıfın temsili orta kademe birliği (eski sınıf-temelli çağrılar için). */
 export function legacyTroopIdForClass(
   battleClass: UnitTierId,
   culture: FactionId = 'player',
 ): string {
-  switch (battleClass) {
-    case 'militia': return `${culture}_infantry_3`;
-    case 'archer': return `${culture}_archer_3`;
-    case 'cavalry': return `${culture}_cavalry_3`;
-    case 'guard': return `${culture}_guard_4`;
+  const byClass = TROOP_DEFINITIONS.filter(
+    (def) => def.culture === culture && def.battleClass === battleClass,
+  );
+  // Halk hattı yeğlenir; sınıf yalnız soylu hatta varsa (örn. Batanya okçusu
+  // Fian hattı) soylu temsilci kullanılır.
+  const candidates = byClass.filter((def) => !def.isNobleLine);
+  const pool = candidates.length > 0 ? candidates : byClass;
+  if (pool.length > 0) {
+    const sorted = [...pool].sort((a, b) => a.tier - b.tier);
+    return (sorted.find((def) => def.tier >= 3) ?? sorted[sorted.length - 1]).id;
   }
+  // Kültürde bu sınıf yoksa (örn. Vlandiya atlı okçusu) kültür köküne düş.
+  const root = TROOP_DEFINITIONS.find((def) => def.culture === culture && def.tier === 1);
+  return root?.id ?? 'player_recruit';
 }
 
-/** Ağaç bütünlüğü: tekrarlanan kimlik, kopuk terfi ve kademe sıçraması olmamalı. */
+const LEGACY_TROOP_ID_PATTERN =
+  /^(player|empire|vlandia|battania|sturgia|khuzait|aserai|bandits)_(recruit|infantry|archer|cavalry|guard)(?:_(\d+))?$/;
+
+/**
+ * 10.9 öncesi sahte ağaç kimliklerinin (`kültür_sınıf_kademe`) yeni ağaçlara
+ * göçü: eski `guard` seçkin piyadeydi, piyadeye gider; kademe korunur,
+ * halk hattında aynı kademedeki ilk birlik seçilir.
+ */
+export function migrateLegacyTroopId(troopId: string): string {
+  if (TROOP_DEFINITION_BY_ID.has(troopId)) return troopId;
+  const match = LEGACY_TROOP_ID_PATTERN.exec(troopId);
+  if (!match) return troopId;
+  const culture = match[1] as FactionId;
+  const legacyClass = match[2];
+  const tier = match[3] ? Number(match[3]) : 1;
+  if (legacyClass === 'recruit' || tier <= 1) {
+    return TROOP_DEFINITIONS.find((def) => def.culture === culture && def.tier === 1)?.id ?? troopId;
+  }
+  const battleClass: UnitTierId =
+    legacyClass === 'archer' ? 'archer' : legacyClass === 'cavalry' ? 'cavalry' : 'infantry';
+  const candidates = TROOP_DEFINITIONS.filter(
+    (def) => def.culture === culture && def.battleClass === battleClass && !def.isNobleLine,
+  );
+  if (candidates.length === 0) {
+    return TROOP_DEFINITIONS.find((def) => def.culture === culture && def.tier === 1)?.id ?? troopId;
+  }
+  const exact = candidates.find((def) => def.tier === tier);
+  if (exact) return exact.id;
+  const sorted = [...candidates].sort((a, b) => a.tier - b.tier);
+  return (sorted.filter((def) => def.tier < tier).pop() ?? sorted[0]).id;
+}
+
+/** Ağaç bütünlüğü: tekrarlanan kimlik, kopuk terfi, kademe sıçraması ve kökten erişilemeyen birlik olmamalı. */
 export function validateTroopDefinitions(
   definitions: readonly TroopDefinition[] = TROOP_DEFINITIONS,
 ): string[] {
@@ -1737,25 +1932,37 @@ export function validateTroopDefinitions(
     if (byId.has(definition.id)) errors.push(`Tekrarlanan birlik kimliği: ${definition.id}`);
     byId.set(definition.id, definition);
   }
+  const hasParent = new Set<string>();
+  for (const definition of definitions) {
+    for (const upgradeId of definition.upgrades) hasParent.add(upgradeId);
+  }
   for (const definition of definitions) {
     for (const upgradeId of definition.upgrades) {
       const target = byId.get(upgradeId);
       if (!target) errors.push(`${definition.id} bilinmeyen hedefe terfi ediyor: ${upgradeId}`);
       else if (target.culture !== definition.culture) errors.push(`${definition.id} kültür dışı hedefe terfi ediyor: ${upgradeId}`);
       else if (target.tier !== definition.tier + 1) errors.push(`${definition.id} kademe atlayarak terfi ediyor: ${upgradeId}`);
+      else if (target.isNobleLine !== definition.isNobleLine) errors.push(`${definition.id} hat değiştirerek terfi ediyor: ${upgradeId}`);
     }
-    if (definition.tier < 5 && definition.upgrades.length === 0) {
-      errors.push(`Kademe 5 altı birlik terfisiz: ${definition.id}`);
+    if (definition.tier < 1 || definition.tier > 6) {
+      errors.push(`Geçersiz kademe: ${definition.id} (T${definition.tier})`);
     }
-    if (definition.tier >= 5 && definition.upgrades.length > 0) {
-      errors.push(`Son kademe birlik terfi içeriyor: ${definition.id}`);
+    const isRoot = !hasParent.has(definition.id);
+    if (isRoot && !((definition.tier === 1 && !definition.isNobleLine) || (definition.tier === 2 && definition.isNobleLine))) {
+      errors.push(`Kök olmayan birlik terfi kaynağısız: ${definition.id}`);
+    }
+    if (!isRoot && definition.tier === 1) {
+      errors.push(`T1 birlik terfi hedefi olamaz: ${definition.id}`);
+    }
+    if (definition.tier >= 6 && definition.upgrades.length > 0) {
+      errors.push(`Son kademe (T6) birlik terfi içeriyor: ${definition.id}`);
     }
   }
   return errors;
 }
 
 export function troopStackTotals(stacks: TroopStack[] | undefined): TroopRoster {
-  const totals: TroopRoster = { militia: 0, archer: 0, cavalry: 0, guard: 0 };
+  const totals: TroopRoster = { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 };
   for (const stack of stacks ?? []) {
     const definition = getTroopDefinition(stack.troopId);
     if (!definition) continue;
@@ -1780,11 +1987,17 @@ export function prisonerStackTotal(stacks: PrisonerStack[] | undefined): number 
 }
 
 function sanitizeRoster(roster: TroopRoster | undefined): TroopRoster {
+  // 10.9 göçü: eski kayıtlardaki `militia` (piyade) ve `guard` (seçkin piyade)
+  // alanları piyade sınıfında birleştirilir; asker kaybı olmaz.
+  const legacy = (roster ?? {}) as Record<string, unknown>;
   return {
-    militia: positiveInt(roster?.militia),
+    infantry:
+      positiveInt(roster?.infantry) +
+      positiveInt(legacy.militia as number) +
+      positiveInt(legacy.guard as number),
     archer: positiveInt(roster?.archer),
     cavalry: positiveInt(roster?.cavalry),
-    guard: positiveInt(roster?.guard),
+    horseArcher: positiveInt(roster?.horseArcher),
   };
 }
 
@@ -1797,18 +2010,20 @@ function capTroopStackXp(stack: TroopStack): TroopStack {
 function sanitizeTroopStacks(rawStacks: TroopStack[] | undefined): TroopStack[] {
   const byId = new Map<string, TroopStack>();
   for (const raw of rawStacks ?? []) {
-    if (!raw || typeof raw !== 'object' || !getTroopDefinition(raw.troopId)) continue;
+    if (!raw || typeof raw !== 'object' || typeof raw.troopId !== 'string') continue;
+    const troopId = migrateLegacyTroopId(raw.troopId);
+    if (!getTroopDefinition(troopId)) continue;
     const count = positiveInt(raw.count);
     if (count <= 0) continue;
-    const current = byId.get(raw.troopId);
+    const current = byId.get(troopId);
     const merged: TroopStack = {
-      troopId: raw.troopId,
+      troopId,
       count: (current?.count ?? 0) + count,
       wounded: (current?.wounded ?? 0) + Math.min(count, positiveInt(raw.wounded)),
       xp: (current?.xp ?? 0) + Math.max(0, finiteNumber(raw.xp, 0)),
     };
     merged.wounded = Math.min(merged.count, merged.wounded);
-    byId.set(raw.troopId, capTroopStackXp(merged));
+    byId.set(troopId, capTroopStackXp(merged));
   }
   return [...byId.values()];
 }
@@ -1887,10 +2102,12 @@ function reconcileTroopStacks(rawStacks: TroopStack[] | undefined, desired: Troo
 function sanitizePrisonerStacks(rawStacks: PrisonerStack[] | undefined): PrisonerStack[] {
   const byId = new Map<string, PrisonerStack>();
   for (const raw of rawStacks ?? []) {
-    if (!raw || typeof raw !== 'object' || !getTroopDefinition(raw.troopId)) continue;
+    if (!raw || typeof raw !== 'object' || typeof raw.troopId !== 'string') continue;
+    const troopId = migrateLegacyTroopId(raw.troopId);
+    if (!getTroopDefinition(troopId)) continue;
     const count = positiveInt(raw.count);
     if (count <= 0) continue;
-    const current = byId.get(raw.troopId);
+    const current = byId.get(troopId);
     const merged: PrisonerStack = {
       troopId: raw.troopId,
       count: (current?.count ?? 0) + count,

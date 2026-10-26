@@ -49,7 +49,7 @@ const baseCampaign = createInitialCampaignState('Komutan Demirhan', 'noble');
     ...baseCampaign,
     playerX: 10,
     playerZ: 10,
-    roster: { militia: 6, archer: 0, cavalry: 0, guard: 0 },
+    roster: { infantry: 6, archer: 0, cavalry: 0, horseArcher: 0 },
   };
   const playerStrength = getPlayerPartyStrength(weakPlayerCampaign);
 
@@ -58,7 +58,7 @@ const baseCampaign = createInitialCampaignState('Komutan Demirhan', 'noble');
     x: 24,
     z: 10,
     armySize: 32,
-    roster: { militia: 16, archer: 8, cavalry: 6, guard: 2 },
+    roster: { infantry: 16, archer: 8, cavalry: 6, horseArcher: 2 },
   };
 
   const reaction = evaluateHostileReaction({
@@ -127,7 +127,7 @@ const baseCampaign = createInitialCampaignState('Komutan Demirhan', 'noble');
     ...baseCampaign,
     playerX: 10,
     playerZ: 10,
-    roster: { militia: 18, archer: 16, cavalry: 14, guard: 12 },
+    roster: { infantry: 18, archer: 16, cavalry: 14, horseArcher: 12 },
   };
   const playerStrength = getPlayerPartyStrength(strongPlayerCampaign);
 
@@ -136,7 +136,7 @@ const baseCampaign = createInitialCampaignState('Komutan Demirhan', 'noble');
     x: 22,
     z: 10,
     armySize: 7,
-    roster: { militia: 5, archer: 2, cavalry: 0, guard: 0 },
+    roster: { infantry: 5, archer: 2, cavalry: 0, horseArcher: 0 },
   };
 
   const reaction = evaluateHostileReaction({
@@ -194,12 +194,12 @@ const baseCampaign = createInitialCampaignState('Komutan Demirhan', 'noble');
     ...baseCampaign.lords.find((l) => l.faction !== 'bandits')!,
     isAtWarWithPlayer: true,
     armySize: 48,
-    roster: { militia: 16, archer: 14, cavalry: 10, guard: 8 },
+    roster: { infantry: 16, archer: 14, cavalry: 10, horseArcher: 8 },
   };
   const bandit = {
     ...baseCampaign.lords.find((l) => l.faction === 'bandits')!,
     armySize: 30,
-    roster: { militia: 18, archer: 8, cavalry: 4, guard: 0 },
+    roster: { infantry: 18, archer: 8, cavalry: 4, horseArcher: 0 },
   };
 
   for (const scenario of [
@@ -289,12 +289,12 @@ const baseCampaign = createInitialCampaignState('Komutan Demirhan', 'noble');
 
   const strongPlayer = {
     ...baseCampaign,
-    roster: { militia: 20, archer: 20, cavalry: 15, guard: 15 },
+    roster: { infantry: 20, archer: 20, cavalry: 15, horseArcher: 15 },
   };
   const weakBandit = {
     ...baseCampaign.lords.find((l) => l.faction === 'bandits')!,
     armySize: 8,
-    roster: { militia: 6, archer: 2, cavalry: 0, guard: 0 },
+    roster: { infantry: 6, archer: 2, cavalry: 0, horseArcher: 0 },
   };
   const surRes = resolveCorneredBanditSurrender(strongPlayer, weakBandit);
   ok(

@@ -9,7 +9,6 @@ import {
   Settlement,
   SettlementDailyDefault,
   SiegeEngineType,
-  TacticalOrder,
   TroopRoster,
   UnitTierId,
   WorkshopTypeId,
@@ -43,7 +42,6 @@ import {
   sellSurplusLootAtMarket,
   setSettlementDailyDefault,
   upgradeSettlementBuilding,
-  upgradeTroopTier,
 } from './game/rules';
 import type {
   BattleTelemetry,
@@ -51,6 +49,7 @@ import type {
   MapCameraTelemetry,
 } from './game/types';
 import { WorldCanvas } from './components/WorldCanvas';
+import { BattlefieldView } from './components/BattlefieldView';
 import { GameHud } from './components/GameHud';
 import { SettlementModal } from './components/SettlementModal';
 import { SiegeEncounterModal } from './components/SiegeEncounterModal';
@@ -240,20 +239,17 @@ export default function App() {
   // Battle State & Pre-Allocated Object Pool
   const campaignBattlePoolRef = useRef<BattleMemoryPool>(new BattleMemoryPool());
   const [battlePrewarmStages, setBattlePrewarmStages] = useState<PrewarmStageReport[] | null>(null);
-  const [activeOrder, setActiveOrder] = useState<TacticalOrder>('CHARGE');
   const [battleTargetLordId, setBattleTargetLordId] = useState<string | null>(null);
   const [battleTargetSettlementId, setBattleTargetSettlementId] = useState<string | null>(null);
   const [battleTelemetry, setBattleTelemetry] = useState<BattleTelemetry>({
     playerHp: 120,
     playerMaxHp: 120,
-    playerStamina: 100,
     alliesAlive: 17,
     alliesTotal: 17,
     enemiesAlive: 11,
     enemiesTotal: 11,
     enemyCommanderName: 'Kara Geçit Yağmacıları',
-    activeOrder: 'CHARGE',
-    comboCount: 0,
+    orderSummary: '—',
   });
 
   const [outcomeSnapshot, setOutcomeSnapshot] = useState<{
@@ -1056,12 +1052,8 @@ export default function App() {
         }
       }
 
-      if (gameState === 'playing' && subMode === 'battle') {
-        if (e.code === 'Digit1') setActiveOrder('CHARGE');
-        if (e.code === 'Digit2') setActiveOrder('SHIELD_WALL');
-        if (e.code === 'Digit3') setActiveOrder('FOLLOW_ME');
-        if (e.code === 'Digit4') setActiveOrder('HOLD_VOLLEY');
-      }
+      // Savaş içi bölük emirleri (0-4 + F tuşları) BattlefieldView'de
+      // capture aşamasında işlenir (B4); burada rakam tuşlarına dokunulmaz.
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -1101,7 +1093,7 @@ export default function App() {
         });
         // Fetih bildirimi, vakayinameye düşen en yeni olaydan türetilir (aşağıdaki effect).
         const next = tick.state;
-        // Faz 8: gönüllü havuzları her 3 günde bir tazelenir.
+        // Gönüllü üretimi günlük tik içindedir (10.7); toplu tazeleme yok.
         return { ...next, settlements: refreshRecruitPools(next.settlements, next.day) };
       });
     }, intervalMs);
@@ -1259,14 +1251,14 @@ export default function App() {
           const mergedKeys = Array.from(new Set([...(s.recruitedSlotKeys ?? []), ...newSlotKeys]));
           const nextPool = { ...s.recruitPool };
           for (let i = 0; i < validRecruits.length; i++) {
-            if (nextPool.militia > 0) nextPool.militia -= 1;
+            if (nextPool.infantry > 0) nextPool.infantry -= 1;
             else if (nextPool.archer > 0) nextPool.archer -= 1;
             else if (nextPool.cavalry > 0) nextPool.cavalry -= 1;
-            else if (nextPool.guard > 0) nextPool.guard -= 1;
+            else if (nextPool.horseArcher > 0) nextPool.horseArcher -= 1;
           }
           return {
             ...s,
-            lastRecruitDay: prev.day,
+            // Günlük kilit yok (10.7): alınan yuvalar boş kalır, günlük üretimle dolar.
             recruitedSlotKeys: mergedKeys,
             recruitPool: nextPool,
           };
@@ -1535,7 +1527,6 @@ export default function App() {
     setActiveSettlementModal(null);
     setBattleTargetLordId(lord.id);
     setBattleTargetSettlementId(null);
-    setActiveOrder('CHARGE');
     const stages = campaignBattlePoolRef.current.prewarmMemoryPages();
     setBattlePrewarmStages(stages);
     setSubMode('battle');
@@ -1547,7 +1538,6 @@ export default function App() {
     setActiveDiplomacyLord(null);
     setBattleTargetSettlementId(settlement.id);
     setBattleTargetLordId(null);
-    setActiveOrder('CHARGE');
     const stages = campaignBattlePoolRef.current.prewarmMemoryPages();
     setBattlePrewarmStages(stages);
     setSubMode('battle');
@@ -1558,7 +1548,6 @@ export default function App() {
     setActiveDiplomacyLord(null);
     setBattleTargetLordId('lord-kargi');
     setBattleTargetSettlementId(null);
-    setActiveOrder('CHARGE');
     const stages = campaignBattlePoolRef.current.prewarmMemoryPages();
     setBattlePrewarmStages(stages);
     setSubMode('battle');
@@ -1617,15 +1606,14 @@ export default function App() {
       data-e2e-enabled={e2eRequest.enabled ? 'true' : 'false'}
       data-e2e-scenario={e2eRequest.enabled ? e2eRequest.scenario : undefined}
     >
-      {/* Persistent 3D WebGL Continental Map & Tactical Battlefield Canvas */}
+      {/* Persistent 3D WebGL Continental Map Canvas (sefer haritası): savaş
+          sırasında da takılı kalır (isRenderPaused ile donar) — sökülüp yeniden
+          kurulması saniyeler süren kasılmaya yol açıyordu. */}
       <WorldCanvas
         gameState={gameState}
         subMode={subMode}
         campaignTimeScale={campaignTimeScale}
         campaign={campaign}
-        activeOrder={activeOrder}
-        battleTargetLordId={battleTargetLordId}
-        battleTargetSettlementId={battleTargetSettlementId}
         cameraActionsRef={cameraActionsRef}
         lordPositionsRef={lordPositionsRef}
         lordPositionCommandsRef={lordPositionCommandsRef}
@@ -1634,6 +1622,7 @@ export default function App() {
         activeDialogueLordId={dialogueLord?.id ?? null}
         activeSettlementModalId={activeSettlementModal?.id ?? null}
         isRenderPaused={
+          subMode === 'battle' ||
           Boolean(loadingScreen?.active) ||
           isCharacterCreatorOpen ||
           isTitleLoadOpen ||
@@ -1666,9 +1655,28 @@ export default function App() {
               : `${l.title} ${l.name} sancağınızı kıstırdı!`,
           );
         }}
-        onBattleTelemetry={setBattleTelemetry}
-        onBattleComplete={handleBattleComplete}
       />
+
+      {/* 10.2/B1: meydan savaşı ayrı misyon sahnesinde (arazi profili sefer
+          haritasındaki karşılaşma noktasından kurulur) */}
+      {subMode === 'battle' && (gameState === 'playing' || gameState === 'paused') && (
+        <BattlefieldView
+          paused={gameState === 'paused'}
+          campaign={campaign}
+          targetLord={
+            battleTargetLordId
+              ? (campaign.lords.find((l) => l.id === battleTargetLordId) ?? null)
+              : null
+          }
+          targetSettlement={
+            battleTargetSettlementId
+              ? (campaign.settlements.find((s) => s.id === battleTargetSettlementId) ?? null)
+              : null
+          }
+          onBattleTelemetry={setBattleTelemetry}
+          onBattleComplete={handleBattleComplete}
+        />
+      )}
 
       {/* 1. BANNERLORD MAIN MENU OVERLAY */}
       {gameState === 'title' && (
@@ -1863,7 +1871,6 @@ export default function App() {
           nearLord={nearLord}
           mapTelemetry={mapTelemetry}
           cameraActionsRef={cameraActionsRef}
-          activeOrder={activeOrder}
           battleTelemetry={battleTelemetry}
           muted={muted}
           onSetTimeScale={setMapTimeScale}
@@ -1873,10 +1880,6 @@ export default function App() {
           }}
           onPause={() => setGameState('paused')}
           onRestart={startGame}
-          onSetTacticalOrder={(ord) => {
-            setActiveOrder(ord);
-            sound.playWarhorn();
-          }}
           onOpenSettlement={handleOpenSettlement}
           onOpenDiplomacy={(l) => {
             setActiveDiplomacyLord(l);
@@ -1885,7 +1888,6 @@ export default function App() {
             setIsEncyclopediaOpen(true);
           }}
           onStartQuickBattle={handleStartQuickBattle}
-          onRetreatBattle={() => setSubMode('overworld')}
           onAdvanceDay={() => {
             sound.playCoinChime();
             setCampaign((prev) => advanceDailyEconomyAndWorld(prev));
@@ -1910,11 +1912,6 @@ export default function App() {
           }}
           onOpenCharacterModal={() => {
             setIsCharacterModalOpen((prev) => !prev);
-          }}
-          onUpgradeTroop={(fromTier, toTier) => {
-            const res = upgradeTroopTier(campaign, fromTier, toTier, 1);
-            if (res.success) setCampaign(res.nextState);
-            return res.reason || null;
           }}
           onRecruitPrisoners={() => {
             const res = recruitCapturedPrisoners(campaign, 1);

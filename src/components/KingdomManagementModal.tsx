@@ -465,8 +465,8 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
           {/* ================================================================ */}
           {activeTab === 'diplomacy_war' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-              {/* Left 7 Cols: Live Kingdom War Desire & Asymmetric Metrics */}
-              <div className="lg:col-span-7 space-y-4">
+              {/* Live Kingdom War Desire & Asymmetric Metrics (tam genişlik: sandbox laboratuvarı 10.1 ile kaldırıldı) */}
+              <div className="lg:col-span-12 space-y-4">
                 <div className="p-4 rounded bg-[#17130e] border border-[#c6a15b]/30">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#c6a15b]/20 pb-2.5 mb-3">
                     <div>
@@ -620,125 +620,6 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
                 </div>
               </div>
 
-              {/* Right 5 Cols: Interactive Fief-Power Paradox Simulator */}
-              <div className="lg:col-span-5 p-4 rounded bg-[#17130e] border border-[#c6a15b]/30 flex flex-col justify-between space-y-3">
-                <div>
-                  <h3 className="text-sm font-bold text-[#fef08a]">
-                    Canlı "Tımar-Güç Paradoksu" (Fief-Power Paradox) Laboratuvarı
-                  </h3>
-                  <p className="text-xs text-[#b5a890] mt-1">
-                    Paydada yer alan <code className="text-[#fde68a]">TotalValueOfKingdomFiefs</code>{' '}
-                    nedeniyle eşit askeri güçteki iki krallıktan çok toprağı olanın nasıl haraç
-                    ödediğini gözlemleyin.
-                  </p>
-
-                  <div className="mt-3 space-y-2.5 text-xs">
-                    <div>
-                      <label
-                        htmlFor="sim-fief-a"
-                        className="flex justify-between text-[#e2d6c1] font-mono-tabular mb-1"
-                      >
-                        <span>X Krallığı (Oyuncu) Şehir Sayısı:</span>
-                        <span className="font-bold text-[#fbbf24]">{simFiefCountA} Şehir</span>
-                      </label>
-                      <input
-                        id="sim-fief-a"
-                        type="range"
-                        min={1}
-                        max={20}
-                        value={simFiefCountA}
-                        onChange={(e) => setSimFiefCountA(Number(e.target.value))}
-                        className="w-full accent-[#d97706]"
-                      />
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="sim-fief-b"
-                        className="flex justify-between text-[#e2d6c1] font-mono-tabular mb-1"
-                      >
-                        <span>Y Krallığı (Rakip) Şehir Sayısı:</span>
-                        <span className="font-bold text-[#fbbf24]">{simFiefCountB} Şehir</span>
-                      </label>
-                      <input
-                        id="sim-fief-b"
-                        type="range"
-                        min={0}
-                        max={20}
-                        value={simFiefCountB}
-                        onChange={(e) => setSimFiefCountB(Number(e.target.value))}
-                        className="w-full accent-[#d97706]"
-                      />
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="sim-str-a"
-                        className="flex justify-between text-[#e2d6c1] font-mono-tabular mb-1"
-                      >
-                        <span>X Krallığı Toplam Askeri Güç:</span>
-                        <span className="font-bold text-[#34d399]">{simStrengthA} Güç</span>
-                      </label>
-                      <input
-                        id="sim-str-a"
-                        type="range"
-                        min={1000}
-                        max={12000}
-                        step={500}
-                        value={simStrengthA}
-                        onChange={(e) => setSimStrengthA(Number(e.target.value))}
-                        className="w-full accent-[#10b981]"
-                      />
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="sim-str-b"
-                        className="flex justify-between text-[#e2d6c1] font-mono-tabular mb-1"
-                      >
-                        <span>Y Krallığı Toplam Askeri Güç:</span>
-                        <span className="font-bold text-[#f87171]">{simStrengthB} Güç</span>
-                      </label>
-                      <input
-                        id="sim-str-b"
-                        type="range"
-                        min={500}
-                        max={12000}
-                        step={500}
-                        value={simStrengthB}
-                        onChange={(e) => setSimStrengthB(Number(e.target.value))}
-                        className="w-full accent-[#ef4444]"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/25 space-y-1.5 text-xs font-mono-tabular">
-                  <div className="flex justify-between">
-                    <span className="text-[#a89b84]">X / Y Savaş İsteği Oranı:</span>
-                    <span className="text-[#f8f0df] font-bold">
-                      {sandboxParadoxReport.warDesireRatioA} vs {sandboxParadoxReport.warDesireRatioB}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-[#a89b84]">Simülasyon Haraç Sonucu:</span>
-                    <span
-                      className={
-                        sandboxParadoxReport.dailyTributeFromAToB > 0
-                          ? 'text-[#f87171] font-bold'
-                          : 'text-[#34d399] font-bold'
-                      }
-                    >
-                      {sandboxParadoxReport.dailyTributeFromAToB > 0
-                        ? `X Krallığı Günde ${sandboxParadoxReport.dailyTributeFromAToB} Dinar Öder`
-                        : `Y Krallığı Günde ${Math.abs(sandboxParadoxReport.dailyTributeFromAToB)} Dinar Öder`}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#c7baa3] font-sans pt-1 border-t border-[#c6a15b]/15">
-                    {sandboxParadoxReport.explanation}
-                  </p>
-                </div>
-              </div>
             </div>
           )}
 

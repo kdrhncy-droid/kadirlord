@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { WorldWarPanel } from './WorldWarPanel';
 import {
   AttributeId,
@@ -7,11 +7,10 @@ import {
   FACTION_INFO,
   LordAgent,
   Settlement,
-  TacticalOrder,
   UNIT_DEFINITIONS,
   UnitTierId,
   calculateClanTier,
-  calculateDailyWage,
+  calculatePartyDailyWage,
   calculateLearningLimit,
   calculatePartyStrength,
   getTotalTroops,
@@ -22,6 +21,7 @@ import type {
   MapCameraTelemetry,
 } from '../game/types';
 import { isSettlementLabelVisible } from '../game/mapGen';
+import { getPartyLimit } from '../game/partySystem';
 import {
   QUEST_KIND_ICONS,
   QUEST_KIND_LABELS,
@@ -38,25 +38,21 @@ interface GameHudProps {
   nearLord: LordAgent | null;
   mapTelemetry: MapCameraTelemetry;
   cameraActionsRef: React.MutableRefObject<CameraControlActions | null>;
-  activeOrder: TacticalOrder;
   battleTelemetry: BattleTelemetry;
   muted: boolean;
   onSetTimeScale: (scale: 0 | 1 | 2 | 4) => void;
   onToggleMute: () => void;
   onPause: () => void;
   onRestart: () => void;
-  onSetTacticalOrder: (order: TacticalOrder) => void;
   onOpenSettlement: (s: Settlement) => void;
   onOpenDiplomacy: (l: LordAgent) => void;
   /** Faz 6: yüz yüze diyalog ekranı. */
   onTalkToLord?: (l: LordAgent) => void;
   onStartQuickBattle: () => void;
-  onRetreatBattle: () => void;
   onAdvanceDay: () => void;
   onAllocateAttribute?: (attrId: AttributeId) => string | null;
   onAllocateFocus?: (skillId: BannerlordSkillId) => string | null;
   onOpenInventoryModal?: () => void;
-  onUpgradeTroop?: (fromTier: UnitTierId, toTier: UnitTierId) => string | null;
   onRecruitPrisoners?: () => string | null;
   onOpenMarketModal?: () => void;
   /**
@@ -111,24 +107,20 @@ export const GameHud: React.FC<GameHudProps> = ({
   nearLord,
   mapTelemetry,
   cameraActionsRef,
-  activeOrder,
   battleTelemetry,
   muted,
   onSetTimeScale,
   onToggleMute,
   onPause,
   onRestart,
-  onSetTacticalOrder,
   onOpenSettlement,
   onOpenDiplomacy,
   onTalkToLord,
   onStartQuickBattle,
-  onRetreatBattle,
   onAdvanceDay,
   onAllocateAttribute,
   onAllocateFocus,
   onOpenInventoryModal,
-  onUpgradeTroop,
   onRecruitPrisoners,
   onOpenMarketModal,
   canTrade = false,
@@ -144,6 +136,16 @@ export const GameHud: React.FC<GameHudProps> = ({
   const [rightBarCollapsed, setRightBarCollapsed] = useState(false);
   /** J menüsü: Görevler ve Raporlar sekmeleri. */
   const [worldPane, setWorldPane] = useState<'chronicle' | 'quests'>('quests');
+  // Sol alt rapor şeridi Bannerlord'daki gibi geçicidir: yeni olayda
+  // belirir, bir süre sonra solar (kalıcı kayıt "Raporlar" panelindedir).
+  const [feedVisible, setFeedVisible] = useState(true);
+  const lastChronicleId = campaign.chronicle[campaign.chronicle.length - 1]?.id;
+  useEffect(() => {
+    if (!lastChronicleId) return;
+    setFeedVisible(true);
+    const timer = setTimeout(() => setFeedVisible(false), 7000);
+    return () => clearTimeout(timer);
+  }, [lastChronicleId]);
   const [activeTab, setActiveTab] = useState<'none' | 'army' | 'character' | 'world'>('none');
   const [hudFeedback, setHudFeedback] = useState<string | null>(null);
   const [hoveredLabelId, setHoveredLabelId] = useState<string | null>(null);
@@ -219,9 +221,10 @@ export const GameHud: React.FC<GameHudProps> = ({
     campaign.roster,
     campaign.playerHp / campaign.playerMaxHp,
   );
-  const dailyWage = calculateDailyWage(campaign.roster);
+  const dailyWage = calculatePartyDailyWage(campaign);
   const clanInfo = calculateClanTier(campaign.renown);
-  const partyCapacity = 45 + clanInfo.maxPartyBonus;
+  // Tek kaynak (10.5): parti kapasitesi partySystem'den gelir; eski `45 + kademe` uydurmaydı.
+  const partyCapacity = getPartyLimit(campaign);
 
   // Bannerlord Takvimi: 1 Mevsim = 21 Gün, 1 Yıl = 84 Gün (Başlangıç Yılı: 1084)
   const dayInSeason = ((Math.max(1, campaign.day) - 1) % 21) + 1;
@@ -561,14 +564,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                   MEYDAN SAVAŞI
                 </span>
                 <span className="text-[11px] text-[#d1c5b0]">
-                  Emir:{' '}
-                  {activeOrder === 'CHARGE'
-                    ? 'Hücum'
-                    : activeOrder === 'SHIELD_WALL'
-                      ? 'Kalkan Duvarı'
-                      : activeOrder === 'FOLLOW_ME'
-                        ? 'Takip Et'
-                        : 'Ok Yağmuru'}
+                  Emir: {battleTelemetry.orderSummary}
                 </span>
               </div>
 
@@ -693,14 +689,6 @@ export const GameHud: React.FC<GameHudProps> = ({
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {Object.values(UNIT_DEFINITIONS).map((u) => {
-                const nextTier: UnitTierId | null =
-                  u.id === 'militia'
-                    ? 'archer'
-                    : u.id === 'archer'
-                      ? 'cavalry'
-                      : u.id === 'cavalry'
-                        ? 'guard'
-                        : null;
                 return (
                   <div
                     key={u.id}
@@ -713,22 +701,6 @@ export const GameHud: React.FC<GameHudProps> = ({
                         {campaign.roster[u.id]} Birlik
                       </div>
                     </div>
-                    {nextTier && onUpgradeTroop && (
-                      <button
-                        type="button"
-                        disabled={campaign.roster[u.id] <= 0}
-                        onClick={() => {
-                          const err = onUpgradeTroop(u.id, nextTier);
-                          setHudFeedback(
-                            err ||
-                              `🎖️ 1 ${u.name} üst kademeye (${UNIT_DEFINITIONS[nextTier].name}) terfi ettirildi!`,
-                          );
-                        }}
-                        className="w-full py-1 rounded text-[11px] font-bold bg-[#b45309] hover:bg-[#d97706] text-white disabled:opacity-35 transition-colors"
-                      >
-                        + Terfi: {UNIT_DEFINITIONS[nextTier].name.split(' ')[0]}
-                      </button>
-                    )}
                   </div>
                 );
               })}
@@ -1159,7 +1131,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                   {/* Event Log / Chronicle Ticker (Bannerlord Vakanüvis Akışı — Sol Alt) */}
                   <div
                     data-testid="hud-event-feed"
-                    className="absolute bottom-16 left-4 max-w-sm flex flex-col gap-1 pointer-events-none select-none z-30 mb-1"
+                    className={`absolute bottom-16 left-4 max-w-sm flex flex-col gap-1 pointer-events-none select-none z-30 mb-1 transition-opacity duration-700 ${feedVisible ? 'opacity-100' : 'opacity-0'}`}
                   >
                     {campaign.chronicle.slice(-4).reverse().map((ev) => (
                       <div
@@ -1635,43 +1607,20 @@ export const GameHud: React.FC<GameHudProps> = ({
               ) : (
                 <div className="hud-panel rounded-lg px-4 py-2.5 w-full flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    {(
-                      [
-                        { id: 'CHARGE', label: '[1] Hücum · Tam Taarruz' },
-                        { id: 'SHIELD_WALL', label: '[2] Kalkan Duvarı · Savunma Hattı' },
-                        { id: 'FOLLOW_ME', label: '[3] Beni Takip Et · Muhafız' },
-                        { id: 'HOLD_VOLLEY', label: '[4] Ok Yağmuru · Menzilli' },
-                      ] as Array<{ id: TacticalOrder; label: string }>
-                    ).map((ord) => (
-                      <button
-                        key={ord.id}
-                        type="button"
-                        onClick={(e) => {
-                          e.currentTarget.blur();
-                          onSetTacticalOrder(ord.id);
-                        }}
-                        className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                          activeOrder === ord.id
-                            ? 'bg-[#b45309] text-white border border-[#fbbf24]'
-                            : 'bg-[#1c1914] text-[#d1c5b0] hover:bg-[#2a241c]'
-                        }`}
-                      >
-                        {ord.label}
-                      </button>
-                    ))}
+                    <span className="text-xs text-[#d1c5b0]">
+                      Bölük emirleri: <span className="text-[#f3d98b]">0-4</span> bölük seç ·{' '}
+                      <span className="text-[#f3d98b]">F1</span> Hareket ·{' '}
+                      <span className="text-[#f3d98b]">F2</span> Yön ·{' '}
+                      <span className="text-[#f3d98b]">F3</span> Diziliş ·{' '}
+                      <span className="text-[#f3d98b]">F4</span> Ateş ·{' '}
+                      <span className="text-[#f3d98b]">F6</span> Devret
+                    </span>
                   </div>
 
                   <div className="flex items-center gap-3">
                     <span className="text-xs font-mono-tabular text-[#d1c5b0]">
-                      Sol Tık/F: Kılıç Savur · Sağ Tık: Kalkan · Space: Hücum
+                      WASD: Sür · Sol Tık: Saldır · Sağ Tık (basılı): Blok
                     </span>
-                    <button
-                      type="button"
-                      onClick={onRetreatBattle}
-                      className="px-3 py-1.5 rounded text-xs font-semibold bg-[#29221a] hover:bg-[#3b3126] text-[#fca5a5] border border-[#f87171]/30 whitespace-nowrap shrink-0"
-                    >
-                      Haritaya Çekil
-                    </button>
                   </div>
                 </div>
               )}

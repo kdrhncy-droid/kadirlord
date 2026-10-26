@@ -92,7 +92,7 @@ ok(
   targetTown.name,
 );
 
-const defeat = resolveBattleOutcome(before, false, null, { militia: 2 }, 30);
+const defeat = resolveBattleOutcome(before, false, null, { infantry: 2 }, 30);
 ok((defeat.inventoryItems ?? []).length === (before.inventoryItems ?? []).length, 'yenilgide ganimet yok');
 
 /* ── 4. Emtia satışı ── */

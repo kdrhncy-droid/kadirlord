@@ -36,7 +36,7 @@ import {
 import { BannerlordRecruitmentModal } from './BannerlordRecruitmentModal';
 import { recruitQuote, partyLimit, partySize, partyRoom } from '../game/recruitment';
 import { sound } from '../game/sound';
-import { generateNotables, type NotableIconKey, type SettlementNotable } from '../game/notables';
+import { generateNotables, NOTABLE_POWER_INFLUENTIAL, notablePowerLabel, type NotableIconKey, type SettlementNotable } from '../game/notables';
 import { troopName, troopRole } from '../game/troops';
 
 export type TownTab =
@@ -1031,11 +1031,11 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
               );
             }
 
-            const hasRawIssue = n.power >= 50 || idx === 1;
+            const hasRawIssue = n.power >= NOTABLE_POWER_INFLUENTIAL || idx === 1;
             const isResolved = resolvedNotableIds.has(n.id);
             const hasIssue = hasRawIssue && !isResolved;
             const isSelected = selectedNotableId === n.id;
-            const powerLabel = n.power >= 100 ? 'Etkili' : n.power >= 60 ? 'Normal' : 'Zayıf';
+            const powerLabel = notablePowerLabel(n.power);
             const attitudeLabel =
               n.relation >= 15 ? 'Dost' : n.relation <= -10 ? 'Mesafeli' : 'Tarafsız';
             const propertyDesc =
@@ -1104,7 +1104,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     {n.name}
                   </div>
                   {hasIssue && (
-                    <div className="text-[#fde68a] font-semibold mb-0.5">
+                    <div className="text-cyan-300 font-semibold mb-0.5">
                       Mevcut bir sorunu var
                     </div>
                   )}
@@ -1146,7 +1146,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
             type="button"
             onClick={() => {
               const firstWithIssue = notables.find(
-                (n, idx) => (n.power >= 50 || idx === 1) && !resolvedNotableIds.has(n.id),
+                (n, idx) => (n.power >= NOTABLE_POWER_INFLUENTIAL || idx === 1) && !resolvedNotableIds.has(n.id),
               );
               const pick = firstWithIssue ?? notables[0] ?? null;
               if (pick) setSelectedNotableId(pick.id);
@@ -1196,7 +1196,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                 notable={selectedNotable}
                 onClose={() => setSelectedNotableId(null)}
                 issueQuest={
-                  selectedNotable.power >= 50 ||
+                  selectedNotable.power >= NOTABLE_POWER_INFLUENTIAL ||
                   notables.findIndex((n) => n.id === selectedNotable.id) === 1
                     ? getNotableIssueQuest(selectedNotable, settlement)
                     : null

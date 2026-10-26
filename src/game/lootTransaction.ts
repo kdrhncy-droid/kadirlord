@@ -259,10 +259,10 @@ export function commitBattleLoot(
 
   // 1. Oyuncu zayiatını düş
   const nextRoster: TroopRoster = {
-    militia: Math.max(0, state.roster.militia - (pendingLoot.playerTroopLosses.militia || 0)),
+    infantry: Math.max(0, state.roster.infantry - (pendingLoot.playerTroopLosses.infantry || 0)),
     archer: Math.max(0, state.roster.archer - (pendingLoot.playerTroopLosses.archer || 0)),
     cavalry: Math.max(0, state.roster.cavalry - (pendingLoot.playerTroopLosses.cavalry || 0)),
-    guard: Math.max(0, state.roster.guard - (pendingLoot.playerTroopLosses.guard || 0)),
+    horseArcher: Math.max(0, state.roster.horseArcher - (pendingLoot.playerTroopLosses.horseArcher || 0)),
   };
 
   // 2. Düşman lord zayiatı ve geri çekilme
@@ -270,25 +270,18 @@ export function commitBattleLoot(
     if (l.id !== pendingLoot.enemyLordId) return l;
 
     const currentRoster: TroopRoster = l.roster || {
-      militia: Math.max(2, Math.floor(l.armySize * 0.35)),
+      infantry: Math.max(2, Math.floor(l.armySize * 0.35)),
       archer: Math.max(2, Math.floor(l.armySize * 0.28)),
       cavalry: Math.max(1, Math.floor(l.armySize * 0.22)),
-      guard: Math.max(1, Math.floor(l.armySize * 0.15)),
+      horseArcher: Math.max(1, Math.floor(l.armySize * 0.15)),
     };
 
     let updatedRoster = deductCasualtiesFromRoster(currentRoster, pendingLoot.enemiesDefeatedCount);
     let updatedTotal = getTotalTroops(updatedRoster);
 
-    const maxSurvivingOnDefeat = Math.max(2, Math.floor(l.armySize * 0.25));
-    if (updatedTotal > maxSurvivingOnDefeat) {
-      updatedRoster = deductCasualtiesFromRoster(
-        updatedRoster,
-        updatedTotal - maxSurvivingOnDefeat,
-      );
-      updatedTotal = getTotalTroops(updatedRoster);
-    }
+    // B5: kadro yalnız gerçek kayıplarla düşer (eski %25 zorlaması kaldırıldı).
     if (updatedTotal <= 0) {
-      updatedRoster = { militia: 1, archer: 0, cavalry: 0, guard: 0 };
+      updatedRoster = { infantry: 1, archer: 0, cavalry: 0, horseArcher: 0 };
       updatedTotal = 1;
     }
     const safeRetreat = snapToNearestLand(l.x + 18, l.z - 18);

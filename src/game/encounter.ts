@@ -86,10 +86,10 @@ export function isHostileToPlayer(lord: LordAgent): boolean {
 /** Bir lordun mevcut birliğinin toplam muharebe gücünü hesaplar. */
 export function getLordPartyStrength(lord: LordAgent): number {
   const roster: TroopRoster = lord.roster ?? {
-    militia: Math.max(2, Math.floor(lord.armySize * 0.35)),
+    infantry: Math.max(2, Math.floor(lord.armySize * 0.35)),
     archer: Math.max(1, Math.floor(lord.armySize * 0.28)),
     cavalry: Math.max(1, Math.floor(lord.armySize * 0.22)),
-    guard: Math.max(0, Math.floor(lord.armySize * 0.15)),
+    horseArcher: Math.max(0, Math.floor(lord.armySize * 0.15)),
   };
   return Math.max(1, calculatePartyStrength(roster, 1.0));
 }
@@ -489,7 +489,7 @@ export function calculateSacrificeEscape(
 
   let remaining = targetLoss;
   const losses: Partial<TroopRoster> = {};
-  const order: Array<keyof TroopRoster> = ['militia', 'archer', 'cavalry', 'guard'];
+  const order: Array<keyof TroopRoster> = ['infantry', 'archer', 'cavalry', 'horseArcher'];
 
   for (const tier of order) {
     if (remaining <= 0) break;
@@ -527,10 +527,10 @@ export function applySacrificeEscape(
   }
 
   const nextRoster: TroopRoster = {
-    militia: Math.max(0, campaign.roster.militia - (calc.losses.militia ?? 0)),
+    infantry: Math.max(0, campaign.roster.infantry - (calc.losses.infantry ?? 0)),
     archer: Math.max(0, campaign.roster.archer - (calc.losses.archer ?? 0)),
     cavalry: Math.max(0, campaign.roster.cavalry - (calc.losses.cavalry ?? 0)),
-    guard: Math.max(0, campaign.roster.guard - (calc.losses.guard ?? 0)),
+    horseArcher: Math.max(0, campaign.roster.horseArcher - (calc.losses.horseArcher ?? 0)),
   };
 
   const nextState: CampaignState = {
@@ -584,7 +584,7 @@ export function simulateSendTroopsBattle(
     Math.min(totalTroops - 1, Math.round(totalTroops * lossFraction)),
   );
   const losses: Partial<TroopRoster> = {};
-  const order: Array<keyof TroopRoster> = ['militia', 'archer', 'cavalry', 'guard'];
+  const order: Array<keyof TroopRoster> = ['infantry', 'archer', 'cavalry', 'horseArcher'];
   for (const tier of order) {
     if (toLose <= 0) break;
     const avail = campaign.roster[tier] ?? 0;
@@ -638,10 +638,10 @@ export function resolveCorneredBanditSurrender(
   const nextLords = campaign.lords.map((l) => {
     if (l.id !== lord.id) return l;
     const nextRoster: TroopRoster = {
-      militia: Math.max(2, Math.floor((l.roster.militia ?? 4) * 0.5)),
+      infantry: Math.max(2, Math.floor((l.roster.infantry ?? 4) * 0.5)),
       archer: Math.max(1, Math.floor((l.roster.archer ?? 2) * 0.5)),
       cavalry: Math.max(0, Math.floor((l.roster.cavalry ?? 0) * 0.5)),
-      guard: Math.max(0, Math.floor((l.roster.guard ?? 0) * 0.5)),
+      horseArcher: Math.max(0, Math.floor((l.roster.horseArcher ?? 0) * 0.5)),
     };
     const nextSize = getTotalTroops(nextRoster);
     return {

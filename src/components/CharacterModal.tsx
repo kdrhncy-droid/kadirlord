@@ -173,8 +173,14 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
     );
   };
 
-  // Selected skill perks
+  // Selected skill perks (Bannerlord düzeni: kademe çiftleri ikon düğmeleridir;
+  // açıklama yalnızca odaktaki tek perk için altta gösterilir — kalabalık kart
+  // listesi yerine.)
+  const [focusedPerkId, setFocusedPerkId] = useState<string>('');
   const perkPairs = getPerksForSkill(selectedSkillId);
+  const focusedPerk =
+    PERK_CATALOG.find((p) => p.id === focusedPerkId && p.skillId === selectedSkillId) ??
+    (Object.values(perkPairs)[0] ? Object.values(perkPairs)[0][0] : undefined);
   const selectedAttrId = SKILL_ATTRIBUTE_MAP[selectedSkillId];
   const selectedAttrVal = currentHero.attributes[selectedAttrId] ?? 2;
   const selectedSkillState = currentHero.skills[selectedSkillId] ?? { level: 10, focus: 0, xp: 0 };
@@ -188,7 +194,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   return (
     <div
       data-testid="bannerlord-character-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md pointer-events-auto select-none animate-fadeIn"
+      className="fixed inset-0 modal-anim-in z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-none pointer-events-auto select-none animate-fadeIn"
       role="dialog"
       aria-modal="true"
     >
@@ -330,32 +336,31 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
               return (
                 <div
                   key={attrId}
-                  className="rounded-lg border border-[#c6a15b]/30 bg-[#1a1510] p-3 shadow-md"
+                  className="border-b border-[#c6a15b]/15 pb-2.5"
                 >
-                  {/* Attribute Title Header */}
-                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#c6a15b]/20">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold font-display text-[#fde68a] tracking-wide">
-                        {attrInfo.name}
-                      </span>
-                      <span className="text-base font-mono font-bold text-[#fef08a] px-2 py-0.5 rounded bg-[#282015] border border-[#c6a15b]/30">
-                        {attrVal} / 10
-                      </span>
-                      <span className="text-[11px] text-[#a89b84] hidden sm:inline">
-                        — {attrInfo.desc}
-                      </span>
-                    </div>
-
+                  {/* Nitelik başlığı: Bannerlord'daki gibi tek satır — isim, değer,
+                      (puan varsa) küçük +. Açıklama ipucunda. */}
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span
+                      className="text-[11px] font-bold tracking-[0.14em] text-[#c6a15b] uppercase"
+                      title={attrInfo.desc}
+                    >
+                      {attrInfo.name}
+                    </span>
+                    <span className="text-lg font-mono font-bold leading-none text-[#fef08a]">
+                      {attrVal}
+                    </span>
                     {freeAttrs > 0 && attrVal < 10 && (
                       <button
                         type="button"
                         onClick={() => handleAllocateAttribute(attrId)}
-                        className="px-2.5 py-1 rounded bg-[#b45309] hover:bg-[#d97706] text-white text-xs font-bold transition flex items-center gap-1 shadow"
+                        className="w-5 h-5 rounded-sm bg-[#b45309] hover:bg-[#d97706] text-white text-sm leading-none font-bold transition"
                         title="Nitelik puanı ver (+1)"
                       >
-                        <span>+ Nitelik Ver</span>
+                        +
                       </button>
                     )}
+                    <span className="flex-1 h-px bg-[#c6a15b]/15" />
                   </div>
 
                   {/* Skills Grid under this Attribute */}
@@ -372,38 +377,35 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                           onClick={() => {
                             sound.playCoin();
                             setSelectedSkillId(sId);
+                            setFocusedPerkId('');
                           }}
-                          className={`cursor-pointer rounded-lg p-2.5 border transition-all flex flex-col justify-between gap-1.5 ${
+                          title={`Öğrenme hızı ${rate}x · sınır ${limit}`}
+                          className={`cursor-pointer px-2 py-1.5 border transition-all flex flex-col gap-1 ${
                             isSelected
-                              ? 'border-[#fbbf24] bg-[#292015] ring-1 ring-[#fbbf24]/50 shadow-lg'
-                              : 'border-[#c6a15b]/20 bg-[#16120e] hover:bg-[#221a13] hover:border-[#c6a15b]/50'
+                              ? 'border-[#fbbf24] bg-[#292015]'
+                              : 'border-[#c6a15b]/15 bg-[#171310] hover:bg-[#221a13] hover:border-[#c6a15b]/45'
                           }`}
                         >
-                          {/* Skill Name & Level */}
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold truncate text-[#f4ecd8]">
+                          <div className="flex items-baseline justify-between gap-1">
+                            <span className="text-[11px] font-bold truncate text-[#f4ecd8]">
                               {SKILL_LABELS[sId]}
                             </span>
-                            <span className="text-xs font-mono font-bold text-[#fbbf24]">
+                            <span className="text-sm font-mono font-bold leading-none text-[#fbbf24]">
                               {skillState.level}
                             </span>
                           </div>
-
-                          {/* Focus Points Pips (● ● ○ ○ ○) */}
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-1">
+                          {/* Bannerlord odak çentikleri: 5 ince dikey çubuk. */}
+                          <div className="flex items-end justify-between">
+                            <div className="flex items-end gap-[3px]">
                               {[0, 1, 2, 3, 4].map((idx) => (
                                 <div
                                   key={idx}
-                                  className={`w-2.5 h-2.5 rounded-full border ${
-                                    idx < skillState.focus
-                                      ? 'bg-[#fbbf24] border-[#d97706]'
-                                      : 'bg-[#201a14] border-[#c6a15b]/30'
+                                  className={`w-[5px] h-[9px] ${
+                                    idx < skillState.focus ? 'bg-[#fbbf24]' : 'bg-[#3a3226]'
                                   }`}
                                 />
                               ))}
                             </div>
-
                             {freeFocus > 0 && skillState.focus < 5 && (
                               <button
                                 type="button"
@@ -411,18 +413,12 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                                   e.stopPropagation();
                                   handleAllocateFocus(sId);
                                 }}
-                                className="w-5 h-5 rounded bg-[#b45309] hover:bg-[#d97706] text-white text-xs font-bold flex items-center justify-center shadow"
+                                className="w-4 h-4 rounded-sm bg-[#b45309] hover:bg-[#d97706] text-white text-[11px] leading-none font-bold"
                                 title="Odak puanı ver (+1)"
                               >
                                 +
                               </button>
                             )}
-                          </div>
-
-                          {/* Learning Rate & Limit Info */}
-                          <div className="flex items-center justify-between text-[10px] text-[#a89b84]">
-                            <span>Hız: <strong className="text-[#34d399]">{rate}x</strong></span>
-                            <span>Sınır: <strong className="text-[#fde68a]">{limit}</strong></span>
                           </div>
                         </div>
                       );
@@ -436,37 +432,27 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
           {/* ------------------------------------------------------- */}
           {/* RIGHT COLUMN: PERK TREE FOR SELECTED SKILL              */}
           {/* ------------------------------------------------------- */}
-          <div className="w-full lg:w-5/12 h-1/2 lg:h-full overflow-y-auto p-4 sm:p-6 bg-[#16120d] flex flex-col">
-            
-            {/* Header of Selected Skill */}
-            <div className="pb-3 mb-4 border-b border-[#c6a15b]/30">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-display font-bold text-[#fef08a] flex items-center gap-2">
-                    <span>{SKILL_LABELS[selectedSkillId]}</span>
-                  </h3>
-                  <p className="text-xs text-[#b5a890] mt-0.5">
-                    Bağlı Nitelik: <strong className="text-[#fde68a]">{ATTRIBUTE_LABELS[selectedAttrId].name}</strong> ({selectedAttrVal})
-                  </p>
-                </div>
-                <div className="text-right font-mono">
-                  <div className="text-2xl font-bold text-[#fbbf24]">{selectedSkillState.level}</div>
-                  <div className="text-[10px] text-[#a89b84]">Seviye Sınırı: {selectedLimit}</div>
-                </div>
-              </div>
+          <div className="w-full lg:w-5/12 h-1/2 lg:h-full overflow-y-auto p-4 sm:p-5 bg-[#16120d] flex flex-col">
 
-              {/* Learning Multiplier Banner */}
-              <div className="mt-3 p-2 rounded bg-[#201a14] border border-[#c6a15b]/20 flex items-center justify-between text-xs">
-                <span className="text-[#c6a15b]">Mevcut Öğrenme Hızı:</span>
-                <span className="font-bold font-mono text-[#34d399]">{selectedRate}x Kat</span>
+            {/* Seçili beceri başlığı: Bannerlord'daki gibi tek satır özet */}
+            <div className="pb-2.5 mb-3 border-b border-[#c6a15b]/30 flex items-end justify-between">
+              <div>
+                <h3 className="text-base font-display font-bold text-[#fef08a]">
+                  {SKILL_LABELS[selectedSkillId]}
+                </h3>
+                <p className="text-[11px] text-[#b5a890] mt-0.5">
+                  {ATTRIBUTE_LABELS[selectedAttrId].name} {selectedAttrVal} · Öğrenme hızı{' '}
+                  <strong className="text-[#34d399]">{selectedRate}x</strong> · Sınır {selectedLimit}
+                </p>
+              </div>
+              <div className="text-2xl font-mono font-bold leading-none text-[#fbbf24]">
+                {selectedSkillState.level}
               </div>
             </div>
 
-            {/* Perk Milestone Branches */}
-            <div className="flex-1 space-y-4">
-              <h4 className="text-xs font-bold text-[#c6a15b] tracking-wider uppercase mb-2">
-                Açılabilir Beceri Yetenekleri (Her kademede 1 seçim)
-              </h4>
+            {/* Perk kademeleri: her kademede iki seçenek = iki kompakt düğme; detay
+                alttaki tek panelde (Bannerlord'da perk detayları seçim üzerine açılır). */}
+            <div className="space-y-2">
 
               {Object.keys(perkPairs).length === 0 ? (
                 <div className="text-xs text-[#8b8072] italic p-4 text-center">
@@ -480,90 +466,48 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                   const isAActive = heroPerks.includes(perkA.id);
                   const isBActive = heroPerks.includes(perkB.id);
 
-                  return (
-                    <div
-                      key={reqLevel}
-                      className={`p-3 rounded-xl border transition ${
-                        isEligible
-                          ? 'border-[#c6a15b]/40 bg-[#1c1712]'
-                          : 'border-[#44382a]/30 bg-[#14100c]/60 opacity-65'
+                  const renderOption = (
+                    perk: typeof perkA,
+                    isActive: boolean,
+                  ) => (
+                    <button
+                      type="button"
+                      key={perk.id}
+                      onMouseEnter={() => setFocusedPerkId(perk.id)}
+                      onClick={() => {
+                        setFocusedPerkId(perk.id);
+                        if (isEligible && !isActive) handleUnlockPerk(perk.id);
+                      }}
+                      className={`flex-1 text-left px-2 py-1.5 border text-[11px] font-bold truncate transition ${
+                        isActive
+                          ? 'border-[#34d399] bg-[#14301d] text-[#a7f3d0]'
+                          : focusedPerk?.id === perk.id
+                            ? 'border-[#fbbf24] bg-[#292015] text-[#fef08a]'
+                            : isEligible
+                              ? 'border-[#c6a15b]/30 bg-[#1e1812] text-[#e8dcc3] hover:border-[#fbbf24]'
+                              : 'border-[#3a3024]/40 bg-[#14100c] text-[#8b8072]'
                       }`}
                     >
-                      {/* Milestone Header */}
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold font-mono px-2 py-0.5 rounded bg-[#2b2218] text-[#fef08a] border border-[#c6a15b]/30">
-                          SEVİYE {reqLevel}
+                      {isActive ? '✓ ' : ''}{perk.name}
+                    </button>
+                  );
+
+                  return (
+                    <div key={reqLevel} className={isEligible ? '' : 'opacity-60'}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[10px] font-bold font-mono text-[#c6a15b]">
+                          {reqLevel}
                         </span>
+                        <span className="flex-1 h-px bg-[#c6a15b]/15" />
                         {!isEligible && (
-                          <span className="text-[10px] text-[#ef4444] font-semibold flex items-center gap-1">
-                            <Lock size={12} /> Kilitli ({reqLevel - selectedSkillState.level} seviye kaldı)
+                          <span className="text-[9px] text-[#8b8072] flex items-center gap-0.5">
+                            <Lock size={9} /> {reqLevel - selectedSkillState.level} seviye
                           </span>
                         )}
                       </div>
-
-                      {/* 2 Choice Options */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {/* Option A */}
-                        <div
-                          className={`p-2.5 rounded-lg border flex flex-col justify-between gap-2 transition ${
-                            isAActive
-                              ? 'border-[#34d399] bg-[#14301d] ring-1 ring-[#34d399]'
-                              : isEligible
-                              ? 'border-[#c6a15b]/30 bg-[#221a13] hover:border-[#fbbf24]'
-                              : 'border-[#3a3024]/40 bg-[#16120e]'
-                          }`}
-                        >
-                          <div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-[#fef08a]">{perkA.name}</span>
-                              {isAActive && <Check size={14} className="text-[#34d399]" />}
-                            </div>
-                            <p className="text-[11px] text-[#d4c7b2] mt-1 leading-snug">
-                              {perkA.description}
-                            </p>
-                          </div>
-
-                          {isEligible && !isAActive && (
-                            <button
-                              type="button"
-                              onClick={() => handleUnlockPerk(perkA.id)}
-                              className="w-full py-1 rounded bg-[#b45309] hover:bg-[#d97706] text-white text-[11px] font-bold shadow transition"
-                            >
-                              {isBActive ? 'Buna Değiştir' : 'Yetenek Seç'}
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Option B */}
-                        <div
-                          className={`p-2.5 rounded-lg border flex flex-col justify-between gap-2 transition ${
-                            isBActive
-                              ? 'border-[#34d399] bg-[#14301d] ring-1 ring-[#34d399]'
-                              : isEligible
-                              ? 'border-[#c6a15b]/30 bg-[#221a13] hover:border-[#fbbf24]'
-                              : 'border-[#3a3024]/40 bg-[#16120e]'
-                          }`}
-                        >
-                          <div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-[#fef08a]">{perkB.name}</span>
-                              {isBActive && <Check size={14} className="text-[#34d399]" />}
-                            </div>
-                            <p className="text-[11px] text-[#d4c7b2] mt-1 leading-snug">
-                              {perkB.description}
-                            </p>
-                          </div>
-
-                          {isEligible && !isBActive && (
-                            <button
-                              type="button"
-                              onClick={() => handleUnlockPerk(perkB.id)}
-                              className="w-full py-1 rounded bg-[#b45309] hover:bg-[#d97706] text-white text-[11px] font-bold shadow transition"
-                            >
-                              {isAActive ? 'Buna Değiştir' : 'Yetenek Seç'}
-                            </button>
-                          )}
-                        </div>
+                      <div className="flex gap-1.5">
+                        {renderOption(perkA, isAActive)}
+                        {renderOption(perkB, isBActive)}
                       </div>
                     </div>
                   );
@@ -571,8 +515,26 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
               )}
             </div>
 
+            {/* Odaktaki perk detayı (Bannerlord'da detay, perk seçilince/gezinince görünür) */}
+            <div className="flex-1" />
+            {focusedPerk && (
+              <div className="sticky bottom-0 mt-3 border border-[#c6a15b]/30 bg-[#1c1712] px-3 py-2.5">
+                <div className="text-xs font-bold text-[#fef08a]">{focusedPerk.name}</div>
+                <p className="text-[11px] text-[#d4c7b2] mt-0.5 leading-snug">
+                  {focusedPerk.description}
+                </p>
+                <div className="text-[10px] text-[#8b8072] mt-1">
+                  {(currentHero.perks ?? []).includes(focusedPerk.id)
+                    ? 'Seçili yetenek'
+                    : selectedSkillState.level >= focusedPerk.requiredLevel
+                      ? 'Seçmek için perk adına tıklayın (aynı kademedeki diğer yetenek bırakılır)'
+                      : `Seviye ${focusedPerk.requiredLevel} gerekli`}
+                </div>
+              </div>
+            )}
+
             {/* Bottom Footer Hint */}
-            <div className="mt-4 pt-3 border-t border-[#c6a15b]/20 text-center text-[11px] text-[#8b8072]">
+            <div className="mt-3 pt-2 border-t border-[#c6a15b]/20 text-center text-[11px] text-[#8b8072]">
               Kısayol: [C] veya [Esc] ile kapatabilirsiniz.
             </div>
           </div>

@@ -58,6 +58,16 @@ export interface SettlementNotable {
   speech: string;
 }
 
+/** Bannerlord eşraf güç bantları: Etkili ≥100, Güçlü ≥200 (tek kaynak). */
+export const NOTABLE_POWER_INFLUENTIAL = 100;
+export const NOTABLE_POWER_POWERFUL = 200;
+
+export function notablePowerLabel(power: number): string {
+  if (power >= NOTABLE_POWER_POWERFUL) return 'Güçlü';
+  if (power >= NOTABLE_POWER_INFLUENTIAL) return 'Etkili';
+  return 'Sıradan';
+}
+
 /* ───────────────────────── isim havuzları ───────────────────────── */
 
 const NAMES: Record<FactionId, readonly string[]> = {
@@ -122,7 +132,7 @@ const ROLES: Record<string, RoleSpec> = {
     role: 'ruler',
     icon: 'crown',
     title: 'Şehir Hakimi & Valisi',
-    power: [70, 96],
+    power: [210, 288],
     relation: [0, 25],
     speech: (s) =>
       `Hoş geldiniz. ${s.name} surları ardında asayiş ve ticaret lehimize işliyor. Şehrimize dostane niyetle mi geldiniz?`,
@@ -131,7 +141,7 @@ const ROLES: Record<string, RoleSpec> = {
     role: 'commander',
     icon: 'shield',
     title: 'Garnizon Kumandanı',
-    power: [55, 85],
+    power: [165, 255],
     relation: [-10, 20],
     speech: (s) =>
       `Surlarımız sağlam, ${s.name} garnizonu teyakkuzda. Dış vadilerdeki haydut hareketliliğini yakından izliyoruz.`,
@@ -140,7 +150,7 @@ const ROLES: Record<string, RoleSpec> = {
     role: 'merchant',
     icon: 'coins',
     title: 'Lonca Temsilcisi',
-    power: [40, 80],
+    power: [120, 240],
     relation: [-5, 30],
     speech: () =>
       'Kervanlarımız doğudan batıya tuz, tahıl ve kaliteli demir taşıyor. Pazaryerimiz her zaman taze erzak alır.',
@@ -149,7 +159,7 @@ const ROLES: Record<string, RoleSpec> = {
     role: 'tavernkeeper',
     icon: 'beer',
     title: 'Meyhaneci & Bilgi Kaynağı',
-    power: [20, 55],
+    power: [60, 165],
     relation: [0, 40],
     speech: () =>
       'Ocağımızın başı her zaman sıcak! Kiralık kılıçlar, esir fidyecileri… Hepsi masalarımızda oturur.',
@@ -158,7 +168,7 @@ const ROLES: Record<string, RoleSpec> = {
     role: 'gladiator',
     icon: 'swords',
     title: 'Arena Dövüş Ustası',
-    power: [25, 65],
+    power: [75, 195],
     relation: [-15, 25],
     speech: () =>
       'Kum havuzuna çıkacak cesaretin var mı? Arenada yalnızca çelik ve bilek gücü konuşur!',
@@ -167,7 +177,7 @@ const ROLES: Record<string, RoleSpec> = {
     role: 'smith',
     icon: 'hammer',
     title: 'Demirci Ustası',
-    power: [30, 65],
+    power: [90, 195],
     relation: [0, 20],
     speech: () =>
       'Ocağım körükte, çekicim elimde. Kırık kılıcını getir, sözümü tutarsam ücretini sonra konuşuruz.',
@@ -176,7 +186,7 @@ const ROLES: Record<string, RoleSpec> = {
     role: 'horseTrader',
     icon: 'cart',
     title: 'At Tüccarı',
-    power: [30, 70],
+    power: [90, 210],
     relation: [-5, 25],
     speech: () =>
       'Bozkırın en iyi atları benim ahırımda. Sürünün hızı, komutanının hızıdır.',
@@ -185,7 +195,7 @@ const ROLES: Record<string, RoleSpec> = {
     role: 'warden',
     icon: 'lock',
     title: 'Hisar Zindan Başı',
-    power: [35, 70],
+    power: [105, 210],
     relation: [-25, 10],
     speech: () => 'Demir parmaklıklarımız arkasında hiçbir esir gün ışığı göremez. Saygılar komutanım.',
   },
@@ -193,7 +203,7 @@ const ROLES: Record<string, RoleSpec> = {
     role: 'elder',
     icon: 'wheat',
     title: 'Köy İhtiyarı ve Temsilcisi',
-    power: [20, 50],
+    power: [50, 230],
     relation: [0, 30],
     speech: (s) =>
       `Hoş sefa geldiniz beyim. ${s.name} halkı buğday hasadından memnun; gençlerimiz sancağınızda yer isterse yazılır.`,
@@ -202,7 +212,7 @@ const ROLES: Record<string, RoleSpec> = {
     role: 'headman',
     icon: 'landmark',
     title: 'Köy Kethüdası',
-    power: [25, 55],
+    power: [60, 250],
     relation: [0, 25],
     speech: () => 'Ambarımız dolu, sürümüz otlakta. Lakin haydutlar yol kesiyor; bir el atarsanız dua ederiz.',
   },

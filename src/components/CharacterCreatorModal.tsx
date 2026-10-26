@@ -44,6 +44,7 @@ import {
   ATTRIBUTE_LABELS,
 } from '../game/characterDevelopment.ts';
 import { sound } from '../game/sound.ts';
+import { CULTURE_FEATS, PLAYABLE_CULTURES } from '../game/cultureBonuses.ts';
 
 interface CharacterCreatorModalProps {
   initialDNA?: CharacterMorphDNA;
@@ -288,49 +289,29 @@ const HERALDIC_SVG_EMBLEMS: Record<string, React.ReactNode> = {
   ),
 };
 
+/**
+ * Kültür kartları tek kaynaktan (cultureBonuses.ts) türer (10.8): kartta yazan
+ * her satırın kod karşılığı vardır; sistemi henüz olmayan Bannerlord satırları
+ * karta çıkarılmaz. İmparatorluk satırlarının hepsi bekleyen sistemlere bağlı
+ * olduğundan kartında bu açıkça belirtilir.
+ */
 const CULTURE_BONUS_CARDS: Array<{
   id: FactionId;
   title: string;
   bonusTitle: string;
   bonusDesc: string;
-}> = [
-  {
-    id: 'vlandia',
-    title: 'Vlandiya',
-    bonusTitle: 'Feodal Şövalye Geleneği',
-    bonusDesc: 'Savaşta askerler +%20 terfi tecrübesi kazanır; paralı asker geliri +%15 artar.',
-  },
-  {
-    id: 'sturgia',
-    title: 'Sturgia',
-    bonusTitle: 'Kuzey Kar Yürüyüşçüleri',
-    bonusDesc: 'Karlı arazilerde hız cezası %20 azalır; kalkan duvarında piyade toplanması güçlenir.',
-  },
-  {
-    id: 'empire',
-    title: 'İmparatorluk',
-    bonusTitle: 'İmparatorluk Mühendisliği',
-    bonusDesc: 'Garnizon ücretleri %20 daha az; kuşatma silahı ve şehir inşası +%25 daha hızlı.',
-  },
-  {
-    id: 'aserai',
-    title: 'Aserai',
-    bonusTitle: 'Çöl Kervan Sultanlığı',
-    bonusDesc: 'Kervan kurma %30 ucuz, ticaret cezası %10 az; çölde hareket hızı cezası yok.',
-  },
-  {
-    id: 'khuzait',
-    title: 'Kuzait',
-    bonusTitle: 'Bozkır Atlı Göçebeleri',
-    bonusDesc: 'Haritada atlı birliklerden +%10 ekstra hız bonusu; bozkırda süvari devşirme ucuz.',
-  },
-  {
-    id: 'battania',
-    title: 'Batanya',
-    bonusTitle: 'Ulu Orman Pusucuları',
-    bonusDesc: 'Ormanlarda hız cezası %10 daha az ve görüş menzili +%15 daha geniş.',
-  },
-];
+}> = PLAYABLE_CULTURES.map((culture) => {
+  const feat = CULTURE_FEATS[culture];
+  return {
+    id: culture,
+    title: feat.title,
+    bonusTitle: feat.featName,
+    bonusDesc:
+      feat.lines.length > 0
+        ? feat.lines.map((line) => line.text).join(' ')
+        : 'Bu kültürün Bannerlord featleri (garnizon ücreti, ordu nüfuzu, köy ocakları) henüz oyuna bağlı değil; seçim şimdilik görünüm ve başlangıç kültürünü belirler.',
+  };
+});
 
 export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   initialDNA,
@@ -775,7 +756,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   return (
     <div
       data-testid="character-creator-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 md:p-6 select-none animate-fadeIn"
+      className="fixed inset-0 modal-anim-in z-50 flex items-center justify-center bg-black/85 backdrop-blur-none p-2 md:p-6 select-none animate-fadeIn"
     >
       {/* Outer Bannerlord Parchment / Iron Frame */}
       <div className="relative w-full max-w-7xl h-[94vh] bg-[#14100c] border-2 border-[#c6a15b]/60 rounded-xl shadow-2xl flex flex-col md:flex-row overflow-hidden font-sans">

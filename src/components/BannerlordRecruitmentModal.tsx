@@ -8,6 +8,7 @@ import {
 } from '../game/rules';
 import {
   type SettlementNotable,
+  NOTABLE_POWER_POWERFUL,
   generateNotables,
 } from '../game/notables';
 import { hash32 } from '../game/heroes';
@@ -40,7 +41,14 @@ interface BannerlordRecruitmentModalProps {
   onClose: () => void;
 }
 
-const REQUIRED_RELATIONS = [0, 0, 5, 10, 15, 20];
+/**
+ * Yuva ilişki eşikleri (10.7 araştırması): Bannerlord'da ilk üç yuva ilişkisiz
+ * açıktır; 4/5/6. yuvalar +5/+10/+20 ilişki ister
+ * (`DefaultVolunteerModel.MaximumIndexHeroCanRecruitFromHero` davranışı;
+ * topluluk SSS: "starting three troops... 4th, 5th, 6th slots +5, +10, +20").
+ * Eski `[0,0,5,10,15,20]` dizisi bu eşiklerin kaymış hâliydi.
+ */
+const REQUIRED_RELATIONS = [0, 0, 0, 5, 10, 20];
 
 export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProps> = ({
   settlement,
@@ -65,8 +73,10 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
   }, [faction]);
 
   const recruitTroop = cultureTroops.find((t) => t.tier === 1) || cultureTroops[0];
-  const tier2Troops = cultureTroops.filter((t) => t.tier === 2);
-  const tier3Troops = cultureTroops.filter((t) => t.tier === 3);
+  const tier2Troops = cultureTroops.filter((t) => t.tier === 2 && !t.isNobleLine);
+  // 10.9/10.7: soylu hattın kökü (T2) yalnız Güçlü (200+) toprak sahiplerinden
+  // devşirilebilir; soylu hat ara kademeleri gönüllü olarak verilmez.
+  const nobleRecruit = cultureTroops.find((t) => t.isNobleLine && t.tier === 2);
 
   // 3. Build initial 6 slots for each notable deterministically (emptying already-recruited slots & varying count per village)
   const initialRows = useMemo<NotableRecruiterRow[]>(() => {
@@ -76,7 +86,8 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
     return notables.map((notable, nIdx) => {
       const slots: (RecruitmentSlotData | null)[] = [];
       const isLandowner = notable.role === 'headman' || notable.role === 'elder';
-      const isPowerful = notable.power >= 70;
+      // Bannerlord: soylu hat yalnız Güçlü (200+) köy toprak sahiplerinden gelir (10.7).
+      const isPowerful = notable.power >= NOTABLE_POWER_POWERFUL;
 
       // Her köy ve eşraf farklı/rastgele sayıda gönüllü asker çıkarır (köylerde eşraf başına 1..4, şehirlerde 2..5)
       const notableSeed = hash32(`${settlement.id}:${notable.id}:${nIdx}`);
@@ -111,9 +122,9 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
             baseCost = 20;
           }
         } else {
-          // Slot 4 & 5: Higher tier / noble units if landowner
-          if (isLandowner && isPowerful && tier3Troops.length > 0) {
-            targetTroop = tier3Troops[(nIdx + sIdx) % tier3Troops.length];
+          // Slot 4 & 5: Güçlü toprak sahibi soylu hattın kökünü (T2) verir.
+          if (isLandowner && isPowerful && nobleRecruit) {
+            targetTroop = nobleRecruit;
             baseCost = 120;
           } else if (tier2Troops.length > 0) {
             targetTroop = tier2Troops[nIdx % tier2Troops.length];
@@ -143,7 +154,7 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
         slots,
       };
     });
-  }, [notables, recruitTroop, tier2Troops, tier3Troops, settlement.id, settlement.type, settlement.recruitedSlotKeys]);
+  }, [notables, recruitTroop, tier2Troops, nobleRecruit, settlement.id, settlement.type, settlement.recruitedSlotKeys]);
 
   // 4. Session State: which slot recruits have been picked into pending basket
   // Key: `${notableId}_${slotIndex}`
@@ -261,7 +272,7 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
   return (
     <div
       data-testid="bannerlord-recruitment-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md pointer-events-auto select-none"
+      className="fixed inset-0 modal-anim-in z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-none pointer-events-auto select-none"
       role="dialog"
       aria-modal="true"
     >
@@ -310,10 +321,10 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
 
             {availableUnlockedSlots <= 0 && (
               <div
-                data-testid="recruitment-cooldown-banner"
+                data-testid="recruitment-empty-banner"
                 className="p-2.5 rounded border border-[#f59e0b]/50 bg-[#292014] text-xs text-[#fde68a]"
               >
-                Bu yerleşimdeki alınabilir gönüllü askerlerin tamamı toplandı (slotlar boş). Yeni gönüllüler için birkaç gün bekleyin.
+                Bu yerleşimdeki alınabilir gönüllü askerlerin tamamı toplandı (yuvalar boş). Eşraf yeni gönüllüleri günlük üretimle azar azar sunar; kilitli yuvalar için eşrafla ilişki gerekir.
               </div>
             )}
 
@@ -415,8 +426,8 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
                         <div className="text-xl mt-0.5">
                           {slot.troopDef.battleClass === 'cavalry' && '🐎'}
                           {slot.troopDef.battleClass === 'archer' && '🏹'}
-                          {slot.troopDef.battleClass === 'guard' && '🛡️'}
-                          {slot.troopDef.battleClass === 'militia' && '⚔️'}
+                          {slot.troopDef.battleClass === 'horseArcher' && '🏹🐎'}
+                          {slot.troopDef.battleClass === 'infantry' && '⚔️'}
                         </div>
                         <span className="text-[10px] font-semibold text-center truncate w-full text-[#fef08a]">
                           {slot.troopDef.name}

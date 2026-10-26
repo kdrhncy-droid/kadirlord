@@ -1,22 +1,30 @@
 /**
- * probe-troops.ts — Faz B2 (ilk dilim): kültüre özgü asker adları
+ * probe-troops.ts — 10.9: gerçek kültür birlik ağaçları + sınıf düzeltmesi
  *
  *   npx tsx scripts/probe-troops.ts
  *
- * Savaş motoru dört sınıfla çalışıyor; bu dilim yalnızca **adları** kültüre
- * bağlıyor. Probe şunları arar:
- *  1. 8 taraf × 4 sınıf için ad/rol tanımlı mı, adlar kendi içinde tekil mi?
- *  2. Kültürler birbirinden gerçekten farklı mı (kopyala-yapıştır kalmamış mı)?
- *  3. Metinlerde Kiril/bozuk karakter var mı?
- *  4. Arayüz doğru kültürü gösteriyor mu (Vlandiya kasabasında şövalye, bozkırda noyan)?
- *  5. Tanımsız taraf için güvenli geri düşüş var mı?
+ * Doğrular:
+ *  1. Savaş sınıfları Bannerlord'un dörtlüsü (piyade/okçu/süvari/atlı okçu);
+ *     atlı okçu hem atlı hem menzilli.
+ *  2. Ağaç bütünlüğü: tekrar kimlik/kopuk terfi/kademe sıçraması yok, kökten
+ *     her birliğe erişilebiliyor, hat geçişi yok.
+ *  3. Vanilla yapı: her kültürde tek T1 halk kökü; altı kültürde T2→T6 soylu
+ *     hat; atlı okçu yalnız İmparatorluk/Kuzait/Aserai'de; Batanya okçusu
+ *     yalnız soylu Fian hattında; bilinen zincir uçları mevcut.
+ *  4. CULTURE_TROOPS temsilci adları gerçek ağaçlarla tutarlı.
+ *  5. Eski kayıt göçü: sahte `*_guard_N` kimlikleri ve `militia+guard`
+ *     roster alanları piyadeye kayıpsız geçiyor.
  */
-import React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { FACTION_INFO, UNIT_DEFINITIONS, createInitialCampaignState } from '../src/game/rules.ts';
+import { UNIT_DEFINITIONS, createInitialCampaignState, factionHasHorseArchers } from '../src/game/rules.ts';
 import type { FactionId, UnitTierId } from '../src/game/rules.ts';
-import { CULTURE_TROOPS, cultureTroopLine, troopName, troopRole } from '../src/game/troops.ts';
-import { SettlementModal } from '../src/components/SettlementModal.tsx';
+import {
+  TROOP_DEFINITIONS,
+  getTroopDefinition,
+  migrateLegacyTroopId,
+  validateTroopDefinitions,
+  ensureBannerlordFoundation,
+} from '../src/game/bannerlordFoundation.ts';
+import { CULTURE_TROOPS, cultureHasClass } from '../src/game/troops.ts';
 
 let fails = 0;
 const ok = (cond: boolean, label: string, detail = '') => {
@@ -24,97 +32,165 @@ const ok = (cond: boolean, label: string, detail = '') => {
   console.log(`${cond ? '✓' : '✗'} ${label}${detail ? ` — ${detail}` : ''}`);
 };
 
-const factions = Object.keys(CULTURE_TROOPS) as FactionId[];
-const tiers = Object.keys(UNIT_DEFINITIONS) as UnitTierId[];
+const CULTURES: FactionId[] = ['empire', 'vlandia', 'battania', 'sturgia', 'khuzait', 'aserai'];
+const ALL: FactionId[] = [...CULTURES, 'bandits', 'player'];
+const defsOf = (c: FactionId) => TROOP_DEFINITIONS.filter((d) => d.culture === c);
 
-/* ── 1. Bütünlük ── */
-ok(factions.length === 8, 'sekiz taraf tanımlı', factions.join(', '));
-ok(tiers.length === 4, 'dört asker sınıfı var', tiers.join(', '));
-
-const incomplete = factions.filter((f) =>
-  tiers.some((t) => !CULTURE_TROOPS[f][t] || !CULTURE_TROOPS[f][t].name || !CULTURE_TROOPS[f][t].role),
-);
-ok(incomplete.length === 0, 'her taraf × sınıf için ad ve rol dolu', `${factions.length * tiers.length} kayıt`);
-
-const duplicateNames = factions.filter((f) => {
-  const names = tiers.map((t) => CULTURE_TROOPS[f][t].name);
-  return new Set(names).size !== names.length;
-});
-ok(duplicateNames.length === 0, 'aynı kültür içinde ad tekrarı yok', `${duplicateNames.length} kültür`);
-
-/* ── 2. Kültürler farklı ── */
-const signatures = factions.map((f) => tiers.map((t) => CULTURE_TROOPS[f][t].name).join('|'));
-ok(new Set(signatures).size === signatures.length, 'hiçbir kültür diğerinin listesini kopyalamıyor');
-
-const vlandiaCav = CULTURE_TROOPS.vlandia.cavalry.name;
-const khuzaitCav = CULTURE_TROOPS.khuzait.cavalry.name;
-ok(vlandiaCav !== khuzaitCav, 'Vlandiya ve Khuzait süvarisi ayrı adlandırılmış', `${vlandiaCav} ↔ ${khuzaitCav}`);
-ok(/şövalye/i.test(vlandiaCav), 'Vlandiya süvarisi şövalye');
-ok(/atlı okçu/i.test(khuzaitCav), 'Khuzait süvarisi atlı okçu');
-
-/* ── 3. Kiril/bozuk karakter yok ── */
-const cyrillic = /[\u0400-\u04FF]/;
-const bad = factions.flatMap((f) => tiers.map((t) => CULTURE_TROOPS[f][t])).filter((u) => cyrillic.test(u.name + u.role));
-ok(bad.length === 0, 'adlarda Kiril karakter yok', `${bad.length} kayıt`);
-
-const emptyish = factions
-  .flatMap((f) => tiers.map((t) => CULTURE_TROOPS[f][t]))
-  .filter((u) => u.name.trim().length < 4 || u.role.trim().length < 4);
-ok(emptyish.length === 0, 'adlar ve roller anlamlı uzunlukta', `${emptyish.length} kısa kayıt`);
-
-/* ── 4. Yardımcı fonksiyonlar ── */
-ok(troopName('cavalry', 'battania') === CULTURE_TROOPS.battania.cavalry.name, 'troopName kültürü kullanıyor');
-ok(troopName('cavalry') === UNIT_DEFINITIONS.cavalry.name, 'taraf verilmezse genel ada düşüyor');
-ok(troopRole('archer', 'sturgia') === CULTURE_TROOPS.sturgia.archer.role, 'troopRole kültürü kullanıyor');
-ok(UNIT_DEFINITIONS.cavalry.name !== troopName('cavalry', 'vlandia'), 'kültür adı genel addan farklı (gerçekten yeni bilgi)');
-
-const line = cultureTroopLine('aserai');
-ok(line.length === 4 && line.every((u) => u.id && u.name), 'kültür hattı dört sınıf döndürüyor');
-ok(cultureTroopLine('bandits')[0].name === CULTURE_TROOPS.bandits.militia.name, 'haydut hattı tanımlı');
-
-/* ── 5. Arayüz doğru kültürü gösteriyor ── */
-const campaign = createInitialCampaignState('Komutan Demirhan', 'noble');
-const byFaction = (f: FactionId) =>
-  campaign.settlements.find((s) => s.faction === f && s.type === 'TOWN')!;
-
-const noop = () => null;
-const render = (settlement: (typeof campaign.settlements)[number]) =>
-  renderToStaticMarkup(
-    React.createElement(SettlementModal, {
-      settlement,
-      campaign,
-      initialTab: 'recruit',
-      onClose: () => {},
-      onRecruit: noop,
-      onBuyFood: noop,
-      onStartSiegeBattle: noop,
-      onHireMercenaries: noop,
-      onRansomPrisoners: noop,
-      onBuyTavernRound: noop,
-      onArenaPractice: noop,
-      onArenaTournament: noop,
-      onSellLoot: noop,
-      onManageGarrison: noop,
-      onRestAndRecover: noop,
-    } as never),
-  );
-
-const vlandiaTown = byFaction('vlandia');
-const khuzaitTown = byFaction('khuzait');
-const vText = render(vlandiaTown).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-const kText = render(khuzaitTown).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-
-ok(vText.includes(CULTURE_TROOPS.vlandia.cavalry.name), 'Vlandiya kasabasında Vlandiya süvarisi görünüyor');
-ok(kText.includes(CULTURE_TROOPS.khuzait.cavalry.name), 'Khuzait kasabasında bozkır süvarisi görünüyor');
-ok(!kText.includes(CULTURE_TROOPS.vlandia.cavalry.name), 'Khuzait kasabasında Vlandiya adı sızmıyor');
-ok(vText.includes(UNIT_DEFINITIONS.cavalry.name), 'genel sınıf adı da yazılıyor (savaş paneliyle eşleşsin)');
-
-/* ── 6. FACTION_INFO ile tutarlılık ── */
+/* ── 1. Sınıflar ── */
+const classes = Object.keys(UNIT_DEFINITIONS) as UnitTierId[];
 ok(
-  factions.every((f) => FACTION_INFO[f as keyof typeof FACTION_INFO] !== undefined),
-  'kültür anahtarları FACTION_INFO ile uyumlu',
+  JSON.stringify([...classes].sort()) === JSON.stringify(['archer', 'cavalry', 'horseArcher', 'infantry']),
+  'dört Bannerlord sınıfı',
+  classes.join(', '),
 );
-ok(UNIT_DEFINITIONS.guard.name.length > 0, 'muhafız sınıfı tanımı duruyor (savaş kodu değişmedi)');
+ok(
+  UNIT_DEFINITIONS.horseArcher.isRanged && UNIT_DEFINITIONS.horseArcher.isMounted,
+  'atlı okçu hem atlı hem menzilli',
+);
+ok(
+  TROOP_DEFINITIONS.every((d) => d.battleClass !== ('guard' as string)),
+  'hiçbir birlik tanımında guard sınıfı yok',
+);
 
-console.log(fails === 0 ? '\n✅ KÜLTÜR ASKER ADLARI DOĞRU' : `\n❌ ${fails} hata`);
+/* ── 2. Ağaç bütünlüğü ── */
+const errors = validateTroopDefinitions();
+ok(errors.length === 0, 'validateTroopDefinitions temiz', errors.slice(0, 3).join(' | '));
+
+for (const culture of ALL) {
+  const defs = defsOf(culture);
+  const parents = new Set(defs.flatMap((d) => d.upgrades));
+  const roots = defs.filter((d) => !parents.has(d.id));
+  const seen = new Set<string>();
+  const queue = roots.map((r) => r.id);
+  while (queue.length > 0) {
+    const id = queue.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    queue.push(...(defs.find((d) => d.id === id)?.upgrades ?? []));
+  }
+  ok(seen.size === defs.length, `${culture}: tüm birlikler kökten erişilebilir`, `${seen.size}/${defs.length}`);
+}
+
+/* ── 3. Vanilla yapı ── */
+for (const culture of ALL) {
+  const t1 = defsOf(culture).filter((d) => d.tier === 1);
+  ok(t1.length === 1 && !t1[0].isNobleLine, `${culture}: tek T1 halk kökü`, t1[0]?.id ?? 'yok');
+}
+for (const culture of CULTURES) {
+  const noble = defsOf(culture).filter((d) => d.isNobleLine);
+  const nobleParents = new Set(noble.flatMap((d) => d.upgrades));
+  const nobleRoots = noble.filter((d) => !nobleParents.has(d.id));
+  ok(
+    nobleRoots.length === 1 && nobleRoots[0].tier === 2 && noble.some((d) => d.tier === 6 && d.upgrades.length === 0),
+    `${culture}: soylu hat T2 kökten T6 uca`,
+    `${nobleRoots[0]?.id} → ${noble.find((d) => d.tier === 6)?.id}`,
+  );
+  const commonLeaves = defsOf(culture).filter((d) => !d.isNobleLine && d.upgrades.length === 0);
+  ok(commonLeaves.every((d) => d.tier === 5), `${culture}: halk hatları T5'te biter`, commonLeaves.map((d) => d.id).join(', '));
+}
+
+const haCultures = ALL.filter((c) => defsOf(c).some((d) => d.battleClass === 'horseArcher'));
+ok(
+  JSON.stringify([...haCultures].sort()) === JSON.stringify(['aserai', 'empire', 'khuzait', 'player']),
+  'atlı okçu yalnız İmparatorluk/Kuzait/Aserai (+genel yedek)',
+  haCultures.join(', '),
+);
+const battArchers = defsOf('battania').filter((d) => d.battleClass === 'archer');
+ok(
+  battArchers.length > 0 && battArchers.every((d) => d.isNobleLine),
+  'Batanya okçusu yalnız soylu Fian hattında',
+  battArchers.map((d) => d.id).join(', '),
+);
+
+const spotIds = [
+  'empire_legionary_5', 'empire_cataphract_6', 'empire_bucellarii_5', 'empire_menavliaton_5',
+  'vlandia_bannerknight_6', 'vlandia_sharpshooter_5', 'vlandia_vanguard_5',
+  'battania_fian_6', 'battania_oathsworn_5',
+  'sturgia_druzhinnik_6', 'sturgia_heavyaxe_5',
+  'khuzait_khansguard_6', 'khuzait_darkhan_5', 'khuzait_heavylancer_5',
+  'aserai_farisvanguard_6', 'aserai_mamlukepalace_5', 'aserai_masterarcher_5',
+];
+const missing = spotIds.filter((id) => !getTroopDefinition(id));
+ok(missing.length === 0, 'bilinen vanilla zincir uçları mevcut', missing.join(', ') || `${spotIds.length} birlik`);
+ok(getTroopDefinition('empire_bucellarii_5')?.battleClass === 'horseArcher', 'Bukelları atlı okçu sınıfında');
+ok(
+  getTroopDefinition('sturgia_varyag_3')?.battleClass === 'infantry' &&
+    getTroopDefinition('sturgia_varyagveteran_4')?.battleClass === 'cavalry',
+  'Sturgiya soylu hattı yaya başlayıp süvariye geçer',
+);
+ok(
+  getTroopDefinition('empire_recruit')?.upgrades.includes('empire_archer_2') ?? false,
+  'İmparatorluk acemisi doğrudan okçuya da terfi eder',
+);
+
+/* ── 3b. Havuz koruması: kültürde olmayan sınıf gönüllü veremez ── */
+let poolMatrixOk = true;
+for (const culture of ALL) {
+  if (factionHasHorseArchers(culture) !== cultureHasClass(culture, 'horseArcher')) poolMatrixOk = false;
+}
+ok(poolMatrixOk, 'factionHasHorseArchers matrisi ağaçlarla tutarlı');
+const world = createInitialCampaignState();
+const badPools = world.settlements.filter(
+  (s) => !factionHasHorseArchers(s.faction) && s.recruitPool.horseArcher > 0,
+);
+ok(badPools.length === 0, 'atlı okçusu olmayan kültür yerleşimleri havuzda atlı okçu vermez', badPools.map((s) => s.name).join(', '));
+ok(
+  world.settlements.some((s) => s.faction === 'khuzait' && s.recruitPool.horseArcher > 0),
+  'Kuzait yerleşimleri atlı okçu gönüllüsü verebilir',
+);
+
+/* ── 4. Temsilci ad tutarlılığı ── */
+let consistent = true;
+for (const culture of ALL) {
+  for (const cls of classes) {
+    const hasDef = defsOf(culture).some((d) => d.battleClass === cls);
+    if (hasDef !== cultureHasClass(culture, cls)) consistent = false;
+    if (hasDef && !CULTURE_TROOPS[culture]?.[cls]?.name) consistent = false;
+  }
+}
+ok(consistent, 'CULTURE_TROOPS sınıfları gerçek ağaçlarla birebir');
+
+/* ── 5. Eski kayıt göçü ── */
+ok(
+  getTroopDefinition(migrateLegacyTroopId('empire_guard_5'))?.battleClass === 'infantry',
+  'eski empire_guard_5 → piyade',
+  migrateLegacyTroopId('empire_guard_5'),
+);
+ok(
+  migrateLegacyTroopId('khuzait_cavalry_3') === 'khuzait_horseman_3',
+  'eski khuzait_cavalry_3 → khuzait_horseman_3',
+);
+ok(
+  getTroopDefinition('aserai_guard_4')?.battleClass === 'infantry',
+  'getTroopDefinition eski kimliği göçle buluyor',
+);
+ok(
+  getTroopDefinition(migrateLegacyTroopId('vlandia_infantry_2'))?.tier === 2,
+  'göçte kademe korunur',
+  migrateLegacyTroopId('vlandia_infantry_2'),
+);
+
+const base = createInitialCampaignState();
+const legacyState = {
+  ...base,
+  roster: { militia: 10, guard: 5, archer: 3, cavalry: 2 },
+  troopStacks: [
+    { troopId: 'empire_guard_5', count: 4, wounded: 1, xp: 0 },
+    { troopId: 'empire_infantry_3', count: 6, wounded: 0, xp: 0 },
+  ],
+} as unknown as typeof base;
+const migrated = ensureBannerlordFoundation(legacyState);
+ok(
+  migrated.roster.infantry >= 15 && migrated.roster.archer === 3 && migrated.roster.cavalry === 2,
+  'eski militia+guard rosterı piyadede birleşti (kayıpsız)',
+  JSON.stringify(migrated.roster),
+);
+ok(
+  (migrated.troopStacks ?? []).length > 0 &&
+    (migrated.troopStacks ?? []).every((s) => getTroopDefinition(s.troopId)?.id === s.troopId),
+  'eski yığın kimlikleri yeni ağaçlara göç etti',
+  (migrated.troopStacks ?? []).map((s) => `${s.troopId}×${s.count}`).join(', '),
+);
+
+console.log(fails === 0 ? '\nTÜM KONTROLLER GEÇTİ' : `\n${fails} KONTROL BAŞARISIZ`);
 process.exit(fails === 0 ? 0 : 1);

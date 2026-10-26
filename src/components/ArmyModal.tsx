@@ -187,10 +187,10 @@ export const ArmyModal: React.FC<ArmyModalProps> = ({
           sum +
           calculatePartyStrength(
             l.roster ?? {
-              militia: Math.floor(l.armySize * 0.4),
+              infantry: Math.floor(l.armySize * 0.4),
               archer: Math.floor(l.armySize * 0.3),
               cavalry: Math.floor(l.armySize * 0.2),
-              guard: Math.floor(l.armySize * 0.1),
+              horseArcher: Math.floor(l.armySize * 0.1),
             },
             1.0,
           ),
@@ -200,8 +200,8 @@ export const ArmyModal: React.FC<ArmyModalProps> = ({
   }, [campaign.roster, campaign.lords, previewArmy.memberLordIds]);
 
   const boostCost = useMemo(
-    () => calculateCohesionBoostCost(playerArmy?.memberLordIds.length ?? selectedIds.length),
-    [playerArmy, selectedIds.length],
+    () => calculateCohesionBoostCost(previewArmy, campaign),
+    [previewArmy, campaign],
   );
 
   const targetableSettlements = useMemo(
@@ -253,7 +253,7 @@ export const ArmyModal: React.FC<ArmyModalProps> = ({
           <div className="flex items-center gap-4">
             <div
               className="rounded border border-[#c6a15b]/45 bg-[#120e0a]/95 px-3.5 py-2"
-              title={`Baz ${cohesionBreakdown.baseLoss} · Parti ${cohesionBreakdown.partyCountPenalty} · Asker ${cohesionBreakdown.troopCountPenalty}${cohesionBreakdown.starvationPenalty < 0 ? ` · Açlık ${cohesionBreakdown.starvationPenalty}` : ''}`}
+              title={`Baz ${cohesionBreakdown.baseLoss} · Parti ${cohesionBreakdown.partyCountPenalty}${cohesionBreakdown.starvationPenalty < 0 ? ` · Açlık ${cohesionBreakdown.starvationPenalty}` : ''}`}
             >
               <div className="flex items-center justify-between gap-4">
                 <span className="text-xs font-bold uppercase tracking-wider text-[#d6c8b0]">
@@ -283,8 +283,6 @@ export const ArmyModal: React.FC<ArmyModalProps> = ({
                 <span>Baz {cohesionBreakdown.baseLoss}</span>
                 <span>·</span>
                 <span>Parti {cohesionBreakdown.partyCountPenalty}</span>
-                <span>·</span>
-                <span>Asker {cohesionBreakdown.troopCountPenalty}</span>
                 {cohesionBreakdown.starvationPenalty < 0 && (
                   <>
                     <span>·</span>
@@ -713,7 +711,7 @@ export const ArmyCohesionHudWidget: React.FC<{
 
   if (!playerArmy || !breakdown) return null;
 
-  const boostCost = calculateCohesionBoostCost(playerArmy.memberLordIds.length);
+  const boostCost = calculateCohesionBoostCost(playerArmy, campaign);
   const canBoost = (campaign.influence ?? 0) >= boostCost && playerArmy.cohesion < 100;
 
   return (
