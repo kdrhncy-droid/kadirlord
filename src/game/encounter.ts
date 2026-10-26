@@ -355,10 +355,13 @@ export function evaluateHostileReaction(params: {
 
 /**
  * Bir karşılaşmanın senaryosunu (kimin kimi yakaladığını) belirler.
+ * `initiator` verilirse teması kimin başlattığını doğrudan kullanır; verilmezse
+ * harita kovalama eşikleriyle (`pursueThreshold`: haydut 1.06, lord 1.0) aynı eşiği kullanır.
  */
 export function classifyEncounterScenario(
   lord: LordAgent,
   campaign: CampaignState,
+  initiator?: 'player' | 'enemy',
 ): {
   scenario: EncounterScenario;
   forced: boolean;
@@ -382,11 +385,14 @@ export function classifyEncounterScenario(
   }
 
   const isBandit = lord.faction === 'bandits';
-  const enemyStronger = strengthRatio >= 0.95;
+  const pursueThreshold = isBandit ? 1.06 : 1.0;
+  const enemyInitiated = initiator
+    ? initiator === 'enemy'
+    : strengthRatio >= pursueThreshold;
 
   if (isBandit) {
     return {
-      scenario: enemyStronger ? 'BANDIT_CAUGHT_PLAYER' : 'PLAYER_CAUGHT_BANDIT',
+      scenario: enemyInitiated ? 'BANDIT_CAUGHT_PLAYER' : 'PLAYER_CAUGHT_BANDIT',
       forced: true,
       enemyStrength,
       playerStrength,
@@ -395,7 +401,7 @@ export function classifyEncounterScenario(
   }
 
   return {
-    scenario: enemyStronger ? 'LORD_CAUGHT_PLAYER' : 'PLAYER_CAUGHT_LORD',
+    scenario: enemyInitiated ? 'LORD_CAUGHT_PLAYER' : 'PLAYER_CAUGHT_LORD',
     forced: true,
     enemyStrength,
     playerStrength,
@@ -411,10 +417,11 @@ export function checkHostileMapInterception(params: {
   campaign: CampaignState;
   playerX: number;
   playerZ: number;
-  lordPositions: Map<string, { x: number; z: number }>;
+  lordPositions: ReadonlyMap<string, { x: number; z: number }>;
   cooldowns: Map<string, number>;
   nowSec: number;
   interceptRadius?: number;
+  pursuedLordId?: string | null;
 }): InterceptionEvent | null {
   const {
     campaign,
@@ -424,6 +431,7 @@ export function checkHostileMapInterception(params: {
     cooldowns,
     nowSec,
     interceptRadius = INTERCEPT_RADIUS,
+    pursuedLordId = null,
   } = params;
 
   let closestEvent: InterceptionEvent | null = null;
@@ -436,7 +444,9 @@ export function checkHostileMapInterception(params: {
     const pos = lordPositions.get(lord.id) ?? { x: lord.x, z: lord.z };
     const dist = Math.hypot(pos.x - playerX, pos.z - playerZ);
     if (dist <= interceptRadius) {
-      const info = classifyEncounterScenario(lord, campaign);
+      const initiator: 'player' | 'enemy' | undefined =
+        pursuedLordId && pursuedLordId === lord.id ? 'player' : undefined;
+      const info = classifyEncounterScenario(lord, campaign, initiator);
       if (!closestEvent || dist < closestEvent.distance) {
         closestEvent = {
           lord,

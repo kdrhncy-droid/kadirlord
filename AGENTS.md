@@ -160,10 +160,8 @@ Bu araç paketi aşağıdaki oyun hatalarını düzeltmez; onları güvenilir bi
 tekrar üretmeyi kolaylaştırır:
 
 - *(Çözüldü - 8.16)* Diyalog sahnesindeki `conversation.ts#heroFromLord` meslek/cinsiyet (`LADY`, `RULER`, `LORD`, `BANDIT`) ve `lord.bannerColor` türetimi düzeltildi.
-- Karşılaşma senaryosu, teması gerçekten kimin başlattığını değil yalnız
-  güç oranını kullanıyor; eşikler kovalama/kaçma eşikleriyle tam aynı değil.
-- `checkHostileMapInterception` probe'da test ediliyor ancak üretimde
-  `WorldCanvas` kendi yakalama döngüsünü kullanıyor.
+- *(Çözüldü - 2026-10-26)* Karşılaşma senaryosu (`classifyEncounterScenario`) artık `initiator` (`'player' | 'enemy'`) parametresini destekliyor ve eşikleri harita kovalama eşikleriyle (`pursueThreshold`: haydut `1.06`, lord `1.0`) birebir hizalandı.
+- *(Çözüldü - 2026-10-26)* `WorldCanvas` yakalama döngüsü doğrudan `checkHostileMapInterception` yardımcı fonksiyonuna bağlandı; probe ve üretim aynı kodu çalıştırıyor.
 
 Yeni bir açık kapatıldığında bu listeyi ve ilgili denetim belgesini güncelleyin.
 ## Kapsam İlkesi (kullanıcı, 2026-10-24)

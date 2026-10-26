@@ -83,8 +83,8 @@ ok(topLayer({ dialogue: true, settlement: true }) === 'dialogue', 'diyalog yerle
 ok(countLayers({ market: true, kingdom: true, pause: true }) === 3, 'katman sayısı 3');
 
 /* ── 5. Sıra listesi tutarlılığı ── */
-ok(UI_LAYER_ORDER.length === 7, 'yedi UI katmanı tanımlı');
-ok(new Set(UI_LAYER_ORDER).size === 7, 'katman kimlikleri tekil');
+ok(UI_LAYER_ORDER.length === 10, 'on UI katmanı tanımlı');
+ok(new Set(UI_LAYER_ORDER).size === 10, 'katman kimlikleri tekil');
 ok(UI_LAYER_ORDER[UI_LAYER_ORDER.length - 1] === 'pause', 'duraklatma en son kapanır');
 ok(
   UI_LAYER_ORDER.every((layer) => topLayer({ [layer]: true }) === layer),

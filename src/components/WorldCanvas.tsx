@@ -53,6 +53,7 @@ import {
   ENCOUNTER_COOLDOWN_SEC,
   type EncounterScenario,
   INTERCEPT_RADIUS,
+  checkHostileMapInterception,
   classifyEncounterScenario,
   getPlayerPartyStrength,
   isHostileToPlayer,
@@ -2527,7 +2528,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
                 reached = true;
                 encounterCooldowns.set(l.id, elapsedTotal + ENCOUNTER_COOLDOWN_SEC);
                 if (isHostileToPlayer(l) && stateRef.current.onHostileEncounter) {
-                  const info = classifyEncounterScenario(l, camp);
+                  const info = classifyEncounterScenario(l, camp, 'player');
                   stateRef.current.onHostileEncounter(l, info.scenario);
                 } else {
                   stateRef.current.onOpenDiplomacy(l);
@@ -2548,42 +2549,40 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
         // I-2. Bannerlord Automatic Hostile Interception (Düşman lord veya haydut oyuncuyu yakaladığında!)
         if (!isWorldEffectivelyPaused && !activeTalkingLordId) {
-          for (let i = 0; i < camp.lords.length; i++) {
-            const l = camp.lords[i];
-            if (!isHostileToPlayer(l)) continue;
-            if ((encounterCooldowns.get(l.id) ?? 0) > elapsedTotal) continue;
-
+          const hit = checkHostileMapInterception({
+            campaign: camp,
+            playerX: playerOverworldX,
+            playerZ: playerOverworldZ,
+            lordPositions: lordLiveRoutes,
+            cooldowns: encounterCooldowns,
+            nowSec: elapsedTotal,
+            pursuedLordId: followingLordId,
+          });
+          if (hit) {
+            const l = hit.lord;
+            encounterCooldowns.set(l.id, elapsedTotal + ENCOUNTER_COOLDOWN_SEC);
+            // Yakalama sonrası iç içe geçmeyi önlemek için düşmanı güvenli temas sınırında tut
             const route = lordLiveRoutes.get(l.id);
-            const lx = route ? route.x : l.x;
-            const lz = route ? route.z : l.z;
-            const dist = Math.hypot(lx - playerOverworldX, lz - playerOverworldZ);
+            if (route) {
+              const dx = route.x - playerOverworldX;
+              const dz = route.z - playerOverworldZ;
+              const len = Math.hypot(dx, dz) || 1;
+              route.x = playerOverworldX + (dx / len) * (INTERCEPT_RADIUS + 0.6);
+              route.z = playerOverworldZ + (dz / len) * (INTERCEPT_RADIUS + 0.6);
+              route.waypoints = [];
+            }
+            stateRef.current.onSetTimeScale?.(0);
+            followingLordId = null;
+            pendingTarget = null;
+            overworldTargetPos = null;
+            overworldWaypoints = [];
+            (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+            marchPathDirty = true;
 
-            if (dist <= INTERCEPT_RADIUS) {
-              encounterCooldowns.set(l.id, elapsedTotal + ENCOUNTER_COOLDOWN_SEC);
-              // Yakalama sonrası iç içe geçmeyi önlemek için düşmanı güvenli temas sınırında tut
-              if (route) {
-                const dx = lx - playerOverworldX;
-                const dz = lz - playerOverworldZ;
-                const len = Math.hypot(dx, dz) || 1;
-                route.x = playerOverworldX + (dx / len) * (INTERCEPT_RADIUS + 0.6);
-                route.z = playerOverworldZ + (dz / len) * (INTERCEPT_RADIUS + 0.6);
-                route.waypoints = [];
-              }
-              stateRef.current.onSetTimeScale?.(0);
-              followingLordId = null;
-              pendingTarget = null;
-              overworldTargetPos = null;
-              overworldWaypoints = [];
-              (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
-              marchPathDirty = true;
-
-              const info = classifyEncounterScenario(l, camp);
-              if (stateRef.current.onHostileEncounter) {
-                stateRef.current.onHostileEncounter(l, info.scenario);
-              } else {
-                stateRef.current.onOpenDiplomacy(l);
-              }
-              break;
+            if (stateRef.current.onHostileEncounter) {
+              stateRef.current.onHostileEncounter(l, hit.scenario);
+            } else {
+              stateRef.current.onOpenDiplomacy(l);
             }
           }
         }

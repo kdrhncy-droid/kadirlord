@@ -151,8 +151,13 @@ export const GameHud: React.FC<GameHudProps> = ({
   const [hoveredLabelId, setHoveredLabelId] = useState<string | null>(null);
 
 
+  const isInKingdom = Boolean(
+    campaign.allegianceFaction || campaign.playerKingdom?.isDeclared,
+  );
+
   React.useEffect(() => {
     const onKeyH = (e: KeyboardEvent) => {
+      if (subMode !== 'overworld') return;
       if (
         document.activeElement &&
         ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)
@@ -198,7 +203,7 @@ export const GameHud: React.FC<GameHudProps> = ({
         setActiveTab((prev) => (prev === 'world' ? 'none' : 'world'));
         setWorldPane('chronicle');
       } else if (e.code === 'KeyK') {
-        if (onOpenKingdomModal) {
+        if (isInKingdom && onOpenKingdomModal) {
           onOpenKingdomModal();
         }
       }
@@ -206,6 +211,8 @@ export const GameHud: React.FC<GameHudProps> = ({
     window.addEventListener('keydown', onKeyH);
     return () => window.removeEventListener('keydown', onKeyH);
   }, [
+    subMode,
+    isInKingdom,
     onOpenInventoryModal,
     onOpenPartyModal,
     onOpenCharacterModal,
@@ -520,67 +527,7 @@ export const GameHud: React.FC<GameHudProps> = ({
 
       {/* TOP ROW: Uncluttered on Overworld (only compact right camera/utility pill); Full Battle Counter in Battle Mode */}
       <div className="relative z-20 flex items-start justify-between gap-2">
-        {subMode === 'battle' ? (
-          <>
-            <div className="hud-panel rounded-lg px-3.5 py-2 pointer-events-auto flex items-center gap-3 whitespace-nowrap">
-              <div className="flex items-center gap-2.5">
-                <div className="flex flex-col">
-                  <span className="text-[11px] uppercase tracking-wider text-[#c6a15b] font-semibold">
-                    {campaign.playerName}
-                  </span>
-                  <div className="flex items-center gap-1 mt-1">{renderVitalityPips()}</div>
-                </div>
-                <div className="font-mono-tabular text-lg font-bold text-[#f8f0df] hud-stroke">
-                  {Math.round(currentHp)}
-                  <span className="text-xs text-[#a89b84] font-normal ml-0.5">/{maxHp} HP</span>
-                </div>
-              </div>
-              <div className="h-7 w-px bg-[#c6a15b]/25" />
-              <div>
-                <span className="text-[10px] uppercase tracking-wider text-[#a89b84] block">
-                  Sancak Ordusu
-                </span>
-                <span className="text-base font-bold font-mono-tabular text-[#f3ead8]">
-                  {battleTelemetry.alliesAlive}
-                  <span className="text-xs font-normal text-[#c6a15b] ml-1">
-                    Asker ({partyStrength})
-                  </span>
-                </span>
-              </div>
-            </div>
-
-            <div className="hud-panel rounded-lg px-5 py-2.5 pointer-events-auto flex items-center gap-6 whitespace-nowrap">
-              <div className="text-right">
-                <span className="text-[10px] uppercase tracking-wider text-[#6ee7b7] block">
-                  Sancak Kuvvetleri
-                </span>
-                <span className="text-xl font-bold font-mono-tabular text-[#34d399]">
-                  {battleTelemetry.alliesAlive} / {battleTelemetry.alliesTotal}
-                </span>
-              </div>
-
-              <div className="text-center px-2">
-                <span className="text-xs font-display font-bold text-[#fbbf24] block">
-                  MEYDAN SAVAŞI
-                </span>
-                <span className="text-[11px] text-[#d1c5b0]">
-                  Emir: {battleTelemetry.orderSummary}
-                </span>
-              </div>
-
-              <div className="text-left">
-                <span className="text-[10px] uppercase tracking-wider text-[#fca5a5] block">
-                  {battleTelemetry.enemyCommanderName}
-                </span>
-                <span className="text-xl font-bold font-mono-tabular text-[#f87171]">
-                  {battleTelemetry.enemiesAlive} / {battleTelemetry.enemiesTotal}
-                </span>
-              </div>
-            </div>
-          </>
-        ) : (
-          <div />
-        )}
+        <div />
 
         {/* Top-Right Compact Camera & Utility Controls */}
         <div className="flex items-center gap-1.5 pointer-events-auto">
@@ -1225,39 +1172,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                       <span className="absolute -bottom-1 text-[8px] font-mono font-bold text-[#c6a15b] group-hover:text-white">P</span>
                     </button>
 
-                    {/* #4 Klan [L] */}
-                    {onOpenKingdomModal && (
-                      <button
-                        type="button"
-                        data-testid="hud-open-clan"
-                        title="Klan Menüsü (L) — Yoldaşlar, aile üyeleri, mülkler ve kervanlar"
-                        onClick={onOpenKingdomModal}
-                        className="relative w-10 h-10 rounded-full bg-gradient-to-b from-[#2a2217] to-[#14100b] hover:from-[#3a2f20] hover:to-[#1e1811] border border-[#c6a15b]/60 hover:border-[#fbbf24] text-[#fde68a] flex items-center justify-center transition shadow-md group"
-                      >
-                        <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current" aria-hidden="true">
-                          <path d="M12 2c4.4 0 8 3.6 8 8 0 3.1-1.8 5.8-4.4 7.1L17 22H7l1.4-4.9C5.8 15.8 4 13.1 4 10c0-4.4 3.6-8 8-8zm-2.5 6.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm5 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3zM12 13l-2.5 2.5h5L12 13z" />
-                        </svg>
-                        <span className="absolute -bottom-1 text-[8px] font-mono font-bold text-[#c6a15b] group-hover:text-white">L</span>
-                      </button>
-                    )}
-
-                    {/* #5 Krallık [K] */}
-                    {onOpenKingdomModal && (
-                      <button
-                        type="button"
-                        data-testid="hud-open-kingdom"
-                        title="Krallık Divanı (K) — Savaş ve barış oylamaları, politikalar ve tımarlar"
-                        onClick={onOpenKingdomModal}
-                        className="relative w-10 h-10 rounded-full bg-gradient-to-b from-[#2a2217] to-[#14100b] hover:from-[#3a2f20] hover:to-[#1e1811] border border-[#c6a15b]/60 hover:border-[#fbbf24] text-[#fde68a] flex items-center justify-center transition shadow-md group"
-                      >
-                        <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current" aria-hidden="true">
-                          <path d="M3 18h18v2.5H3V18zm0-2l2.2-8.5 4.8 4.2L12 4l2 7.7 4.8-4.2L21 16H3z" />
-                        </svg>
-                        <span className="absolute -bottom-1 text-[8px] font-mono font-bold text-[#c6a15b] group-hover:text-white">K</span>
-                      </button>
-                    )}
-
-                    {/* #6 Günlük / Görevler [J] */}
+                    {/* #4 Günlük / Görevler [J] */}
                     <button
                       type="button"
                       data-testid="hud-open-quests"
@@ -1278,6 +1193,45 @@ export const GameHud: React.FC<GameHudProps> = ({
                       )}
                       <span className="absolute -bottom-1 text-[8px] font-mono font-bold text-[#c6a15b] group-hover:text-white">J</span>
                     </button>
+
+                    {/* #5 Klan [L] */}
+                    {onOpenKingdomModal && (
+                      <button
+                        type="button"
+                        data-testid="hud-open-clan"
+                        title="Klan Menüsü (L) — Yoldaşlar, aile üyeleri, mülkler ve atölyeler"
+                        onClick={onOpenKingdomModal}
+                        className="relative w-10 h-10 rounded-full bg-gradient-to-b from-[#2a2217] to-[#14100b] hover:from-[#3a2f20] hover:to-[#1e1811] border border-[#c6a15b]/60 hover:border-[#fbbf24] text-[#fde68a] flex items-center justify-center transition shadow-md group"
+                      >
+                        <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current" aria-hidden="true">
+                          <path d="M12 2c4.4 0 8 3.6 8 8 0 3.1-1.8 5.8-4.4 7.1L17 22H7l1.4-4.9C5.8 15.8 4 13.1 4 10c0-4.4 3.6-8 8-8zm-2.5 6.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm5 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3zM12 13l-2.5 2.5h5L12 13z" />
+                        </svg>
+                        <span className="absolute -bottom-1 text-[8px] font-mono font-bold text-[#c6a15b] group-hover:text-white">L</span>
+                      </button>
+                    )}
+
+                    {/* #6 Krallık [K] — Yalnızca bir krallığa bağlıyken veya kendi krallığını kurmuşken aktif */}
+                    {onOpenKingdomModal && (
+                      <button
+                        type="button"
+                        data-testid="hud-open-kingdom"
+                        disabled={!isInKingdom}
+                        title={
+                          isInKingdom
+                            ? 'Krallık Divanı (K) — Savaş ve barış oylamaları, politikalar ve tımarlar'
+                            : 'Krallık Divanı (K) — Henüz bir krallığın parçası değilsiniz'
+                        }
+                        onClick={() => {
+                          if (isInKingdom) onOpenKingdomModal();
+                        }}
+                        className="relative w-10 h-10 rounded-full bg-gradient-to-b from-[#2a2217] to-[#14100b] hover:from-[#3a2f20] hover:to-[#1e1811] border border-[#c6a15b]/60 hover:border-[#fbbf24] text-[#fde68a] flex items-center justify-center transition shadow-md group disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current" aria-hidden="true">
+                          <path d="M3 18h18v2.5H3V18zm0-2l2.2-8.5 4.8 4.2L12 4l2 7.7 4.8-4.2L21 16H3z" />
+                        </svg>
+                        <span className="absolute -bottom-1 text-[8px] font-mono font-bold text-[#c6a15b] group-hover:text-white">K</span>
+                      </button>
+                    )}
                   </div>
 
                   {/* 2. Bottom-Center: Authentic Bannerlord Circular Sun/Moon Medallion Dial (#8, #9, #10) */}
@@ -1604,26 +1558,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                     )}
                   </div>
                 </>
-              ) : (
-                <div className="hud-panel rounded-lg px-4 py-2.5 w-full flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-[#d1c5b0]">
-                      Bölük emirleri: <span className="text-[#f3d98b]">0-4</span> bölük seç ·{' '}
-                      <span className="text-[#f3d98b]">F1</span> Hareket ·{' '}
-                      <span className="text-[#f3d98b]">F2</span> Yön ·{' '}
-                      <span className="text-[#f3d98b]">F3</span> Diziliş ·{' '}
-                      <span className="text-[#f3d98b]">F4</span> Ateş ·{' '}
-                      <span className="text-[#f3d98b]">F6</span> Devret
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-mono-tabular text-[#d1c5b0]">
-                      WASD: Sür · Sol Tık: Saldır · Sağ Tık (basılı): Blok
-                    </span>
-                  </div>
-                </div>
-              )}
+              ) : null}
             </div>
           )}
         </div>

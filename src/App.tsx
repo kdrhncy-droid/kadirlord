@@ -993,7 +993,7 @@ export default function App() {
         return;
       }
 
-      if (e.code === 'KeyN' && gameState === 'playing') {
+      if (e.code === 'KeyN' && gameState === 'playing' && subMode === 'overworld') {
         e.preventDefault();
         setIsEncyclopediaOpen(true);
         return;
@@ -1005,8 +1005,8 @@ export default function App() {
         return;
       }
 
-      if (e.code === 'KeyR' && gameState === 'playing' && !uiPausesWorld) {
-        setIsNewGameCreatorFlow(true);
+      if (e.code === 'KeyV' && gameState === 'playing' && subMode === 'overworld' && !uiPausesWorld) {
+        setIsNewGameCreatorFlow(false);
         setIsCharacterCreatorOpen(true);
         return;
       }
@@ -1420,7 +1420,20 @@ export default function App() {
   const handleRestAndRecover = useCallback((settlementId: string): string | null => {
     setCampaign((prev) => {
       const res = restAndRecoverAtSettlement(prev, settlementId);
-      return res.nextState;
+      const tick = advanceWorldDay(res.nextState, {
+        lordPositions: lordPositionsRef.current,
+        clans: macroStateRef.current?.clans,
+        playerPos: { x: res.nextState.playerX, z: res.nextState.playerZ },
+      });
+      const next = {
+        ...tick.state,
+        playerHp: res.nextState.playerHp,
+        settlements: refreshRecruitPools(tick.state.settlements, tick.state.day),
+      };
+      setActiveSettlementModal(
+        next.settlements.find((s) => s.id === settlementId) || null,
+      );
+      return next;
     });
     return null;
   }, []);

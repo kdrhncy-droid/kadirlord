@@ -696,21 +696,30 @@ export function createContactShadowDisc(radius = 0.85): THREE.Mesh {
     sharedShadowGeo.rotateX(-Math.PI / 2);
   }
   if (!sharedShadowMat) {
-    const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 64;
-    const ctx = canvas.getContext('2d')!;
-    const grad = ctx.createRadialGradient(32, 32, 4, 32, 32, 30);
-    grad.addColorStop(0, 'rgba(0, 0, 0, 0.55)');
-    grad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 64, 64);
-    const tex = new THREE.CanvasTexture(canvas);
-    sharedShadowMat = new THREE.MeshBasicMaterial({
-      map: tex,
-      transparent: true,
-      depthWrite: false,
-    });
+    if (typeof document !== 'undefined') {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d')!;
+      const grad = ctx.createRadialGradient(32, 32, 4, 32, 32, 30);
+      grad.addColorStop(0, 'rgba(0, 0, 0, 0.55)');
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 64, 64);
+      const tex = new THREE.CanvasTexture(canvas);
+      sharedShadowMat = new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        depthWrite: false,
+      });
+    } else {
+      sharedShadowMat = new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+      });
+    }
   }
   const disc = new THREE.Mesh(sharedShadowGeo, sharedShadowMat);
   disc.scale.setScalar(radius);
@@ -1051,6 +1060,14 @@ export interface WarriorMeshHandles {
   bodyGroup: THREE.Group;
   rightArm: THREE.Group;
   leftArm: THREE.Group;
+  leftLeg: THREE.Mesh;
+  rightLeg: THREE.Mesh;
+  horseGroup?: THREE.Group;
+  horseLegs?: THREE.Group[];
+  bowMesh?: THREE.Mesh;
+  shieldMesh?: THREE.Mesh;
+  meleeWeaponGroup: THREE.Group;
+  nockedArrowMesh?: THREE.Mesh;
   telegraphRing: THREE.Mesh;
   armorMat: THREE.MeshStandardMaterial;
 }
@@ -1159,10 +1176,13 @@ export function createWarriorModel(options: {
   const goldMat = warriorGoldMat();
 
   let riderYOffset = 0;
+  let horseGroup: THREE.Group | undefined;
+  let horseLegs: THREE.Group[] | undefined;
 
   if (options.isMounted) {
     riderYOffset = 0.75;
-    const horseGroup = new THREE.Group();
+    horseGroup = new THREE.Group();
+    horseLegs = [];
     const coatMat = warriorCoatMat();
     const maneMat = warriorManeMat();
 
@@ -1171,7 +1191,7 @@ export function createWarriorModel(options: {
     barrel.castShadow = true;
     horseGroup.add(barrel);
 
-    // Dört bacak (alt yarı koyu çorap) — bacaksız "uçan kutu" görünümü biter.
+    // Dört eklemli bacak (kalça/omuz noktasından salınım yapar)
     const legGeo = warriorGeo('CylinderGeometry:0.09,0.07,0.78,7', () => new THREE.CylinderGeometry(0.09, 0.07, 0.78, 7));
     const sockGeo = warriorGeo('CylinderGeometry:0.075,0.08,0.3,7', () => new THREE.CylinderGeometry(0.075, 0.08, 0.3, 7));
     for (const [lx, lz] of [
@@ -1180,13 +1200,17 @@ export function createWarriorModel(options: {
       [-0.24, -0.52],
       [0.24, -0.52],
     ] as const) {
+      const legPivot = new THREE.Group();
+      legPivot.position.set(lx, 0.76, lz);
       const leg = new THREE.Mesh(legGeo, coatMat);
-      leg.position.set(lx, 0.39, lz);
+      leg.position.set(0, -0.37, 0);
       leg.castShadow = true;
-      horseGroup.add(leg);
+      legPivot.add(leg);
       const sock = new THREE.Mesh(sockGeo, maneMat);
-      sock.position.set(lx, 0.15, lz);
-      horseGroup.add(sock);
+      sock.position.set(0, -0.61, 0);
+      legPivot.add(sock);
+      horseGroup.add(legPivot);
+      horseLegs.push(legPivot);
     }
 
     // Eyer altı hizi örtüsü (caparison) + eyer
@@ -1277,60 +1301,229 @@ export function createWarriorModel(options: {
   leftArm.position.set(-0.42, 1.18 + riderYOffset, 0.1);
   bodyGroup.add(leftArm);
 
-  if (options.isRanged) {
-    const bowGeo = warriorGeo('warrior-bow', () => {
-      const bowCurve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(0, -0.5, 0.1),
-        new THREE.Vector3(0, 0, 0.36),
-        new THREE.Vector3(0, 0.5, 0.1),
-      ]);
-      return new THREE.TubeGeometry(bowCurve, 12, 0.04, 6, false);
+  const bowGeo = warriorGeo('warrior-bow', () => {
+    const bowCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, -0.5, 0.1),
+      new THREE.Vector3(0, 0, 0.36),
+      new THREE.Vector3(0, 0.5, 0.1),
+    ]);
+    return new THREE.TubeGeometry(bowCurve, 12, 0.04, 6, false);
+  });
+  const bowMesh = new THREE.Mesh(bowGeo, leatherMat);
+  bowMesh.visible = Boolean(options.isRanged);
+  leftArm.add(bowMesh);
+
+  const shieldGeo = warriorGeo('warrior-shield', () => {
+    const shieldShape = new THREE.Shape();
+    shieldShape.moveTo(-0.32, 0.42);
+    shieldShape.lineTo(0.32, 0.42);
+    shieldShape.lineTo(0.28, -0.1);
+    shieldShape.lineTo(0, -0.52);
+    shieldShape.lineTo(-0.28, -0.1);
+    shieldShape.closePath();
+    return new THREE.ExtrudeGeometry(shieldShape, {
+      depth: 0.06,
+      bevelEnabled: true,
+      bevelSize: 0.02,
+      bevelThickness: 0.02,
+      bevelSegments: 2,
     });
-    const bow = new THREE.Mesh(bowGeo, leatherMat);
-    leftArm.add(bow);
-  } else {
-    const shieldGeo = warriorGeo('warrior-shield', () => {
-      const shieldShape = new THREE.Shape();
-      shieldShape.moveTo(-0.32, 0.42);
-      shieldShape.lineTo(0.32, 0.42);
-      shieldShape.lineTo(0.28, -0.1);
-      shieldShape.lineTo(0, -0.52);
-      shieldShape.lineTo(-0.28, -0.1);
-      shieldShape.closePath();
-      return new THREE.ExtrudeGeometry(shieldShape, {
-        depth: 0.06,
-        bevelEnabled: true,
-        bevelSize: 0.02,
-        bevelThickness: 0.02,
-        bevelSegments: 2,
-      });
-    });
-    const shield = new THREE.Mesh(shieldGeo, armorMat);
-    shield.position.set(-0.12, -0.05, 0.22);
-    shield.rotation.y = -Math.PI / 3;
-    leftArm.add(shield);
-  }
+  });
+  const shieldMesh = new THREE.Mesh(shieldGeo, armorMat);
+  shieldMesh.position.set(-0.12, -0.05, 0.22);
+  shieldMesh.rotation.y = -Math.PI / 3;
+  shieldMesh.visible = !options.isRanged;
+  leftArm.add(shieldMesh);
 
   const rightArm = new THREE.Group();
   rightArm.position.set(0.42, 1.18 + riderYOffset, 0.1);
   bodyGroup.add(rightArm);
 
-  const hilt = new THREE.Mesh(warriorGeo('BoxGeometry:0.28,0.06,0.08', () => new THREE.BoxGeometry(0.28, 0.06, 0.08)), goldMat);
-  hilt.position.set(0, 0.12, 0.25);
-  rightArm.add(hilt);
+  const meleeWeaponGroup = new THREE.Group();
+  meleeWeaponGroup.visible = !options.isRanged;
+  rightArm.add(meleeWeaponGroup);
 
-  const bladeLen = options.isMounted ? 1.55 : options.isHeavy ? 1.25 : 0.98;
-  const blade = new THREE.Mesh(warriorGeo(`blade:${bladeLen}`, () => new THREE.BoxGeometry(0.07, bladeLen, 0.04)), steelMat);
-  blade.position.set(0, 0.12 + bladeLen * 0.5, 0.25);
-  blade.rotation.x = 0.25;
-  rightArm.add(blade);
+  if (options.isMounted && !options.isRanged) {
+    // Süvari kargısı (2.35m ahşap gövde + çelik mızrak ucu)
+    const shaft = new THREE.Mesh(
+      warriorGeo('lance-shaft', () => new THREE.CylinderGeometry(0.032, 0.044, 2.35, 7)),
+      leatherMat,
+    );
+    shaft.position.set(0, 0.95, 0.32);
+    shaft.rotation.x = 0.22;
+    meleeWeaponGroup.add(shaft);
+
+    const spearTip = new THREE.Mesh(
+      warriorGeo('lance-tip', () => new THREE.ConeGeometry(0.065, 0.34, 6)),
+      steelMat,
+    );
+    spearTip.position.set(0, 2.18, 0.58);
+    spearTip.rotation.x = 0.22;
+    meleeWeaponGroup.add(spearTip);
+  } else {
+    const hilt = new THREE.Mesh(warriorGeo('BoxGeometry:0.28,0.06,0.08', () => new THREE.BoxGeometry(0.28, 0.06, 0.08)), goldMat);
+    hilt.position.set(0, 0.12, 0.25);
+    meleeWeaponGroup.add(hilt);
+
+    const bladeLen = options.isHeavy ? 1.25 : 0.98;
+    const blade = new THREE.Mesh(warriorGeo(`blade:${bladeLen}`, () => new THREE.BoxGeometry(0.07, bladeLen, 0.04)), steelMat);
+    blade.position.set(0, 0.12 + bladeLen * 0.5, 0.25);
+    blade.rotation.x = 0.25;
+    meleeWeaponGroup.add(blade);
+  }
+
+  // Okçuların sağ elinde kiriş çekerken görünen ok
+  const nockedArrowMesh = new THREE.Mesh(
+    warriorGeo('nocked-arrow', () => new THREE.CylinderGeometry(0.015, 0.015, 0.78, 5)),
+    leatherMat,
+  );
+  nockedArrowMesh.rotation.x = Math.PI / 2;
+  nockedArrowMesh.position.set(-0.18, 0.02, 0.32);
+  nockedArrowMesh.visible = Boolean(options.isRanged);
+  rightArm.add(nockedArrowMesh);
 
   return {
     root,
     bodyGroup,
     rightArm,
     leftArm,
+    leftLeg,
+    rightLeg,
+    horseGroup,
+    horseLegs,
+    bowMesh,
+    shieldMesh,
+    meleeWeaponGroup,
+    nockedArrowMesh,
     telegraphRing,
     armorMat,
   };
 }
+
+export function animateWarriorRigPose(
+  handles: WarriorMeshHandles,
+  params: {
+    speed: number;
+    time: number;
+    phaseOffset: number;
+    isMounted: boolean;
+    usingRanged: boolean;
+    shieldIntact: boolean;
+    isBlocking: boolean;
+    blockDirection: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+    attackPhase: 'IDLE' | 'WINDUP' | 'RELEASE' | 'RECOVERY';
+    attackDirection: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+    attackProgress: number; // 0..1
+    isCouchedLance: boolean;
+  },
+): void {
+  const {
+    speed,
+    time,
+    phaseOffset,
+    isMounted,
+    usingRanged,
+    shieldIntact,
+    isBlocking,
+    blockDirection,
+    attackPhase,
+    attackDirection,
+    attackProgress,
+    isCouchedLance,
+  } = params;
+
+  // 1. Silah / Yay / Kalkan görünürlük geçişi (okçu mermisi bitince kılıca geçer)
+  if (handles.bowMesh) handles.bowMesh.visible = usingRanged;
+  if (handles.nockedArrowMesh) {
+    handles.nockedArrowMesh.visible = usingRanged && attackPhase !== 'RECOVERY';
+  }
+  handles.meleeWeaponGroup.visible = !usingRanged;
+  if (handles.shieldMesh) {
+    handles.shieldMesh.visible = !usingRanged && shieldIntact;
+  }
+
+  // 2. Yaya bacak adımı veya binek at 4 zamanlı dörtnal (gallop) döngüsü
+  const moveFactor = Math.min(1, speed / (isMounted ? 9.5 : 5.5));
+  const cycle = time * (isMounted ? 11.5 : 8.5) + phaseOffset;
+
+  if (isMounted && handles.horseLegs && handles.horseLegs.length === 4) {
+    const gallopAmp = 0.62 * moveFactor;
+    handles.horseLegs[0].rotation.x = Math.sin(cycle) * gallopAmp;
+    handles.horseLegs[1].rotation.x = Math.sin(cycle + 0.65) * gallopAmp;
+    handles.horseLegs[2].rotation.x = Math.sin(cycle + Math.PI) * gallopAmp;
+    handles.horseLegs[3].rotation.x = Math.sin(cycle + Math.PI + 0.65) * gallopAmp;
+    if (handles.horseGroup) {
+      handles.horseGroup.rotation.x = Math.cos(cycle) * 0.045 * moveFactor;
+    }
+    handles.leftLeg.rotation.x = 0.12;
+    handles.rightLeg.rotation.x = 0.12;
+  } else {
+    const strideAmp = 0.58 * moveFactor;
+    handles.leftLeg.rotation.x = Math.sin(cycle) * strideAmp;
+    handles.rightLeg.rotation.x = -Math.sin(cycle) * strideAmp;
+  }
+
+  // 3. Sol kol (Yay tutuşu veya 4 yönlü kalkan/siper bloğu)
+  if (usingRanged) {
+    handles.leftArm.rotation.set(-0.95, 0.25, 0);
+  } else if (isBlocking) {
+    const dirY = blockDirection === 'LEFT' ? 0.35 : blockDirection === 'RIGHT' ? 0.85 : 0.58;
+    const dirX = blockDirection === 'UP' ? -0.95 : blockDirection === 'DOWN' ? -0.25 : -0.58;
+    handles.leftArm.rotation.set(dirX, dirY, 0);
+  } else {
+    handles.leftArm.rotation.set(
+      -Math.sin(cycle) * 0.18 * moveFactor,
+      0.16,
+      0,
+    );
+  }
+
+  // 4. Sağ kol (Koltuklanmış kargı, yay germe veya 4 yönlü yakın dövüş savurması)
+  if (isCouchedLance && !usingRanged) {
+    handles.rightArm.rotation.set(1.28, -0.08, 0);
+    return;
+  }
+
+  if (usingRanged) {
+    if (attackPhase === 'WINDUP') {
+      handles.rightArm.rotation.set(-0.92, -0.35 - attackProgress * 0.35, 0);
+    } else if (attackPhase === 'RELEASE') {
+      handles.rightArm.rotation.set(-0.85, -0.75 + attackProgress * 0.5, 0);
+    } else {
+      handles.rightArm.rotation.set(-0.45, -0.15, 0);
+    }
+    return;
+  }
+
+  if (attackPhase === 'WINDUP') {
+    if (attackDirection === 'UP') {
+      handles.rightArm.rotation.set(-1.35 * attackProgress, 0, -0.1);
+    } else if (attackDirection === 'DOWN') {
+      handles.rightArm.rotation.set(0.45 * attackProgress, -0.2, 0.12);
+    } else if (attackDirection === 'LEFT') {
+      handles.rightArm.rotation.set(-0.35, 0.85 * attackProgress, -0.45);
+    } else {
+      handles.rightArm.rotation.set(-0.35, -0.85 * attackProgress, 0.45);
+    }
+  } else if (attackPhase === 'RELEASE') {
+    if (attackDirection === 'UP') {
+      handles.rightArm.rotation.set(-1.35 + 2.35 * attackProgress, 0, 0);
+    } else if (attackDirection === 'DOWN') {
+      handles.rightArm.rotation.set(0.45 - 1.65 * attackProgress, 0, 0);
+    } else if (attackDirection === 'LEFT') {
+      handles.rightArm.rotation.set(0.2, 0.85 - 1.95 * attackProgress, -0.35);
+    } else {
+      handles.rightArm.rotation.set(0.2, -0.85 + 1.95 * attackProgress, 0.35);
+    }
+  } else if (attackPhase === 'RECOVERY') {
+    const k = 1 - attackProgress;
+    handles.rightArm.rotation.set(0.35 * k, 0, 0);
+  } else {
+    handles.rightArm.rotation.set(
+      Math.sin(cycle) * 0.22 * moveFactor,
+      0,
+      0,
+    );
+  }
+}
+

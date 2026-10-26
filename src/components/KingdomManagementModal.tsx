@@ -258,7 +258,6 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
     onUpdateCampaign({
       ...campaign,
       gold: campaign.gold - costGold,
-      renown: campaign.renown + 25,
     });
 
     onUpdateMacroState({

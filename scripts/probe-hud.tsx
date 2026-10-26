@@ -68,9 +68,16 @@ const render = (over: Record<string, unknown> = {}) =>
 const html = render();
 const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
-/* 1. Beş çekirdek düğme */
-for (const label of ['Karakter [C]', 'Envanter [I]', 'Ordum (', 'Harita &amp; Günlük', 'Divan [K]', 'Ansiklopedi [N]']) {
-  ok(html.includes(label), `menüde "${label.replace('&amp;', '&')}" var`);
+/* 1. Altı çekirdek Bannerlord sol alt menü ikonu (C, I, P, J, L, K) */
+for (const testId of [
+  'hud-open-character',
+  'hud-open-inventory',
+  'hud-open-party',
+  'hud-open-quests',
+  'hud-open-clan',
+  'hud-open-kingdom',
+]) {
+  ok(html.includes(`data-testid="${testId}"`), `menüde "${testId}" var`);
 }
 
 /* 2. Kaldırılan mükerrer öğeler */

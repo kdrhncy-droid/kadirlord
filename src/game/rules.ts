@@ -325,6 +325,8 @@ export interface Settlement {
   visited?: boolean;
   /** Bannerlord 6-slot asker toplama ekranında bu yerleşimden toplanmış (boşaltılmış) slot anahtarları. */
   recruitedSlotKeys?: string[];
+  /** Bu şehirde son turnuvanın düzenlendiği sefer günü (günde en fazla 1 turnuva). */
+  lastTournamentDay?: number;
 }
 
 export function getSettlementArrivalRadius(type: 'TOWN' | 'CASTLE' | 'VILLAGE'): number {
@@ -818,6 +820,34 @@ export function hireMercenariesAtTavern(
   };
 }
 
+const PRISONER_TIER_RANSOM: Record<number, number> = {
+  1: 35,
+  2: 50,
+  3: 80,
+  4: 120,
+  5: 180,
+  6: 260,
+};
+
+export function calculatePrisonerRansomValue(state: CampaignState): number {
+  if (state.prisoners <= 0) return 0;
+  const stacks = state.prisonerStacks ?? [];
+  let stackTotalCount = 0;
+  let stackGold = 0;
+  for (const st of stacks) {
+    if (st.count <= 0) continue;
+    const def = getTroopDefinition(st.troopId);
+    const tier = Math.max(1, Math.min(6, def?.tier ?? 1));
+    stackTotalCount += st.count;
+    stackGold += st.count * (PRISONER_TIER_RANSOM[tier] ?? 35);
+  }
+  if (stackTotalCount > state.prisoners && stackTotalCount > 0) {
+    return Math.round((stackGold / stackTotalCount) * state.prisoners);
+  }
+  const untypedCount = Math.max(0, state.prisoners - stackTotalCount);
+  return stackGold + untypedCount * 35;
+}
+
 export function ransomPrisonersAtTavern(
   state: CampaignState,
   settlementId: string,
@@ -825,9 +855,8 @@ export function ransomPrisonersAtTavern(
   if (state.prisoners <= 0) {
     return { nextState: state, success: false, reason: 'Fidyeciye teslim edilecek esiriniz yok.' };
   }
-  const ransomPerPrisoner = 35;
   const count = state.prisoners;
-  const totalGold = count * ransomPerPrisoner;
+  const totalGold = calculatePrisonerRansomValue(state);
   const s = state.settlements.find((item) => item.id === settlementId);
 
   return {
@@ -837,6 +866,7 @@ export function ransomPrisonersAtTavern(
       ...state,
       gold: state.gold + totalGold,
       prisoners: 0,
+      prisonerStacks: [],
       chronicle: [
         {
           id: `ransom-${Date.now()}`,
@@ -900,8 +930,7 @@ export function joinArenaTournament(
   settlementId: string,
 ): { nextState: CampaignState; success: boolean; victory: boolean; goldEarned: number; renownEarned: number; prizeName: string } {
   const s = state.settlements.find((item) => item.id === settlementId);
-  const entryFee = 30;
-  if (state.gold < entryFee) {
+  if (s?.lastTournamentDay === state.day) {
     return {
       nextState: state,
       success: false,
@@ -912,9 +941,23 @@ export function joinArenaTournament(
     };
   }
 
-  const partyStrength = calculatePartyStrength(state.roster);
-  const winChance = Math.min(0.85, 0.55 + partyStrength * 0.005);
+  // Bannerlord'da turnuvaya katılım ücretsizdir ve kazanma şansı parti büyüklüğüne değil,
+  // baş karakterin kişisel dövüş becerilerine (Tek El, Çift El, Gönderli, Atletizm) ve sağlığına bağlıdır.
+  const skills = state.skills;
+  const combatSkillAvg = skills
+    ? ((skills.oneHanded?.level ?? 40) +
+        (skills.twoHanded?.level ?? 30) +
+        (skills.polearm?.level ?? 35) +
+        (skills.athletics?.level ?? 40)) /
+      4
+    : 45;
+  const hpRatio = Math.max(0.25, state.playerHp / Math.max(1, state.playerMaxHp));
+  const winChance = Math.min(0.88, Math.max(0.25, (0.42 + combatSkillAvg * 0.004) * hpRatio));
   const victory = Math.random() < winChance;
+
+  const updatedSettlements = state.settlements.map((item) =>
+    item.id === settlementId ? { ...item, lastTournamentDay: state.day } : item,
+  );
 
   if (victory) {
     const goldEarned = 250;
@@ -928,9 +971,10 @@ export function joinArenaTournament(
       prizeName,
       nextState: {
         ...state,
-        gold: state.gold - entryFee + goldEarned,
+        gold: state.gold + goldEarned,
         renown: state.renown + renownEarned,
         morale: Math.min(100, state.morale + 6),
+        settlements: updatedSettlements,
         chronicle: [
           {
             id: `tourney-win-${Date.now()}`,
@@ -951,7 +995,7 @@ export function joinArenaTournament(
       prizeName: '',
       nextState: {
         ...state,
-        gold: state.gold - entryFee,
+        settlements: updatedSettlements,
         chronicle: [
           {
             id: `tourney-loss-${Date.now()}`,
@@ -1076,14 +1120,24 @@ export function restAndRecoverAtSettlement(
   settlementId: string,
 ): { nextState: CampaignState; success: boolean; healedCount: number; message: string } {
   const s = state.settlements.find((item) => item.id === settlementId);
+  let remainingHeal = 6;
+  let actualHealed = 0;
+  const nextTroopStacks = (state.troopStacks ?? []).map((stack) => {
+    if (remainingHeal <= 0 || stack.wounded <= 0) return stack;
+    const heal = Math.min(stack.wounded, remainingHeal);
+    remainingHeal -= heal;
+    actualHealed += heal;
+    return { ...stack, wounded: stack.wounded - heal };
+  });
   return {
     success: true,
-    healedCount: 4,
+    healedCount: actualHealed > 0 ? actualHealed : 4,
     message: `${s?.name || 'Yerleşim'} surları altında güvenle dinlenildi. Askerlerinizin morali yükseldi.`,
     nextState: {
       ...state,
       morale: Math.min(100, state.morale + 6),
       playerHp: Math.min(state.playerMaxHp, state.playerHp + 25),
+      troopStacks: nextTroopStacks,
     },
   };
 }
@@ -1173,6 +1227,24 @@ export function forcePeasantsSupplies(
     prosperity: Math.max(10, v.prosperity - 15),
   };
 
+  // Bannerlord'da köylüleri erzak vermeye zorlamak düşmanca bir savaş eylemidir; bağlı krallıkla ilişkiyi düşürür ve savaşı başlatır.
+  const ownerFaction =
+    v.faction === 'player' && v.boundSettlementId
+      ? (state.settlements.find((s) => s.id === v.boundSettlementId)?.faction ?? v.faction)
+      : v.faction;
+  const updatedLords =
+    ownerFaction !== 'player'
+      ? state.lords.map((l) =>
+          l.faction === ownerFaction
+            ? {
+                ...l,
+                isAtWarWithPlayer: true,
+                relation: Math.max(-100, l.relation - 15),
+              }
+            : l,
+        )
+      : state.lords;
+
   const nextInventory = addItemDefinitionToInventory(
     state,
     'mkt_grain_sack',
@@ -1189,11 +1261,12 @@ export function forcePeasantsSupplies(
       inventoryItems: nextInventory,
       morale: Math.min(100, state.morale + 1),
       settlements: updatedSettlements,
+      lords: updatedLords,
       chronicle: [
         {
           id: `force-supplies-${Date.now()}`,
           day: state.day,
-          category: 'ECONOMY' as const,
+          category: 'WAR' as const,
           text: `${v.name} köylüleri kılıç zoruyla erzak vermeye zorlandı (+${foodGained} Erzak).`,
         },
         ...state.chronicle,
@@ -1224,6 +1297,23 @@ export function forcePeasantsRecruits(
     prosperity: Math.max(10, v.prosperity - 12),
   };
 
+  const ownerFaction =
+    v.faction === 'player' && v.boundSettlementId
+      ? (state.settlements.find((s) => s.id === v.boundSettlementId)?.faction ?? v.faction)
+      : v.faction;
+  const updatedLords =
+    ownerFaction !== 'player'
+      ? state.lords.map((l) =>
+          l.faction === ownerFaction
+            ? {
+                ...l,
+                isAtWarWithPlayer: true,
+                relation: Math.max(-100, l.relation - 20),
+              }
+            : l,
+        )
+      : state.lords;
+
   return {
     success: true,
     recruitsGained,
@@ -1234,6 +1324,7 @@ export function forcePeasantsRecruits(
         infantry: state.roster.infantry + recruitsGained,
       },
       settlements: updatedSettlements,
+      lords: updatedLords,
       chronicle: [
         {
           id: `force-recruits-${Date.now()}`,
@@ -1322,9 +1413,10 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
   let wageMoraleDelta = 0;
   if (state.gold + playerSettlementTaxes + playerWorkshopIncome < wage) wageMoraleDelta -= 8;
 
-  const seasons: Array<'Bahar' | 'Yaz' | 'Güz' | 'Kış'> = ['Bahar', 'Yaz', 'Güz', 'Kış'];
+  // Bannerlord Takvimi: 1 Mevsim = 21 Gün, 1 Yıl = 84 Gün (Başlangıç: Yaz 1, 1084)
+  const seasons: Array<'Yaz' | 'Güz' | 'Kış' | 'Bahar'> = ['Yaz', 'Güz', 'Kış', 'Bahar'];
   const nextDay = state.day + 1;
-  const seasonIdx = Math.floor(((nextDay - 1) % 40) / 10);
+  const seasonIdx = Math.floor(((nextDay - 1) % 84) / 21);
 
   // Atölye gelirini 10 günde bir vakayinameye yaz (her gün yazmak günlüğü boğar).
   const economyChronicle =
@@ -3858,6 +3950,7 @@ export function upgradeSettlementBuilding(
     nextState: {
       ...state,
       gold: state.gold - upgradeCost,
+      influence: buildingId === 'FORUM' ? (state.influence ?? 0) + 1 : state.influence,
       settlements: nextSettlements,
       chronicle: [
         {
@@ -3906,6 +3999,21 @@ export function buyOrChangeWorkshop(
   const s = state.settlements[idx];
   if (s.type !== 'TOWN') {
     return { success: false, reason: 'Atölyeler (Workshops) yalnızca büyük şehirlerde kurulabilir.', nextState: state };
+  }
+  const isChangingExisting =
+    s.workshopOwner === 'player' && Boolean(s.workshopType && s.workshopType !== 'NONE');
+  if (!isChangingExisting) {
+    const ownedWorkshops = state.settlements.filter(
+      (item) => item.workshopOwner === 'player' && item.workshopType && item.workshopType !== 'NONE',
+    ).length;
+    const maxWorkshops = calculateClanTier(state.renown).tier + 1;
+    if (ownedWorkshops >= maxWorkshops) {
+      return {
+        success: false,
+        reason: `Maksimum atölye sınırına ulaştınız (${ownedWorkshops}/${maxWorkshops} — Klan Kademesi + 1).`,
+        nextState: state,
+      };
+    }
   }
   const cost = 220;
   if (state.gold < cost) {
@@ -4311,7 +4419,7 @@ export function attemptLordPersuasionStep(
     replyText,
     nextState: {
       ...state,
-      renown: convinced ? state.renown + 5 : state.renown,
+      renown: state.renown,
       skills: {
         ...baseSkills,
         charm: {

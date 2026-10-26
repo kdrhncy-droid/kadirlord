@@ -122,6 +122,11 @@ export function remainingReserves(
   };
 }
 
+/** Tarafın sahaya çıkmamış yedeği kaldı mı? */
+export function hasReserves(reserves: TroopRoster): boolean {
+  return getTotalTroops(reserves) > 0;
+}
+
 /**
  * Bir taraf için takviye dalgası kararı. Sahadaki mevcut ilk dalganın
  * yarısına (veya altına) düşmedikçe dalga yok; dalga, tarafı ilk dalga
