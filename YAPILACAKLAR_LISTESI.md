@@ -1,6 +1,6 @@
 # Kadirlord — Birleştirilmiş Tüm Görevler, Tamamlananlar (`[x]`) ve Açık İşler (`[ ]`)
 
-> **Son Konsolidasyon:** 2026-10-22 (`d929f6f` — Canlı Kuşatma, Çoklu Lord Yarım Ay Dizilimi ve Ordu/Bütünlük Sistemleri Sonrası)
+> **Son Konsolidasyon:** 2026-10-27 (`c3799f4` — Savaş Meydanı v1 Adım 1, Sancak Birliği Kahraman Sayımı, Klan Menüsü ve Harita Savaşları Yol Haritası)
 > **Kapsam:** Bu dosya; eski `YAPILACAKLAR_LISTESI.md`, `docs/CURSOR_ZOR_GOREVLER.md`, `docs/EKSIKLER_VE_HATALAR.md`, **Steam Bannerlord Türkçe Detaylı Tam Rehberi (`id=2046201799` — 17 Bölüm + SSS)** ve **6 Ana Ekranın (Şehir/Köy/Kale, Harita HUD, Envanter, Pazar, Diyalog/Lord, Parti/Karakter/Krallık) Görsel/Mekanik Denetimi** içindeki **TÜM görevlerin birleştirilmiş tek kaynağıdır**.
 > **Doğrulama Prensibi:** Her madde gerçek kod tabanında (`src/game/` ve `src/components/`) kontrol edilerek gerçekten tamamlanmış olanlar `[x]`, eksik/yarım/görsel olarak hatalı olanlar `[ ]` olarak işaretlenmiştir.
 > **⚠️ 2026-10-24 denetimi:** Bazı `[x]` maddelerin sayı/formül ve doğrulama bakımından Bannerlord'a uymadığı (ve `verify:fast`in kırmızı olduğu) kod kanıtıyla tespit edildi; düzeltmeler **Bölüm 6 (10.1–10.11)** altında takip edilir. Ayrıntı: [`docs/DENETIM_2026-10-24_YAPILANLAR_VE_SAVAS_MEYDANI.md`](docs/DENETIM_2026-10-24_YAPILANLAR_VE_SAVAS_MEYDANI.md).
@@ -328,3 +328,37 @@
   - ✅ **Rapor şeridi solar:** sol alt olay şeridi yeni olayda belirir, 7 saniyede solar (opaklık canlıda 1→0 ölçüldü); kalıcı kayıt "Raporlar" panelinde.
   - ✅ **"Asker topluyor ama azalıyor":** iki kök neden düzeltildi — (a) iaşe yalnız asker alınırken doluyordu: garnizonunda bekleyen tavan-üstü lord açlıktan eriyordu (prob öncesi: 100→90 asker/2 gün, erzak 1→0; sonrası: 100→100, erzak 1→11; ayrıca evinde olan lord aynı tik içinde açlık cezası almaz), (b) etiket yoldayken de "garnizonunda asker topluyor" diyordu: artık varışa kadar "garnizonuna takviye almaya gidiyor".
   - [ ] **Bilinen eksik (bu turda eklenmedi — kullanıcı talimatı):** sentetik görev günlüğü görevleri kabul edilmeden aktif sayıyor; gerçek kabul akışı (Bannerlord: görev verenle konuşup alma) ve kervan partisi isim levhası ayrı iş.
+
+---
+
+## 🚀 BÖLÜM 7 — 2026-10-27 KULLANICI ONAYLI ADIM ADIM YOL HARİTASI (SAVAŞ MEYDANI v1, KLAN MENÜSÜ VE HARİTA SAVAŞLARI)
+
+> **Çalışma Kuralı:** Her yeni adım kodlanmadan önce kullanıcıya sunulup açık onay alınır; tamamlandığında testlerle (`verify:fast`) doğrulanır.
+
+- [x] **11.1. Savaş Meydanı v1 — Adım 1: At Rig/Animasyonu, Sağ El Bayrakların Kaldırılması ve `F` ile Attan İnme/Binme (`src/game/proceduralModels.ts`, `src/components/BattlefieldView.tsx`, `scripts/probe-battle-combat.ts`):** *(2026-10-27 yapıldı)*
+  - Askerlerin ve komutanın sağ elinde tuttuğu formasyon bayrakları (`createFormationBanner`) tamamen kaldırıldı.
+  - At modeli iki eklemli (dizden bükülen `horseLegs` + `horseKnees`), yuvarlatılmış göğüs/sağrı, dörtnala ritmik baş-boyun (`horseNeck`) ve hızla savrulan kuyruk (`horseTail`) animasyonuyla yenilendi; binici grubu (`riderGroup`) ayrıştırıldı.
+  - **`F` tuşu (`KeyF` / `KeyZ`)** ile attan inme/binme eklendi: attan inildiğinde at 3B savaş alanında olduğu yerde nefes alarak bekler (`dismountedHorse`), oyuncu yere (`y = 0`) inip yaya yürür; ata `3.8m` yaklaşıldığında `🐎 [F] Ata Bin` ipucu çıkar ve tekrar binilebilir.
+- [x] **11.2. Sağ Alt HUD `"Sancak Birliği: 0"` Hatası Düzeltmesi — Oyuncu ve Ağabey/Yoldaşların Sayılması (`src/game/rules.ts`, `src/components/GameHud.tsx`, `src/components/WorldCanvas.tsx`, `src/components/PartyModal.tsx`, `scripts/probe-hud.tsx`):** *(2026-10-27 yapıldı)*
+  - `getPlayerPartyHeadcount(state)` eklendi: oyuncuyu ve partideki aile/yoldaş kahramanları (`isInPlayerParty !== false`) parti mevcuduna dahil eder (`LordAgent.armySize === getTotalTroops(roster)` kuralını bozmadan).
+  - Gerçekçi yeni oyun başlangıcında (`realisticBannerlordStart: true`, 0 asker + Oyuncu + Ağabey Niasen) sağ alt HUD (`#12 Birlik & Kalkan`), harita üzerindeki oyuncu sancağı ve Parti ekranı (`P`) artık `0` yerine **`2`** (`2 Kahraman · 0 Asker`) gösterir.
+- [ ] **11.3. Savaş Meydanı v1 — Adım 2: Birim Çarpışması, Kalkan Bloklama ve Okçu/Piyade/Süvari Muharebe Yapay Zekası (`src/components/BattlefieldView.tsx`, `src/game/battlefield.ts`):**
+  - Askerlerin birbirinin içinden geçmesini önleyen gerçekçi çarpışma ayrımı (`separation` / omuz omuza kalkan hattı tutma).
+  - Oyuncu ve kalkanlı birimlerde sağ tık (`RMB`) kalkan bloklama, 4 yönlü yakın dövüş (`Sol / Sağ / Üst / Saplama`) ve kalkan/zırh vuruş geri bildirimi.
+  - Okçuların menzilde durup parabolik gerçek ok fırlatması + sınırlı sadak cephanesi; süvarilerin mızrak/kargı hücumu ve döngüsel taarruz AI'ı.
+- [ ] **11.4. Savaş Meydanı v1 — Adım 3: Moral / Bozgun (`Routing`), `Tab` Muharebe Skoru ve Savaş Sonu Esir / Ganimet Akışı (`src/components/BattlefieldView.tsx`, `src/App.tsx`):**
+  - Ağır kayıp veren tarafın moralinin kırılıp harita sınırına doğru kaçması (`ROUTING`).
+  - `Tab` tuşuyla canlı muharebe özeti (*Sağlam / Yaralı / Ölü / Kaçan*) ve kurallı geri çekilme.
+  - Savaş bittiğinde gerçek yaralı/ölü ayrımı, esir alma ve ganimet ekranına (`BattleLootModal`) geçiş.
+- [ ] **11.5. Bannerlord Klan Menüsü (`L` Kısayolu — ` src/components/ClanModal.tsx`, Görsel ve Metin Araştırmalı):**
+  - Krallık (`K`) ekranından bağımsız, oyun başından itibaren her zaman açılabilen gerçek Bannerlord **Klan Ekranı (`L`)**.
+  - **Üst Başlık:** Klan Sancağı, Klan Adı değiştirme, Klan Kademesi (`Tier 0..6`) ve Nam (`Renown`) ilerleme çubuğu, Günlük Gelir/Gider özeti.
+  - **4 Ana Sekme:**
+    1. **Üyeler (`Members`):** Oyuncu, Ağabey/Aile üyeleri ve Yoldaşlar; konumları, sağlık durumları ve **4 Klan Rolü Ataması** (*İaşeci, İzci, Cerrah, Mühendis*) + Vali / Parti Lideri atama.
+    2. **Birlikler (`Parties`):** Oyuncunun ana birliği, klan üyelerinin yönettiği ek klan partileri (asker mevcudu, maaş sınırı, tutumu: *Saldırgan / Savunmacı / Dengeli*) ve kervanlar.
+    3. **Tımarlar (`Fiefs`):** Klana ait şehirler, kaleler ve bağlı köyler; refah, sadakat, güvenlik, garnizon, vergi geliri ve vali ataması.
+    4. **Diğer (`Other`):** Klana ait **Atölyeler (`Workshops`)**, **Kervanlar (`Caravans`)** ve detaylı **Finans (Gelir / Gider) Dökümü**.
+- [ ] **11.6. Harita Üzeri AI-AI Lord Savaşları (`MapEvent`), Kuşatma Asker Düşüşü ve Yardıma Gitme (`src/game/worldSim.ts`, `src/components/WorldCanvas.tsx`, `src/components/SiegeEncounterModal.tsx`):**
+  - Düşman lord partileri haritada çarpıştığında veya kuşatma yapan bir lordun (ör. Rhagaea) üzerine savunma/destek orduları geldiğinde iç içe geçip beklemek veya anında el değiştirmek yerine **aktif harita muharebesi (`MapEvent`)** başlaması.
+  - Savaşan lordların ve kuşatılan yerleşimlerin üzerinde çapraz kılıç / kuşatma göstergesi, bilgi kartında **"Savaşıyor: [Karşı Taraf]"** / **"Kuşatma Altında"** yazması ve her iki tarafın asker sayısının zaman aktıkça **kademeli olarak düşmesi** (canlı erime / attrition).
+  - Oyuncunun haritada süren bir AI-AI meydan savaşına veya kuşatma muharebesine tıklayarak müttefik/dost tarafa **destek olarak savaşa katılabilmesi** (veya düşmana saldırabilmesi).
