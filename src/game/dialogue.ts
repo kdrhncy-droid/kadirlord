@@ -23,6 +23,7 @@ import type { Quest } from './quests.ts';
 import {
   type CampaignState,
   FACTION_INFO,
+  type FactionId,
   type LordAgent,
   type Settlement,
   calculateClanTier,
@@ -61,6 +62,14 @@ export type DialogueEffect =
   | { kind: 'BRIBE_ESCAPE'; cost: number }
   | { kind: 'DEMAND_SURRENDER' }
   | { kind: 'PLAYER_SURRENDER' }
+  | {
+      kind: 'SET_ALLEGIANCE';
+      faction: FactionId;
+      role: 'INDEPENDENT' | 'MERCENARY' | 'VASSAL';
+      relationDelta?: number;
+      goldDelta?: number;
+      reason: string;
+    }
   | { kind: 'PERSUADE'; difficulty: number; successNext: DialogueNodeId; failNext: DialogueNodeId };
 
 export interface DialogueNode {
@@ -565,6 +574,22 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
       next: 'discuss-menu',
     });
 
+    const activeAllegianceFaction =
+      ctx.campaign.playerFaction &&
+      ctx.campaign.playerFaction !== 'player' &&
+      ctx.campaign.playerFaction !== 'bandits'
+        ? ctx.campaign.playerFaction
+        : null;
+    const activeAllegianceRole =
+      ctx.campaign.allegianceRole ?? (activeAllegianceFaction ? 'MERCENARY' : 'INDEPENDENT');
+    const isServingThisFaction = activeAllegianceFaction === ctx.lord.faction;
+    const isServingOtherFaction = Boolean(
+      activeAllegianceFaction && activeAllegianceFaction !== ctx.lord.faction,
+    );
+    const otherFactionName = activeAllegianceFaction
+      ? FACTION_INFO[activeAllegianceFaction]?.name ?? activeAllegianceFaction
+      : '';
+
     const discussOptions: DialogueOption[] = [
       {
         id: 'discuss-barter',
@@ -574,16 +599,32 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
       },
       {
         id: 'discuss-fealty',
-        text: isRuler
-          ? `Kılıcımı ve sancağımı ${factionName} hizmetine sunmak, size bağlılık yemini etmek istiyorum.`
-          : `${factionName} sancağı altına girmek ve hükümdarınıza bağlılık yemini etmek istiyorum.`,
-        hint: `Klan Kademesi 2 gerekir (Mevcut: Kademe ${playerClan.tier})`,
+        text:
+          isServingThisFaction && activeAllegianceRole === 'VASSAL'
+            ? `${factionName} sancağı altındaki vasallık yeminim hakkında konuşmak istiyorum.`
+            : isRuler
+              ? `Kılıcımı ve sancağımı ${factionName} hizmetine sunmak, size bağlılık yemini etmek istiyorum.`
+              : `${factionName} sancağı altına girmek ve hükümdarınıza bağlılık yemini etmek istiyorum.`,
+        hint:
+          isServingThisFaction && activeAllegianceRole === 'VASSAL'
+            ? 'Aktif vasallık yemini · Krallıktan ayrılma'
+            : isServingOtherFaction
+              ? `Engelli: Hâlihazırda ${otherFactionName} hizmetindesiniz`
+              : `Klan Kademesi 2 gerekir (Mevcut: Kademe ${playerClan.tier})`,
         next: 'discuss-fealty-node',
       },
       {
         id: 'discuss-mercenary',
-        text: `Sancağımı ${factionName} ordularına paralı asker olarak kiralamak istiyorum.`,
-        hint: 'Sefer sözleşmesi · +60 Dinar avans ve +2 İlişki',
+        text:
+          isServingThisFaction && activeAllegianceRole === 'MERCENARY'
+            ? `${factionName} ile olan paralı asker sözleşmem hakkında konuşmak istiyorum.`
+            : `Sancağımı ${factionName} ordularına paralı asker olarak kiralamak istiyorum.`,
+        hint:
+          isServingThisFaction && activeAllegianceRole === 'MERCENARY'
+            ? 'Aktif sözleşme · Sözleşmeyi sonlandır ve bağımsız ol'
+            : isServingOtherFaction
+              ? `Engelli: Hâlihazırda ${otherFactionName} hizmetindesiniz`
+              : 'Sefer sözleşmesi · +60 Dinar avans ve +2 İlişki',
         next: 'discuss-mercenary-node',
       },
     ];
@@ -660,76 +701,178 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
       options: discussOptions,
     };
 
-    nodes['discuss-fealty-node'] = {
-      id: 'discuss-fealty-node',
-      speaker: 'NPC',
-      text:
-        playerClan.tier >= 2
-          ? isRuler
-            ? `${name}: "Sancağının şöhreti (${ctx.campaign.renown} Nam, Kademe ${playerClan.tier}) kulağıma kadar geldi ${playerName}. Kılıcını düşmanlarımıza karşı çekmeye ant içersen seni ${factionName} derebeyi olarak kabul ederim!"`
-            : `${name}: "Şöhretin vasallık için yeterli ${playerName}. Hükümdarımızın sancağı altında omuz omuza çarpışmaktan onur duyarız."`
-          : `${name}: "Cesaretini takdir ediyorum ${playerName}, ancak Bannerlord geleneklerine göre vasallık yemini edebilmek için klanının en az Kademe 2 (150 Nam) seviyesine ulaşması gerekir. Şu anki şöhretin ${ctx.campaign.renown} Nam (Kademe ${playerClan.tier})."`,
-      options:
-        playerClan.tier >= 2
-          ? [
-              {
-                id: 'fealty-swear',
-                text: 'Kılıcım ve onurum üzerine bağlılık yemini ediyorum!',
-                hint: 'İlişki +5 · Siyasi İttifak',
-                effect: { kind: 'RELATION', delta: 5, reason: 'Bağlılık yemini' },
-                next: 'root',
-              },
-              {
-                id: 'fealty-back',
-                text: 'Kararımı vermeden önce biraz daha düşüneyim.',
-                next: 'root',
-              },
-            ]
-          : [
-              {
-                id: 'fealty-mercenary-instead',
-                text: 'O halde şimdilik paralı asker olarak hizmet edeyim.',
-                next: 'discuss-mercenary-node',
-              },
-              {
-                id: 'fealty-back',
-                text: 'Anlaşıldı, şöhretimi artırdığımda tekrar geleceğim.',
-                next: 'root',
-              },
-            ],
-    };
-
-    nodes['discuss-mercenary-node'] = {
-      id: 'discuss-mercenary-node',
-      speaker: 'NPC',
-      text: `${name}: "${factionName} ordularının her zaman eli kılıç tutan paralı bölük komutanlarına ihtiyacı vardır. Kazanacağın her muharebe ve esir için günlük sancak akçesi alırsın."`,
-      options: [
-        {
-          id: 'mercenary-sign',
-          text: 'Sözleşmeyi kabul ediyorum, kılıcım hizmetinizdedir.',
-          hint: '+60 dinar sözleşme avansı · İlişki +2',
-          effect: {
-            kind: 'RELATION_AND_GOLD',
-            relationDelta: 2,
-            goldDelta: 60,
-            reason: 'Paralı asker sözleşmesi',
+    if (isServingOtherFaction) {
+      nodes['discuss-fealty-node'] = {
+        id: 'discuss-fealty-node',
+        speaker: 'NPC',
+        text: `${name}: "Sancağınız hâlihazırda ${otherFactionName} hizmetinde görünüyor ${playerName}. Başka bir krallığa paralı asker veya derebeyi olarak bağlıyken bize bağlılık yemini edemezsiniz. Önce mevcut sözleşmenizi sonlandırın."`,
+        options: [
+          {
+            id: 'fealty-back',
+            text: 'Anlaşıldı, başka bir konudan bahsedelim.',
+            next: 'root',
           },
-          next: 'mercenary-signed',
-        },
-        {
-          id: 'mercenary-back',
-          text: 'Şimdilik bağımsız kalmayı tercih ediyorum.',
-          next: 'root',
-        },
-      ],
-    };
+        ],
+      };
+    } else if (isServingThisFaction && activeAllegianceRole === 'VASSAL') {
+      nodes['discuss-fealty-node'] = {
+        id: 'discuss-fealty-node',
+        speaker: 'NPC',
+        text: `${name}: "Zaten ${factionName} divanının yeminli bir derebeyisin ${playerName}. Sancağını krallıktan ayırmak mı istiyorsun?"`,
+        options: [
+          {
+            id: 'fealty-leave',
+            text: 'Evet, bağlılık yeminimden azat edilip bağımsız sancağıma dönmek istiyorum.',
+            hint: 'Krallıktan ayrıl · İlişki −10',
+            effect: {
+              kind: 'SET_ALLEGIANCE',
+              faction: 'player',
+              role: 'INDEPENDENT',
+              relationDelta: -10,
+              reason: 'Vasallık yemininden ayrılma',
+            },
+            next: 'root',
+          },
+          {
+            id: 'fealty-back',
+            text: 'Hayır, yeminime sadığım. Başka bir konuya geçelim.',
+            next: 'root',
+          },
+        ],
+      };
+    } else {
+      nodes['discuss-fealty-node'] = {
+        id: 'discuss-fealty-node',
+        speaker: 'NPC',
+        text:
+          playerClan.tier >= 2
+            ? isRuler
+              ? `${name}: "Sancağının şöhreti (${ctx.campaign.renown} Nam, Kademe ${playerClan.tier}) kulağıma kadar geldi ${playerName}. Kılıcını düşmanlarımıza karşı çekmeye ant içersen seni ${factionName} derebeyi olarak kabul ederim!"`
+              : `${name}: "Şöhretin vasallık için yeterli ${playerName}. Hükümdarımızın sancağı altında omuz omuza çarpışmaktan onur duyarız."`
+            : `${name}: "Cesaretini takdir ediyorum ${playerName}, ancak Bannerlord geleneklerine göre vasallık yemini edebilmek için klanının en az Kademe 2 (150 Nam) seviyesine ulaşması gerekir. Şu anki şöhretin ${ctx.campaign.renown} Nam (Kademe ${playerClan.tier})."`,
+        options:
+          playerClan.tier >= 2
+            ? [
+                {
+                  id: 'fealty-swear',
+                  text: 'Kılıcım ve onurum üzerine bağlılık yemini ediyorum!',
+                  hint: `İlişki +5 · ${factionName} Derebeyi (Vasal) Ol`,
+                  effect: {
+                    kind: 'SET_ALLEGIANCE',
+                    faction: ctx.lord.faction,
+                    role: 'VASSAL',
+                    relationDelta: 5,
+                    reason: 'Bağlılık yemini',
+                  },
+                  next: 'root',
+                },
+                {
+                  id: 'fealty-back',
+                  text: 'Kararımı vermeden önce biraz daha düşüneyim.',
+                  next: 'root',
+                },
+              ]
+            : [
+                {
+                  id: 'fealty-mercenary-instead',
+                  text: 'O halde şimdilik paralı asker olarak hizmet edeyim.',
+                  next: 'discuss-mercenary-node',
+                },
+                {
+                  id: 'fealty-back',
+                  text: 'Anlaşıldı, şöhretimi artırdığımda tekrar geleceğim.',
+                  next: 'root',
+                },
+              ],
+      };
+    }
 
-    nodes['mercenary-signed'] = {
-      id: 'mercenary-signed',
-      speaker: 'NPC',
-      text: `${name}: "Güzel! Al bakalım, bu 60 dinar ilk sefer avansındır. Düşman sancaklarını devirdikçe hazinemizden payını alacaksın."`,
-      options: [{ id: 'merc-done', text: 'Başka bir konuya geçelim.', next: 'root' }],
-    };
+    if (isServingOtherFaction) {
+      nodes['discuss-mercenary-node'] = {
+        id: 'discuss-mercenary-node',
+        speaker: 'NPC',
+        text: `${name}: "Sancağınız hâlihazırda ${otherFactionName} hizmetinde görünüyor ${playerName}. Aynı anda birden fazla krallığa paralı askerlik yapamazsınız! Önce mevcut sözleşmenizi sonlandırın."`,
+        options: [
+          {
+            id: 'mercenary-back',
+            text: 'Anlaşıldı, başka bir konudan bahsedelim.',
+            next: 'root',
+          },
+        ],
+      };
+    } else if (isServingThisFaction && activeAllegianceRole === 'MERCENARY') {
+      nodes['discuss-mercenary-node'] = {
+        id: 'discuss-mercenary-node',
+        speaker: 'NPC',
+        text: `${name}: "Zaten ${factionName} sancağı altında paralı asker olarak çarpışıyorsun ${playerName}. Sözleşmeni sonlandırıp sancağını serbest bırakmak mı istiyorsun?"`,
+        options: [
+          {
+            id: 'mercenary-leave',
+            text: 'Evet, paralı asker sözleşmemi sonlandırıp bağımsızlığıma dönmek istiyorum.',
+            hint: 'Sözleşmeyi feshet · Bağımsız Sancak',
+            effect: {
+              kind: 'SET_ALLEGIANCE',
+              faction: 'player',
+              role: 'INDEPENDENT',
+              reason: 'Paralı asker sözleşmesi sonlandırıldı',
+            },
+            next: 'root',
+          },
+          {
+            id: 'mercenary-back',
+            text: 'Hayır, sancağınız altında çarpışmaya devam edeceğim.',
+            next: 'root',
+          },
+        ],
+      };
+    } else if (isServingThisFaction && activeAllegianceRole === 'VASSAL') {
+      nodes['discuss-mercenary-node'] = {
+        id: 'discuss-mercenary-node',
+        speaker: 'NPC',
+        text: `${name}: "Sen artık paralı bir bölük komutanı değil, ${factionName} divanının yeminli bir derebeyisin ${playerName}!"`,
+        options: [
+          {
+            id: 'mercenary-back',
+            text: 'Haklısınız, başka bir konuya geçelim.',
+            next: 'root',
+          },
+        ],
+      };
+    } else {
+      nodes['discuss-mercenary-node'] = {
+        id: 'discuss-mercenary-node',
+        speaker: 'NPC',
+        text: `${name}: "${factionName} ordularının her zaman eli kılıç tutan paralı bölük komutanlarına ihtiyacı vardır. Kazanacağın her muharebe ve esir için günlük sancak akçesi alırsın."`,
+        options: [
+          {
+            id: 'mercenary-sign',
+            text: 'Sözleşmeyi kabul ediyorum, kılıcım hizmetinizdedir.',
+            hint: `+60 dinar sözleşme avansı · İlişki +2 · ${factionName} Paralı Askeri Ol`,
+            effect: {
+              kind: 'SET_ALLEGIANCE',
+              faction: ctx.lord.faction,
+              role: 'MERCENARY',
+              relationDelta: 2,
+              goldDelta: 60,
+              reason: 'Paralı asker sözleşmesi',
+            },
+            next: 'mercenary-signed',
+          },
+          {
+            id: 'mercenary-back',
+            text: 'Şimdilik bağımsız kalmayı tercih ediyorum.',
+            next: 'root',
+          },
+        ],
+      };
+
+      nodes['mercenary-signed'] = {
+        id: 'mercenary-signed',
+        speaker: 'NPC',
+        text: `${name}: "Güzel! Al bakalım, bu 60 dinar ilk sefer avansındır. Düşman sancaklarını devirdikçe hazinemizden payını alacaksın."`,
+        options: [{ id: 'merc-done', text: 'Başka bir konuya geçelim.', next: 'root' }],
+      };
+    }
 
     nodes['discuss-marriage-node'] = {
       id: 'discuss-marriage-node',
@@ -1135,6 +1278,11 @@ export type EncounterActionTrigger =
   | { kind: 'OPEN_BARTER'; presetMarriage?: boolean; presetPeace?: boolean }
   | { kind: 'OPEN_COUNCIL' }
   | { kind: 'MEET_HERO' }
+  | {
+      kind: 'SET_ALLEGIANCE';
+      faction: FactionId;
+      role: 'INDEPENDENT' | 'MERCENARY' | 'VASSAL';
+    }
   | null;
 
 /** Oyuncu seçeneğini uygular → yeni ilişki/altın + sonraki düğüm + karşılaşma aksiyonu. */
@@ -1192,6 +1340,15 @@ export function applyOption(
       case 'RELATION_AND_GOLD':
         relation += e.relationDelta;
         gold = Math.max(0, gold + e.goldDelta);
+        break;
+      case 'SET_ALLEGIANCE':
+        if (e.relationDelta) relation += e.relationDelta;
+        if (e.goldDelta) gold = Math.max(0, gold + e.goldDelta);
+        encounterAction = {
+          kind: 'SET_ALLEGIANCE',
+          faction: e.faction,
+          role: e.role,
+        };
         break;
       case 'ACCEPT_QUEST':
         acceptedQuestId = e.questId;
@@ -1255,7 +1412,13 @@ export function applyOption(
     }
   }
   if (!nextId && !e) closed = true;
-  if (!nextId && e && e.kind !== 'OPEN_BARTER' && e.kind !== 'MEET_HERO') {
+  if (
+    !nextId &&
+    e &&
+    e.kind !== 'OPEN_BARTER' &&
+    e.kind !== 'MEET_HERO' &&
+    e.kind !== 'SET_ALLEGIANCE'
+  ) {
     closed = true;
   }
   return { nextId, relation, gold, openTrade, acceptedQuestId, encounterAction, closed };

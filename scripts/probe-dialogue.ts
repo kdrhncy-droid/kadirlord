@@ -3,7 +3,7 @@
  *
  *   npx tsx scripts/probe-dialogue.ts
  */
-import { createInitialCampaignState } from '../src/game/rules.ts';
+import { applyPlayerAllegianceChange, createInitialCampaignState } from '../src/game/rules.ts';
 import { buildQuestLog } from '../src/game/quests.ts';
 import {
   applyOption,
@@ -139,6 +139,37 @@ ok(
     rootOptions.some((o) => o.id === 'noble-task-hub') &&
     rootOptions.some((o) => o.id === 'barter-direct'),
   'Bannerlord 4 ana konuşma dalı (konuşma, soru, görev, takas) mevcut',
+);
+
+/* 12. Tek Krallığa Paralı Askerlik / Vasallık Kısıtı (Birden Fazla Krallığa Aynı Anda Girilemez) */
+const signMerc = applyPlayerAllegianceChange(campaign, lord.faction, 'MERCENARY');
+ok(signMerc.success && signMerc.nextState.playerFaction === lord.faction, 'bağımsız oyuncu paralı asker sözleşmesi imzalayabiliyor');
+const otherKingdomLord = campaign.lords.find((l) => l.faction !== 'bandits' && l.faction !== lord.faction)!;
+const secondMercAttempt = applyPlayerAllegianceChange(signMerc.nextState, otherKingdomLord.faction, 'MERCENARY');
+ok(!secondMercAttempt.success, 'zaten bir krallığa paralı askerken ikinci bir krallığa sözleşme imzalanamıyor');
+
+const otherKingdomDlg = buildDialogue({
+  lord: otherKingdomLord,
+  campaign: signMerc.nextState,
+  relation: 10,
+  atWar: false,
+  hasMet: true,
+});
+ok(
+  !otherKingdomDlg.nodes['discuss-mercenary-node'].options.some((o) => o.id === 'mercenary-sign'),
+  'başka krallığa bağlıyken ikinci krallık lordunda paralı asker imza seçeneği çıkmıyor',
+);
+const sameKingdomDlg = buildDialogue({
+  lord,
+  campaign: signMerc.nextState,
+  relation: 10,
+  atWar: false,
+  hasMet: true,
+});
+ok(
+  sameKingdomDlg.nodes['discuss-mercenary-node'].options.some((o) => o.id === 'mercenary-leave') &&
+    !sameKingdomDlg.nodes['discuss-mercenary-node'].options.some((o) => o.id === 'mercenary-sign'),
+  'aynı krallık lordunda tekrar imza yerine sözleşme fesih (mercenary-leave) seçeneği çıkıyor',
 );
 
 console.log(fails === 0 ? '\n✅ DİYALOG SİSTEMİ DOĞRU' : `\n❌ ${fails} hata`);

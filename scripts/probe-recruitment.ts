@@ -3,7 +3,13 @@
  *
  *   npx tsx scripts/probe-recruitment.ts
  */
-import { createInitialCampaignState, getTotalTroops, type UnitTierId } from '../src/game/rules.ts';
+import {
+  advanceDailyEconomyAndWorld,
+  createInitialCampaignState,
+  getTotalTroops,
+  type UnitTierId,
+} from '../src/game/rules.ts';
+import { stepLiveLordSettlementRecruitment } from '../src/game/worldSim.ts';
 import {
   partyLimit,
   partyRoom,
@@ -96,6 +102,40 @@ void poolTotal;
 /* 10. Genel tutarlılık */
 ok(validateRecruitment(campaign).length === 0, 'kampanya toplama açısından tutarlı');
 ok(validateRecruitment(res.nextState).length === 0, 'toplama sonrası da tutarlı');
+
+/* 11. Lord/Kral/Leydi köyden/şehirden asker topladığında 1 gün boyunca o yerleşimde asker kalmamalı */
+const vLord = campaign.lords.find((l) => l.faction !== 'bandits')!;
+const targetVillage = campaign.settlements.find(
+  (s) => s.type === 'VILLAGE' && s.faction === vLord.faction && poolTotal(s) > 0,
+)!;
+const smallRoster = { infantry: 8, archer: 4, cavalry: 2, horseArcher: 0 };
+const prepState = {
+  ...campaign,
+  lords: campaign.lords.map((l) =>
+    l.id === vLord.id
+      ? { ...l, x: targetVillage.x + 1.5, z: targetVillage.z + 1.5, roster: smallRoster, armySize: 14 }
+      : l,
+  ),
+};
+const afterLordRecruit = stepLiveLordSettlementRecruitment(prepState);
+const updatedLord = afterLordRecruit.lords.find((l) => l.id === vLord.id)!;
+const updatedVillage = afterLordRecruit.settlements.find((s) => s.id === targetVillage.id)!;
+ok(updatedLord.armySize > 14, 'köye varan lord beklemeden gönüllü toplayıp asker sayısını artırıyor', `14 → ${updatedLord.armySize}`);
+ok(
+  poolTotal(updatedVillage) === 0 && updatedVillage.lastLordRecruitDay === afterLordRecruit.day,
+  'lordun asker topladığı köyde gönüllü havuzu sıfırlanıyor ve gün kilidi yazılıyor',
+);
+const quoteBlockedToday = recruitQuote(afterLordRecruit, updatedVillage, 'infantry', 20);
+ok(
+  quoteBlockedToday.maxRecruitable === 0 && Boolean(quoteBlockedToday.blockedReason),
+  'lordun asker topladığı köyden aynı gün oyuncu veya başka bir lord asker toplayamıyor',
+);
+const nextDayState = advanceDailyEconomyAndWorld(afterLordRecruit);
+const nextDayVillage = nextDayState.settlements.find((s) => s.id === targetVillage.id)!;
+ok(
+  nextDayVillage.lastLordRecruitDay === undefined && poolTotal(nextDayVillage) > 0,
+  'ertesi gün (1 gün sonra) köyde yeniden gönüllü üretiliyor ve kilit kalkıyor',
+);
 
 console.log(fails === 0 ? '\n✅ ASKER TOPLAMA KURALLARI DOĞRU' : `\n❌ ${fails} hata`);
 process.exit(fails === 0 ? 0 : 1);

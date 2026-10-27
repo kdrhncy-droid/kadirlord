@@ -82,6 +82,13 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
   const initialRows = useMemo<NotableRecruiterRow[]>(() => {
     const takenSet = new Set(settlement.recruitedSlotKeys ?? []);
     const isVillage = settlement.type === 'VILLAGE';
+    const totalPoolLeft =
+      (settlement.recruitPool?.infantry ?? 0) +
+      (settlement.recruitPool?.archer ?? 0) +
+      (settlement.recruitPool?.cavalry ?? 0) +
+      (settlement.recruitPool?.horseArcher ?? 0);
+    const isDepletedToday =
+      settlement.lastLordRecruitDay === campaign.day || totalPoolLeft <= 0;
 
     return notables.map((notable, nIdx) => {
       const slots: (RecruitmentSlotData | null)[] = [];
@@ -97,8 +104,8 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
 
       for (let sIdx = 0; sIdx < 6; sIdx++) {
         const slotKey = `${notable.id}_${sIdx}`;
-        // Eğer bu slot daha önce toplandıysa veya bu eşrafın mevcut gönüllü sayısını aşıyorsa slot BOŞ görünür
-        if (takenSet.has(slotKey) || sIdx >= filledSlotCount) {
+        // Eğer bu yerleşim bugün bir lord tarafından boşaltıldıysa, slot daha önce toplandıysa veya eşrafın gönüllü sayısını aşıyorsa slot BOŞ görünür
+        if (isDepletedToday || takenSet.has(slotKey) || sIdx >= filledSlotCount) {
           slots.push(null);
           continue;
         }

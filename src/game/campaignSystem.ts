@@ -249,29 +249,36 @@ export function stepLordCampaignRoute(
         Math.hypot(s.x - route.x, s.z - route.z) > 15 &&
         Math.hypot(s.x - route.x, s.z - route.z) < 155,
     );
+    const withRecruits = candidateSettlements.filter(
+      (s) =>
+        lord.faction !== 'bandits' &&
+        s.recruitPool.infantry + s.recruitPool.archer + s.recruitPool.cavalry + s.recruitPool.horseArcher > 0,
+    );
 
     const pool =
-      candidateSettlements.length > 0
-        ? candidateSettlements
-        : settlements.filter(
-            (s) =>
-              Math.hypot(s.x - route.x, s.z - route.z) > 12 &&
-              Math.hypot(s.x - route.x, s.z - route.z) < 120,
-          );
+      withRecruits.length > 0
+        ? withRecruits
+        : candidateSettlements.length > 0
+          ? candidateSettlements
+          : settlements.filter(
+              (s) =>
+                Math.hypot(s.x - route.x, s.z - route.z) > 12 &&
+                Math.hypot(s.x - route.x, s.z - route.z) < 120,
+            );
 
     if (pool.length > 0) {
       const pickIdx =
         Math.abs(Math.floor(route.x * 13 + route.z * 17 + lord.armySize * 7)) % pool.length;
       const dest = pool[pickIdx];
       route.targetSettlementId = dest.id;
-      const gateX = dest.x + (pickIdx % 2 === 0 ? 1 : -1) * 4.5;
-      const gateZ = dest.z + 4.5;
+      const gateX = dest.x + (pickIdx % 2 === 0 ? 1 : -1) * 2.2;
+      const gateZ = dest.z + 2.2;
       route.waypoints = computeLandPath(route.x, route.z, gateX, gateZ);
       route.currentAction =
         lord.faction === 'bandits'
           ? `${dest.name} civarında kervan kolluyor`
           : dest.type === 'VILLAGE'
-            ? `${dest.name} köyünü denetlemeye gidiyor`
+            ? `${dest.name} köyünden gönüllü toplamaya gidiyor`
             : `${dest.name} garnizonuna doğru ilerliyor`;
     } else {
       const angle = (Date.now() * 0.001 + lord.armySize) % 6.28;
@@ -471,20 +478,34 @@ export function applyLordOrderToRoute(
         key = `defend-siege:${target.id}:${Math.round(targetX / 4)}:${Math.round(targetZ / 4)}`;
         action = `${target.name} kuşatmasını yarmak için yardıma koşuyor`;
       } else {
-        targetX = target.x + 4.5;
-        targetZ = target.z + 4.5;
+        targetX = target.x + 2.2;
+        targetZ = target.z + 2.2;
         key = `set:${target.id}`;
-        // "Asker topluyor" ancak varış noktasındayken doğrudur; yoldayken
-        // aynı metin yazılıyordu ve lord yolda (örn. açlıktan) asker
-        // kaybederse oyuncuya "topluyor ama azalıyor" görünüyordu.
         const distToGate = Math.hypot(route.x - targetX, route.z - targetZ);
+        const poolCount =
+          target.recruitPool.infantry +
+          target.recruitPool.archer +
+          target.recruitPool.cavalry +
+          target.recruitPool.horseArcher;
+
+        // Lord hedef yerleşime vardıysa ve gönüllü havuzu boşaldıysa kapıda takılı kalmasın;
+        // stepLordCampaignRoute bir sonraki uygun yerleşime yönlendirsin.
+        if (
+          route.orderKey === key &&
+          route.waypoints.length === 0 &&
+          distToGate <= 3.6 &&
+          (order.kind === 'PATROL' || (order.kind === 'REINFORCE' && poolCount <= 0))
+        ) {
+          return;
+        }
+
         action =
           order.kind === 'DEFEND'
             ? `${target.name} savunmasına koşuyor`
             : order.kind === 'REINFORCE'
-              ? distToGate <= 7
-                ? `${target.name} garnizonunda asker topluyor`
-                : `${target.name} garnizonuna takviye almaya gidiyor`
+              ? distToGate <= 5.5
+                ? `${target.name} yerleşiminden asker topluyor`
+                : `${target.name} yerleşimine takviye almaya gidiyor`
               : `${target.name} bölgesini denetliyor`;
       }
     }

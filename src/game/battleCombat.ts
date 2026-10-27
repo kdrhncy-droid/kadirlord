@@ -25,6 +25,514 @@ import { evaluateDirectionalParry } from './tacticalFormation';
 
 export type AttackDirection = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
 
+export type BattleAttackPhase = 'IDLE' | 'WINDUP' | 'READY' | 'ACTIVE' | 'RECOVERY';
+
+// ============================================================================
+// 1.B BASILI TUT-BIRAK (HOLD-TO-CHAMBER & RELEASE-TO-SWING) SALDIRI MAKİNESİ
+// ============================================================================
+
+export interface PlayerAttackStateInput {
+  phase: BattleAttackPhase;
+  attackTimer: number;
+  cooldownTimer: number;
+  windupDuration: number;
+  activeDuration?: number;
+  recoveryDuration?: number;
+  meleeCooldown: number;
+  rangedCooldown: number;
+  isRanged: boolean;
+  ammo: number;
+  mouseLeftHeld: boolean;
+  mouseLeftJustPressed: boolean;
+  mouseRightHeld: boolean;
+  dt: number;
+}
+
+export interface PlayerAttackStateOutput {
+  phase: BattleAttackPhase;
+  attackTimer: number;
+  cooldownTimer: number;
+  isRanged: boolean;
+  /** 0..1 arası animasyon ilerlemesi (READY aşamasında 1.0 sabit kalır) */
+  attackProgress: number;
+  /** Sol tık bırakılıp savurma/atış tam bu karede mi tetiklendi? */
+  triggeredRelease: boolean;
+  /** Sağ tık ile hazırlanan saldırı iptal mi edildi (Feint)? */
+  feinted: boolean;
+  /** Saldırı yeni mi başlatıldı (WINDUP başlangıcı)? */
+  startedWindup: boolean;
+}
+
+/**
+ * Gerçek Bannerlord Basılı Tut-Bırak (Hold LMB = Hazır Beklet, Release LMB = Savur)
+ * yakın dövüş ve yay germe durum makinesi:
+ *
+ *  - Oyuncu Sol Tık (LMB) bastığında `WINDUP` başlar; silah seçili yöne doğru kaldırılır.
+ *  - Oyuncu Sol Tıkı basılı tutmaya devam ederse (`mouseLeftHeld === true`),
+ *    `WINDUP` tamamlandığında silah **SAVRULMAZ**, `'READY'` (Chambered)
+ *    aşamasında savurmaya hazır bekletilir.
+ *  - Oyuncu Sol Tıktan elini çektiği anda (`mouseLeftHeld === false`), `'READY'`
+ *    aşamasından `'ACTIVE'` aşamasına geçilir ve `triggeredRelease = true` döner.
+ *  - Oyuncu `'WINDUP'` veya `'READY'` aşamasındayken Sağ Tık (`mouseRightHeld`)
+ *    basarsa saldırı iptal edilir (`feinted = true`) ve anında savunmaya geçilir.
+ */
+export function stepPlayerAttackState(input: PlayerAttackStateInput): PlayerAttackStateOutput {
+  const activeDur = input.activeDuration ?? 0.14;
+  const recoveryDur = input.recoveryDuration ?? 0.22;
+  const windupDur = Math.max(0.06, input.windupDuration);
+  let phase = input.phase;
+  let attackTimer = input.attackTimer;
+  let cooldownTimer = Math.max(0, input.cooldownTimer - input.dt);
+  let isRanged = input.isRanged;
+  let triggeredRelease = false;
+  let feinted = false;
+  let startedWindup = false;
+
+  // Sağ tık (RMB) basılıysa yakın dövüşte hazırlık/bekleme/toparlanma anında kesilip bloğa geçilir
+  if (
+    input.mouseRightHeld &&
+    !isRanged &&
+    (phase === 'WINDUP' || phase === 'READY' || phase === 'RECOVERY')
+  ) {
+    return {
+      phase: 'IDLE',
+      attackTimer: 0,
+      cooldownTimer: 0.04,
+      isRanged,
+      attackProgress: 0,
+      triggeredRelease: false,
+      feinted: phase === 'WINDUP' || phase === 'READY',
+      startedWindup: false,
+    };
+  }
+
+  if (phase === 'IDLE') {
+    if (
+      (input.mouseLeftJustPressed || input.mouseLeftHeld) &&
+      !input.mouseRightHeld &&
+      cooldownTimer <= 0
+    ) {
+      if (isRanged && input.ammo <= 0) {
+        isRanged = false;
+      }
+      phase = 'WINDUP';
+      attackTimer = windupDur;
+      startedWindup = true;
+    }
+  } else if (phase === 'WINDUP') {
+    attackTimer -= input.dt;
+    if (attackTimer <= 0) {
+      if (input.mouseLeftHeld) {
+        // Sol tık hâlâ basılı: savurma! Silahı/yayı hazır beklet (READY / Chambered)
+        phase = 'READY';
+        attackTimer = 0;
+      } else {
+        // Hızlı tıklandı ve bırakıldı: hazırlık biter bitmez savur!
+        phase = 'ACTIVE';
+        attackTimer = activeDur;
+        triggeredRelease = true;
+      }
+    }
+  } else if (phase === 'READY') {
+    // Sol tık basılı tutulduğu sürece READY pozunda bekler; bırakıldığı an savurur!
+    if (!input.mouseLeftHeld) {
+      phase = 'ACTIVE';
+      attackTimer = activeDur;
+      triggeredRelease = true;
+    }
+  } else if (phase === 'ACTIVE') {
+    attackTimer -= input.dt;
+    if (attackTimer <= 0) {
+      phase = 'RECOVERY';
+      attackTimer = recoveryDur;
+    }
+  } else if (phase === 'RECOVERY') {
+    attackTimer -= input.dt;
+    if (attackTimer <= 0) {
+      phase = 'IDLE';
+      attackTimer = 0;
+      cooldownTimer = isRanged ? input.rangedCooldown : input.meleeCooldown;
+    }
+  }
+
+  let attackProgress = 0;
+  if (phase === 'WINDUP') {
+    attackProgress = Math.max(0, Math.min(1, 1 - attackTimer / windupDur));
+  } else if (phase === 'READY') {
+    attackProgress = 1;
+  } else if (phase === 'ACTIVE') {
+    attackProgress = Math.max(0, Math.min(1, 1 - attackTimer / activeDur));
+  } else if (phase === 'RECOVERY') {
+    attackProgress = Math.max(0, Math.min(1, 1 - attackTimer / recoveryDur));
+  }
+
+  return {
+    phase,
+    attackTimer,
+    cooldownTimer,
+    isRanged,
+    attackProgress,
+    triggeredRelease,
+    feinted,
+    startedWindup,
+  };
+}
+
+// ============================================================================
+// 1.C BANNERLORD SALDIRI / SAVUNMA YÖN OKLARI GÖSTERGESİ HESABI
+// ============================================================================
+
+export interface DirectionalArrowVisual {
+  active: boolean;
+  opacity: number;
+  scale: number;
+  variant: 'attack' | 'block' | 'idle';
+}
+
+export interface DirectionalReticleState {
+  visible: boolean;
+  mode: 'ATTACK_CHAMBER' | 'ATTACK_SWING' | 'BLOCK' | 'DIRECTION_CUE' | 'HIDDEN';
+  activeDirection: AttackDirection;
+  statusLabel: string;
+  arrows: Record<AttackDirection, DirectionalArrowVisual>;
+}
+
+/**
+ * Oyuncu saldırı hazırlarken (`WINDUP` / `READY`), savururken (`ACTIVE`),
+ * sağ tıkla savunma yaparken (`isBlocking`) veya fareyle yön seçtiğinde
+ * hangi yön okunun nasıl parlayacağını hesaplar.
+ */
+export function computeDirectionalReticleState(params: {
+  attackDir: AttackDirection;
+  blockDir: AttackDirection;
+  attackPhase: BattleAttackPhase;
+  isBlocking: boolean;
+  hasShield?: boolean;
+  mouseLeftHeld: boolean;
+  usingBow: boolean;
+  dirCueTimer?: number;
+}): DirectionalReticleState {
+  const dirs: AttackDirection[] = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
+  const dirLabels: Record<AttackDirection, string> = {
+    UP: 'Üst Darbe',
+    DOWN: 'Saplama',
+    LEFT: 'Sol Savurma',
+    RIGHT: 'Sağ Savurma',
+  };
+
+  if (params.usingBow) {
+    const hiddenArrows = {
+      UP: { active: false, opacity: 0, scale: 1, variant: 'idle' as const },
+      DOWN: { active: false, opacity: 0, scale: 1, variant: 'idle' as const },
+      LEFT: { active: false, opacity: 0, scale: 1, variant: 'idle' as const },
+      RIGHT: { active: false, opacity: 0, scale: 1, variant: 'idle' as const },
+    };
+    return {
+      visible: false,
+      mode: 'HIDDEN',
+      activeDirection: params.attackDir,
+      statusLabel: '',
+      arrows: hiddenArrows,
+    };
+  }
+
+  const isChambering =
+    params.attackPhase === 'WINDUP' ||
+    params.attackPhase === 'READY' ||
+    (params.mouseLeftHeld && !params.isBlocking);
+  const isSwinging = params.attackPhase === 'ACTIVE';
+  const hasCue = (params.dirCueTimer ?? 0) > 0;
+  const shieldBlock = params.isBlocking && Boolean(params.hasShield);
+
+  let mode: DirectionalReticleState['mode'] = 'DIRECTION_CUE';
+  let activeDirection: AttackDirection = params.attackDir;
+  let statusLabel = '';
+
+  if (params.isBlocking) {
+    mode = 'BLOCK';
+    activeDirection = params.blockDir;
+    statusLabel = shieldBlock
+      ? 'Kalkan Savunması (Tüm Yönler)'
+      : `Blok: ${dirLabels[activeDirection]}`;
+  } else if (isSwinging) {
+    mode = 'ATTACK_SWING';
+    activeDirection = params.attackDir;
+    statusLabel = `Savurma: ${dirLabels[activeDirection]}`;
+  } else if (isChambering) {
+    mode = 'ATTACK_CHAMBER';
+    activeDirection = params.attackDir;
+    statusLabel =
+      params.attackPhase === 'READY'
+        ? `Hazır (${dirLabels[activeDirection]}) — Bırak: Vur`
+        : `Hazırlanıyor: ${dirLabels[activeDirection]}`;
+  } else if (hasCue) {
+    mode = 'DIRECTION_CUE';
+    activeDirection = params.attackDir;
+    statusLabel = dirLabels[activeDirection];
+  } else {
+    mode = 'DIRECTION_CUE';
+    activeDirection = params.attackDir;
+  }
+
+  const arrows = {} as Record<AttackDirection, DirectionalArrowVisual>;
+  for (const d of dirs) {
+    const isTarget = d === activeDirection;
+    if (mode === 'BLOCK') {
+      if (shieldBlock) {
+        // Kalkan ile savunmada 4 yönlü ok çıkmaz — kalkan her yönü savunur
+        arrows[d] = {
+          active: false,
+          opacity: 0,
+          scale: 0.9,
+          variant: 'idle',
+        };
+      } else {
+        // Sadece kalkansız (tek elli veya çift elli silah) blokta 4 yönlü savunma oku çıkar
+        arrows[d] = {
+          active: isTarget,
+          opacity: isTarget ? 1.0 : 0.18,
+          scale: isTarget ? 1.28 : 0.92,
+          variant: isTarget ? 'block' : 'idle',
+        };
+      }
+    } else if (mode === 'ATTACK_SWING') {
+      arrows[d] = {
+        active: isTarget,
+        opacity: isTarget ? 1.0 : 0.15,
+        scale: isTarget ? 1.35 : 0.9,
+        variant: isTarget ? 'attack' : 'idle',
+      };
+    } else if (mode === 'ATTACK_CHAMBER') {
+      const readyBoost = params.attackPhase === 'READY';
+      arrows[d] = {
+        active: isTarget,
+        opacity: isTarget ? (readyBoost ? 1.0 : 0.88) : 0.18,
+        scale: isTarget ? (readyBoost ? 1.26 : 1.14) : 0.92,
+        variant: isTarget ? 'attack' : 'idle',
+      };
+    } else {
+      arrows[d] = {
+        active: isTarget,
+        opacity: isTarget ? (hasCue ? 0.82 : 0.48) : 0.14,
+        scale: isTarget ? (hasCue ? 1.12 : 1.0) : 0.9,
+        variant: isTarget ? 'attack' : 'idle',
+      };
+    }
+  }
+
+  return {
+    visible: true,
+    mode,
+    activeDirection,
+    statusLabel,
+    arrows,
+  };
+}
+
+// ============================================================================
+// 1.D KALKAN HATTI VE BİRİM ÇARPIŞMA ÇÖZÜCÜSÜ (NON-PENETRATING COLLISION)
+// ============================================================================
+
+export interface CollidableBattleActor {
+  id: string;
+  numericId: number;
+  team: 'ally' | 'enemy';
+  x: number;
+  z: number;
+  vx: number;
+  vz: number;
+  hp: number;
+  gone: boolean;
+  isMounted: boolean;
+  isBlocking: boolean;
+  inShieldWall?: boolean;
+}
+
+export interface CavalryTrampleEvent {
+  chargerId: number;
+  victimId: number;
+  damage: number;
+  knockX: number;
+  knockZ: number;
+}
+
+/**
+ * Birimlerin birbirinin içinden geçmesini (blobbing / tunneling) önleyen
+ * çok geçişli fiziksel çarpışma ve omuz omuza kalkan hattı çözücüsü:
+ *
+ *  1. Karşı takımdan iki asker temas ettiğinde (`a.team !== b.team`) sert cephe
+ *     engeli (`hard contact`) uygulanır: birbirlerinin içinden geçemezler ve
+ *     birbirlerine doğru olan hız bileşenleri (`inwardNormalVel`) sıfırlanır.
+ *  2. Aynı takımdaki askerler (`a.team === b.team`) omuz omuza kalkan duvarı
+ *     mesafesini korur; komutan (`player-commander`) dost safların arasından
+ *     geçerken dost askerler hafifçe yana açılır.
+ *  3. Dörtnala (`hız >= 8.0 m/s`) gelen atlı birim yaya düşmana çarptığında
+ *     momentumla onu geriye savurur ve `CavalryTrampleEvent` üretir.
+ */
+export function resolveBattleActorCollisions<T extends CollidableBattleActor>(
+  actors: T[],
+  options?: {
+    iterations?: number;
+    clampPosition?: (x: number, z: number) => { x: number; z: number };
+    trampleCooldownByPair?: Set<string>;
+  },
+): CavalryTrampleEvent[] {
+  const iterations = options?.iterations ?? 3;
+  const trampleEvents: CavalryTrampleEvent[] = [];
+  const pairTrampled = options?.trampleCooldownByPair ?? new Set<string>();
+
+  const getMass = (a: CollidableBattleActor): number => {
+    if (a.isMounted) return 3.4;
+    if (a.inShieldWall || a.isBlocking) return 1.65;
+    if (a.id === 'player-commander' || a.id === 'enemy-commander') return 1.45;
+    return 1.0;
+  };
+
+  for (let iter = 0; iter < iterations; iter++) {
+    for (let i = 0; i < actors.length; i++) {
+      const a = actors[i];
+      if (a.hp <= 0 || a.gone) continue;
+
+      for (let j = i + 1; j < actors.length; j++) {
+        const b = actors[j];
+        if (b.hp <= 0 || b.gone) continue;
+
+        const sameTeam = a.team === b.team;
+        const anyMounted = a.isMounted || b.isMounted;
+        const bothMounted = a.isMounted && b.isMounted;
+
+        // Minimum merkez-merkez ayrım mesafesi (metre)
+        let minSep: number;
+        if (bothMounted) {
+          minSep = sameTeam ? 1.88 : 2.05;
+        } else if (anyMounted) {
+          minSep = sameTeam ? 1.55 : 1.72;
+        } else if (sameTeam) {
+          // Kalkan duvarında omuz omuza sıkı saf (1.08m), normal düzende 1.22m
+          minSep = a.inShieldWall && b.inShieldWall ? 1.08 : 1.22;
+        } else {
+          // Düşman piyadeler göğüs göğüse geldiğinde 1.38m sert cephe sınırı!
+          minSep = 1.38;
+        }
+
+        let dx = b.x - a.x;
+        let dz = b.z - a.z;
+        let dist = Math.hypot(dx, dz);
+
+        if (dist >= minSep) continue;
+
+        // Tam üst üste binmişse deterministik açı ile ayır
+        if (dist < 0.001) {
+          const fallbackAngle = ((a.numericId * 17 + b.numericId * 31) % 360) * (Math.PI / 180);
+          dx = Math.sin(fallbackAngle);
+          dz = Math.cos(fallbackAngle);
+          dist = 0.001;
+        }
+
+        const nx = dx / dist;
+        const nz = dz / dist;
+        const overlap = minSep - dist;
+
+        let massA = getMass(a);
+        let massB = getMass(b);
+
+        // Dost askerler oyuncu komutana yol verir
+        if (sameTeam) {
+          if (a.id === 'player-commander') massA *= 4.0;
+          if (b.id === 'player-commander') massB *= 4.0;
+        }
+
+        const invMassA = 1 / massA;
+        const invMassB = 1 / massB;
+        const invMassSum = invMassA + invMassB;
+
+        // Düşman temasında %100 sert ayrıştırma, dost temasında %75 yumuşak omuz ayrıştırması
+        const stiffness = sameTeam ? 0.72 : 1.0;
+        const pushA = overlap * (invMassA / invMassSum) * stiffness;
+        const pushB = overlap * (invMassB / invMassSum) * stiffness;
+
+        a.x -= nx * pushA;
+        a.z -= nz * pushA;
+        b.x += nx * pushB;
+        b.z += nz * pushB;
+
+        if (options?.clampPosition) {
+          const ca = options.clampPosition(a.x, a.z);
+          a.x = ca.x;
+          a.z = ca.z;
+          const cb = options.clampPosition(b.x, b.z);
+          b.x = cb.x;
+          b.z = cb.z;
+        }
+
+        // İlk iterasyonda hız vektörü düzeltmesi ve süvari ezme (trample) kontrolü
+        if (iter === 0) {
+          const relVx = b.vx - a.vx;
+          const relVz = b.vz - a.vz;
+          const normalVel = relVx * nx + relVz * nz;
+
+          if (!sameTeam && normalVel < 0) {
+            // Dörtnala süvari yaya düşmana çarparsa ezme (Charge / Trample) uygular
+            const speedA = Math.hypot(a.vx, a.vz);
+            const speedB = Math.hypot(b.vx, b.vz);
+            const pairKey =
+              a.numericId < b.numericId
+                ? `${a.numericId}:${b.numericId}`
+                : `${b.numericId}:${a.numericId}`;
+
+            if (a.isMounted && !b.isMounted && speedA >= 7.8 && !pairTrampled.has(pairKey)) {
+              pairTrampled.add(pairKey);
+              const dmg = Math.max(6, Math.round((speedA - 5.5) * 3.2 * (b.isBlocking ? 0.55 : 1)));
+              b.vx += nx * 5.8;
+              b.vz += nz * 5.8;
+              a.vx *= 0.82;
+              a.vz *= 0.82;
+              trampleEvents.push({
+                chargerId: a.numericId,
+                victimId: b.numericId,
+                damage: dmg,
+                knockX: nx * 5.8,
+                knockZ: nz * 5.8,
+              });
+            } else if (b.isMounted && !a.isMounted && speedB >= 7.8 && !pairTrampled.has(pairKey)) {
+              pairTrampled.add(pairKey);
+              const dmg = Math.max(6, Math.round((speedB - 5.5) * 3.2 * (a.isBlocking ? 0.55 : 1)));
+              a.vx -= nx * 5.8;
+              a.vz -= nz * 5.8;
+              b.vx *= 0.82;
+              b.vz *= 0.82;
+              trampleEvents.push({
+                chargerId: b.numericId,
+                victimId: a.numericId,
+                damage: dmg,
+                knockX: -nx * 5.8,
+                knockZ: -nz * 5.8,
+              });
+            } else {
+              // Karşı cephe çarpışması: birbirinin içine doğru olan hız bileşenini sıfırla!
+              const shareA = invMassA / invMassSum;
+              const shareB = invMassB / invMassSum;
+              a.vx += nx * normalVel * shareA;
+              a.vz += nz * normalVel * shareA;
+              b.vx -= nx * normalVel * shareB;
+              b.vz -= nz * normalVel * shareB;
+            }
+          } else if (sameTeam && normalVel < -1.2) {
+            // Dost saflarda hafif sönümlü omuz teması
+            const damp = 0.35;
+            a.vx += nx * normalVel * 0.5 * damp;
+            a.vz += nz * normalVel * 0.5 * damp;
+            b.vx -= nx * normalVel * 0.5 * damp;
+            b.vz -= nz * normalVel * 0.5 * damp;
+          }
+        }
+      }
+    }
+  }
+
+  return trampleEvents;
+}
+
 // ============================================================================
 // 1. OYUNCU VE BİRİM SAVAŞ DONANIMI TÜRETİMİ
 // ============================================================================

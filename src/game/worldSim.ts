@@ -357,6 +357,7 @@ export function decideLordOrder(ctx: OrderContext): LordOrder | undefined {
   const { state, world, lord, pos, positions, rand, playerPos } = ctx;
   const day = state.day;
 
+  if (lord.characterState === 'CAPTIVE' || lord.characterState === 'DEAD') return undefined;
   if (lord.faction === 'player') return lord.order;
 
   // Oyuncunun ordusuna bağlı üye lordlar kendi başlarına stratejik emir değiştirmez
@@ -521,6 +522,7 @@ export function advanceSieges(
   const playerPos = { x: state.playerX, z: state.playerZ };
 
   for (const lord of lords) {
+    if (lord.characterState === 'CAPTIVE' || lord.characterState === 'DEAD') continue;
     if (lord.order?.kind !== 'SIEGE' || !lord.order.targetSettlementId) continue;
     const target = settlements.find((s) => s.id === lord.order?.targetSettlementId);
     if (!target) {
@@ -698,7 +700,10 @@ export function advanceUpkeep(
   positions: WorldTickOptions['lordPositions'],
   rand: () => number = mulberry32(state.day),
 ): UpkeepOutcome {
-  const nextSettlements = settlements.map((s) => ({ ...s }));
+  const nextSettlements = settlements.map((s) => ({
+    ...s,
+    recruitPool: { ...s.recruitPool },
+  }));
   const events: Array<{ category: string; text: string }> = [];
   let reinforcements = 0;
 
@@ -724,19 +729,26 @@ export function advanceUpkeep(
   }
 
   const nextLords = lords.map((lord) => {
+    if (lord.characterState === 'CAPTIVE' || lord.characterState === 'DEAD') return lord;
     const l = { ...lord, roster: lord.roster ? { ...lord.roster } : lord.roster };
     const pos = positionOf(positions, l);
 
-    // Kendi yerleşiminde mi? (iaşe ve açlık kararı bundan önce bilinmeli:
-    // evindeki lord aynı tik içinde önce açlıktan eriyip sonra iaşe
-    // alıyordu.)
-    const home = l.order?.targetSettlementId
+    // Kendi yerleşiminde mi? Hedef yerleşim veya yakınındaki dost yerleşim kontrol edilir.
+    const targetHome = l.order?.targetSettlementId
       ? nextSettlements.find((s) => s.id === l.order?.targetSettlementId)
       : undefined;
-    const atHome =
-      home &&
-      home.faction === l.faction &&
-      distance(pos.x, pos.z, home.x, home.z) <= getSettlementArrivalRadius(home.type) + 3;
+    const nearbyFriendly = nextSettlements.find(
+      (s) =>
+        s.faction === l.faction &&
+        distance(pos.x, pos.z, s.x, s.z) <= getSettlementArrivalRadius(s.type) + 4.5,
+    );
+    const home =
+      targetHome &&
+      targetHome.faction === l.faction &&
+      distance(pos.x, pos.z, targetHome.x, targetHome.z) <= getSettlementArrivalRadius(targetHome.type) + 4.5
+        ? targetHome
+        : nearbyFriendly;
+    const atHome = Boolean(home);
 
     // Erzak tüketimi.
     l.foodDays = Math.max(0, (l.foodDays ?? 6) - 1);
@@ -749,24 +761,65 @@ export function advanceUpkeep(
       }
     }
 
-    // Kendi yerleşiminde takviye.
-
-    if (atHome && (l.order?.kind === 'REINFORCE' || l.order?.kind === 'DEFEND' || l.order?.kind === 'PATROL')) {
+    // Kendi yerleşiminde takviye ve gönüllü toplama (topladığı yerleşimde 1 gün asker kalmaz).
+    if (home && (l.order?.kind === 'REINFORCE' || l.order?.kind === 'DEFEND' || l.order?.kind === 'PATROL')) {
       const army = getTotalTroops(l.roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 });
       const cap = Math.max(24, Math.min(60, home.garrison + 22));
-      // Evinde olan lord asker sayısı tavanın üstünde olsa da iaşe alır;
-      // önceden erzak yalnız "asker alırken" doluyordu: tavan üstü lord
-      // garnizonunda beklerken açlıktan eriyordu (kullanıcı bildirimi).
       l.foodDays = Math.max(l.foodDays ?? 0, Math.min(14, 6 + Math.round(home.foodStock * 0.1)));
       l.morale = Math.min(100, (l.morale ?? 70) + 2);
       l.wounded = Math.max(0, (l.wounded ?? 0) - 1);
-      if (army < cap) {
-        const gain = Math.max(1, Math.min(4, Math.round(home.garrison * 0.08) + 1));
+
+      const poolAvailable =
+        home.lastLordRecruitDay !== state.day ? getTotalTroops(home.recruitPool) : 0;
+
+      if (army < cap && (poolAvailable > 0 || home.lastLordRecruitDay !== state.day)) {
+        const needed = cap - army;
+        const rawGain =
+          poolAvailable > 0
+            ? Math.min(needed, Math.max(2, Math.min(6, poolAvailable)))
+            : Math.max(1, Math.min(4, Math.round(home.garrison * 0.08) + 1));
+        const gain = Math.min(needed, rawGain);
         l.roster = growRoster(l.roster, gain, l.faction, rand);
         l.armySize = getTotalTroops(l.roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 });
+        // Bu köy/şehirdeki gönüllüler lord tarafından toplandı: 1 gün boyunca başka lord veya oyuncu toplayamaz
+        home.recruitPool = { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 };
+        home.lastLordRecruitDay = state.day;
         reinforcements++;
+
+        // Askerini toplayan lord yerleşimde beklemez, sıradaki uygun dost yerleşime geçer
+        if (l.order?.kind === 'REINFORCE' || l.order?.kind === 'PATROL') {
+          const nextTarget = nextSettlements
+            .filter(
+              (s) =>
+                s.faction === l.faction &&
+                s.id !== home.id &&
+                s.lastLordRecruitDay !== state.day &&
+                getTotalTroops(s.recruitPool) > 0,
+            )
+            .sort((a, b) => distance(pos.x, pos.z, a.x, a.z) - distance(pos.x, pos.z, b.x, b.z))[0];
+          if (nextTarget) {
+            l.order = {
+              kind: l.armySize < cap ? 'REINFORCE' : 'PATROL',
+              targetSettlementId: nextTarget.id,
+              sinceDay: state.day,
+            };
+          }
+        }
       } else if (l.order?.kind === 'REINFORCE') {
-        l.order = { kind: 'PATROL', targetSettlementId: home.id, sinceDay: state.day };
+        const nextTarget = nextSettlements
+          .filter(
+            (s) =>
+              s.faction === l.faction &&
+              s.id !== home.id &&
+              s.lastLordRecruitDay !== state.day &&
+              getTotalTroops(s.recruitPool) > 0,
+          )
+          .sort((a, b) => distance(pos.x, pos.z, a.x, a.z) - distance(pos.x, pos.z, b.x, b.z))[0];
+        l.order = {
+          kind: army < cap && nextTarget ? 'REINFORCE' : 'PATROL',
+          targetSettlementId: nextTarget?.id ?? home.id,
+          sinceDay: state.day,
+        };
       }
     }
 
@@ -774,6 +827,102 @@ export function advanceUpkeep(
   });
 
   return { lords: nextLords, settlements: nextSettlements, events, reinforcements };
+}
+
+/**
+ * Harita üzerinde gerçek zamanlı hareket eden lordlar dost bir köy veya şehre
+ * vardığında gün sonunu (16 sn) beklemeden gönüllüleri anında toplar, yerleşim
+ * havuzunu 1 günlüğüne boşaltır (`lastLordRecruitDay = state.day`) ve beklemeksizin
+ * bir sonraki yerleşime yönelir.
+ */
+export function stepLiveLordSettlementRecruitment(
+  state: CampaignState,
+  positions?: WorldTickOptions['lordPositions'],
+): CampaignState {
+  let changed = false;
+  const nextSettlements = state.settlements.map((s) => ({
+    ...s,
+    recruitPool: { ...s.recruitPool },
+  }));
+
+  const nextLords = state.lords.map((lord) => {
+    if (lord.characterState === 'CAPTIVE' || lord.characterState === 'DEAD') return lord;
+    if (lord.faction === 'bandits' || lord.order?.kind === 'SIEGE') return lord;
+    const pos = positionOf(positions, lord);
+    const army = getTotalTroops(
+      lord.roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 },
+    );
+
+    const nearby = nextSettlements.find(
+      (s) =>
+        s.faction === lord.faction &&
+        s.lastLordRecruitDay !== state.day &&
+        getTotalTroops(s.recruitPool) > 0 &&
+        distance(pos.x, pos.z, s.x, s.z) <= getSettlementArrivalRadius(s.type) + 4.5,
+    );
+    if (!nearby) return lord;
+
+    const cap = Math.max(24, Math.min(60, nearby.garrison + 22));
+    if (army >= cap) return lord;
+
+    const poolCount = getTotalTroops(nearby.recruitPool);
+    const take = Math.min(cap - army, Math.max(1, Math.min(6, poolCount)));
+    if (take <= 0) return lord;
+
+    changed = true;
+    const baseRoster = lord.roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 };
+    const nextRoster = { ...baseRoster };
+    let rem = take;
+    const takeFromTier = (tier: keyof typeof nextRoster) => {
+      const avail = Math.min(rem, nearby.recruitPool[tier]);
+      if (avail > 0) {
+        nextRoster[tier] += avail;
+        nearby.recruitPool[tier] -= avail;
+        rem -= avail;
+      }
+    };
+    takeFromTier('infantry');
+    takeFromTier('archer');
+    takeFromTier('cavalry');
+    takeFromTier('horseArcher');
+
+    // Yerleşimdeki gönüllüler bu lord tarafından toplandı; 1 gün boyunca boş kalır
+    nearby.recruitPool = { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 };
+    nearby.lastLordRecruitDay = state.day;
+
+    const newArmySize = getTotalTroops(nextRoster);
+    const nextTarget = nextSettlements
+      .filter(
+        (s) =>
+          s.faction === lord.faction &&
+          s.id !== nearby.id &&
+          s.lastLordRecruitDay !== state.day &&
+          getTotalTroops(s.recruitPool) > 0,
+      )
+      .sort((a, b) => distance(pos.x, pos.z, a.x, a.z) - distance(pos.x, pos.z, b.x, b.z))[0];
+
+    return {
+      ...lord,
+      roster: nextRoster,
+      armySize: newArmySize,
+      foodDays: Math.max(lord.foodDays ?? 6, 10),
+      currentAction: `${nearby.name} yerleşiminden +${take} gönüllü topladı`,
+      order: nextTarget
+        ? {
+            kind: (newArmySize < cap ? 'REINFORCE' : 'PATROL') as 'REINFORCE' | 'PATROL',
+            targetSettlementId: nextTarget.id,
+            sinceDay: state.day,
+          }
+        : lord.order,
+    };
+  });
+
+  if (!changed) return state;
+  return {
+    ...state,
+    settlements: nextSettlements,
+    lords: nextLords,
+  };
 }
 
 function growRoster(
@@ -874,6 +1023,8 @@ export function advanceWorldDay(state: CampaignState, opts: WorldTickOptions = {
 
   /* 5. Oyuncu avı teması (savaş başlatmaz; harita karşılaşmayı yönetir) */
   for (const lord of lords) {
+    if (base.playerCaptureState?.isCaptive) break;
+    if (lord.characterState === 'CAPTIVE' || lord.characterState === 'DEAD') continue;
     if (lord.order?.kind !== 'HUNT_PLAYER') continue;
     const pos = positionOf(positions, lord);
     if (distance(pos.x, pos.z, playerPos.x, playerPos.z) < 10) {

@@ -4,6 +4,7 @@ import {
   BannerlordSkillId,
   BuildingProjectId,
   CampaignState,
+  FactionId,
   LordAgent,
   NewGameStartOptions,
   Settlement,
@@ -13,8 +14,10 @@ import {
   UnitTierId,
   WorkshopTypeId,
   advanceDailyEconomyAndWorld,
+  advanceSettlementHourlyRest,
   allocateAttributePoint,
   allocateFocusPoint,
+  applyPlayerAllegianceChange,
   attemptLordPersuasionStep,
   bombardSettlementWalls,
   buyFoodAtSettlement,
@@ -90,7 +93,7 @@ import {
   KingdomMacroState,
   createInitialKingdomMacroState,
 } from './game/kingdomSystem';
-import { advanceWorldDay } from './game/worldSim';
+import { advanceWorldDay, stepLiveLordSettlementRecruitment } from './game/worldSim';
 import {
   applyBreakInCasualties,
   buildSiegeEncounterView,
@@ -115,6 +118,7 @@ import {
   defaultStorage,
   readSave,
   readSaveSummary,
+  summarizeSave,
   writeSave,
   type BackgroundChoice,
   type SaveData,
@@ -137,6 +141,12 @@ import {
   type KadirlordTestApi,
 } from './game/testHarness';
 import type { SiegeEncounterRole } from './game/siegeEncounter';
+import {
+  computePlayerDailyEscapeChance,
+  payPlayerCaptivityRansom,
+  resolvePlayerCaptivityDilemma,
+  triggerPlayerCapturedSequence,
+} from './game/partySystem';
 
 export default function App() {
   const search = typeof window !== 'undefined' ? window.location.search : '';
@@ -212,6 +222,8 @@ export default function App() {
   );
   /** Tanışılan kahramanlar — orta yol fog of war (yaş/beceri açılır). */
   const [metHeroIds, setMetHeroIds] = useState<string[]>([]);
+  /** Yerleşimde aktif bekleme (Burada bir süre bekle / fast-forward rest). */
+  const [isWaitingInSettlement, setIsWaitingInSettlement] = useState(false);
 
   /* ── Faz 10a: kalıcılık + zaman/katman yönetimi ── */
   /** Diskteki kayıt özeti (başlık ekranındaki "Devam Et" için). */
@@ -738,7 +750,7 @@ export default function App() {
     market: isMarketModalOpen,
     kingdom: isKingdomModalOpen || isArmyModalOpen,
     dialogue: !!(dialogueLord || dialogueSettlement),
-    settlement: !!activeSettlementModal || !!activeSiegeSettlementId,
+    settlement: !isWaitingInSettlement && (!!activeSettlementModal || !!activeSiegeSettlementId),
     diplomacy: !!activeDiplomacyLord,
     pause: gameState === 'paused',
   };
@@ -774,6 +786,7 @@ export default function App() {
       case 'settlement':
         setActiveSettlementModal(null);
         setActiveSiegeSettlementId(null);
+        setIsWaitingInSettlement(false);
         break;
       case 'diplomacy':
         setActiveDiplomacyLord(null);
@@ -828,21 +841,38 @@ export default function App() {
         metHeroIds,
         backgroundChoice,
       });
-      if (ok) setSaveInfo(readSaveSummary(defaultStorage()));
+      if (ok) {
+        setSaveInfo(
+          summarizeSave({
+            version: 4,
+            savedAt: Date.now(),
+            backgroundChoice,
+            metHeroIds,
+            campaign: nextCampaign,
+            macroState: nextMacro,
+          }),
+        );
+      }
       return ok;
     },
     [campaign, macroState, metHeroIds, backgroundChoice, e2eRequest.enabled],
   );
 
-  /** Otomatik kayıt: her oyun günü geçişinde. */
+  /** Otomatik kayıt: her oyun günü geçişinde (ana iş parçacığını dondurmamak için 150ms gecikmeli). */
   const lastAutosaveDayRef = useRef(-1);
+  const autosaveTimeoutRef = useRef<number | null>(null);
   useEffect(() => {
     if (e2eRequest.enabled) return;
-    if (gameState === 'title' || gameState === 'gameover') return;
+    if (gameState !== 'playing' || subMode !== 'overworld') return;
     if (lastAutosaveDayRef.current === campaign.day) return;
     lastAutosaveDayRef.current = campaign.day;
-    persist();
-  }, [campaign.day, gameState, persist, e2eRequest.enabled]);
+    if (autosaveTimeoutRef.current !== null) {
+      window.clearTimeout(autosaveTimeoutRef.current);
+    }
+    autosaveTimeoutRef.current = window.setTimeout(() => {
+      persist();
+    }, 150);
+  }, [campaign.day, gameState, subMode, persist, e2eRequest.enabled]);
 
   /** Diskteki kaydı yükler. */
   const continueGame = useCallback(() => {
@@ -1096,6 +1126,57 @@ export default function App() {
         // Gönüllü üretimi günlük tik içindedir (10.7); toplu tazeleme yok.
         return { ...next, settlements: refreshRecruitPools(next.settlements, next.day) };
       });
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [gameState, subMode, campaignTimeScale]);
+
+  // 24-Hour Continuous Clock & Settlement Waiting Progression (Bannerlord Clock)
+  useEffect(() => {
+    if (gameState !== 'playing' || subMode !== 'overworld' || campaignTimeScale === 0) return;
+    const hourIntervalMs = Math.max(70, Math.round(667 / campaignTimeScale));
+    const timer = setInterval(() => {
+      setCampaign((prev) => {
+        let next = prev;
+        const currentHour = typeof next.hour === 'number' ? next.hour : 9;
+        const nextHour = (currentHour + 1) % 24;
+
+        if (isWaitingInSettlement && activeSettlementModal) {
+          const restRes = advanceSettlementHourlyRest(next, activeSettlementModal.id);
+          next = restRes.nextState;
+        }
+
+        return {
+          ...next,
+          hour: nextHour,
+        };
+      });
+    }, hourIntervalMs);
+    return () => clearInterval(timer);
+  }, [gameState, subMode, campaignTimeScale, isWaitingInSettlement, activeSettlementModal]);
+
+  // Settlement wait interruption when hostile army approaches
+  useEffect(() => {
+    if (!isWaitingInSettlement || !activeSettlementModal) return;
+    const hostile = campaign.lords.find((l) => {
+      if (!isHostileToPlayer(l) || l.characterState === 'CAPTIVE' || l.characterState === 'DEAD') return false;
+      const live = lordPositionsRef.current.get(l.id) ?? { x: l.x, z: l.z };
+      return Math.hypot(live.x - activeSettlementModal.x, live.z - activeSettlementModal.z) < 16;
+    });
+    if (hostile) {
+      setIsWaitingInSettlement(false);
+      setCampaignTimeScale(0);
+      showToast(
+        `Düşman ordusu (${hostile.name}) ${activeSettlementModal.name} surlarına dayandı! Bekleme kesintiye uğradı!`,
+      );
+    }
+  }, [campaign.lords, isWaitingInSettlement, activeSettlementModal, campaign, showToast]);
+
+  // Lordlar dost köy/şehre vardıklarında 16 sn'lik gün sonunu beklemeden gönüllüleri anında toplar ve ayrılır
+  useEffect(() => {
+    if (gameState !== 'playing' || subMode !== 'overworld' || campaignTimeScale === 0) return;
+    const intervalMs = Math.max(500, Math.round(2000 / campaignTimeScale));
+    const timer = setInterval(() => {
+      setCampaign((prev) => stepLiveLordSettlementRecruitment(prev, lordPositionsRef.current));
     }, intervalMs);
     return () => clearInterval(timer);
   }, [gameState, subMode, campaignTimeScale]);
@@ -1584,6 +1665,15 @@ export default function App() {
         setSubMode('overworld');
       } else {
         setCampaign((prev) => {
+          const enemyLord =
+            (battleTargetLordId
+              ? prev.lords.find((l) => l.id === battleTargetLordId)
+              : null) ??
+            prev.lords.find((l) => l.isAtWarWithPlayer || l.faction === 'bandits') ??
+            null;
+          if (enemyLord) {
+            return triggerPlayerCapturedSequence(prev, enemyLord, losses, enemiesDefeated);
+          }
           const next = resolveBattleOutcome(
             prev,
             false,
@@ -1592,24 +1682,15 @@ export default function App() {
             enemiesDefeated,
             battleTargetSettlementId,
           );
-          const fiefsOwned = next.settlements.filter((s) => s.faction === 'player').length;
-
-          setOutcomeSnapshot({
-            victory: false,
-            title: 'SANCAK GERİ ÇEKİLDİ',
-            subtitle: 'Komutan yaralandı; muhafızlarınız sizi savaş meydanından çıkardı.',
-            enemiesDefeated,
-            renown: next.renown,
-            gold: next.gold,
-            fiefsOwned,
-          });
           return next;
         });
         setSubMode('overworld');
-        setGameState('gameover');
+        setGameState('playing');
+        setCampaignTimeScale(4);
+        showToast('Savaş kaybedildi! Düşman birliği tarafından esir alındınız.');
       }
     },
-    [battleTargetLordId, battleTargetSettlementId, campaign],
+    [battleTargetLordId, battleTargetSettlementId, campaign, showToast],
   );
 
   return (
@@ -1634,6 +1715,7 @@ export default function App() {
         activeDiplomacyLordId={activeDiplomacyLord?.id ?? null}
         activeDialogueLordId={dialogueLord?.id ?? null}
         activeSettlementModalId={activeSettlementModal?.id ?? null}
+        isWaitingInSettlement={isWaitingInSettlement}
         isRenderPaused={
           subMode === 'battle' ||
           Boolean(loadingScreen?.active) ||
@@ -2025,7 +2107,19 @@ export default function App() {
             activeSettlementModal
           }
           campaign={campaign}
-          onClose={() => setActiveSettlementModal(null)}
+          isWaiting={isWaitingInSettlement}
+          onToggleWaiting={(w) => {
+            setIsWaitingInSettlement(w);
+            if (w) setCampaignTimeScale(4);
+            else setCampaignTimeScale(1);
+          }}
+          campaignTimeScale={campaignTimeScale}
+          onSetCampaignTimeScale={(scale) => setCampaignTimeScale(scale as TimeScale)}
+          onClose={() => {
+            setActiveSettlementModal(null);
+            setIsWaitingInSettlement(false);
+          }}
+          onUpdateCampaign={(next) => setCampaign(next)}
           onOpenFullMarket={() => setIsMarketModalOpen(true)}
           onTalkToReeve={() => {
             setDialogueSettlement(activeSettlementModal);
@@ -2380,26 +2474,29 @@ export default function App() {
               });
               setPendingBattleLoot(pending);
             } else {
-              setCampaign((prev) => {
-                const next = resolveBattleOutcome(prev, false, l.id, sim.losses, sim.enemiesDefeated, null);
-                const fiefsOwned = next.settlements.filter((s) => s.faction === 'player').length;
-                setOutcomeSnapshot({
-                  victory: false,
-                  title: 'BİRLİKLER GERİ ÇEKİLDİ',
-                  subtitle: 'Otomatik muharebede hatlarınız kırıldı; ağır kayıpla geri çekildiniz.',
-                  enemiesDefeated: sim.enemiesDefeated,
-                  renown: next.renown,
-                  gold: next.gold,
-                  fiefsOwned,
-                });
-                return next;
-              });
-              setGameState('gameover');
+              setCampaign((prev) =>
+                triggerPlayerCapturedSequence(prev, l, sim.losses, sim.enemiesDefeated),
+              );
+              setGameState('playing');
+              setCampaignTimeScale(4);
+              showToast(
+                `Muharebe kaybedildi! ${l.title} ${l.name} sancağınızı dağıttı ve sizi zincire vurdu!`,
+              );
             }
           }}
           onSacrificeEscape={(l) => {
             const res = applySacrificeEscape(campaign, l);
-            setCampaign(res.nextState);
+            const angle = Math.random() * Math.PI * 2;
+            const pushDist = 28;
+            const pushedX = Math.max(-500, Math.min(500, (l.x || 0) + Math.cos(angle) * pushDist));
+            const pushedZ = Math.max(-380, Math.min(380, (l.z || 0) + Math.sin(angle) * pushDist));
+            lordPositionCommandsRef.current.set(l.id, { x: pushedX, z: pushedZ });
+            setCampaign({
+              ...res.nextState,
+              lords: res.nextState.lords.map((item) =>
+                item.id === l.id ? { ...item, x: pushedX, z: pushedZ } : item,
+              ),
+            });
             setDialogueLord(null);
             setDialogueSettlement(null);
             setIsForcedEncounter(false);
@@ -2410,9 +2507,17 @@ export default function App() {
           }}
           onBribeEscape={(l, cost) => {
             sound.playCoinChime();
+            const angle = Math.random() * Math.PI * 2;
+            const pushDist = 28;
+            const pushedX = Math.max(-500, Math.min(500, (l.x || 0) + Math.cos(angle) * pushDist));
+            const pushedZ = Math.max(-380, Math.min(380, (l.z || 0) + Math.sin(angle) * pushDist));
+            lordPositionCommandsRef.current.set(l.id, { x: pushedX, z: pushedZ });
             setCampaign((prev) => ({
               ...prev,
               gold: Math.max(0, prev.gold - cost),
+              lords: prev.lords.map((item) =>
+                item.id === l.id ? { ...item, x: pushedX, z: pushedZ } : item,
+              ),
               chronicle: [
                 {
                   id: `bribe-${prev.day}-${Date.now()}`,
@@ -2453,7 +2558,17 @@ export default function App() {
           }}
           onPlayerSurrender={(l) => {
             const res = applyPlayerSurrender(campaign, l);
-            setCampaign(res.nextState);
+            const angle = Math.random() * Math.PI * 2;
+            const pushDist = 28;
+            const pushedX = Math.max(-500, Math.min(500, (l.x || 0) + Math.cos(angle) * pushDist));
+            const pushedZ = Math.max(-380, Math.min(380, (l.z || 0) + Math.sin(angle) * pushDist));
+            lordPositionCommandsRef.current.set(l.id, { x: pushedX, z: pushedZ });
+            setCampaign({
+              ...res.nextState,
+              lords: res.nextState.lords.map((item) =>
+                item.id === l.id ? { ...item, x: pushedX, z: pushedZ } : item,
+              ),
+            });
             setDialogueLord(null);
             setDialogueSettlement(null);
             setIsForcedEncounter(false);
@@ -2468,6 +2583,15 @@ export default function App() {
             setIsForcedEncounter(false);
             setEncounterScenario(undefined);
             setActiveDiplomacyLord(l);
+          }}
+          onChangeAllegiance={(targetFaction: FactionId | 'INDEPENDENT', role: 'INDEPENDENT' | 'MERCENARY' | 'VASSAL') => {
+            const res = applyPlayerAllegianceChange(campaign, targetFaction, role);
+            if (!res.success) {
+              if (res.reason) showToast(res.reason);
+              return;
+            }
+            setCampaign(res.nextState);
+            if (res.reason) showToast(res.reason);
           }}
         />
       )}
@@ -2643,6 +2767,200 @@ export default function App() {
         >
           <span className="font-bold tracking-[0.18em] mr-2 text-[#f59e0b]">SAVAŞ HABERİ</span>
           {worldToast.text}
+        </div>
+      )}
+
+      {/* 9c. ESARET MODU (PLAYER CAPTIVITY OVERLAY) & ESARETTEN KAÇIŞ BİLDİRİMİ */}
+      {gameState === 'playing' &&
+        subMode === 'overworld' &&
+        campaign.playerCaptureState?.isCaptive &&
+        (() => {
+          const cap = campaign.playerCaptureState!;
+          const escapePct = Math.round(
+            computePlayerDailyEscapeChance(campaign, cap.daysCaptive),
+          );
+          const dungeonSettle = cap.dungeonSettlementId
+            ? campaign.settlements.find((s) => s.id === cap.dungeonSettlementId)
+            : null;
+          return (
+            <div
+              data-testid="player-captivity-overlay"
+              className="fixed inset-x-0 top-16 z-[65] flex flex-col items-center px-4 pointer-events-none"
+            >
+              <div className="w-full max-w-2xl rounded-sm border-2 border-[#dc2626]/70 bg-[#120d0a]/95 p-5 text-[#f3ead8] shadow-[0_20px_60px_rgba(0,0,0,0.92)] pointer-events-auto">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#dc2626]/30 pb-3">
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-[0.26em] text-[#f87171]">
+                      Esaret Altındasınız · Kamera Tutsak Kafilesine Kilitli
+                    </div>
+                    <h2 className="font-display text-lg font-bold text-[#fde68a] mt-0.5">
+                      {dungeonSettle
+                        ? `${dungeonSettle.name} Zindanında Zincirlisiniz`
+                        : `${cap.captorTitle} ${cap.captorName} Kafilesinde Tutsaksınız`}
+                    </h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-1 rounded bg-[#2a1212] border border-[#f87171]/40 text-xs font-mono font-bold text-[#fca5a5]">
+                      Esaret: {cap.daysCaptive} Gün
+                    </span>
+                    <span className="px-2.5 py-1 rounded bg-[#16271c] border border-[#34d399]/40 text-xs font-mono font-bold text-[#6ee7b7]">
+                      Günlük Kaçış: %{escapePct}
+                    </span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-[#cbbd9f] mt-3 leading-relaxed">
+                  {dungeonSettle
+                    ? `${cap.captorTitle} ${cap.captorName} sizi ${dungeonSettle.name} zindanına kapattı. Gözcülük ve Serserilik yeteneklerinize göre her gün kaçış zarı atılır.`
+                    : `Elleriniz bağlı hâlde ${cap.captorName} birliğinin peşinde sürükleniyorsunuz. Harita zamanı hızlandırılmış akıyor; nöbetçilerin dalgınlığını kollayın veya fidye ödeyin.`}
+                </p>
+
+                {/* Zaman Hızı ve Gün İlerletme Kontrolleri */}
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded bg-[#1b140e] border border-[#c6a15b]/25 px-3 py-2">
+                  <div className="flex items-center gap-1.5 text-[11px] text-[#d6cbb5]">
+                    <span className="font-semibold text-[#c6a15b]">Esaret Zaman Akışı:</span>
+                    {([1, 2, 4] as const).map((spd) => (
+                      <button
+                        key={spd}
+                        type="button"
+                        onClick={() => setCampaignTimeScale(spd)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold border ${
+                          campaignTimeScale === spd
+                            ? 'bg-[#b45309] border-[#fbbf24] text-white'
+                            : 'bg-[#14110c] border-[#c6a15b]/30 text-[#a89b84]'
+                        }`}
+                      >
+                        {spd}x
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid="captivity-advance-day-btn"
+                      onClick={() => {
+                        setCampaign((prev) => {
+                          const tick = advanceWorldDay(prev, {
+                            lordPositions: lordPositionsRef.current,
+                            clans: macroStateRef.current?.clans,
+                            playerPos: { x: prev.playerX, z: prev.playerZ },
+                          });
+                          return {
+                            ...tick.state,
+                            settlements: refreshRecruitPools(tick.state.settlements, tick.state.day),
+                          };
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded bg-[#261f16] hover:bg-[#382d20] border border-[#c6a15b]/45 text-[11px] font-bold text-[#fde68a]"
+                    >
+                      1 Gün İlerle (Kaçış Zarı At)
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="captivity-pay-ransom-btn"
+                      disabled={campaign.gold < cap.ransomCost}
+                      onClick={() => {
+                        const res = payPlayerCaptivityRansom(campaign);
+                        if (!res.success) {
+                          if (res.reason) showToast(res.reason);
+                          return;
+                        }
+                        sound.playCoinChime();
+                        setCampaign(res.nextState);
+                        setCampaignTimeScale(1);
+                        if (res.reason) showToast(res.reason);
+                      }}
+                      className="px-3 py-1.5 rounded bg-[#1b3124] hover:bg-[#234230] disabled:opacity-40 border border-[#34d399]/50 text-[11px] font-bold text-[#a7f3d0]"
+                    >
+                      Fidye Öde ve Kurtul ({cap.ransomCost} Dinar)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Rastgele Esaret Olayı (Random Event Pop-up / Dilemma) */}
+                {cap.activeEvent && (
+                  <div
+                    data-testid="captivity-dilemma-box"
+                    className="mt-3 rounded border border-[#f59e0b]/55 bg-[#1c150c] p-3.5 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#fbbf24]">
+                        Esaret Fırsatı · {cap.activeEvent.title}
+                      </span>
+                      <span className="text-[11px] font-mono text-[#a89b84]">
+                        Can: %{campaign.playerHp ?? 100} · Hazine: {campaign.gold} Dinar
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#e6dec8]">{cap.activeEvent.text}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      {cap.activeEvent.options.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          data-testid={`captivity-dilemma-${opt.id}`}
+                          onClick={() => {
+                            const res = resolvePlayerCaptivityDilemma(campaign, opt.id);
+                            setCampaign(res.nextState);
+                            if (res.escaped) {
+                              sound.playSettlementEnter();
+                              setCampaignTimeScale(1);
+                            }
+                            showToast(res.outcomeText);
+                          }}
+                          className="text-left p-2.5 rounded border border-[#c6a15b]/35 bg-[#14100b] hover:bg-[#261e14] hover:border-[#fbbf24] transition-colors"
+                        >
+                          <div className="text-xs font-bold text-[#fde68a]">{opt.label}</div>
+                          <div className="text-[10px] text-[#a89b84] mt-0.5">{opt.description}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+      {/* 9d. ESARETTEN KAÇTINIZ! (ESCAPED CAPTIVITY MODAL) */}
+      {campaign.escapedCaptivityNotice && (
+        <div
+          data-testid="escaped-captivity-modal"
+          className="fixed inset-0 z-[85] flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 pointer-events-auto"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="hud-panel max-w-md w-full rounded-sm border-2 border-[#c6a15b] bg-[#14110c] p-6 text-center text-[#f3ead8] shadow-2xl space-y-4">
+            <div className="text-[11px] font-bold uppercase tracking-[0.25em] text-[#34d399]">
+              Zincirler Kırıldı
+            </div>
+            <h2 className="font-display text-2xl font-bold text-[#fde68a]">
+              {campaign.escapedCaptivityNotice.method === 'RANSOM'
+                ? 'Fidye Ödendi · Özgürsünüz!'
+                : 'Esaretten Kaçtınız!'}
+            </h2>
+            <p className="text-xs text-[#d6cbb5] leading-relaxed">
+              {campaign.escapedCaptivityNotice.message}
+            </p>
+            <div className="pt-2">
+              <button
+                type="button"
+                data-testid="escaped-captivity-confirm-btn"
+                onClick={() => {
+                  setCampaign((prev) => ({
+                    ...prev,
+                    escapedCaptivityNotice: null,
+                  }));
+                  setCampaignTimeScale(1);
+                  cameraActionsRef.current?.focusOnPlayer();
+                }}
+                className="px-6 py-2.5 rounded bg-[#b45309] hover:bg-[#d97706] text-xs font-bold text-white uppercase tracking-wider"
+              >
+                Sancağı Yeniden Topla [Devam Et]
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

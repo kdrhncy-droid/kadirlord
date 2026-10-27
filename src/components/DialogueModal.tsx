@@ -32,6 +32,7 @@ import { buildQuestLog } from '../game/quests';
 import {
   type CampaignState,
   FACTION_INFO,
+  type FactionId,
   type LordAgent,
   type Settlement,
   getTotalTroops,
@@ -79,6 +80,11 @@ interface DialogueModalProps {
   onPlayerSurrender?: (lord: LordAgent) => void;
   /** Detaylı siyasi divan / ikna penceresini açmak isterse. */
   onOpenDiplomacyCouncil?: (lord: LordAgent) => void;
+  /** Paralı asker sözleşmesi, vasallık yemini veya krallıktan ayrılma. */
+  onChangeAllegiance?: (
+    faction: FactionId,
+    role: 'INDEPENDENT' | 'MERCENARY' | 'VASSAL',
+  ) => void;
   /** Lordla daha önce tanışıldı mı? False ise Bannerlord ilk tanışma diyaloğu ('intro-root') başlar. */
   hasMet?: boolean;
 }
@@ -103,6 +109,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   onDemandSurrender,
   onPlayerSurrender,
   onOpenDiplomacyCouncil,
+  onChangeAllegiance,
   hasMet = true,
 }) => {
   const questLog = useMemo(() => buildQuestLog(campaign), [campaign]);
@@ -242,6 +249,8 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
       lord?.id,
       settlement?.id,
       campaign.day,
+      campaign.playerFaction,
+      campaign.allegianceRole,
       canTrade,
       questLog.active.length,
       isForced,
@@ -306,6 +315,9 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
         return true;
       case 'MEET_HERO':
         onMeetHero?.(lord.id);
+        return false;
+      case 'SET_ALLEGIANCE':
+        onChangeAllegiance?.(action.faction, action.role);
         return false;
       case 'OPEN_BARTER':
         setBarterOpen(true);

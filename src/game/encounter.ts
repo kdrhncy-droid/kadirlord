@@ -434,9 +434,15 @@ export function checkHostileMapInterception(params: {
     pursuedLordId = null,
   } = params;
 
+  // Oyuncu esir altındayken başka hiçbir lord veya haydut oyuncuyu yakalayamaz
+  if (campaign.playerCaptureState?.isCaptive) {
+    return null;
+  }
+
   let closestEvent: InterceptionEvent | null = null;
 
   for (const lord of campaign.lords) {
+    if (lord.characterState === 'CAPTIVE' || lord.characterState === 'DEAD') continue;
     if (!isHostileToPlayer(lord)) continue;
     const cooldownUntil = cooldowns.get(lord.id) ?? 0;
     if (nowSec < cooldownUntil) continue;

@@ -31,7 +31,14 @@ import {
 } from './loot.ts';
 import { snapToNearestLand } from './navigation.ts';
 import {
+  captureDefeatedLord,
+  releaseCaptiveLord,
+} from './partySystem.ts';
+import {
+  calculateBattleRenown,
+  calculatePartyStrength,
   deductCasualtiesFromRoster,
+  getPlayerCultureModifiers,
   getTotalTroops,
   type CampaignHero,
   type CampaignState,
@@ -89,7 +96,18 @@ export function prepareBattleLoot(
     'bandits';
 
   const goldLoot = battleGoldReward(enemiesDefeated, isSiege);
-  const renownGain = 15 + enemiesDefeated * 3;
+  const playerStrength = calculatePartyStrength(state.roster, state.playerHp / Math.max(1, state.playerMaxHp));
+  const enemyLord = enemyLordId ? state.lords.find((l) => l.id === enemyLordId) : null;
+  const enemyStrength = enemyLord
+    ? calculatePartyStrength(enemyLord.roster, 1.0)
+    : Math.max(6, Math.round(enemiesDefeated * 1.5));
+  const renownGain = calculateBattleRenown(
+    playerStrength,
+    enemyStrength,
+    enemiesDefeated,
+    isSiege,
+    getPlayerCultureModifiers(state).battleRenownMultiplier,
+  );
   const prisonersGain = Math.max(1, Math.floor(enemiesDefeated * 0.35));
 
   const rolled = rollBattleLoot(state, {
@@ -231,6 +249,8 @@ export interface CommitBattleLootOptions {
   leftoverLootItems: InventoryItem[];
   heroUpdates?: HeroEquipmentUpdate[];
   applyDiscard?: boolean;
+  /** Savaşta mağlup edilen düşman komutan için karar: Esir Al ('CAPTURE') veya Serbest Bırak ('RELEASE'). */
+  enemyLordFate?: 'CAPTURE' | 'RELEASE';
 }
 
 export interface CommitBattleLootResult {
@@ -240,6 +260,7 @@ export interface CommitBattleLootResult {
   prisonersGained: number;
   itemsKeptCount: number;
   discardXpAwarded: number;
+  enemyLordFate?: 'CAPTURE' | 'RELEASE';
 }
 
 /**
@@ -255,6 +276,7 @@ export function commitBattleLoot(
     leftoverLootItems,
     heroUpdates,
     applyDiscard = true,
+    enemyLordFate,
   } = options;
 
   // 1. Oyuncu zayiatını düş
@@ -373,7 +395,7 @@ export function commitBattleLoot(
       : `${state.playerName}, meydan savaşında düşman ordusunu bozguna uğrattı (+${pendingLoot.renownGain} Nam, +${pendingLoot.goldLoot} Dinar, ${describeLoot(itemsActuallyKept)}).`,
   };
 
-  const nextState = ensureBannerlordFoundation({
+  let nextState = ensureBannerlordFoundation({
     ...state,
     gold: state.gold + pendingLoot.goldLoot,
     renown: state.renown + pendingLoot.renownGain,
@@ -389,6 +411,15 @@ export function commitBattleLoot(
     chronicle: [newChronicle, ...state.chronicle].slice(0, 20),
   });
 
+  if (pendingLoot.enemyLordId && enemyLordFate === 'CAPTURE') {
+    nextState = captureDefeatedLord(nextState, pendingLoot.enemyLordId);
+  } else if (pendingLoot.enemyLordId && enemyLordFate === 'RELEASE') {
+    const relRes = releaseCaptiveLord(nextState, pendingLoot.enemyLordId, true);
+    if (relRes.success) {
+      nextState = relRes.nextState;
+    }
+  }
+
   return {
     nextState,
     goldGained: pendingLoot.goldLoot,
@@ -396,5 +427,6 @@ export function commitBattleLoot(
     prisonersGained: pendingLoot.prisonersGain,
     itemsKeptCount,
     discardXpAwarded,
+    enemyLordFate,
   };
 }

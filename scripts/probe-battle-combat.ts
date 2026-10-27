@@ -6,16 +6,21 @@ import {
   applyReinforcementMoraleBoost,
   canMaintainCouchLance,
   computeArcherAimVelocity,
+  computeDirectionalReticleState,
   computeRelativeSpeedBonus,
   createDivisionMoraleState,
   derivePlayerBattleLoadout,
   getUnitClassCombatSpec,
+  resolveBattleActorCollisions,
   resolveDirectionalMeleeHit,
   shouldUnitUseRanged,
   splitBattleCasualties,
   stepBallisticArrow,
   stepDivisionMorale,
+  stepPlayerAttackState,
   type BallisticArrow,
+  type BattleAttackPhase,
+  type CollidableBattleActor,
 } from '../src/game/battleCombat';
 import { animateWarriorRigPose, createWarriorModel } from '../src/game/proceduralModels';
 
@@ -284,4 +289,243 @@ assert.ok(cavRig.riderGroup!.position.y < 0.1, 'Attan inen karakter zemine inmel
 assert.equal(cavRig.leftLeg.rotation.z, 0, 'Attan inen karakterin bacak açıklığı yaya yürüyüşe dönmeli');
 console.log('✓ 6. 3B asker/at 2 eklemli bacak animasyonu, boyun/kuyruk salınımı ve attan inme geçişi doğrulandı');
 
-console.log('\nTÜM MEYDAN SAVAŞI (B6-B7) KONTROLLERİ GEÇTİ');
+// ── 7. 11.3: Basılı Tutarak Silah Hazır Bekletme (Hold-to-Chamber) & Bırakınca Savurma (Release-to-Swing)
+let pPhase: BattleAttackPhase = 'IDLE';
+let pTimer = 0;
+let pCooldown = 0;
+
+// Sol tık basıldı ve basılı tutuluyor: IDLE -> WINDUP
+let out = stepPlayerAttackState({
+  phase: pPhase,
+  attackTimer: pTimer,
+  cooldownTimer: pCooldown,
+  dt: 0.05,
+  mouseLeftHeld: true,
+  mouseLeftJustPressed: true,
+  mouseRightHeld: false,
+  isRanged: false,
+  ammo: 20,
+  windupDuration: 0.15,
+  activeDuration: 0.14,
+  recoveryDuration: 0.22,
+  meleeCooldown: 0.35,
+  rangedCooldown: 0.65,
+});
+assert.equal(out.phase, 'WINDUP', 'Sol tık basıldığında WINDUP başlamalı');
+assert.equal(out.triggeredRelease, false, 'Basılı tutulurken kılıç hemen savrulmamalı');
+pPhase = out.phase;
+pTimer = out.attackTimer;
+pCooldown = out.cooldownTimer;
+
+// 2.0 saniye boyunca (40 kare) sol tık basılı tutuluyor: READY aşamasında beklemeli, savurmamalı!
+for (let f = 0; f < 40; f++) {
+  out = stepPlayerAttackState({
+    phase: pPhase,
+    attackTimer: pTimer,
+    cooldownTimer: pCooldown,
+    dt: 0.05,
+    mouseLeftHeld: true,
+    mouseLeftJustPressed: false,
+    mouseRightHeld: false,
+    isRanged: false,
+    ammo: 20,
+    windupDuration: 0.15,
+    activeDuration: 0.14,
+    recoveryDuration: 0.22,
+    meleeCooldown: 0.35,
+    rangedCooldown: 0.65,
+  });
+  assert.equal(
+    out.triggeredRelease,
+    false,
+    `Sol tık basılı tutulduğu sürece (kare ${f}) kılıç savrulmamalı`,
+  );
+  pPhase = out.phase;
+  pTimer = out.attackTimer;
+  pCooldown = out.cooldownTimer;
+}
+assert.equal(pPhase, 'READY', 'Sol tık basılı tutulurken karakter elini READY durumunda hazır bekletmeli');
+
+// READY durumunda rig animasyonu silahı geride hazır tutmalı
+animateWarriorRigPose(cavRig, {
+  speed: 0,
+  time: 2.0,
+  phaseOffset: 0,
+  isMounted: false,
+  usingRanged: false,
+  shieldIntact: true,
+  isBlocking: false,
+  blockDirection: 'UP',
+  attackPhase: 'READY',
+  attackDirection: 'RIGHT',
+  attackProgress: 1,
+  isCouchedLance: false,
+});
+assert.ok(cavRig.rightArm.rotation.y < -0.5, 'READY durumunda sağ kol savurmaya hazır geride beklemeli');
+
+// Oyuncu sol tıktan elini çektiğinde (mouseLeftHeld: false) kılıç anında savrulmalı!
+out = stepPlayerAttackState({
+  phase: pPhase,
+  attackTimer: pTimer,
+  cooldownTimer: pCooldown,
+  dt: 0.05,
+  mouseLeftHeld: false,
+  mouseLeftJustPressed: false,
+  mouseRightHeld: false,
+  isRanged: false,
+  ammo: 20,
+  windupDuration: 0.15,
+  activeDuration: 0.14,
+  recoveryDuration: 0.22,
+  meleeCooldown: 0.35,
+  rangedCooldown: 0.65,
+});
+assert.equal(out.phase, 'ACTIVE', 'Sol tık bırakıldığında ACTIVE savurma aşamasına geçmeli');
+assert.equal(out.triggeredRelease, true, 'Sol tık bırakıldığı an vuruş tetiklenmeli (triggeredRelease = true)');
+
+// Sağ tık (RMB) ile feint/iptal testi: READY aşamasında sağ tık basılırsa saldırı iptal olup IDLE'a dönmeli
+const feintOut = stepPlayerAttackState({
+  phase: 'READY',
+  attackTimer: 0,
+  cooldownTimer: 0,
+  dt: 0.05,
+  mouseLeftHeld: true,
+  mouseLeftJustPressed: false,
+  mouseRightHeld: true,
+  isRanged: false,
+  ammo: 20,
+  windupDuration: 0.15,
+  activeDuration: 0.14,
+  recoveryDuration: 0.22,
+  meleeCooldown: 0.35,
+  rangedCooldown: 0.65,
+});
+assert.equal(feintOut.feinted, true, 'Hazır beklerken sağ tık basılınca saldırı iptal (feint) edilmeli');
+assert.equal(feintOut.phase, 'IDLE', 'İptal sonrası saldırı fazı IDLE olmalı');
+console.log('✓ 7. Sol tık basılı tutunca hazır bekletme (READY), bırakınca savurma (ACTIVE) ve sağ tık feint doğrulandı');
+
+// ── 8. 11.3: Saldırı ve Savunma Yönüne Göre HUD Ok Göstergesi (Directional Reticle)
+const chamberReticle = computeDirectionalReticleState({
+  usingBow: false,
+  isBlocking: false,
+  attackPhase: 'READY',
+  attackDir: 'LEFT',
+  blockDir: 'UP',
+  mouseLeftHeld: true,
+  dirCueTimer: 0,
+});
+assert.equal(chamberReticle.mode, 'ATTACK_CHAMBER', 'Sol tık basılıyken nişangâh ATTACK_CHAMBER modunda olmalı');
+assert.equal(chamberReticle.activeDirection, 'LEFT', 'Aktif yön LEFT olmalı');
+assert.equal(chamberReticle.arrows.LEFT.active, true, 'Sol ok aktif yanmalı');
+assert.equal(chamberReticle.arrows.LEFT.variant, 'attack', 'Sol ok attack stilinde olmalı');
+assert.equal(chamberReticle.arrows.RIGHT.active, false, 'Diğer yön okları aktif olmamalı');
+
+const blockReticleWeapon = computeDirectionalReticleState({
+  usingBow: false,
+  isBlocking: true,
+  hasShield: false,
+  attackPhase: 'IDLE',
+  attackDir: 'LEFT',
+  blockDir: 'UP',
+  mouseLeftHeld: false,
+  dirCueTimer: 0,
+});
+assert.equal(blockReticleWeapon.mode, 'BLOCK', 'Kalkansız sağ tık basılıyken nişangâh BLOCK modunda olmalı');
+assert.equal(blockReticleWeapon.activeDirection, 'UP', 'Aktif savunma yönü UP olmalı');
+assert.equal(blockReticleWeapon.arrows.UP.active, true, 'Tek/çift elli silah bloğunda üst savunma oku aktif yanmalı');
+assert.equal(blockReticleWeapon.arrows.UP.variant, 'block', 'Tek/çift elli silah bloğunda üst savunma oku block stilinde olmalı');
+
+const blockReticleShield = computeDirectionalReticleState({
+  usingBow: false,
+  isBlocking: true,
+  hasShield: true,
+  attackPhase: 'IDLE',
+  attackDir: 'LEFT',
+  blockDir: 'UP',
+  mouseLeftHeld: false,
+  dirCueTimer: 0,
+});
+assert.equal(blockReticleShield.mode, 'BLOCK', 'Kalkanla sağ tık basılıyken nişangâh BLOCK modunda olmalı');
+assert.equal(
+  blockReticleShield.arrows.UP.active ||
+    blockReticleShield.arrows.DOWN.active ||
+    blockReticleShield.arrows.LEFT.active ||
+    blockReticleShield.arrows.RIGHT.active,
+  false,
+  'Kalkan ile savunmada 4 yönlü blok oku çıkmamalı (kalkan her yönü savunur)',
+);
+console.log('✓ 8. Saldırı okları, kalkansız 4 yönlü silah bloğu oku ve kalkanın tam yön savunması doğrulandı');
+
+// ── 9. 11.3: Birimlerin İç İçe Geçmesini Önleyen Kalkan Hattı Çarpışma Çözücüsü ve Süvari Çiğnemesi
+const lineActors: CollidableBattleActor[] = [
+  // Müttefik kalkan duvarı (z = 0 hattında)
+  {
+    id: 'ally-1',
+    numericId: 101,
+    team: 'ally',
+    x: -0.4,
+    z: 0,
+    vx: 0,
+    vz: -4.5,
+    hp: 100,
+    gone: false,
+    isMounted: false,
+    isBlocking: true,
+    inShieldWall: true,
+  },
+  {
+    id: 'ally-2',
+    numericId: 102,
+    team: 'ally',
+    x: 0.1,
+    z: 0,
+    vx: 0,
+    vz: -4.5,
+    hp: 100,
+    gone: false,
+    isMounted: false,
+    isBlocking: true,
+    inShieldWall: true,
+  },
+  // Karşıdan hücum eden düşman piyadeleri (aynı noktaya girmeye çalışıyor)
+  {
+    id: 'enemy-1',
+    numericId: 201,
+    team: 'enemy',
+    x: -0.35,
+    z: -0.6,
+    vx: 0,
+    vz: 4.5,
+    hp: 100,
+    gone: false,
+    isMounted: false,
+    isBlocking: false,
+    inShieldWall: false,
+  },
+  // Dörtnala çarpan düşman süvarisi
+  {
+    id: 'enemy-cav',
+    numericId: 202,
+    team: 'enemy',
+    x: 0.1,
+    z: -1.1,
+    vx: 0,
+    vz: 9.8,
+    hp: 115,
+    gone: false,
+    isMounted: true,
+    isBlocking: false,
+    inShieldWall: false,
+  },
+];
+
+const tramples = resolveBattleActorCollisions(lineActors, { iterations: 4 });
+const allyDist = Math.hypot(lineActors[0].x - lineActors[1].x, lineActors[0].z - lineActors[1].z);
+const frontDist = Math.hypot(lineActors[0].x - lineActors[2].x, lineActors[0].z - lineActors[2].z);
+assert.ok(allyDist >= 1.04, `Dost kalkan duvarı askerleri iç içe geçmemeli (mesafe: ${allyDist.toFixed(2)}m)`);
+assert.ok(frontDist >= 1.34, `Karşıt cephe askerleri birbirinin içinden geçmemeli (mesafe: ${frontDist.toFixed(2)}m)`);
+assert.ok(tramples.length >= 1, 'Dörtnala piyadeye çarpan süvari çiğneme (trample) olayı üretmeli');
+assert.ok(tramples[0].damage >= 4, 'Süvari çiğnemesi anlamlı darbe hasarı üretmeli');
+console.log('✓ 9. Birimlerin iç içe geçmesini önleyen kalkan hattı çarpışması ve süvari çiğnemesi doğrulandı');
+
+console.log('\nTÜM MEYDAN SAVAŞI (B6-B7 & 11.3) KONTROLLERİ GEÇTİ');

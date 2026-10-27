@@ -39,6 +39,12 @@ import { BannerlordRecruitmentModal } from './BannerlordRecruitmentModal';
 import { recruitQuote, partyLimit, partySize, partyRoom } from '../game/recruitment';
 import { sound } from '../game/sound';
 import { generateNotables, NOTABLE_POWER_INFLUENTIAL, notablePowerLabel, type NotableIconKey, type SettlementNotable } from '../game/notables';
+import {
+  donateCaptiveLordToDungeon,
+  donatePrisonersToDungeon,
+  getDungeonCaptiveLords,
+  getPlayerCaptiveLords,
+} from '../game/partySystem';
 import { troopName, troopRole } from '../game/troops';
 
 export type TownTab =
@@ -434,8 +440,18 @@ interface SettlementModalProps {
   onOpenCharacterArena?: () => void;
   /** Oyuncu kale veya şehri kuşatmaya başladığında harita kuşatma kampını ve krallık savaşını başlatır. */
   onBeginSiege?: (settlement: Settlement) => void;
+  /** Kampanya durumunu doğrudan güncelleyen geri çağırım (zindana esir bağışı vb. için). */
+  onUpdateCampaign?: (nextState: CampaignState) => void;
   /** Başlangıç sekmesi (probe'lar ve hızlı erişim için). */
   initialTab?: TownTab;
+  /** Yerleşimde aktif bekleme durumu */
+  isWaiting?: boolean;
+  /** Beklemeyi başlat / durdur */
+  onToggleWaiting?: (waiting: boolean) => void;
+  /** Kampanya zaman hızı */
+  campaignTimeScale?: number;
+  /** Zaman hızı değiştir */
+  onSetCampaignTimeScale?: (scale: number) => void;
 }
 
 export const SettlementModal: React.FC<SettlementModalProps> = ({
@@ -469,7 +485,12 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   onTalkToReeve,
   onOpenCharacterArena: _onOpenCharacterArena,
   onBeginSiege,
+  onUpdateCampaign,
   initialTab = 'overview',
+  isWaiting = false,
+  onToggleWaiting,
+  campaignTimeScale = 1,
+  onSetCampaignTimeScale,
 }) => {
   const [activeTab, setActiveTab] = useState<TownTab>(initialTab);
   /** Faz 8: muhtarla ilişki — asker toplama kapısı ve ücret indirimi. */
@@ -526,9 +547,21 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   const presentLords = React.useMemo(
     () =>
       campaign.lords
-        .filter((l) => l.faction !== 'bandits' && Math.hypot(l.x - settlement.x, l.z - settlement.z) <= 22)
+        .filter(
+          (l) =>
+            l.faction !== 'bandits' &&
+            l.characterState !== 'CAPTIVE' &&
+            l.characterState !== 'DEAD' &&
+            Math.hypot(l.x - settlement.x, l.z - settlement.z) <= 22,
+        )
         .slice(0, 5),
     [campaign.lords, settlement.x, settlement.z],
+  );
+
+  const playerCaptiveLords = React.useMemo(() => getPlayerCaptiveLords(campaign), [campaign]);
+  const dungeonCaptiveLords = React.useMemo(
+    () => getDungeonCaptiveLords(campaign, settlement.id),
+    [campaign, settlement.id],
   );
 
   // Faz B0: çuvaldaki ticari emtia (satılabilir ganimet) ve toplam değeri.
@@ -1274,6 +1307,27 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
 
                   <button
                     type="button"
+                    data-testid="settlement-dungeon-btn"
+                    onClick={() => {
+                      setActiveTab(activeTab === 'dungeon' ? 'overview' : 'dungeon');
+                      setFeedback(null);
+                    }}
+                    className={`w-full px-4 py-2.5 text-left flex items-center justify-between hover:bg-[#241c13] transition-colors ${
+                      activeTab === 'dungeon' ? 'bg-[#2e2316] text-[#fde68a]' : 'text-[#f3ead8]'
+                    }`}
+                  >
+                    <span className="flex items-center gap-3">
+                      <svg viewBox="0 0 16 16" className="w-4 h-4 shrink-0 fill-none stroke-[#c6a15b]" strokeWidth="1.5" aria-hidden="true">
+                        <rect x="2.5" y="2.5" width="11" height="11" rx="1" />
+                        <path d="M6 2.5v11M10 2.5v11M2.5 8h11" />
+                      </svg>
+                      <span className="font-semibold">Zindana git</span>
+                    </span>
+                    <span className="text-[10px] text-[#a89b84]">Esir Bağışı</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => {
                       setActiveTab(activeTab === 'arena' ? 'overview' : 'arena');
                       setFeedback(null);
@@ -1546,18 +1600,24 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
               {/* BİR SÜRE BURADA BEKLE */}
               <button
                 type="button"
+                data-testid="settlement-wait-here-btn"
                 onClick={() => {
-                  handleRestRecover();
                   setActiveTab('wait');
+                  onToggleWaiting?.(true);
+                  if (onSetCampaignTimeScale) onSetCampaignTimeScale(4);
+                  setFeedback('Yerleşimde bekleme başlatıldı. Zaman hızla akıyor, birlikleriniz ve sağlığınız yenileniyor.');
                 }}
-                className={`w-full px-4 py-2.5 text-left flex items-center gap-3 hover:bg-[#241c13] transition-colors ${
+                className={`w-full px-4 py-2.5 text-left flex items-center justify-between hover:bg-[#241c13] transition-colors ${
                   activeTab === 'wait' ? 'bg-[#2e2316] text-[#fde68a]' : 'text-[#f3ead8]'
                 }`}
               >
-                <svg viewBox="0 0 16 16" className="w-4 h-4 shrink-0 fill-none stroke-[#c6a15b]" strokeWidth="1.4" aria-hidden="true">
-                  <path d="M4 2h8M4 14h8M5 2c0 3 3 4.5 3 6s-3 3-3 6M11 2c0 3-3 4.5-3 6s3 3 3 6" />
-                </svg>
-                <span className="font-semibold">Bir süre burada bekle</span>
+                <span className="flex items-center gap-3">
+                  <svg viewBox="0 0 16 16" className="w-4 h-4 shrink-0 fill-none stroke-[#c6a15b]" strokeWidth="1.4" aria-hidden="true">
+                    <path d="M4 2h8M4 14h8M5 2c0 3 3 4.5 3 6s-3 3-3 6M11 2c0 3-3 4.5-3 6s3 3 3 6" />
+                  </svg>
+                  <span className="font-semibold">Bir süre burada bekle</span>
+                </span>
+                <span className="text-[10px] font-mono text-[#4ade80]">Hızlı İyileşme</span>
               </button>
 
               {/* ÇIKIŞ */}
@@ -1741,13 +1801,18 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     <div>
                       <div className="font-bold text-sm text-[#f8f0df]">Esirleri Fidyeciye Teslim Et</div>
                       <div className="text-xs text-[#a89b84] mt-0.5">
-                        Ordunuzdaki esirler: <span className="font-bold text-[#fb923c]">{campaign.prisoners} Esir</span> · Getiri: {calculatePrisonerRansomValue(campaign)} Dinar (Kademeye Göre)
+                        Ordunuzdaki esirler:{' '}
+                        <span className="font-bold text-[#fb923c]">
+                          {campaign.prisoners} Esir
+                          {playerCaptiveLords.length > 0 ? ` + ${playerCaptiveLords.length} Soylu Komutan` : ''}
+                        </span>{' '}
+                        · Getiri: {calculatePrisonerRansomValue(campaign)} Dinar (Kademeye Göre)
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={handleRansom}
-                      disabled={campaign.prisoners <= 0}
+                      disabled={campaign.prisoners <= 0 && playerCaptiveLords.length === 0}
                       className="px-3.5 py-2 rounded text-xs font-bold bg-[#374151] hover:bg-[#4b5563] text-white disabled:opacity-40 whitespace-nowrap"
                     >
                       Fidye Al
@@ -1937,11 +2002,243 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                 </div>
               )}
 
-              {/* DUNGEON TAB */}
+              {/* DUNGEON TAB (Bannerlord Zindana Esir Bağışı — +Nüfuz ve +Güvenlik) */}
               {activeTab === 'dungeon' && (
-                <div className="p-3.5 rounded bg-[#1f1a14] border border-[#c6a15b]/30">
-                  <div className="text-xs text-[#a89b84]">Zindan Doluluk Oranı:</div>
-                  <div className="text-sm font-bold text-white mt-1">2 / 30 Hücre Dolu</div>
+                <div className="space-y-3" data-testid="settlement-dungeon-panel">
+                  <div className="p-3.5 rounded bg-[#1f1a14] border border-[#c6a15b]/30 flex items-center justify-between">
+                    <div>
+                      <div className="text-xs text-[#a89b84]">Zindan Güvenliği &amp; Doluluk Oranı:</div>
+                      <div className="text-sm font-bold text-white mt-0.5">
+                        {2 + dungeonCaptiveLords.length} / 30 Hücre Dolu · Güvenlik: {settlement.security ?? 65}
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded bg-[#14100b] border border-[#c6a15b]/30 text-[11px] text-[#fde68a] font-mono">
+                      Kaçış Direnci Yüksek
+                    </span>
+                  </div>
+
+                  {/* Zindana Tutsak Komutan Bağışı */}
+                  <div className="p-3.5 rounded bg-[#1f1a14] border border-[#c6a15b]/30 space-y-2">
+                    <div className="font-bold text-xs text-[#fde68a] uppercase tracking-wider">
+                      Ordunuzdaki Tutsak Komutanları Zindana Bırak ({playerCaptiveLords.length})
+                    </div>
+                    {playerCaptiveLords.length === 0 ? (
+                      <div className="text-xs text-[#a89b84]">
+                        Ordunuzda zindana teslim edilecek tutsak düşman komutanı bulunmuyor.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {playerCaptiveLords.map((lord) => (
+                          <div
+                            key={lord.id}
+                            data-testid={`dungeon-donate-lord-row-${lord.id}`}
+                            className="p-2.5 rounded bg-[#16120d] border border-[#c6a15b]/25 flex items-center justify-between gap-2"
+                          >
+                            <div>
+                              <div className="font-bold text-xs text-white">
+                                {lord.title} {lord.name}
+                              </div>
+                              <div className="text-[11px] text-[#a89b84]">
+                                {FACTION_INFO[lord.faction]?.name ?? lord.faction} · Bağış Ödülü: +18..35 Nüfuz &amp; +3 Güvenlik
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              data-testid={`dungeon-donate-lord-btn-${lord.id}`}
+                              onClick={() => {
+                                const res = donateCaptiveLordToDungeon(campaign, settlement.id, lord.id);
+                                if (!res.success) {
+                                  setFeedback(res.reason ?? 'Zindana teslim edilemedi.');
+                                  return;
+                                }
+                                sound.playCoinChime();
+                                onUpdateCampaign?.(res.nextState);
+                                setFeedback(
+                                  `${lord.title} ${lord.name}, ${settlement.name} zindanına hapsedildi (+${res.influenceGained} Nüfuz, +${res.securityGained} Güvenlik).`,
+                                );
+                              }}
+                              className="px-3 py-1.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white whitespace-nowrap"
+                            >
+                              Zindana At (+Nüfuz)
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Zindana Sıradan Asker Esiri Bağışı */}
+                  <div className="p-3.5 rounded bg-[#1f1a14] border border-[#c6a15b]/30 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-bold text-xs text-[#f8f0df]">
+                        Savaş Esirlerini Garnizon Zindanına Bağışla
+                      </div>
+                      <div className="text-[11px] text-[#a89b84] mt-0.5">
+                        Ordunuzdaki Esirler: <strong className="text-sky-400">{campaign.prisoners}</strong> · Nüfuz ve kale güvenliği kazandırır.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="dungeon-donate-troops-btn"
+                      disabled={campaign.prisoners <= 0}
+                      onClick={() => {
+                        const res = donatePrisonersToDungeon(campaign, settlement.id);
+                        if (!res.success) {
+                          setFeedback(res.reason ?? 'Zindana bağışlanacak esir yok.');
+                          return;
+                        }
+                        sound.playCoinChime();
+                        onUpdateCampaign?.(res.nextState);
+                        setFeedback(
+                          `${res.donatedCount} savaş esiri ${settlement.name} zindanına teslim edildi (+${res.influenceGained} Nüfuz, +${res.securityGained} Güvenlik).`,
+                        );
+                      }}
+                      className="px-3.5 py-2 rounded text-xs font-bold bg-[#065f46] hover:bg-[#059669] text-white disabled:opacity-40 whitespace-nowrap"
+                    >
+                      Esirleri Zindana At
+                    </button>
+                  </div>
+
+                  {/* Zindanda Halihazırda Tutulan Soylu Esirler */}
+                  {dungeonCaptiveLords.length > 0 && (
+                    <div className="p-3.5 rounded bg-[#18130d] border border-[#c6a15b]/25 space-y-1.5">
+                      <div className="text-[11px] font-bold text-[#c6a15b] uppercase tracking-wider">
+                        Bu Zindanda Tutulan Soylu Tutsaklar ({dungeonCaptiveLords.length})
+                      </div>
+                      {dungeonCaptiveLords.map((lord) => (
+                        <div
+                          key={lord.id}
+                          className="flex items-center justify-between text-xs py-1 border-b border-[#8b6b36]/15 last:border-b-0"
+                        >
+                          <span className="font-semibold text-[#f8f0df]">
+                            {lord.title} {lord.name} ({FACTION_INFO[lord.faction]?.name ?? lord.faction})
+                          </span>
+                          <span className="text-[11px] font-mono text-amber-400">
+                            Hücrede ({lord.daysCaptive ?? 0} gün)
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* WAIT / REST TAB (BANNERLORD BURADA BİR SÜRE BEKLE HUD PANELİ) */}
+              {activeTab === 'wait' && (
+                <div data-testid="settlement-wait-panel" className="space-y-4">
+                  <div className="p-4 rounded bg-[#1c1610] border border-[#c6a15b]/40 shadow-lg space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#c6a15b]/25 pb-2.5">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#fbbf24]">
+                          Zaman Akışı ve Karargah
+                        </div>
+                        <h3 className="font-display text-base font-bold text-[#fde68a] mt-0.5">
+                          {settlement.name} Kapılarında Bekleniyor
+                        </h3>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-1 rounded bg-[#2a2014] border border-[#c6a15b]/40 font-mono text-xs font-bold text-[#fef08a]">
+                          Saat: {String(campaign.hour ?? 9).padStart(2, '0')}:00
+                        </span>
+                        <span className="px-2.5 py-1 rounded bg-[#15231a] border border-[#34d399]/40 font-mono text-xs font-bold text-[#86efac]">
+                          Gün {campaign.day}
+                        </span>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-[#d6cbb5] leading-relaxed">
+                      Ordunuz {settlement.name} revir ve hanlarında dinleniyor. Harita kamerası yerleşimin etrafında süzülüyor ve saatler hızla ilerliyor. Bir düşman ordusu yaklaşırsa bekleme derhal kesintiye uğrar.
+                    </p>
+
+                    {/* Sağlık ve İyileşme Hızı */}
+                    {(() => {
+                      const curHp = Math.min(100, Math.round(campaign.playerHp ?? 100));
+                      const baseRegen = settlement.type === 'TOWN' ? 8 : settlement.type === 'CASTLE' ? 6 : 4;
+                      const medBonus = Math.round((campaign.skills?.medicine?.level ?? 15) * 0.12);
+                      const totalRegenPerHour = baseRegen + medBonus;
+                      const woundedCount = (campaign.troopStacks ?? []).reduce(
+                        (sum, stack) => sum + (stack.wounded ?? 0),
+                        0,
+                      );
+
+                      return (
+                        <div className="space-y-3 rounded bg-[#130f0a] border border-[#c6a15b]/25 p-3">
+                          <div>
+                            <div className="flex items-center justify-between text-xs font-bold text-[#fde68a] mb-1">
+                              <span>Komutan Sağlığı (HP)</span>
+                              <span className="font-mono">%{curHp} / 100</span>
+                            </div>
+                            <div className="w-full h-3 rounded bg-[#241c14] border border-[#c6a15b]/30 overflow-hidden">
+                              <div
+                                className="h-full bg-gradient-to-r from-red-600 via-amber-500 to-emerald-500 transition-all duration-300"
+                                style={{ width: `${curHp}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-[11px]">
+                            <div className="p-2 rounded bg-[#1a140d] border border-[#c6a15b]/20">
+                              <span className="text-[#a89b84] block">İyileşme Hızı:</span>
+                              <span className="font-bold text-[#34d399] font-mono">
+                                +{totalRegenPerHour} HP / saat
+                              </span>
+                              <span className="text-[10px] text-[#a89b84] block mt-0.5">
+                                ({settlement.type === 'TOWN' ? 'Şehir Reviri' : settlement.type === 'CASTLE' ? 'Kale Reviri' : 'Köy Şifacısı'} + Hekimlik)
+                              </span>
+                            </div>
+
+                            <div className="p-2 rounded bg-[#1a140d] border border-[#c6a15b]/20">
+                              <span className="text-[#a89b84] block">Yaralı Askerler:</span>
+                              <span className="font-bold text-[#60a5fa] font-mono">
+                                {woundedCount > 0 ? `${woundedCount} asker tedavi ediliyor` : 'Yaralı asker yok'}
+                              </span>
+                              <span className="text-[10px] text-[#a89b84] block mt-0.5">
+                                Saatlik iyileşme devrede
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Hız Kontrolleri & Beklemeyi Sonlandır Butonu */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#c6a15b]/25">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-semibold text-[#c6a15b]">Hız:</span>
+                        {([0, 1, 2, 4] as const).map((spd) => {
+                          const isActive = (campaignTimeScale ?? 1) === spd;
+                          return (
+                            <button
+                              key={spd}
+                              type="button"
+                              onClick={() => onSetCampaignTimeScale?.(spd)}
+                              className={`px-2.5 py-1 rounded text-xs font-mono font-bold border transition ${
+                                isActive
+                                  ? 'bg-[#b45309] border-[#fbbf24] text-white shadow'
+                                  : 'bg-[#14110c] border-[#c6a15b]/30 text-[#a89b84] hover:text-[#fde68a]'
+                              }`}
+                            >
+                              {spd === 0 ? 'Durdur' : `${spd}x`}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <button
+                        type="button"
+                        data-testid="settlement-stop-wait-btn"
+                        onClick={() => {
+                          onToggleWaiting?.(false);
+                          if (onSetCampaignTimeScale) onSetCampaignTimeScale(1);
+                          setActiveTab('overview');
+                          setFeedback('Bekleme sonlandırıldı.');
+                        }}
+                        className="px-4 py-2 rounded bg-[#7f1d1d] hover:bg-[#991b1b] border border-[#ef4444]/60 text-xs font-bold text-white uppercase tracking-wider shadow transition"
+                      >
+                        Beklemeyi Sonlandır [Ayrıl]
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 

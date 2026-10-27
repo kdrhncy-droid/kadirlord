@@ -1259,19 +1259,57 @@ export function createWarriorModel(options: {
       horseKnees.push(kneePivot);
     }
 
-    // Eyer altı hizi örtüsü (caparison) + eyer
+    // Eyer altı hizi örtüsü (caparison) + eyer, eyer kaşı (pommel), arka yaslanma (cantle) ve üzengiler (stirrups)
     const barding = new THREE.Mesh(
       warriorGeo('BoxGeometry:0.72,0.34,0.95', () => new THREE.BoxGeometry(0.72, 0.34, 0.95)),
       armorMat,
     );
     barding.position.set(0, 1.06, -0.04);
     horseGroup.add(barding);
+
     const saddle = new THREE.Mesh(
-      warriorGeo('BoxGeometry:0.5,0.14,0.55', () => new THREE.BoxGeometry(0.5, 0.14, 0.55)),
+      warriorGeo('BoxGeometry:0.52,0.12,0.58', () => new THREE.BoxGeometry(0.52, 0.12, 0.58)),
       leatherMat,
     );
-    saddle.position.set(0, 1.3, -0.02);
+    saddle.position.set(0, 1.28, -0.02);
     horseGroup.add(saddle);
+
+    // Eyer ön kaşı (pommel) & arka kaşı (cantle)
+    const pommel = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.36,0.15,0.1', () => new THREE.BoxGeometry(0.36, 0.15, 0.1)),
+      leatherMat,
+    );
+    pommel.position.set(0, 1.38, 0.22);
+    pommel.rotation.x = -0.22;
+    horseGroup.add(pommel);
+
+    const cantle = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.42,0.18,0.12', () => new THREE.BoxGeometry(0.42, 0.18, 0.12)),
+      leatherMat,
+    );
+    cantle.position.set(0, 1.4, -0.26);
+    cantle.rotation.x = 0.28;
+    horseGroup.add(cantle);
+
+    // Çift taraflı deri üzengi kayışları ve çelik üzengiler (Stirrups)
+    const stirrupLeatherGeo = warriorGeo(
+      'BoxGeometry:0.04,0.48,0.04',
+      () => new THREE.BoxGeometry(0.04, 0.48, 0.04),
+    );
+    const stirrupIronGeo = warriorGeo(
+      'TorusGeometry:0.075,0.018,6,12,Math.PI',
+      () => new THREE.TorusGeometry(0.075, 0.018, 6, 12, Math.PI),
+    );
+    for (const sx of [-0.34, 0.34]) {
+      const strap = new THREE.Mesh(stirrupLeatherGeo, leatherMat);
+      strap.position.set(sx, 1.04, 0.02);
+      horseGroup.add(strap);
+
+      const iron = new THREE.Mesh(stirrupIronGeo, steelMat);
+      iron.position.set(sx, 0.78, 0.02);
+      iron.rotation.z = Math.PI;
+      horseGroup.add(iron);
+    }
 
     // Boyun + Baş + Yele + Dizgin grubu (göğüs kökünden ritmik sallanır)
     horseNeck = new THREE.Group();
@@ -1286,11 +1324,19 @@ export function createWarriorModel(options: {
     neck.castShadow = true;
     horseNeck.add(neck);
 
+    // Kaslı cidago (withers) boyun-sırt bağlantısı
+    const withers = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.28,0.22,0.34', () => new THREE.BoxGeometry(0.28, 0.22, 0.34)),
+      coatMat,
+    );
+    withers.position.set(0, 0.05, -0.16);
+    horseNeck.add(withers);
+
     const mane = new THREE.Mesh(
-      warriorGeo('BoxGeometry:0.09,0.62,0.32', () => new THREE.BoxGeometry(0.09, 0.62, 0.32)),
+      warriorGeo('BoxGeometry:0.08,0.72,0.34', () => new THREE.BoxGeometry(0.08, 0.72, 0.34)),
       maneMat,
     );
-    mane.position.set(0, 0.36, -0.03);
+    mane.position.set(0, 0.38, -0.04);
     mane.rotation.x = 0.42;
     horseNeck.add(mane);
 
@@ -1303,19 +1349,45 @@ export function createWarriorModel(options: {
     head.castShadow = true;
     horseNeck.add(head);
 
+    // Tapered Muzzle & Burun delikleri (Nostrils)
     const muzzle = new THREE.Mesh(
-      warriorGeo('BoxGeometry:0.19,0.19,0.28', () => new THREE.BoxGeometry(0.19, 0.19, 0.28)),
+      warriorGeo('BoxGeometry:0.2,0.18,0.28', () => new THREE.BoxGeometry(0.2, 0.18, 0.28)),
       coatMat,
     );
     muzzle.position.set(0, 0.36, 0.64);
     muzzle.rotation.x = 0.52;
     horseNeck.add(muzzle);
 
+    const nostrilGeo = warriorGeo('BoxGeometry:0.035,0.03,0.06', () => new THREE.BoxGeometry(0.035, 0.03, 0.06));
+    for (const nx of [-0.065, 0.065]) {
+      const nostril = new THREE.Mesh(nostrilGeo, maneMat);
+      nostril.position.set(nx, 0.38, 0.76);
+      nostril.rotation.x = 0.52;
+      horseNeck.add(nostril);
+    }
+
     const earGeo = warriorGeo('ConeGeometry:0.055,0.19,5', () => new THREE.ConeGeometry(0.055, 0.19, 5));
     for (const ex of [-0.09, 0.09]) {
       const ear = new THREE.Mesh(earGeo, coatMat);
       ear.position.set(ex, 0.7, 0.28);
       horseNeck.add(ear);
+    }
+
+    // Gem (Bit) & Deri Dizginler (Reins - ağızdan binicinin sol eline uzanan kayış)
+    const bitGeo = warriorGeo('CylinderGeometry:0.02,0.02,0.26,6', () => new THREE.CylinderGeometry(0.02, 0.02, 0.26, 6));
+    const bit = new THREE.Mesh(bitGeo, steelMat);
+    bit.rotation.z = Math.PI / 2;
+    bit.position.set(0, 0.33, 0.62);
+    horseNeck.add(bit);
+
+    for (const rx of [-0.13, 0.13]) {
+      const rein = new THREE.Mesh(
+        warriorGeo('BoxGeometry:0.025,0.03,0.82', () => new THREE.BoxGeometry(0.025, 0.03, 0.82)),
+        leatherMat,
+      );
+      rein.position.set(rx, 0.22, 0.22);
+      rein.rotation.x = -0.48;
+      horseNeck.add(rein);
     }
 
     horseGroup.add(horseNeck);
@@ -1529,7 +1601,7 @@ export function animateWarriorRigPose(
     shieldIntact: boolean;
     isBlocking: boolean;
     blockDirection: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
-    attackPhase: 'IDLE' | 'WINDUP' | 'RELEASE' | 'RECOVERY';
+    attackPhase: 'IDLE' | 'WINDUP' | 'READY' | 'RELEASE' | 'RECOVERY';
     attackDirection: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
     attackProgress: number; // 0..1
     isCouchedLance: boolean;
@@ -1634,15 +1706,24 @@ export function animateWarriorRigPose(
   if (usingRanged) {
     handles.leftArm.rotation.set(-0.95, 0.25, 0);
   } else if (isBlocking) {
-    const dirY = blockDirection === 'LEFT' ? 0.35 : blockDirection === 'RIGHT' ? 0.85 : 0.58;
-    const dirX = blockDirection === 'UP' ? -0.95 : blockDirection === 'DOWN' ? -0.25 : -0.58;
-    handles.leftArm.rotation.set(dirX, dirY, 0);
+    const dirY = blockDirection === 'LEFT' ? 0.28 : blockDirection === 'RIGHT' ? 0.92 : 0.62;
+    const dirX = blockDirection === 'UP' ? -1.05 : blockDirection === 'DOWN' ? -0.28 : -0.62;
+    const dirZ = blockDirection === 'UP' ? 0.18 : 0;
+    handles.leftArm.rotation.set(dirX, dirY, dirZ);
+    if (handles.shieldMesh) {
+      handles.shieldMesh.position.set(-0.04, blockDirection === 'UP' ? 0.08 : -0.02, 0.30);
+      handles.shieldMesh.rotation.y = blockDirection === 'RIGHT' ? -0.15 : -0.42;
+    }
   } else {
     handles.leftArm.rotation.set(
       -Math.sin(cycle) * 0.18 * moveFactor,
       0.16,
       0,
     );
+    if (handles.shieldMesh) {
+      handles.shieldMesh.position.set(-0.12, -0.05, 0.22);
+      handles.shieldMesh.rotation.y = -Math.PI / 3;
+    }
   }
 
   // 4. Sağ kol (Koltuklanmış kargı, yay germe veya 4 yönlü yakın dövüş savurması)
@@ -1651,9 +1732,12 @@ export function animateWarriorRigPose(
     return;
   }
 
+  const chamberSway = Math.sin(time * 5.2 + phaseOffset) * 0.03;
+
   if (usingRanged) {
-    if (attackPhase === 'WINDUP') {
-      handles.rightArm.rotation.set(-0.92, -0.35 - attackProgress * 0.35, 0);
+    if (attackPhase === 'WINDUP' || attackPhase === 'READY') {
+      const p = attackPhase === 'READY' ? 1 : attackProgress;
+      handles.rightArm.rotation.set(-0.92 + chamberSway * 0.4, -0.35 - p * 0.38, 0);
     } else if (attackPhase === 'RELEASE') {
       handles.rightArm.rotation.set(-0.85, -0.75 + attackProgress * 0.5, 0);
     } else {
@@ -1662,25 +1746,27 @@ export function animateWarriorRigPose(
     return;
   }
 
-  if (attackPhase === 'WINDUP') {
+  if (attackPhase === 'WINDUP' || attackPhase === 'READY') {
+    const p = attackPhase === 'READY' ? 1 : attackProgress;
+    const breath = attackPhase === 'READY' ? chamberSway : 0;
     if (attackDirection === 'UP') {
-      handles.rightArm.rotation.set(-1.35 * attackProgress, 0, -0.1);
+      handles.rightArm.rotation.set(-1.38 * p + breath, 0, -0.1);
     } else if (attackDirection === 'DOWN') {
-      handles.rightArm.rotation.set(0.45 * attackProgress, -0.2, 0.12);
+      handles.rightArm.rotation.set(0.48 * p + breath, -0.22, 0.14);
     } else if (attackDirection === 'LEFT') {
-      handles.rightArm.rotation.set(-0.35, 0.85 * attackProgress, -0.45);
+      handles.rightArm.rotation.set(-0.35, 0.88 * p + breath, -0.45);
     } else {
-      handles.rightArm.rotation.set(-0.35, -0.85 * attackProgress, 0.45);
+      handles.rightArm.rotation.set(-0.35, -0.88 * p - breath, 0.45);
     }
   } else if (attackPhase === 'RELEASE') {
     if (attackDirection === 'UP') {
-      handles.rightArm.rotation.set(-1.35 + 2.35 * attackProgress, 0, 0);
+      handles.rightArm.rotation.set(-1.38 + 2.38 * attackProgress, 0, 0);
     } else if (attackDirection === 'DOWN') {
-      handles.rightArm.rotation.set(0.45 - 1.65 * attackProgress, 0, 0);
+      handles.rightArm.rotation.set(0.48 - 1.68 * attackProgress, 0, 0);
     } else if (attackDirection === 'LEFT') {
-      handles.rightArm.rotation.set(0.2, 0.85 - 1.95 * attackProgress, -0.35);
+      handles.rightArm.rotation.set(0.2, 0.88 - 1.98 * attackProgress, -0.35);
     } else {
-      handles.rightArm.rotation.set(0.2, -0.85 + 1.95 * attackProgress, 0.35);
+      handles.rightArm.rotation.set(0.2, -0.88 + 1.98 * attackProgress, 0.35);
     }
   } else if (attackPhase === 'RECOVERY') {
     const k = 1 - attackProgress;

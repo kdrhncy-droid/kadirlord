@@ -67,6 +67,7 @@ import type {
 } from '../game/types';
 import {
   WarriorMeshHandles,
+  animateWarriorRigPose,
   createContinentalBridgesGroup,
   createContinentalForestsAndRocksGroup,
   createContinentalTerrainMesh,
@@ -101,6 +102,8 @@ interface WorldCanvasProps {
   activeDiplomacyLordId?: string | null;
   activeDialogueLordId?: string | null;
   activeSettlementModalId?: string | null;
+  /** Şehir veya kalede "Burada bir süre bekle" modu aktifken kamerayı zarifçe döndürür. */
+  isWaitingInSettlement?: boolean;
   /** Tam ekran bir modal açıkken arka plan 3B WebGL çizimini duraklatarak FPS düşüşünü önler. */
   isRenderPaused?: boolean;
   cameraActionsRef: React.MutableRefObject<CameraControlActions | null>;
@@ -825,6 +828,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   activeDiplomacyLordId,
   activeDialogueLordId,
   activeSettlementModalId,
+  isWaitingInSettlement = false,
   isRenderPaused = false,
   cameraActionsRef,
   lordPositionsRef,
@@ -846,6 +850,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     activeDiplomacyLordId,
     activeDialogueLordId,
     activeSettlementModalId,
+    isWaitingInSettlement,
     isRenderPaused,
     onSetTimeScale,
     onUpdatePlayerPos,
@@ -863,6 +868,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       activeDiplomacyLordId,
       activeDialogueLordId,
       activeSettlementModalId,
+      isWaitingInSettlement,
       isRenderPaused,
       onSetTimeScale,
       onUpdatePlayerPos,
@@ -878,6 +884,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     activeDiplomacyLordId,
     activeDialogueLordId,
     activeSettlementModalId,
+    isWaitingInSettlement,
     isRenderPaused,
     onSetTimeScale,
     onUpdatePlayerPos,
@@ -1194,6 +1201,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       tz: number,
       target?: { type: 'settlement' | 'lord'; id: string },
     ) {
+      if (stateRef.current.campaign.playerCaptureState?.isCaptive) {
+        return;
+      }
       let resolvedTarget = target ?? null;
       if (!resolvedTarget) {
         // Automatically detect if coordinates match a settlement so Atlas "Sefer Yürüt" also auto-enters on arrival
@@ -1208,6 +1218,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       pendingTarget = resolvedTarget;
       followingLordId = resolvedTarget?.type === 'lord' ? resolvedTarget.id : null;
       followRepathTimer = 0;
+      isFollowingPlayer = true;
 
       if (stateRef.current.campaignTimeScale === 0) {
         stateRef.current.onSetTimeScale?.(1);
@@ -2051,7 +2062,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         const camX = -18 + Math.cos(tourAngle) * 58;
         const camZ = -4 + Math.sin(tourAngle) * 48;
         const camY = 32 + Math.sin(elapsedTotal * 0.25) * 4;
-        camera.position.lerp(_v1.set(camX, camY, camZ), 1 - Math.exp(-3 * dt));
+        if (!Number.isFinite(camera.position.x) || !Number.isFinite(camera.position.y) || !Number.isFinite(camera.position.z)) {
+          camera.position.set(camX, camY, camZ);
+        } else {
+          camera.position.lerp(_v1.set(camX, camY, camZ), 1 - Math.exp(-3 * dt));
+        }
         _camTarget.set(-18, groundHeightAt(-18, -4) + 2.5, -4);
         camera.lookAt(_camTarget);
 
@@ -2197,6 +2212,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         }
 
         camp.lords.forEach((l, idx) => {
+          if (l.characterState === 'CAPTIVE' || l.characterState === 'DEAD') {
+            const lMesh = lordMeshes.get(l.id);
+            const lProxy = lordProxies.get(l.id);
+            if (lMesh) lMesh.root.visible = false;
+            if (lProxy) lProxy.position.set(0, -100, 0);
+            return;
+          }
           let route = lordLiveRoutes.get(l.id);
           if (!route) {
             route = {
@@ -2378,10 +2400,24 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             if (lMesh.root.visible) {
               lMesh.root.position.set(lx, ly, lz);
               lMesh.root.rotation.y = route.rotY;
-              lMesh.bodyGroup.position.y =
-                !isWorldEffectivelyPaused && !isThisLordTalking
-                  ? Math.abs(Math.sin(lordWalkPhase + idx * 1.3)) * 0.11
-                  : 0;
+              const isMoving =
+                !isWorldEffectivelyPaused &&
+                !isThisLordTalking &&
+                (route.waypoints.length > 0 || (route.currentAction && !route.currentAction.includes('Bekliyor')));
+              animateWarriorRigPose(lMesh, {
+                speed: isMoving ? 7.6 : 0,
+                time: elapsedTotal,
+                phaseOffset: idx * 1.35,
+                isMounted: true,
+                usingRanged: false,
+                shieldIntact: true,
+                isBlocking: false,
+                blockDirection: 'UP',
+                attackPhase: 'IDLE',
+                attackDirection: 'UP',
+                attackProgress: 0,
+                isCouchedLance: false,
+              });
             }
           }
           if (lProxy) {
@@ -2442,9 +2478,38 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
         }
 
-        // H. Advance Player Party Movement along March Path
+        // H. Advance Player Party Movement along March Path (or Lock to Captor Party during Captivity)
         let isPartyMoving = false;
-        if (overworldTargetPos && overworldWaypoints.length > 0 && worldSimDt > 0) {
+        const playerCaptive = Boolean(camp.playerCaptureState?.isCaptive);
+        if (playerCaptive && camp.playerCaptureState) {
+          followingLordId = null;
+          pendingTarget = null;
+          overworldTargetPos = null;
+          overworldWaypoints = [];
+          (destRing.material as THREE.MeshBasicMaterial).opacity = 0;
+          marchPathDirty = true;
+
+          const cap = camp.playerCaptureState;
+          if (cap.dungeonSettlementId) {
+            const ds = camp.settlements.find((s) => s.id === cap.dungeonSettlementId);
+            if (ds) {
+              playerOverworldX = ds.x;
+              playerOverworldZ = ds.z;
+            }
+          } else {
+            const captorRoute = lordLiveRoutes.get(cap.captorLordId);
+            const captorLord = camp.lords.find((l) => l.id === cap.captorLordId);
+            if (captorRoute) {
+              playerOverworldX = captorRoute.x;
+              playerOverworldZ = captorRoute.z;
+              playerOverworldFacing = captorRoute.rotY;
+            } else if (captorLord) {
+              playerOverworldX = captorLord.x;
+              playerOverworldZ = captorLord.z;
+            }
+          }
+          isFollowingPlayer = true;
+        } else if (overworldTargetPos && overworldWaypoints.length > 0 && worldSimDt > 0) {
           const wp = overworldWaypoints[0];
           const dx = wp.x - playerOverworldX;
           const dz = wp.z - playerOverworldZ;
@@ -2588,7 +2653,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
         }
 
-        if (isFollowingPlayer) {
+        if (isFollowingPlayer || isPartyMoving) {
           const safe = clampCameraFocus(playerOverworldX, playerOverworldZ, targetCamZoomDist);
           targetCamFocusX = safe.x;
           targetCamFocusZ = safe.z;
@@ -2597,11 +2662,23 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         updateMarchPathGeometry();
 
         const py = Math.max(0.15, groundHeightAt(playerOverworldX, playerOverworldZ));
+        overworldPlayer.root.visible = !playerCaptive;
         overworldPlayer.root.position.set(playerOverworldX, py, playerOverworldZ);
         overworldPlayer.root.rotation.y = playerOverworldFacing;
-        overworldPlayer.bodyGroup.position.y = isPartyMoving
-          ? Math.abs(Math.sin(walkPhase)) * 0.14
-          : 0;
+        animateWarriorRigPose(overworldPlayer, {
+          speed: isPartyMoving ? 8.5 : 0,
+          time: elapsedTotal,
+          phaseOffset: 0,
+          isMounted: true,
+          usingRanged: false,
+          shieldIntact: true,
+          isBlocking: false,
+          blockDirection: 'UP',
+          attackPhase: 'IDLE',
+          attackDirection: 'UP',
+          attackProgress: 0,
+          isCouchedLance: false,
+        });
 
         /* Kervan takipçileri: görev aktifken çıkışta bekler, buluşunca izler */
         {
@@ -2680,6 +2757,21 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
         }
 
+        // If waiting in settlement, gently orbit camera around the settlement
+        if (stateRef.current.isWaitingInSettlement) {
+          targetCamYaw += dt * 0.14;
+        }
+
+        // Defensive sanitization: protect against NaN propagation from fast lerps or modal transitions
+        if (!Number.isFinite(targetCamFocusX)) targetCamFocusX = playerOverworldX || 0;
+        if (!Number.isFinite(targetCamFocusZ)) targetCamFocusZ = playerOverworldZ || 0;
+        if (!Number.isFinite(camFocusX)) camFocusX = targetCamFocusX;
+        if (!Number.isFinite(camFocusZ)) camFocusZ = targetCamFocusZ;
+        if (!Number.isFinite(targetCamYaw)) targetCamYaw = 0;
+        if (!Number.isFinite(camYaw)) camYaw = targetCamYaw;
+        if (!Number.isFinite(targetCamZoomDist) || targetCamZoomDist < 12) targetCamZoomDist = 48;
+        if (!Number.isFinite(camZoomDist) || camZoomDist < 12) camZoomDist = targetCamZoomDist;
+
         // Smooth Exponential Damping for Bannerlord Strategic Map Camera (Focus XZ, Focus Y, Yaw, Zoom)
         const camDamp = isHeadless ? 1 : 1 - Math.exp(-11.0 * dt);
         camFocusX = THREE.MathUtils.lerp(camFocusX, targetCamFocusX, camDamp);
@@ -2690,9 +2782,62 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         const targetFocusY = Math.max(0, groundHeightAt(camFocusX, camFocusZ));
         camFocusY = THREE.MathUtils.lerp(camFocusY, targetFocusY, camDamp);
 
+        // Bannerlord 24-hour Celestial Day/Night Lighting Cycle
+        const currentHour = typeof camp.hour === 'number' ? camp.hour : 9;
+        const sunRadius = 180;
+        const sunAngle = ((currentHour - 6) / 24) * Math.PI * 2;
+        const sunElev = Math.sin((currentHour / 24) * Math.PI * 2 - Math.PI * 0.5);
+        const sunY = Math.max(14, sunElev * 125 + 28);
+        const sunX = Math.cos(sunAngle) * sunRadius;
+        sunLight.position.set(sunX, sunY, 95);
+
+        if (currentHour >= 5 && currentHour < 8) {
+          // Dawn / Sunrise: warm peach & rising mist
+          const dawnT = (currentHour - 5) / 3;
+          sunLight.color.setHex(0xffaa66);
+          sunLight.intensity = 0.65 + dawnT * 0.45;
+          hemiLight.color.setHex(0xb09885);
+          hemiLight.groundColor.setHex(0x282018);
+          hemiLight.intensity = 0.42;
+          rimLight.intensity = 0.25;
+          (skyColor as THREE.Color).setHex(0x243344);
+          if (scene.fog) (scene.fog as THREE.FogExp2).color.setHex(0x243344);
+        } else if (currentHour >= 8 && currentHour < 17) {
+          // Midday: crisp golden illumination, deep blue horizon
+          sunLight.color.setHex(0xfffaed);
+          sunLight.intensity = 1.45;
+          hemiLight.color.setHex(0xbcd4e6);
+          hemiLight.groundColor.setHex(0x3b3224);
+          hemiLight.intensity = 0.58;
+          rimLight.intensity = 0.45;
+          (skyColor as THREE.Color).setHex(0x1e384b);
+          if (scene.fog) (scene.fog as THREE.FogExp2).color.setHex(0x1e384b);
+        } else if (currentHour >= 17 && currentHour < 20) {
+          // Dusk / Golden Hour: deep amber-crimson rim
+          const duskT = (currentHour - 17) / 3;
+          sunLight.color.setHex(0xff7034);
+          sunLight.intensity = 1.25 - duskT * 0.65;
+          hemiLight.color.setHex(0xa06040);
+          hemiLight.groundColor.setHex(0x241510);
+          hemiLight.intensity = 0.36;
+          rimLight.intensity = 0.16;
+          (skyColor as THREE.Color).setHex(0x271a24);
+          if (scene.fog) (scene.fog as THREE.FogExp2).color.setHex(0x271a24);
+        } else {
+          // Deep Night: realistic atmospheric dark night with subtle silvery moon glint
+          sunLight.color.setHex(0x4a6a9b);
+          sunLight.intensity = 0.08;
+          hemiLight.color.setHex(0x121c29);
+          hemiLight.groundColor.setHex(0x05070a);
+          hemiLight.intensity = 0.07;
+          rimLight.intensity = 0.02;
+          (skyColor as THREE.Color).setHex(0x03060c);
+          if (scene.fog) (scene.fog as THREE.FogExp2).color.setHex(0x03060c);
+        }
+
         // Disable real-time directional shadow pass at macro continental zoom (> 290m) to save GPU vertex bandwidth
         if (!isHeadless) {
-          const wantShadows = camZoomDist <= 290;
+          const wantShadows = camZoomDist <= 290 && currentHour >= 5 && currentHour < 20;
           if (sunLight.castShadow !== wantShadows) {
             sunLight.castShadow = wantShadows;
           }
@@ -2706,10 +2851,12 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           camZoomDist,
         );
 
-        camera.position.set(camPose.camX, camPose.camY, camPose.camZ);
-        _camTarget.set(camPose.lookX, camPose.lookY, camPose.lookZ);
-        camera.lookAt(_camTarget);
-        camera.updateMatrixWorld();
+        if (Number.isFinite(camPose.camX) && Number.isFinite(camPose.lookX)) {
+          camera.position.set(camPose.camX, camPose.camY, camPose.camZ);
+          _camTarget.set(camPose.lookX, camPose.lookY, camPose.lookZ);
+          camera.lookAt(_camTarget);
+          camera.updateMatrixWorld();
+        }
 
         // Check proximity to settlements & visible lords
         let nearestSettlement: Settlement | null = null;
@@ -2727,6 +2874,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         let minLordDist = 11.5;
         for (let i = 0; i < camp.lords.length; i++) {
           const l = camp.lords[i];
+          if (l.characterState === 'CAPTIVE' || l.characterState === 'DEAD') continue;
           const route = lordLiveRoutes.get(l.id);
           const lx = route ? route.x : l.x;
           const lz = route ? route.z : l.z;
@@ -2975,6 +3123,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           const l = camp.lords[i];
           const rec = lordLabelRecords.get(l.id);
           if (!rec) continue;
+          if (l.characterState === 'CAPTIVE' || l.characterState === 'DEAD') {
+            if (rec.visible) {
+              rec.visible = false;
+              rec.el.style.display = 'none';
+            }
+            continue;
+          }
           const route = lordLiveRoutes.get(l.id);
           const lx = route ? route.x : l.x;
           const lz = route ? route.z : l.z;
@@ -3063,6 +3218,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         const ppy = py - 0.15;
         _projVec.set(playerOverworldX, ppy, playerOverworldZ).project(camera);
         if (
+          !playerCaptive &&
           _projVec.z >= -1 &&
           _projVec.z <= 1 &&
           Math.abs(_projVec.x) <= 1.05 &&

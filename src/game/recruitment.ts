@@ -94,24 +94,27 @@ export function recruitQuote(
   const byGold = unitCost > 0 ? Math.floor(campaign.gold / unitCost) : 0;
   const gate = recruitRelationGate(relation);
 
+  const depletedToday = settlement.lastLordRecruitDay === campaign.day;
+  const effectiveAvailable = depletedToday ? 0 : available;
+
   let blockedReason: string | null = null;
-  // Bannerlord'da yerleşim başına günlük asker toplama kilidi yoktur (10.7):
-  // sınırlayıcı olan yalnız eşraf yuvalarındaki gönüllülerdir; yuvalar boşalır
-  // ve günlük üretimle azar azar dolar. Aynı gün tekrar toplamak serbesttir.
   if (!gate.allowed) blockedReason = gate.reason ?? null;
-  else if (available <= 0) blockedReason = 'Yerleşkede bu birlikten gönüllü kalmadı.';
+  else if (depletedToday)
+    blockedReason =
+      'Bu yerleşimdeki gönüllüler bugün başka bir sancakbeyi tarafından toplandı (1 gün boyunca yeni gönüllü çıkmaz).';
+  else if (effectiveAvailable <= 0) blockedReason = 'Yerleşkede bu birlikten gönüllü kalmadı.';
   else if (room <= 0) blockedReason = 'Parti kapasitesi dolu — önce asker terhis et veya klan kademeni yükselt.';
   else if (campaign.gold < unitCost) blockedReason = 'Yetersiz dinar.';
 
   const maxRecruitable = blockedReason
     ? 0
-    : Math.max(0, Math.min(available, byRoom, byGold));
+    : Math.max(0, Math.min(effectiveAvailable, byRoom, byGold));
 
   return {
     unitId,
     name: def.name,
     role: def.role,
-    available,
+    available: effectiveAvailable,
     unitCost,
     baseCost: def.recruitCost,
     dailyWage: def.dailyWage,

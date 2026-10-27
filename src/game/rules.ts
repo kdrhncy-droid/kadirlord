@@ -26,7 +26,13 @@ import {
   calculateDailyFoodDemand,
 } from './foodSystem.ts';
 import { getPlayerCultureModifiers } from './cultureBonuses.ts';
+export { getPlayerCultureModifiers } from './cultureBonuses.ts';
 import type { ArmyRecord } from './armySystem';
+import {
+  advanceDailyCaptivityAndEscape,
+  calculateLordRansomValue,
+  getPlayerCaptiveLords,
+} from './partySystem.ts';
 import {
   SIEGE_MELEE_SLOTS,
   SIEGE_RANGED_SLOTS,
@@ -325,6 +331,8 @@ export interface Settlement {
   visited?: boolean;
   /** Bannerlord 6-slot asker toplama ekranında bu yerleşimden toplanmış (boşaltılmış) slot anahtarları. */
   recruitedSlotKeys?: string[];
+  /** Bir lord/kral/leydi bu yerleşimdeki gönüllüleri topladığında kaydedilen sefer günü (1 gün boyunca gönüllü kalmaz). */
+  lastLordRecruitDay?: number;
   /** Bu şehirde son turnuvanın düzenlendiği sefer günü (günde en fazla 1 turnuva). */
   lastTournamentDay?: number;
 }
@@ -396,6 +404,51 @@ export const EMPTY_WORLD_STATS: WorldStats = {
   reinforcements: 0,
 };
 
+/**
+ * Karakter ve Komutan Durumu (Bannerlord CharacterState):
+ *  - FREE: Haritada serbestçe hareket eden aktif komutan/kahraman
+ *  - CAPTIVE: Bir ordunun veya zindanın esiri (haritada görünmez, hareket etmez)
+ *  - WOUNDED: Savaş sonrası ağır yaralı / iyileşme sürecinde
+ *  - DEAD: İdam edilmiş veya savaşta ölmüş (kalıcı olarak oyundan silinir)
+ */
+export type CharacterState = 'FREE' | 'CAPTIVE' | 'WOUNDED' | 'DEAD';
+
+export interface CaptivityDilemmaOption {
+  id: 'ESCAPE_ATTEMPT' | 'BRIBE_GUARD' | 'STEAL_FOOD' | 'ENDURE';
+  label: string;
+  description: string;
+  costGold?: number;
+}
+
+export interface CaptivityDilemmaEvent {
+  id: string;
+  day: number;
+  title: string;
+  text: string;
+  options: CaptivityDilemmaOption[];
+}
+
+export interface PlayerCaptureState {
+  isCaptive: boolean;
+  captorLordId: string;
+  captorName: string;
+  captorTitle: string;
+  captorFaction: FactionId;
+  daysCaptive: number;
+  escapeChance: number;
+  ransomCost: number;
+  dungeonSettlementId?: string | null;
+  activeEvent?: CaptivityDilemmaEvent | null;
+}
+
+export interface EscapedCaptivityNotice {
+  captorName: string;
+  captorTitle?: string;
+  daysHeld: number;
+  method: 'ESCAPE' | 'RANSOM' | 'DILEMMA_ESCAPE' | 'CAPTOR_DEFEATED';
+  message: string;
+}
+
 export interface LordAgent {
   id: string;
   name: string;
@@ -425,6 +478,14 @@ export interface LordAgent {
   armyId?: string | null;
   isPlayerClan?: boolean;
   clanTier?: number;
+  /** Bannerlord Esir & Karakter Durumu Sistemi */
+  characterState?: CharacterState;
+  /** Esir ise tutan taraf: 'player', bir lord kimliği veya 'dungeon:<settlementId>' */
+  captorId?: string | null;
+  /** Zindanda tutuluyorsa yerleşim kimliği */
+  dungeonSettlementId?: string | null;
+  /** Esarette geçen gün sayısı (günlük kaçış zarı için) */
+  daysCaptive?: number;
 }
 
 export interface ChronicleEvent {
@@ -467,6 +528,8 @@ export interface CampaignState {
   /** Bannerlord veri temeli (P1): eski alanlar geçiş döneminde görüntüleme/uyumluluk yedeğidir. */
   foundationVersion?: number;
   influence?: number;
+  /** Oyuncunun Onur (Honor) puanı: esir serbest bırakınca artar (+10), idam edince düşer (-30). */
+  honor?: number;
   heroes?: CampaignHero[];
   roleAssignments?: Partial<Record<ClanRoleId, string | null>>;
   troopStacks?: TroopStack[];
@@ -477,9 +540,14 @@ export interface CampaignState {
   world?: WorldState;
   /** Oyuncunun yürüttüğü kuşatma (Görev 1). Yoksa lord kuşatmaları tek kaynaktır. */
   playerSiege?: PlayerSiegeState | null;
-  /** Görev 2: Oyuncunun bağlı olduğu krallık ve aktif ordular (`ArmyRecord[]`). */
+  /** Görev 2: Oyuncunun bağlı olduğu krallık, rolü ve aktif ordular (`ArmyRecord[]`). */
   playerFaction?: FactionId;
+  allegianceRole?: 'INDEPENDENT' | 'MERCENARY' | 'VASSAL' | 'RULER';
   armies?: ArmyRecord[];
+  /** Oyuncu savaşta yenilip esir düştüğünde aktifleşen Esaret Modu durumu */
+  playerCaptureState?: PlayerCaptureState | null;
+  /** Esaretten kurtulunca gösterilecek bildirim penceresi */
+  escapedCaptivityNotice?: EscapedCaptivityNotice | null;
 }
 
 export interface PlayerSiegeState {
@@ -896,7 +964,10 @@ const PRISONER_TIER_RANSOM: Record<number, number> = {
 };
 
 export function calculatePrisonerRansomValue(state: CampaignState): number {
-  if (state.prisoners <= 0) return 0;
+  const captiveLords = getPlayerCaptiveLords(state);
+  const lordRansomGold = captiveLords.reduce((sum, l) => sum + calculateLordRansomValue(l), 0);
+
+  if (state.prisoners <= 0) return lordRansomGold;
   const stacks = state.prisonerStacks ?? [];
   let stackTotalCount = 0;
   let stackGold = 0;
@@ -908,22 +979,49 @@ export function calculatePrisonerRansomValue(state: CampaignState): number {
     stackGold += st.count * (PRISONER_TIER_RANSOM[tier] ?? 35);
   }
   if (stackTotalCount > state.prisoners && stackTotalCount > 0) {
-    return Math.round((stackGold / stackTotalCount) * state.prisoners);
+    return lordRansomGold + Math.round((stackGold / stackTotalCount) * state.prisoners);
   }
   const untypedCount = Math.max(0, state.prisoners - stackTotalCount);
-  return stackGold + untypedCount * 35;
+  return lordRansomGold + stackGold + untypedCount * 35;
 }
 
 export function ransomPrisonersAtTavern(
   state: CampaignState,
   settlementId: string,
 ): { nextState: CampaignState; success: boolean; goldGained?: number; reason?: string } {
-  if (state.prisoners <= 0) {
+  const captiveLords = getPlayerCaptiveLords(state);
+  if (state.prisoners <= 0 && captiveLords.length === 0) {
     return { nextState: state, success: false, reason: 'Fidyeciye teslim edilecek esiriniz yok.' };
   }
-  const count = state.prisoners;
+  const count = state.prisoners + captiveLords.length;
   const totalGold = calculatePrisonerRansomValue(state);
   const s = state.settlements.find((item) => item.id === settlementId);
+
+  const nextLords =
+    captiveLords.length > 0
+      ? state.lords.map((l) => {
+          if (l.characterState !== 'CAPTIVE' || l.captorId !== 'player') return l;
+          const homeSettlement = state.settlements.find((st) => st.faction === l.faction);
+          const safePos = snapToNearestLand(
+            (homeSettlement?.x ?? l.x) + 6,
+            (homeSettlement?.z ?? l.z) - 6,
+          );
+          return {
+            ...l,
+            characterState: 'FREE' as const,
+            captorId: null,
+            dungeonSettlementId: null,
+            daysCaptive: 0,
+            x: safePos.x,
+            z: safePos.z,
+            targetX: safePos.x,
+            targetZ: safePos.z,
+            roster: { infantry: 8, archer: 5, cavalry: 3, horseArcher: 0 },
+            armySize: 16,
+            currentAction: 'Fidye ile serbest kaldı; ordusunu topluyor',
+          };
+        })
+      : state.lords;
 
   return {
     success: true,
@@ -933,12 +1031,13 @@ export function ransomPrisonersAtTavern(
       gold: state.gold + totalGold,
       prisoners: 0,
       prisonerStacks: [],
+      lords: nextLords,
       chronicle: [
         {
           id: `ransom-${Date.now()}`,
           day: state.day,
           category: 'ECONOMY' as const,
-          text: `${s?.name || 'Şehir'} fidyecisine ${count} esir teslim edildi (+${totalGold} Dinar).`,
+          text: `${s?.name || 'Şehir'} fidyecisine ${count} esir${captiveLords.length > 0 ? ` (${captiveLords.length} soylu komutan dahil)` : ''} teslim edildi (+${totalGold} Dinar).`,
         },
         ...state.chronicle,
       ].slice(0, 25),
@@ -1469,9 +1568,15 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
           : 0,
       },
       recruitedSlotKeys:
-        s.recruitedSlotKeys && s.recruitedSlotKeys.length > 0
-          ? s.recruitedSlotKeys.slice(2)
-          : undefined,
+        s.lastLordRecruitDay !== undefined && state.day + 1 > s.lastLordRecruitDay
+          ? undefined
+          : s.recruitedSlotKeys && s.recruitedSlotKeys.length > 0
+            ? s.recruitedSlotKeys.slice(2)
+            : undefined,
+      lastLordRecruitDay:
+        s.lastLordRecruitDay !== undefined && state.day + 1 > s.lastLordRecruitDay
+          ? undefined
+          : s.lastLordRecruitDay,
     };
   });
 
@@ -1498,7 +1603,7 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
         ].slice(0, 20)
       : stateAfterFood.chronicle;
 
-  return {
+  const baseNextState: CampaignState = {
     ...stateAfterFood,
     day: nextDay,
     season: seasons[seasonIdx] || 'Güz',
@@ -1508,6 +1613,8 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
     playerHp: Math.min(state.playerMaxHp, state.playerHp + 15),
     settlements: updatedSettlements,
   };
+
+  return advanceDailyCaptivityAndEscape(baseNextState);
 }
 
 export function computeMeleeDamage(
@@ -1550,6 +1657,77 @@ export function deductCasualtiesFromRoster(
     if (!deductedAny) break;
   }
   return next;
+}
+
+/**
+ * Mount & Blade II: Bannerlord Muharebe Namı (Renown) Hesaplayıcı:
+ *  - Düşman Gücü / Oyuncu Gücü (Odds Ratio) esas alınır.
+ *  - Eşit veya ezici orduları alt eden küçük birlikler (underdog) katlanarak yüksek nam kazanır (3.5x'e kadar çarpan).
+ *  - Büyük bir ordunun 3-5 haydutu ezmesi (odds << 1) minimum 1-2 nam kazandırır (çiftlik suistimali engeli).
+ *  - Kuşatma zaferleri sur ve şehir büyüklüğü nedeniyle temel taban nam (+12..18) ekler.
+ *  - Vlandiya gibi kültürel nam bonusları sonuca çarpan olarak uygulanır.
+ */
+export function calculateBattleRenown(
+  playerStrength: number,
+  enemyStrength: number,
+  enemiesDefeated: number,
+  isSiege = false,
+  cultureRenownMultiplier = 1.0,
+): number {
+  const safePlayer = Math.max(1, playerStrength);
+  const safeEnemy = Math.max(1, enemyStrength);
+  const oddsRatio = safeEnemy / safePlayer;
+  const oddsMultiplier = Math.min(3.5, Math.max(0.18, Math.pow(oddsRatio, 0.72)));
+  const baseRenown = ((isSiege ? 12 : 2.0) + enemiesDefeated * 0.45) * oddsMultiplier;
+  const scaled = Math.round(baseRenown * Math.max(0.5, cultureRenownMultiplier));
+  return Math.max(1, Math.min(50, scaled));
+}
+
+/**
+ * Bannerlord "Burada bir süre bekle" (Wait here for some time) saatlik iyileşme ve dinlenme adımı:
+ *  - Şehir (Town): x2.0 iyileşme çarpanı
+ *  - Kale (Castle): x1.5 iyileşme çarpanı
+ *  - Köy (Village): x1.2 iyileşme çarpanı
+ *  - Hekimlik (Medicine) yeteneği ve ilgili perkler çarpanı artırır.
+ *  - Oyuncu sağlığı ve birliklerdeki yaralılar (wounded) saatlik olarak iyileşir.
+ */
+export function advanceSettlementHourlyRest(
+  state: CampaignState,
+  settlementId: string,
+): { nextState: CampaignState; healedPlayerHp: number; healedTroops: number } {
+  const settlement = state.settlements.find((s) => s.id === settlementId);
+  const settleMult =
+    settlement?.type === 'TOWN' ? 2.0 : settlement?.type === 'CASTLE' ? 1.5 : 1.2;
+  const medSkill = state.skills?.medicine?.level ?? 40;
+  const medicineMult = 1 + medSkill * 0.005;
+  const hpHealRate = 1.8 * settleMult * medicineMult;
+  const nextPlayerHp = Math.min(state.playerMaxHp, state.playerHp + hpHealRate);
+  const healedPlayerHp = nextPlayerHp - state.playerHp;
+
+  let healedTroops = 0;
+  let remainingHealChance = 0.28 * settleMult * medicineMult;
+  const updatedStacks = (state.troopStacks ?? []).map((stack) => {
+    if (stack.wounded > 0 && remainingHealChance >= 0.5) {
+      remainingHealChance -= 0.5;
+      healedTroops++;
+      return {
+        ...stack,
+        count: stack.count + 1,
+        wounded: Math.max(0, stack.wounded - 1),
+      };
+    }
+    return stack;
+  });
+
+  return {
+    nextState: {
+      ...state,
+      playerHp: Math.round(nextPlayerHp * 10) / 10,
+      troopStacks: updatedStacks,
+    },
+    healedPlayerHp: Math.round(healedPlayerHp * 10) / 10,
+    healedTroops,
+  };
 }
 
 export function resolveBattleOutcome(
@@ -1634,11 +1812,17 @@ export function resolveBattleOutcome(
 
   const isSiegeVictory = Boolean(conqueredSettlementId);
   const goldLoot = battleGoldReward(enemiesDefeatedCount, isSiegeVictory);
-  // Bannerlord dengeli muharebe namı: küçük çatışmalar +2..8, büyük meydan ve kuşatma zaferleri +12..45 Nam
-  // 10.8: Vlandiya feat'i — savaşlardan +%5 nam.
-  const renownGain = Math.round(
-    Math.max(2, Math.min(48, Math.round((isSiegeVictory ? 12 : 3) + enemiesDefeatedCount * 0.65))) *
-      getPlayerCultureModifiers(state).battleRenownMultiplier,
+  const playerStrength = calculatePartyStrength(state.roster, state.playerHp / Math.max(1, state.playerMaxHp));
+  const enemyLord = enemyLordId ? state.lords.find((l) => l.id === enemyLordId) : null;
+  const enemyStrength = enemyLord
+    ? calculatePartyStrength(enemyLord.roster, 1.0)
+    : Math.max(6, Math.round(enemiesDefeatedCount * 1.5));
+  const renownGain = calculateBattleRenown(
+    playerStrength,
+    enemyStrength,
+    enemiesDefeatedCount,
+    isSiegeVictory,
+    getPlayerCultureModifiers(state).battleRenownMultiplier,
   );
   const prisonersGain = Math.max(1, Math.floor(enemiesDefeatedCount * 0.35));
   // Faz B0: zafer artık eşya da bırakır (envantere düşer, pazarda satılır).
@@ -4547,6 +4731,133 @@ export function executeLordBarterOffer(
           day: state.day,
           category: 'DIPLOMACY',
           text: `${lord.title} ${lord.name} ile ${goldOffered} Dinar ve ${prisonersOffered} esir karşılığında takas antlaşması (Barter) imzalandı.`,
+        },
+        ...state.chronicle,
+      ].slice(0, 30),
+    },
+  };
+}
+
+/**
+ * Bannerlord Tek Krallık Bağlılık Kuralı (Paralı Askerlik / Vasallık / Ayrılma):
+ *  - Oyuncu aynı anda yalnızca TEK bir krallığa paralı asker veya vasal olarak hizmet edebilir.
+ *  - Başka bir krallığa bağlıyken ikinci bir krallıkla paralı asker sözleşmesi veya vasallık yemini yapılamaz.
+ *  - Aynı krallıkla mükerrer paralı asker sözleşmesi imzalanarak altın suistimali yapılamaz.
+ */
+export function applyPlayerAllegianceChange(
+  state: CampaignState,
+  targetFaction: FactionId | 'INDEPENDENT',
+  role: 'INDEPENDENT' | 'MERCENARY' | 'VASSAL',
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const currentFaction =
+    state.playerFaction && state.playerFaction !== 'player' && state.playerFaction !== 'bandits'
+      ? state.playerFaction
+      : null;
+  const currentRole = state.allegianceRole ?? (currentFaction ? 'MERCENARY' : 'INDEPENDENT');
+
+  if (role === 'INDEPENDENT') {
+    if (!currentFaction || currentRole === 'INDEPENDENT') {
+      return {
+        success: false,
+        reason: 'Zaten bağımsız bir sancak komutanısınız.',
+        nextState: state,
+      };
+    }
+    const leftFactionName = FACTION_INFO[currentFaction]?.name ?? currentFaction;
+    const nextLords = state.lords.map((l) =>
+      l.faction === currentFaction ? { ...l, isAlliedWithPlayer: false } : l,
+    );
+    return {
+      success: true,
+      nextState: {
+        ...state,
+        playerFaction: 'player',
+        allegianceRole: 'INDEPENDENT',
+        lords: nextLords,
+        chronicle: [
+          {
+            id: `allegiance-leave-${state.day}-${Date.now()}`,
+            day: state.day,
+            category: 'DIPLOMACY',
+            text: `${state.playerName}, ${leftFactionName} ile olan ${
+              currentRole === 'VASSAL' ? 'vasallık yeminini' : 'paralı asker sözleşmesini'
+            } sonlandırarak bağımsız sancağına döndü.`,
+          },
+          ...state.chronicle,
+        ].slice(0, 30),
+      },
+    };
+  }
+
+  if (targetFaction === 'INDEPENDENT' || targetFaction === 'player' || targetFaction === 'bandits') {
+    return {
+      success: false,
+      reason: 'Geçersiz krallık sancağı.',
+      nextState: state,
+    };
+  }
+
+  if (currentFaction && currentFaction !== targetFaction) {
+    const activeName = FACTION_INFO[currentFaction]?.name ?? currentFaction;
+    return {
+      success: false,
+      reason: `Sancağınız hâlihazırda ${activeName} hizmetinde! Başka bir krallığa katılmadan önce mevcut bağlılığınızı sonlandırmalısınız.`,
+      nextState: state,
+    };
+  }
+
+  if (role === 'MERCENARY' && currentFaction === targetFaction) {
+    const activeName = FACTION_INFO[targetFaction]?.name ?? targetFaction;
+    return {
+      success: false,
+      reason: `Zaten ${activeName} ordularında görev yapıyorsunuz.`,
+      nextState: state,
+    };
+  }
+
+  if (role === 'VASSAL' && currentFaction === targetFaction && currentRole === 'VASSAL') {
+    const activeName = FACTION_INFO[targetFaction]?.name ?? targetFaction;
+    return {
+      success: false,
+      reason: `Zaten ${activeName} derebeyisiniz.`,
+      nextState: state,
+    };
+  }
+
+  const targetName = FACTION_INFO[targetFaction]?.name ?? targetFaction;
+  const activeWars = state.world?.wars ?? [];
+  const enemyFactions = new Set<FactionId>();
+  for (const w of activeWars) {
+    if (w.a === targetFaction) enemyFactions.add(w.b);
+    else if (w.b === targetFaction) enemyFactions.add(w.a);
+  }
+
+  const nextLords = state.lords.map((l) => {
+    if (l.faction === targetFaction) {
+      return { ...l, isAlliedWithPlayer: true, isAtWarWithPlayer: false };
+    }
+    if (enemyFactions.has(l.faction)) {
+      return { ...l, isAlliedWithPlayer: false, isAtWarWithPlayer: true };
+    }
+    return l;
+  });
+
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      playerFaction: targetFaction,
+      allegianceRole: role,
+      lords: nextLords,
+      chronicle: [
+        {
+          id: `allegiance-join-${state.day}-${targetFaction}-${role}`,
+          day: state.day,
+          category: 'DIPLOMACY',
+          text:
+            role === 'VASSAL'
+              ? `${state.playerName}, ${targetName} hükümdarına bağlılık yemini ederek krallık derebeyi (Vasal) oldu!`
+              : `${state.playerName}, ${targetName} ile paralı asker sözleşmesi imzalayarak sancağını krallık hizmetine sundu.`,
         },
         ...state.chronicle,
       ].slice(0, 30),

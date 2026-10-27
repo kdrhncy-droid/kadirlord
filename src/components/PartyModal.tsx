@@ -3,6 +3,7 @@ import type {
   CampaignState,
   CampaignHero,
   FactionId,
+  LordAgent,
   Settlement,
   TroopDefinition,
   TroopStack,
@@ -21,6 +22,11 @@ import {
   dismissTroopStack,
   transferTroopToGarrison,
   transferTroopFromGarrison,
+  getPlayerCaptiveLords,
+  calculateLordRansomValue,
+  ransomCaptiveLord,
+  releaseCaptiveLord,
+  executeCaptiveLord,
   type TroopUpgradeOption,
 } from '../game/partySystem.ts';
 import {
@@ -43,7 +49,8 @@ interface PartyModalProps {
 type SelectedEntity =
   | { kind: 'HERO'; hero: CampaignHero }
   | { kind: 'TROOP'; stack: TroopStack; definition: TroopDefinition }
-  | { kind: 'PRISONER'; stack: PrisonerStack; definition: TroopDefinition };
+  | { kind: 'PRISONER'; stack: PrisonerStack; definition: TroopDefinition }
+  | { kind: 'CAPTIVE_LORD'; lord: LordAgent };
 
 function romanNumeral(tier: number): string {
   switch (tier) {
@@ -107,6 +114,7 @@ export const PartyModal: React.FC<PartyModalProps> = ({
   const [draftCampaign, setDraftCampaign] = useState<CampaignState>(committedCampaign);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [hoveredTroopId, setHoveredTroopId] = useState<string | null>(null);
+  const [confirmExecuteLordId, setConfirmExecuteLordId] = useState<string | null>(null);
 
   // Garnizon taslağı (yerleşim varsa)
   const [garrisonStacks, setGarrisonStacks] = useState<TroopStack[]>(() => {
@@ -121,6 +129,7 @@ export const PartyModal: React.FC<PartyModalProps> = ({
   const heroes = useMemo(() => draftCampaign.heroes ?? [], [draftCampaign.heroes]);
   const troopStacks = useMemo(() => draftCampaign.troopStacks ?? [], [draftCampaign.troopStacks]);
   const prisonerStacks = useMemo(() => draftCampaign.prisonerStacks ?? [], [draftCampaign.prisonerStacks]);
+  const captiveLords = useMemo(() => getPlayerCaptiveLords(draftCampaign), [draftCampaign]);
 
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity>(() => {
     if (heroes.length > 0) return { kind: 'HERO', hero: heroes[0] };
@@ -207,6 +216,22 @@ export const PartyModal: React.FC<PartyModalProps> = ({
       const color = FACTION_INFO[selectedEntity.hero.culture]?.color ?? '#b45309';
       return deriveRigVisualOptionsFromEquipment(equipmentText, color);
     }
+    if (selectedEntity.kind === 'CAPTIVE_LORD') {
+      const lordColor = selectedEntity.lord.bannerColor || FACTION_INFO[selectedEntity.lord.faction]?.color || '#991b1b';
+      const baseOpts = deriveRigVisualOptionsFromEquipment(
+        {
+          HEAD: 'Altın Kakmalı Miğfer (+48 Baş)',
+          BODY: 'Ağır Katafrakt Zırhı (+64 Gövde Zırhı)',
+          SHOULDER: 'Pullu Omuzluk',
+          GLOVES: 'Deri Eldiven',
+          LEG: 'Çelik Çizme',
+          WEAPON1: 'Yok',
+          WEAPON2: 'Yok',
+        },
+        lordColor,
+      );
+      return selectedEntity.lord.morphDNA ? { ...baseOpts, morphDNA: selectedEntity.lord.morphDNA } : baseOpts;
+    }
     return deriveTroopVisuals(selectedEntity.definition);
   }, [selectedEntity]);
 
@@ -214,6 +239,9 @@ export const PartyModal: React.FC<PartyModalProps> = ({
     if (selectedEntity.kind === 'HERO') {
       const activeSet = selectedEntity.hero.activeEquipmentSet ?? 'BATTLE';
       return Boolean(selectedEntity.hero.equipment?.[activeSet]?.MOUNT);
+    }
+    if (selectedEntity.kind === 'CAPTIVE_LORD') {
+      return false;
     }
     return selectedEntity.definition.isMounted;
   }, [selectedEntity]);
@@ -256,6 +284,10 @@ export const PartyModal: React.FC<PartyModalProps> = ({
     setDraftCampaign(res.nextState);
     const def = getTroopDefinition(troopId);
     setFeedback(`${count} × ${def?.name ?? troopId} ordu saflarına devşirildi.`);
+    const updatedPrisoner = res.nextState.prisonerStacks?.find((p) => p.troopId === troopId);
+    if (updatedPrisoner && def) {
+      setSelectedEntity({ kind: 'PRISONER', stack: updatedPrisoner, definition: def });
+    }
   };
 
   const handleRansomPrisonerAction = (troopId: string, count = 1) => {
@@ -266,6 +298,47 @@ export const PartyModal: React.FC<PartyModalProps> = ({
     }
     setDraftCampaign(res.nextState);
     setFeedback(`${count} tutsak serbest bırakıldı (+${res.goldEarned} Dinar).`);
+    const updatedPrisoner = res.nextState.prisonerStacks?.find((p) => p.troopId === troopId);
+    const def = getTroopDefinition(troopId);
+    if (updatedPrisoner && def) {
+      setSelectedEntity({ kind: 'PRISONER', stack: updatedPrisoner, definition: def });
+    }
+  };
+
+  const handleRansomCaptiveLord = (lordId: string) => {
+    const res = ransomCaptiveLord(draftCampaign, lordId);
+    if (!res.success) {
+      setFeedback(res.reason ?? 'Fidye işlemi başarısız.');
+      return;
+    }
+    setDraftCampaign(res.nextState);
+    setConfirmExecuteLordId(null);
+    setFeedback(`Tutsak komutan fidye karşılığı serbest bırakıldı (+${res.goldEarned} Dinar).`);
+    if (heroes.length > 0) setSelectedEntity({ kind: 'HERO', hero: heroes[0] });
+  };
+
+  const handleReleaseCaptiveLord = (lordId: string) => {
+    const res = releaseCaptiveLord(draftCampaign, lordId, false);
+    if (!res.success) {
+      setFeedback(res.reason ?? 'Serbest bırakma başarısız.');
+      return;
+    }
+    setDraftCampaign(res.nextState);
+    setConfirmExecuteLordId(null);
+    setFeedback(`Tutsak komutan karşılıksız serbest bırakıldı (+${res.relationGain} İlişki, +${res.honorGain} Onur).`);
+    if (heroes.length > 0) setSelectedEntity({ kind: 'HERO', hero: heroes[0] });
+  };
+
+  const handleExecuteCaptiveLord = (lordId: string) => {
+    const res = executeCaptiveLord(draftCampaign, lordId);
+    if (!res.success) {
+      setFeedback(res.reason ?? 'İdam işlemi başarısız.');
+      return;
+    }
+    setDraftCampaign(res.nextState);
+    setConfirmExecuteLordId(null);
+    setFeedback(`Tutsak komutan idam edildi! (${res.relationPenalty} Krallık İlişkisi, ${res.honorPenalty} Onur).`);
+    if (heroes.length > 0) setSelectedEntity({ kind: 'HERO', hero: heroes[0] });
   };
 
   const handleDismissTroopAction = (troopId: string, count = 1) => {
@@ -492,20 +565,28 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                     ? selectedEntity.hero.kind === 'PLAYER'
                       ? 'Parti Lideri'
                       : 'Yoldaş / Kahraman'
-                    : selectedEntity.kind === 'PRISONER'
-                      ? 'Tutsak Asker'
-                      : 'Muvazzaf Asker'}
+                    : selectedEntity.kind === 'CAPTIVE_LORD'
+                      ? 'Zincirli Tutsak Komutan'
+                      : selectedEntity.kind === 'PRISONER'
+                        ? 'Tutsak Asker'
+                        : 'Muvazzaf Asker'}
                 </div>
                 <div className="text-base font-bold text-white truncate">
                   {selectedEntity.kind === 'HERO'
                     ? selectedEntity.hero.name
-                    : selectedEntity.definition.name}
+                    : selectedEntity.kind === 'CAPTIVE_LORD'
+                      ? `${selectedEntity.lord.title} ${selectedEntity.lord.name}`
+                      : selectedEntity.definition.name}
                 </div>
-                {selectedEntity.kind !== 'HERO' && (
+                {selectedEntity.kind === 'CAPTIVE_LORD' ? (
+                  <div className="text-xs text-[#a89274]">
+                    {FACTION_INFO[selectedEntity.lord.faction]?.name ?? selectedEntity.lord.faction} · Esaret: {selectedEntity.lord.daysCaptive ?? 0} Gün
+                  </div>
+                ) : selectedEntity.kind !== 'HERO' ? (
                   <div className="text-xs text-[#a89274]">
                     Kademe {romanNumeral(selectedEntity.definition.tier)} · {FACTION_INFO[selectedEntity.definition.culture]?.name}
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
 
@@ -634,19 +715,127 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                     </button>
                   </div>
                 </div>
+              ) : selectedEntity.kind === 'CAPTIVE_LORD' ? (
+                /* TUTSAK SOYLU KOMUTAN AKSİYONLARI (Fidye, Serbest Bırakma, İdam) */
+                <div className="space-y-3 text-xs" data-testid="captive-lord-actions-panel">
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-[#241a10] p-2 rounded border border-[#855e2d]/20">
+                      <div className="text-[10px] text-[#a89274]">Fidye Değeri</div>
+                      <div className="text-sm font-bold text-amber-400 font-mono">
+                        {calculateLordRansomValue(selectedEntity.lord)} Dinar
+                      </div>
+                    </div>
+                    <div className="bg-[#241a10] p-2 rounded border border-[#855e2d]/20">
+                      <div className="text-[10px] text-[#a89274]">İlişki</div>
+                      <div className="text-sm font-bold text-white font-mono">
+                        {selectedEntity.lord.relation}
+                      </div>
+                    </div>
+                    <div className="bg-[#241a10] p-2 rounded border border-[#855e2d]/20">
+                      <div className="text-[10px] text-[#a89274]">Esaret Süresi</div>
+                      <div className="text-sm font-bold text-sky-400 font-mono">
+                        {selectedEntity.lord.daysCaptive ?? 0} Gün
+                      </div>
+                    </div>
+                  </div>
+
+                  {confirmExecuteLordId === selectedEntity.lord.id ? (
+                    <div
+                      data-testid="execute-lord-confirm-box"
+                      className="p-3 rounded bg-red-950/80 border border-red-500/70 space-y-2"
+                    >
+                      <div className="font-bold text-red-200 text-xs">
+                        İnfaz Kararı: {selectedEntity.lord.title} {selectedEntity.lord.name} idam edilsin mi?
+                      </div>
+                      <p className="text-[11px] text-red-300/90 leading-snug">
+                        Bu komutan oyundan kalıcı olarak silinecek (DEAD). Bağlı olduğu krallık lordlarıyla ilişkiniz{' '}
+                        <strong>-50</strong> düşecek ve <strong>-30 Onur</strong> kaybedeceksiniz!
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          data-testid="confirm-execute-lord-btn"
+                          onClick={() => handleExecuteCaptiveLord(selectedEntity.lord.id)}
+                          className="flex-1 py-1.5 bg-red-700 hover:bg-red-600 text-white rounded font-bold text-xs shadow transition-colors"
+                        >
+                          İnfazı Onayla (Kellesini Vur)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmExecuteLordId(null)}
+                          className="px-3 py-1.5 bg-[#2a1f16] hover:bg-[#3a2b1f] text-[#e6d8c3] rounded font-semibold text-xs border border-[#855e2d]/40"
+                        >
+                          Vazgeç
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        data-testid="ransom-captive-lord-btn"
+                        onClick={() => handleRansomCaptiveLord(selectedEntity.lord.id)}
+                        className="py-2 px-2 bg-[#b45309] hover:bg-[#d97706] text-white rounded font-bold text-xs shadow transition-colors"
+                      >
+                        Fidye İle Sat (+{calculateLordRansomValue(selectedEntity.lord)} D)
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="release-captive-lord-btn"
+                        onClick={() => handleReleaseCaptiveLord(selectedEntity.lord.id)}
+                        className="py-2 px-2 bg-[#065f46] hover:bg-[#059669] text-white rounded font-bold text-xs shadow transition-colors"
+                      >
+                        Serbest Bırak (+10 İlişki)
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="execute-captive-lord-btn"
+                        onClick={() => setConfirmExecuteLordId(selectedEntity.lord.id)}
+                        className="py-2 px-2 bg-red-900/90 hover:bg-red-700 text-red-100 border border-red-500/60 rounded font-bold text-xs shadow transition-colors"
+                      >
+                        İdam Et (-50 İlişki)
+                      </button>
+                    </div>
+                  )}
+                </div>
               ) : (
-                /* PRISONER AKSIYONLARI */
+                /* PRISONER AKSIYONLARI (Uyum Barı + Devşir + Fidye) */
                 <div className="space-y-3 text-xs">
-                  <div className="text-[11px] text-[#a89274]">
-                    Tutsaklar zamanla ordunuza katılmaya ikna olabilir veya hanlarda esir tüccarına fidye karşılığı satılabilir.
+                  <div className="bg-[#241a10] p-2.5 rounded border border-[#855e2d]/30 space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-[#a89274]">Uyum (Conformity) &amp; Devşirme Durumu:</span>
+                      <span className="font-mono font-bold text-emerald-400">
+                        {selectedEntity.stack.ready} / {selectedEntity.stack.count} Hazır
+                      </span>
+                    </div>
+                    <div className="w-full h-1.5 bg-[#120e0a] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-sky-500 to-emerald-400 transition-all"
+                        style={{
+                          width: `${
+                            selectedEntity.stack.ready >= selectedEntity.stack.count
+                              ? 100
+                              : Math.min(100, Math.round((selectedEntity.stack.readinessProgress ?? 0) * 100))
+                          }%`,
+                        }}
+                      />
+                    </div>
+                    <div className="text-[10px] text-[#a89274]">
+                      Liderlik ve Külhanbeylik becerilerinize göre her gün uyum barı dolar. Hazır olan tutsaklar ordunuza katılabilir.
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
+                      disabled={selectedEntity.stack.ready <= 0}
                       onClick={() => handleRecruitPrisonerAction(selectedEntity.stack.troopId, 1)}
-                      className="flex-1 py-1.5 bg-[#059669] hover:bg-[#047857] text-white rounded font-bold text-xs shadow transition-colors"
+                      className={`flex-1 py-1.5 rounded font-bold text-xs shadow transition-colors ${
+                        selectedEntity.stack.ready > 0
+                          ? 'bg-[#059669] hover:bg-[#047857] text-white'
+                          : 'bg-[#251f19] text-[#6b5842] cursor-not-allowed'
+                      }`}
                     >
-                      Devşir (Asker Yap)
+                      Devşir ({selectedEntity.stack.ready} Hazır)
                     </button>
                     <button
                       type="button"
@@ -855,11 +1044,58 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                   );
                 })()}
 
-              {/* 3. TUTSAKLAR */}
+              {/* 3. TUTSAK SOYLULAR & KOMUTANLAR */}
+              {captiveLords.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider mb-1.5">
+                    Tutsak Komutanlar ({captiveLords.length})
+                  </div>
+                  <div className="space-y-1" data-testid="party-captive-lords-list">
+                    {captiveLords.map((lord) => {
+                      const isSelected = selectedEntity.kind === 'CAPTIVE_LORD' && selectedEntity.lord.id === lord.id;
+                      return (
+                        <div
+                          key={lord.id}
+                          data-testid={`party-captive-lord-row-${lord.id}`}
+                          onClick={() => {
+                            setConfirmExecuteLordId(null);
+                            setSelectedEntity({ kind: 'CAPTIVE_LORD', lord });
+                          }}
+                          className={`flex items-center justify-between p-2 rounded cursor-pointer border transition-all ${
+                            isSelected
+                              ? 'bg-[#3b2018] border-amber-500 text-white shadow-md'
+                              : 'bg-[#211510] border-amber-900/40 text-[#e6d8c3] hover:bg-[#2c1c15]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold text-white border border-amber-400/50"
+                              style={{ backgroundColor: lord.bannerColor || '#78350f' }}
+                            >
+                              {lord.name.slice(0, 1)}
+                            </span>
+                            <div>
+                              <div className="font-bold text-xs">{lord.title} {lord.name}</div>
+                              <div className="text-[10px] text-[#a89274]">
+                                {FACTION_INFO[lord.faction]?.name ?? lord.faction} · Fidye: {calculateLordRansomValue(lord)} D
+                              </div>
+                            </div>
+                          </div>
+                          <span className="px-1.5 py-0.5 rounded bg-red-950/80 border border-red-700/50 text-red-300 text-[10px] font-mono">
+                            Esir
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 4. TUTSAK ASKERLER */}
               {prisonerStacks.length > 0 && (
                 <div>
                   <div className="text-[10px] font-bold text-sky-400 uppercase tracking-wider mb-1.5">
-                    Tutsaklar ({totalPrisonersCount})
+                    Tutsak Askerler ({totalPrisonersCount})
                   </div>
                   <div className="space-y-1">
                     {prisonerStacks.map((pStack) => {
@@ -871,23 +1107,33 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                           onClick={() => {
                             if (def) setSelectedEntity({ kind: 'PRISONER', stack: pStack, definition: def });
                           }}
-                          className={`flex items-center justify-between p-2 rounded cursor-pointer border transition-all ${
+                          className={`flex flex-col p-2 rounded cursor-pointer border transition-all ${
                             isSelected
                               ? 'bg-[#1e2a38] border-sky-500 text-white shadow-md'
                               : 'bg-[#131b24] border-sky-900/30 text-[#b4c6d9] hover:bg-[#1a2533]'
                           }`}
                         >
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs">⛓️</span>
-                            <div>
-                              <div className="font-bold text-xs">{def?.name ?? pStack.troopId}</div>
-                              <div className="text-[10px] text-[#7d93a8]">
-                                Kademe {def ? romanNumeral(def.tier) : 'I'}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs">⛓️</span>
+                              <div>
+                                <div className="font-bold text-xs">{def?.name ?? pStack.troopId}</div>
+                                <div className="text-[10px] text-[#7d93a8]">
+                                  Kademe {def ? romanNumeral(def.tier) : 'I'}
+                                  {pStack.ready > 0 ? ` · ${pStack.ready} Devşirmeye Hazır` : ''}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                          <div className="font-mono font-bold text-xs text-sky-300">
-                            {pStack.count} Tutsak
+                            <div className="flex items-center gap-1.5">
+                              {pStack.ready > 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-700 text-white font-mono text-[10px] font-bold">
+                                  +{pStack.ready}
+                                </span>
+                              )}
+                              <div className="font-mono font-bold text-xs text-sky-300">
+                                {pStack.count} Tutsak
+                              </div>
+                            </div>
                           </div>
                         </div>
                       );

@@ -34,6 +34,8 @@ import {
 import { deriveRigVisualOptionsFromEquipment } from '../game/characterRig.ts';
 import { ITEM_ICON_KEYS, type ItemIconKey } from '../game/itemIcons.ts';
 import { calculatePartyCarryCapacity } from '../game/logistics.ts';
+import { calculateLordRansomValue } from '../game/partySystem.ts';
+import { FACTION_INFO } from '../game/rules.ts';
 import { HeroMannequin } from './HeroMannequin.tsx';
 import { ItemIcon } from './ItemIcon.tsx';
 
@@ -141,6 +143,15 @@ export const BattleLootModal: React.FC<BattleLootModalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<InventorySort>('tier');
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [commanderFate, setCommanderFate] = useState<'CAPTURE' | 'RELEASE'>('CAPTURE');
+
+  const defeatedLord = useMemo(
+    () =>
+      pendingLoot.enemyLordId
+        ? committedCampaign.lords.find((l) => l.id === pendingLoot.enemyLordId) ?? null
+        : null,
+    [committedCampaign.lords, pendingLoot.enemyLordId],
+  );
 
   const heroes = useMemo<CampaignHero[]>(
     () => (draftCampaign.heroes ?? []).filter((hero) => hero.isInPlayerParty),
@@ -367,6 +378,7 @@ export const BattleLootModal: React.FC<BattleLootModalProps> = ({
       finalInventoryItems: draftCampaign.inventoryItems ?? [],
       leftoverLootItems: lootItems,
       applyDiscard: true,
+      enemyLordFate: defeatedLord ? commanderFate : undefined,
     });
     onCommit(result);
   };
@@ -406,6 +418,66 @@ export const BattleLootModal: React.FC<BattleLootModalProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Mağlup Düşman Komutanı Karar Şeridi (Bannerlord Esir Alma / Serbest Bırakma Dilemması) */}
+        {defeatedLord && (
+          <div
+            data-testid="defeated-commander-decision-bar"
+            className="px-6 py-2.5 border-b border-[#c6a15b]/30 bg-gradient-to-r from-[#22170e] via-[#1b130c] to-[#22170e] flex flex-wrap items-center justify-between gap-3"
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className="w-8 h-8 rounded border border-[#c6a15b]/50 flex items-center justify-center text-xs font-bold text-white shadow"
+                style={{ backgroundColor: defeatedLord.bannerColor || '#78350f' }}
+              >
+                {defeatedLord.name.slice(0, 2).toUpperCase()}
+              </div>
+              <div>
+                <div className="text-xs font-bold text-[#f8f0df] flex items-center gap-2">
+                  <span>Mağlup Komutan: {defeatedLord.title} {defeatedLord.name}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#140f0a] border border-[#c6a15b]/30 text-[#d1c5b0]">
+                    {FACTION_INFO[defeatedLord.faction]?.name ?? defeatedLord.faction}
+                  </span>
+                  <span className="text-[10px] font-mono-tabular text-[#fbbf24]">
+                    Fidye Değeri: {calculateLordRansomValue(defeatedLord)} Dinar
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#a89b84]">
+                  {commanderFate === 'CAPTURE'
+                    ? 'Zincire vurularak esir kafilesine katılacak. Birlik ekranından fidye ile satabilir, zindana atabilir veya idam edebilirsiniz.'
+                    : 'Kılıcı kendisine iade edilerek serbest bırakılacak (+10 İlişki, +10 Onur).'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid="commander-fate-capture"
+                onClick={() => setCommanderFate('CAPTURE')}
+                className={`px-3.5 py-1.5 rounded text-xs font-bold border transition-colors ${
+                  commanderFate === 'CAPTURE'
+                    ? 'bg-[#b45309] border-[#fbbf24] text-white shadow'
+                    : 'bg-[#18130d] border-[#c6a15b]/30 text-[#d1c5b0] hover:text-white'
+                }`}
+              >
+                Esir Al (Zincire Vur)
+              </button>
+              <button
+                type="button"
+                data-testid="commander-fate-release"
+                onClick={() => setCommanderFate('RELEASE')}
+                className={`px-3.5 py-1.5 rounded text-xs font-bold border transition-colors ${
+                  commanderFate === 'RELEASE'
+                    ? 'bg-[#065f46] border-[#34d399] text-white shadow'
+                    : 'bg-[#18130d] border-[#c6a15b]/30 text-[#d1c5b0] hover:text-white'
+                }`}
+              >
+                Serbest Bırak (+10 İlişki · +10 Onur)
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Geri Bildirim Şeridi */}
         {feedback && (
