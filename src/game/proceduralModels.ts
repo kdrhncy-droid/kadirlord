@@ -1058,12 +1058,16 @@ export function createSettlementModel(
 export interface WarriorMeshHandles {
   root: THREE.Group;
   bodyGroup: THREE.Group;
+  riderGroup?: THREE.Group;
   rightArm: THREE.Group;
   leftArm: THREE.Group;
   leftLeg: THREE.Mesh;
   rightLeg: THREE.Mesh;
   horseGroup?: THREE.Group;
   horseLegs?: THREE.Group[];
+  horseKnees?: THREE.Group[];
+  horseNeck?: THREE.Group;
+  horseTail?: THREE.Group;
   bowMesh?: THREE.Mesh;
   shieldMesh?: THREE.Mesh;
   meleeWeaponGroup: THREE.Group;
@@ -1175,131 +1179,235 @@ export function createWarriorModel(options: {
   const leatherMat = warriorLeatherMat();
   const goldMat = warriorGoldMat();
 
-  let riderYOffset = 0;
   let horseGroup: THREE.Group | undefined;
   let horseLegs: THREE.Group[] | undefined;
+  let horseKnees: THREE.Group[] | undefined;
+  let horseNeck: THREE.Group | undefined;
+  let horseTail: THREE.Group | undefined;
 
   if (options.isMounted) {
-    riderYOffset = 0.75;
     horseGroup = new THREE.Group();
     horseLegs = [];
+    horseKnees = [];
     const coatMat = warriorCoatMat();
     const maneMat = warriorManeMat();
 
-    const barrel = new THREE.Mesh(warriorGeo('BoxGeometry:0.68,0.62,1.45', () => new THREE.BoxGeometry(0.68, 0.62, 1.45)), coatMat);
-    barrel.position.set(0, 0.98, 0);
+    const barrel = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.64,0.58,1.38', () => new THREE.BoxGeometry(0.64, 0.58, 1.38)),
+      coatMat,
+    );
+    barrel.position.set(0, 1.0, 0);
     barrel.castShadow = true;
     horseGroup.add(barrel);
 
-    // Dört eklemli bacak (kalça/omuz noktasından salınım yapar)
-    const legGeo = warriorGeo('CylinderGeometry:0.09,0.07,0.78,7', () => new THREE.CylinderGeometry(0.09, 0.07, 0.78, 7));
-    const sockGeo = warriorGeo('CylinderGeometry:0.075,0.08,0.3,7', () => new THREE.CylinderGeometry(0.075, 0.08, 0.3, 7));
+    // Kaslı göğüs ve sağrı yuvarlatması (kutu görünümünü kırar)
+    const chestSphereGeo = warriorGeo('SphereGeometry:0.34,10,8', () => new THREE.SphereGeometry(0.34, 10, 8));
+    const chest = new THREE.Mesh(chestSphereGeo, coatMat);
+    chest.position.set(0, 1.02, 0.56);
+    chest.scale.set(0.96, 0.92, 1.08);
+    chest.castShadow = true;
+    horseGroup.add(chest);
+
+    const croup = new THREE.Mesh(chestSphereGeo, coatMat);
+    croup.position.set(0, 1.04, -0.56);
+    croup.scale.set(0.98, 0.95, 1.05);
+    croup.castShadow = true;
+    horseGroup.add(croup);
+
+    // İki eklemli (omuz/kalça + diz/topuk) 4 bacak: koşarken diz bükülür
+    const upperLegGeo = warriorGeo(
+      'CylinderGeometry:0.105,0.08,0.46,7',
+      () => new THREE.CylinderGeometry(0.105, 0.08, 0.46, 7),
+    );
+    const lowerLegGeo = warriorGeo(
+      'CylinderGeometry:0.075,0.062,0.42,7',
+      () => new THREE.CylinderGeometry(0.075, 0.062, 0.42, 7),
+    );
+    const hoofGeo = warriorGeo(
+      'CylinderGeometry:0.068,0.082,0.16,7',
+      () => new THREE.CylinderGeometry(0.068, 0.082, 0.16, 7),
+    );
     for (const [lx, lz] of [
-      [-0.24, 0.52],
-      [0.24, 0.52],
-      [-0.24, -0.52],
-      [0.24, -0.52],
+      [-0.24, 0.54],
+      [0.24, 0.54],
+      [-0.24, -0.54],
+      [0.24, -0.54],
     ] as const) {
       const legPivot = new THREE.Group();
-      legPivot.position.set(lx, 0.76, lz);
-      const leg = new THREE.Mesh(legGeo, coatMat);
-      leg.position.set(0, -0.37, 0);
-      leg.castShadow = true;
-      legPivot.add(leg);
-      const sock = new THREE.Mesh(sockGeo, maneMat);
-      sock.position.set(0, -0.61, 0);
-      legPivot.add(sock);
+      legPivot.position.set(lx, 0.86, lz);
+
+      const upperLeg = new THREE.Mesh(upperLegGeo, coatMat);
+      upperLeg.position.set(0, -0.21, 0);
+      upperLeg.castShadow = true;
+      legPivot.add(upperLeg);
+
+      const kneePivot = new THREE.Group();
+      kneePivot.position.set(0, -0.42, 0);
+      legPivot.add(kneePivot);
+
+      const lowerLeg = new THREE.Mesh(lowerLegGeo, coatMat);
+      lowerLeg.position.set(0, -0.2, 0);
+      lowerLeg.castShadow = true;
+      kneePivot.add(lowerLeg);
+
+      const hoof = new THREE.Mesh(hoofGeo, maneMat);
+      hoof.position.set(0, -0.38, 0.01);
+      kneePivot.add(hoof);
+
       horseGroup.add(legPivot);
       horseLegs.push(legPivot);
+      horseKnees.push(kneePivot);
     }
 
     // Eyer altı hizi örtüsü (caparison) + eyer
-    const barding = new THREE.Mesh(warriorGeo('BoxGeometry:0.76,0.34,0.95', () => new THREE.BoxGeometry(0.76, 0.34, 0.95)), armorMat);
-    barding.position.set(0, 1.05, -0.05);
+    const barding = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.72,0.34,0.95', () => new THREE.BoxGeometry(0.72, 0.34, 0.95)),
+      armorMat,
+    );
+    barding.position.set(0, 1.06, -0.04);
     horseGroup.add(barding);
-    const saddle = new THREE.Mesh(warriorGeo('BoxGeometry:0.5,0.14,0.55', () => new THREE.BoxGeometry(0.5, 0.14, 0.55)), leatherMat);
+    const saddle = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.5,0.14,0.55', () => new THREE.BoxGeometry(0.5, 0.14, 0.55)),
+      leatherMat,
+    );
     saddle.position.set(0, 1.3, -0.02);
     horseGroup.add(saddle);
 
-    const neck = new THREE.Mesh(warriorGeo('BoxGeometry:0.34,0.68,0.4', () => new THREE.BoxGeometry(0.34, 0.68, 0.4)), coatMat);
-    neck.position.set(0, 1.42, 0.6);
-    neck.rotation.x = 0.42;
-    horseGroup.add(neck);
-    const mane = new THREE.Mesh(warriorGeo('BoxGeometry:0.1,0.6,0.34', () => new THREE.BoxGeometry(0.1, 0.6, 0.34)), maneMat);
-    mane.position.set(0, 1.52, 0.47);
-    mane.rotation.x = 0.42;
-    horseGroup.add(mane);
+    // Boyun + Baş + Yele + Dizgin grubu (göğüs kökünden ritmik sallanır)
+    horseNeck = new THREE.Group();
+    horseNeck.position.set(0, 1.16, 0.52);
 
-    // Baş: eğik kafa bloğu + ağızlık + kulaklar
-    const head = new THREE.Mesh(warriorGeo('BoxGeometry:0.28,0.34,0.52', () => new THREE.BoxGeometry(0.28, 0.34, 0.52)), coatMat);
-    head.position.set(0, 1.66, 0.92);
-    head.rotation.x = 0.5;
+    const neck = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.32,0.68,0.38', () => new THREE.BoxGeometry(0.32, 0.68, 0.38)),
+      coatMat,
+    );
+    neck.position.set(0, 0.26, 0.1);
+    neck.rotation.x = 0.42;
+    neck.castShadow = true;
+    horseNeck.add(neck);
+
+    const mane = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.09,0.62,0.32', () => new THREE.BoxGeometry(0.09, 0.62, 0.32)),
+      maneMat,
+    );
+    mane.position.set(0, 0.36, -0.03);
+    mane.rotation.x = 0.42;
+    horseNeck.add(mane);
+
+    const head = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.26,0.32,0.5', () => new THREE.BoxGeometry(0.26, 0.32, 0.5)),
+      coatMat,
+    );
+    head.position.set(0, 0.5, 0.4);
+    head.rotation.x = 0.52;
     head.castShadow = true;
-    horseGroup.add(head);
-    const muzzle = new THREE.Mesh(warriorGeo('BoxGeometry:0.2,0.2,0.28', () => new THREE.BoxGeometry(0.2, 0.2, 0.28)), coatMat);
-    muzzle.position.set(0, 1.52, 1.16);
-    muzzle.rotation.x = 0.5;
-    horseGroup.add(muzzle);
-    const earGeo = warriorGeo('ConeGeometry:0.06,0.2,5', () => new THREE.ConeGeometry(0.06, 0.2, 5));
-    for (const ex of [-0.1, 0.1]) {
+    horseNeck.add(head);
+
+    const muzzle = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.19,0.19,0.28', () => new THREE.BoxGeometry(0.19, 0.19, 0.28)),
+      coatMat,
+    );
+    muzzle.position.set(0, 0.36, 0.64);
+    muzzle.rotation.x = 0.52;
+    horseNeck.add(muzzle);
+
+    const earGeo = warriorGeo('ConeGeometry:0.055,0.19,5', () => new THREE.ConeGeometry(0.055, 0.19, 5));
+    for (const ex of [-0.09, 0.09]) {
       const ear = new THREE.Mesh(earGeo, coatMat);
-      ear.position.set(ex, 1.86, 0.8);
-      horseGroup.add(ear);
+      ear.position.set(ex, 0.7, 0.28);
+      horseNeck.add(ear);
     }
 
-    const tail = new THREE.Mesh(warriorGeo('CylinderGeometry:0.07,0.04,0.62,6', () => new THREE.CylinderGeometry(0.07, 0.04, 0.62, 6)), maneMat);
-    tail.position.set(0, 1.05, -0.82);
-    tail.rotation.x = 0.4;
-    horseGroup.add(tail);
+    horseGroup.add(horseNeck);
+
+    // Kuyruk grubu (sağrı kökünden hızla geriye açılır ve sallanır)
+    horseTail = new THREE.Group();
+    horseTail.position.set(0, 1.15, -0.74);
+    horseTail.rotation.x = 0.38;
+    const tailMesh = new THREE.Mesh(
+      warriorGeo('CylinderGeometry:0.07,0.035,0.66,6', () => new THREE.CylinderGeometry(0.07, 0.035, 0.66, 6)),
+      maneMat,
+    );
+    tailMesh.position.set(0, -0.28, -0.06);
+    horseTail.add(tailMesh);
+    horseGroup.add(horseTail);
 
     bodyGroup.add(horseGroup);
   }
 
-  const legSpreadX = options.isMounted ? 0.42 : 0.18;
-  const leftLeg = new THREE.Mesh(warriorGeo('CylinderGeometry:0.13,0.11,0.68,8', () => new THREE.CylinderGeometry(0.13, 0.11, 0.68, 8)), leatherMat);
-  leftLeg.position.set(-legSpreadX, 0.34 + riderYOffset * 0.4, 0);
+  // Savaşçı (binici veya yaya) gövdesi ayrı riderGroup içindedir;
+  // böylece attan inildiğinde y=0'a (zemine) iner ve yaya adım atar!
+  const riderGroup = new THREE.Group();
+  riderGroup.position.y = options.isMounted ? 0.75 : 0;
+  bodyGroup.add(riderGroup);
+
+  const legSpreadX = options.isMounted ? 0.38 : 0.18;
+  const legPosY = options.isMounted ? 0.18 : 0.34;
+  const leftLeg = new THREE.Mesh(
+    warriorGeo('CylinderGeometry:0.13,0.11,0.68,8', () => new THREE.CylinderGeometry(0.13, 0.11, 0.68, 8)),
+    leatherMat,
+  );
+  leftLeg.position.set(-legSpreadX, legPosY, options.isMounted ? 0.04 : 0);
   leftLeg.rotation.z = options.isMounted ? 0.32 : 0;
-  bodyGroup.add(leftLeg);
+  riderGroup.add(leftLeg);
 
-  const rightLeg = new THREE.Mesh(warriorGeo('CylinderGeometry:0.13,0.11,0.68,8', () => new THREE.CylinderGeometry(0.13, 0.11, 0.68, 8)), leatherMat);
-  rightLeg.position.set(legSpreadX, 0.34 + riderYOffset * 0.4, 0);
+  const rightLeg = new THREE.Mesh(
+    warriorGeo('CylinderGeometry:0.13,0.11,0.68,8', () => new THREE.CylinderGeometry(0.13, 0.11, 0.68, 8)),
+    leatherMat,
+  );
+  rightLeg.position.set(legSpreadX, legPosY, options.isMounted ? 0.04 : 0);
   rightLeg.rotation.z = options.isMounted ? -0.32 : 0;
-  bodyGroup.add(rightLeg);
+  riderGroup.add(rightLeg);
 
-  const torso = new THREE.Mesh(warriorGeo('CylinderGeometry:0.36,0.29,0.86,8', () => new THREE.CylinderGeometry(0.36, 0.29, 0.86, 8)), clothMat);
-  torso.position.set(0, 0.98 + riderYOffset, 0);
+  const torso = new THREE.Mesh(
+    warriorGeo('CylinderGeometry:0.36,0.29,0.86,8', () => new THREE.CylinderGeometry(0.36, 0.29, 0.86, 8)),
+    clothMat,
+  );
+  torso.position.set(0, 0.98, 0);
   torso.castShadow = true;
-  bodyGroup.add(torso);
+  riderGroup.add(torso);
 
-  const pauldronGeo = warriorGeo('SphereGeometry:0.2,10,8,0,Math.PI*2,0,Math.PI/2', () => new THREE.SphereGeometry(0.2, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2));
+  const pauldronGeo = warriorGeo(
+    'SphereGeometry:0.2,10,8,0,Math.PI*2,0,Math.PI/2',
+    () => new THREE.SphereGeometry(0.2, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+  );
   const leftPauldron = new THREE.Mesh(pauldronGeo, steelMat);
-  leftPauldron.position.set(-0.4, 1.28 + riderYOffset, 0);
+  leftPauldron.position.set(-0.4, 1.28, 0);
   leftPauldron.rotation.z = 0.35;
-  bodyGroup.add(leftPauldron);
+  riderGroup.add(leftPauldron);
 
   const rightPauldron = new THREE.Mesh(pauldronGeo, steelMat);
-  rightPauldron.position.set(0.4, 1.28 + riderYOffset, 0);
+  rightPauldron.position.set(0.4, 1.28, 0);
   rightPauldron.rotation.z = -0.35;
-  bodyGroup.add(rightPauldron);
+  riderGroup.add(rightPauldron);
 
-  const helm = new THREE.Mesh(warriorGeo('CylinderGeometry:0.22,0.24,0.38,10', () => new THREE.CylinderGeometry(0.22, 0.24, 0.38, 10)), steelMat);
-  helm.position.set(0, 1.62 + riderYOffset, 0);
+  const helm = new THREE.Mesh(
+    warriorGeo('CylinderGeometry:0.22,0.24,0.38,10', () => new THREE.CylinderGeometry(0.22, 0.24, 0.38, 10)),
+    steelMat,
+  );
+  helm.position.set(0, 1.62, 0);
   helm.castShadow = true;
-  bodyGroup.add(helm);
+  riderGroup.add(helm);
 
-  const visor = new THREE.Mesh(warriorGeo('BoxGeometry:0.32,0.12,0.24', () => new THREE.BoxGeometry(0.32, 0.12, 0.24)), goldMat);
-  visor.position.set(0, 1.62 + riderYOffset, 0.16);
-  bodyGroup.add(visor);
+  const visor = new THREE.Mesh(
+    warriorGeo('BoxGeometry:0.32,0.12,0.24', () => new THREE.BoxGeometry(0.32, 0.12, 0.24)),
+    goldMat,
+  );
+  visor.position.set(0, 1.62, 0.16);
+  riderGroup.add(visor);
 
   if (options.isCommander || options.isHeavy) {
-    const plume = new THREE.Mesh(warriorGeo('BoxGeometry:0.1,0.34,0.46', () => new THREE.BoxGeometry(0.1, 0.34, 0.46)), goldMat);
-    plume.position.set(0, 1.92 + riderYOffset, -0.05);
-    bodyGroup.add(plume);
+    const plume = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.1,0.34,0.46', () => new THREE.BoxGeometry(0.1, 0.34, 0.46)),
+      goldMat,
+    );
+    plume.position.set(0, 1.92, -0.05);
+    riderGroup.add(plume);
   }
 
   const leftArm = new THREE.Group();
-  leftArm.position.set(-0.42, 1.18 + riderYOffset, 0.1);
-  bodyGroup.add(leftArm);
+  leftArm.position.set(-0.42, 1.18, 0.1);
+  riderGroup.add(leftArm);
 
   const bowGeo = warriorGeo('warrior-bow', () => {
     const bowCurve = new THREE.CatmullRomCurve3([
@@ -1336,14 +1444,14 @@ export function createWarriorModel(options: {
   leftArm.add(shieldMesh);
 
   const rightArm = new THREE.Group();
-  rightArm.position.set(0.42, 1.18 + riderYOffset, 0.1);
-  bodyGroup.add(rightArm);
+  rightArm.position.set(0.42, 1.18, 0.1);
+  riderGroup.add(rightArm);
 
   const meleeWeaponGroup = new THREE.Group();
   meleeWeaponGroup.visible = !options.isRanged;
   rightArm.add(meleeWeaponGroup);
 
-  if (options.isMounted && !options.isRanged) {
+  if (options.isMounted && !options.isRanged && !options.isCommander) {
     // Süvari kargısı (2.35m ahşap gövde + çelik mızrak ucu)
     const shaft = new THREE.Mesh(
       warriorGeo('lance-shaft', () => new THREE.CylinderGeometry(0.032, 0.044, 2.35, 7)),
@@ -1361,12 +1469,18 @@ export function createWarriorModel(options: {
     spearTip.rotation.x = 0.22;
     meleeWeaponGroup.add(spearTip);
   } else {
-    const hilt = new THREE.Mesh(warriorGeo('BoxGeometry:0.28,0.06,0.08', () => new THREE.BoxGeometry(0.28, 0.06, 0.08)), goldMat);
+    const hilt = new THREE.Mesh(
+      warriorGeo('BoxGeometry:0.28,0.06,0.08', () => new THREE.BoxGeometry(0.28, 0.06, 0.08)),
+      goldMat,
+    );
     hilt.position.set(0, 0.12, 0.25);
     meleeWeaponGroup.add(hilt);
 
-    const bladeLen = options.isHeavy ? 1.25 : 0.98;
-    const blade = new THREE.Mesh(warriorGeo(`blade:${bladeLen}`, () => new THREE.BoxGeometry(0.07, bladeLen, 0.04)), steelMat);
+    const bladeLen = options.isHeavy || options.isCommander ? 1.25 : 0.98;
+    const blade = new THREE.Mesh(
+      warriorGeo(`blade:${bladeLen}`, () => new THREE.BoxGeometry(0.07, bladeLen, 0.04)),
+      steelMat,
+    );
     blade.position.set(0, 0.12 + bladeLen * 0.5, 0.25);
     blade.rotation.x = 0.25;
     meleeWeaponGroup.add(blade);
@@ -1385,12 +1499,16 @@ export function createWarriorModel(options: {
   return {
     root,
     bodyGroup,
+    riderGroup,
     rightArm,
     leftArm,
     leftLeg,
     rightLeg,
     horseGroup,
     horseLegs,
+    horseKnees,
+    horseNeck,
+    horseTail,
     bowMesh,
     shieldMesh,
     meleeWeaponGroup,
@@ -1442,24 +1560,73 @@ export function animateWarriorRigPose(
     handles.shieldMesh.visible = !usingRanged && shieldIntact;
   }
 
-  // 2. Yaya bacak adımı veya binek at 4 zamanlı dörtnal (gallop) döngüsü
+  // 2. Yaya bacak adımı veya binek at 4 zamanlı dörtnal (gallop) + diz bükümü döngüsü
   const moveFactor = Math.min(1, speed / (isMounted ? 9.5 : 5.5));
-  const cycle = time * (isMounted ? 11.5 : 8.5) + phaseOffset;
+  const cycle = time * (isMounted ? 11.2 : 8.5) + phaseOffset;
 
   if (isMounted && handles.horseLegs && handles.horseLegs.length === 4) {
-    const gallopAmp = 0.62 * moveFactor;
-    handles.horseLegs[0].rotation.x = Math.sin(cycle) * gallopAmp;
-    handles.horseLegs[1].rotation.x = Math.sin(cycle + 0.65) * gallopAmp;
-    handles.horseLegs[2].rotation.x = Math.sin(cycle + Math.PI) * gallopAmp;
-    handles.horseLegs[3].rotation.x = Math.sin(cycle + Math.PI + 0.65) * gallopAmp;
-    if (handles.horseGroup) {
-      handles.horseGroup.rotation.x = Math.cos(cycle) * 0.045 * moveFactor;
+    const gallopAmp = 0.68 * moveFactor;
+    const legPhases = [
+      cycle,
+      cycle + 0.62,
+      cycle + Math.PI,
+      cycle + Math.PI + 0.62,
+    ];
+    for (let li = 0; li < 4; li++) {
+      const p = legPhases[li];
+      handles.horseLegs[li].rotation.x = Math.sin(p) * gallopAmp;
+      if (handles.horseKnees && handles.horseKnees[li]) {
+        // Bacak yerden kesilip öne gelirken diz/topuk eklemi geriye doğru doğal bükülür
+        const lift = Math.max(0, Math.cos(p));
+        handles.horseKnees[li].rotation.x = (lift * 0.85 + 0.08) * moveFactor;
+      }
     }
-    handles.leftLeg.rotation.x = 0.12;
-    handles.rightLeg.rotation.x = 0.12;
+
+    const suspensionBounce = Math.abs(Math.sin(cycle)) * 0.085 * moveFactor;
+    const idleBreath = Math.sin(time * 2.2 + phaseOffset) * 0.012 * (1 - moveFactor);
+    if (handles.horseGroup) {
+      handles.horseGroup.position.y = suspensionBounce + idleBreath;
+      handles.horseGroup.rotation.x = Math.cos(cycle) * 0.065 * moveFactor;
+    }
+    if (handles.horseNeck) {
+      // Dörtnalda boyun ritmik olarak baş sallama (nod) yapar, dururken nefes alır
+      handles.horseNeck.rotation.x =
+        Math.sin(cycle - 0.65) * 0.15 * moveFactor +
+        Math.sin(time * 1.9 + phaseOffset) * 0.035 * (1 - moveFactor);
+      handles.horseNeck.rotation.y =
+        Math.sin(time * 0.85 + phaseOffset) * 0.04 * (1 - moveFactor);
+    }
+    if (handles.horseTail) {
+      handles.horseTail.rotation.x =
+        0.38 + moveFactor * 0.52 + Math.sin(cycle * 2) * 0.14 * moveFactor;
+      handles.horseTail.rotation.z =
+        Math.sin(time * 2.1 + phaseOffset) * (0.07 + 0.08 * moveFactor);
+    }
+
+    if (handles.riderGroup) {
+      handles.riderGroup.position.y =
+        0.75 + Math.abs(Math.sin(cycle - 0.18)) * 0.078 * moveFactor + idleBreath;
+      handles.riderGroup.rotation.x =
+        0.06 * moveFactor + Math.cos(cycle) * 0.025 * moveFactor;
+    }
+    handles.leftLeg.position.set(-0.38, 0.18, 0.04);
+    handles.leftLeg.rotation.z = 0.32;
+    handles.leftLeg.rotation.x = 0.22 + Math.sin(cycle) * 0.04 * moveFactor;
+    handles.rightLeg.position.set(0.38, 0.18, 0.04);
+    handles.rightLeg.rotation.z = -0.32;
+    handles.rightLeg.rotation.x = 0.22 + Math.sin(cycle) * 0.04 * moveFactor;
   } else {
-    const strideAmp = 0.58 * moveFactor;
+    // Yaya yürüyüş / koşu (attan inmiş komutan dahil)
+    const strideAmp = 0.62 * moveFactor;
+    if (handles.riderGroup) {
+      handles.riderGroup.position.y = Math.abs(Math.sin(cycle * 2)) * 0.045 * moveFactor;
+      handles.riderGroup.rotation.x = 0.04 * moveFactor;
+    }
+    handles.leftLeg.position.set(-0.18, 0.34, 0);
+    handles.leftLeg.rotation.z = 0;
     handles.leftLeg.rotation.x = Math.sin(cycle) * strideAmp;
+    handles.rightLeg.position.set(0.18, 0.34, 0);
+    handles.rightLeg.rotation.z = 0;
     handles.rightLeg.rotation.x = -Math.sin(cycle) * strideAmp;
   }
 

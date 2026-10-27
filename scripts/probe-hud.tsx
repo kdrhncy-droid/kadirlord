@@ -109,9 +109,23 @@ ok(
 /* 5. Envanter sekmesi pazar açmıyor (I tuşu etiketi) */
 ok(!text.includes('Envanter & Pazar'), '"Envanter & Pazar" etiketi kalmadı');
 
-/* 6. Sağ alt durum şeridi korunuyor (altın, asker, erzak) */
+/* 6. Sağ alt durum şeridi korunuyor (altın, asker, erzak) ve 0 askerde oyuncu + ağabey (2) sayılıyor */
 ok(text.includes('Dinar'), 'sağ alt şeritte altın var');
 ok(text.includes('Asker'), 'sağ alt şeritte asker sayısı var');
+
+const realisticCampaign = createInitialCampaignState('Komutan Demirhan', 'noble', {
+  realisticBannerlordStart: true,
+});
+const realisticHtml = render({ campaign: realisticCampaign });
+const realisticText = realisticHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+ok(
+  realisticText.includes('Sancak Birliği: 2 /'),
+  'yeni oyunda (0 asker) sağ alt Sancak Birliği oyuncuyu ve ağabeyini sayarak 2 gösteriyor',
+);
+ok(
+  realisticText.includes('2 Kişi') && realisticText.includes('0 Asker'),
+  'Sancak Birliği ipucunda 2 Kahraman (Sen & Aile/Yoldaş) ve 0 Asker ayrımı var',
+);
 
 /* 7. Zaman kontrolü korunuyor */
 ok(html.includes('▶▶▶') && html.includes('||'), 'zaman ölçeği düğmeleri duruyor');

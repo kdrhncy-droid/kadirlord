@@ -29,7 +29,7 @@ import {
   troopStackWoundedTotal,
   prisonerStackTotal,
 } from '../game/bannerlordFoundation.ts';
-import { FACTION_INFO, calculateClanTier } from '../game/rules.ts';
+import { FACTION_INFO, calculateClanTier, getPlayerPartyHeadcount } from '../game/rules.ts';
 import { HeroMannequin, type HeroMannequinVisualOptions } from './HeroMannequin.tsx';
 import { deriveRigVisualOptionsFromEquipment } from '../game/characterRig.ts';
 
@@ -159,6 +159,22 @@ export const PartyModal: React.FC<PartyModalProps> = ({
   const totalTroopsCount = useMemo(() => troopStackTotal(troopStacks), [troopStacks]);
   const totalWoundedCount = useMemo(() => troopStackWoundedTotal(troopStacks), [troopStacks]);
   const totalPrisonersCount = useMemo(() => prisonerStackTotal(prisonerStacks), [prisonerStacks]);
+  const partyHeadcount = useMemo(
+    () =>
+      getPlayerPartyHeadcount({
+        ...draftCampaign,
+        roster: {
+          ...draftCampaign.roster,
+          infantry: totalTroopsCount,
+          archer: 0,
+          cavalry: 0,
+          horseArcher: 0,
+        },
+        troopStacks,
+        heroes,
+      }),
+    [draftCampaign, totalTroopsCount, troopStacks, heroes],
+  );
 
   const totalDailyWage = useMemo(() => {
     return troopStacks.reduce((sum, stack) => {
@@ -295,16 +311,16 @@ export const PartyModal: React.FC<PartyModalProps> = ({
 
           <div className="flex items-center gap-6 text-xs">
             <div className="flex items-center gap-2 bg-[#1a140e] px-3 py-1.5 rounded border border-[#855e2d]/30">
-              <span className="text-[#9ca3af]">Ordu:</span>
+              <span className="text-[#9ca3af]">Sancak Birliği:</span>
               <span
                 className={`font-mono font-bold ${
-                  totalTroopsCount > partyCapBreakdown.total ? 'text-red-400' : 'text-emerald-400'
+                  partyHeadcount.totalMembers > partyCapBreakdown.total ? 'text-red-400' : 'text-emerald-400'
                 }`}
               >
-                {totalTroopsCount} / {partyCapBreakdown.total}
+                {partyHeadcount.totalMembers} / {partyCapBreakdown.total}
               </span>
-              {totalWoundedCount > 0 && (
-                <span className="text-red-400 font-mono">({totalWoundedCount} yaralı)</span>
+              {partyHeadcount.totalWounded > 0 && (
+                <span className="text-red-400 font-mono">({partyHeadcount.totalWounded} yaralı)</span>
               )}
             </div>
 
@@ -887,7 +903,8 @@ export const PartyModal: React.FC<PartyModalProps> = ({
         <footer className="flex items-center justify-between px-6 py-3 bg-[#19130d] border-t border-[#855e2d]/40">
           <div className="text-xs text-[#a89274] flex items-center gap-4">
             <span>
-              Toplam Ordu: <strong className="text-white font-mono">{totalTroopsCount}</strong> / {partyCapBreakdown.total}
+              Sancak Birliği: <strong className="text-white font-mono">{partyHeadcount.totalMembers}</strong> / {partyCapBreakdown.total}{' '}
+              <span className="text-[#855e2d]">({partyHeadcount.totalHeroes} Kahraman · {partyHeadcount.troops} Asker)</span>
             </span>
             <span>
               Maaş: <strong className="text-amber-300 font-mono">-{totalDailyWage} Dinar/gün</strong>

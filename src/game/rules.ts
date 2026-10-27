@@ -649,6 +649,72 @@ export function getTotalTroops(roster: TroopRoster): number {
   );
 }
 
+export interface PlayerPartyHeadcount {
+  healthyHeroes: number;
+  woundedHeroes: number;
+  totalHeroes: number;
+  healthyTroops: number;
+  woundedTroops: number;
+  troops: number;
+  totalHealthy: number;
+  totalWounded: number;
+  totalMembers: number;
+}
+
+/**
+ * Bannerlord parti mevcudu (Sancak Birliği): Oyuncu + partideki aile/yoldaş
+ * kahramanlar (`isInPlayerParty !== false`) + normal asker kıtaları (`roster`).
+ * NOT: `LordAgent.armySize === getTotalTroops(roster)` kuralını bozmamak için
+ * `getTotalTroops` yalnız askerleri saymaya devam eder; oyuncu partisinin toplam
+ * mevcudu için bu yardımcı kullanılır.
+ */
+export function getPlayerPartyHeadcount(
+  state: Pick<CampaignState, 'roster' | 'troopStacks' | 'heroes' | 'playerHp' | 'playerMaxHp'>,
+): PlayerPartyHeadcount {
+  const partyHeroes = (state.heroes ?? []).filter((h) => h.isInPlayerParty !== false);
+  let healthyHeroes = 0;
+  let woundedHeroes = 0;
+
+  if (partyHeroes.length > 0) {
+    for (const hero of partyHeroes) {
+      const maxHp = Math.max(1, hero.maxHp || 100);
+      if (hero.hp < maxHp * 0.2) {
+        woundedHeroes += 1;
+      } else {
+        healthyHeroes += 1;
+      }
+    }
+  } else {
+    const maxHp = Math.max(1, state.playerMaxHp || 100);
+    if ((state.playerHp ?? maxHp) < maxHp * 0.2) {
+      woundedHeroes = 1;
+    } else {
+      healthyHeroes = 1;
+    }
+  }
+
+  const troops = getTotalTroops(state.roster);
+  const rawWoundedTroops = (state.troopStacks ?? []).reduce(
+    (sum, stack) => sum + Math.max(0, Math.floor(stack.wounded ?? 0)),
+    0,
+  );
+  const woundedTroops = Math.min(troops, rawWoundedTroops);
+  const healthyTroops = Math.max(0, troops - woundedTroops);
+  const totalHeroes = healthyHeroes + woundedHeroes;
+
+  return {
+    healthyHeroes,
+    woundedHeroes,
+    totalHeroes,
+    healthyTroops,
+    woundedTroops,
+    troops,
+    totalHealthy: healthyHeroes + healthyTroops,
+    totalWounded: woundedHeroes + woundedTroops,
+    totalMembers: totalHeroes + troops,
+  };
+}
+
 export function calculatePartyStrength(roster: TroopRoster, commanderHpRatio = 1): number {
   const unitScore =
     roster.infantry * 14 +
@@ -3756,7 +3822,9 @@ export function createInitialCampaignState(
       morphDNA: getLordDNA('hero_family_brother', options?.culture ?? 'empire'),
     };
 
-    const existingHeroes = (founded.heroes ?? []).filter((h) => h.id !== 'hero_family_brother');
+    const playerOnly = (founded.heroes ?? []).filter(
+      (h) => h.id === PLAYER_HERO_ID || h.kind === 'PLAYER',
+    );
     const realisticLords = founded.lords.map((l) => {
       if (l.faction !== 'bandits') return l;
       const smallRoster: TroopRoster = { infantry: 5, archer: 2, cavalry: 1, horseArcher: 0 };
@@ -3773,15 +3841,12 @@ export function createInitialCampaignState(
       troopStacks: [],
       prisoners: 0,
       prisonerStacks: [],
-      heroes: [
-        ...existingHeroes.slice(0, 1),
-        familyHero,
-        ...existingHeroes.slice(1),
-      ],
+      heroes: [...playerOnly, familyHero],
       roleAssignments: {
-        ...founded.roleAssignments,
         QUARTERMASTER: PLAYER_HERO_ID,
         SCOUT: 'hero_family_brother',
+        SURGEON: null,
+        ENGINEER: null,
       },
     };
   }

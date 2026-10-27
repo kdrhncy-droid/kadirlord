@@ -242,6 +242,8 @@ const cavRig = createWarriorModel({
   isRanged: false,
 });
 assert.ok((cavRig.horseLegs?.length ?? 0) === 4, 'Atlı birliğin 4 eklemli at bacağı olmalı');
+assert.ok((cavRig.horseKnees?.length ?? 0) === 4, 'Atlı birliğin 4 diz/topuk eklemi olmalı');
+assert.ok(cavRig.horseNeck && cavRig.horseTail && cavRig.riderGroup, 'At boyun, kuyruk ve ayrı binici grubu (riderGroup) olmalı');
 animateWarriorRigPose(cavRig, {
   speed: 8.5,
   time: 0.8,
@@ -257,8 +259,29 @@ animateWarriorRigPose(cavRig, {
   isCouchedLance: true,
 });
 const legAngles = cavRig.horseLegs!.map((leg: THREE.Group) => Number(leg.rotation.x.toFixed(3)));
+const kneeAngles = cavRig.horseKnees!.map((knee: THREE.Group) => Number(knee.rotation.x.toFixed(3)));
 assert.ok(legAngles.some((a: number) => a !== 0), 'Dörtnala koşan atın bacakları hareket etmeli');
+assert.ok(kneeAngles.some((a: number) => a > 0.1), 'Dörtnala koşan atın diz/topuk eklemleri bükülmeli');
+assert.ok(cavRig.riderGroup!.position.y >= 0.75, 'Binici eyer yüksekliğinde (y >= 0.75) oturmalı');
 assert.ok(THREE.MathUtils.radToDeg(cavRig.rightArm.rotation.x) > 45, 'Koltuklanmış kargıda sağ kol ileri yatmalı');
-console.log('✓ 6. 3B asker/at bacak animasyonu ve okçu yay-kılıç geçişi doğrulandı');
+
+// Attan inildiğinde (isMounted: false) binici havada asılı kalmamalı, zemine inmeli ve bacakları düzelmeli
+animateWarriorRigPose(cavRig, {
+  speed: 4.2,
+  time: 1.1,
+  phaseOffset: 0.3,
+  isMounted: false,
+  usingRanged: false,
+  shieldIntact: true,
+  isBlocking: false,
+  blockDirection: 'UP',
+  attackPhase: 'IDLE',
+  attackDirection: 'RIGHT',
+  attackProgress: 0,
+  isCouchedLance: false,
+});
+assert.ok(cavRig.riderGroup!.position.y < 0.1, 'Attan inen karakter zemine inmeli (havada asılı kalmamalı)');
+assert.equal(cavRig.leftLeg.rotation.z, 0, 'Attan inen karakterin bacak açıklığı yaya yürüyüşe dönmeli');
+console.log('✓ 6. 3B asker/at 2 eklemli bacak animasyonu, boyun/kuyruk salınımı ve attan inme geçişi doğrulandı');
 
 console.log('\nTÜM MEYDAN SAVAŞI (B6-B7) KONTROLLERİ GEÇTİ');

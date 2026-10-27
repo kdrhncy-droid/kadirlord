@@ -173,6 +173,8 @@ interface CmdUiData {
   isBlocking: boolean;
   isCouched: boolean;
   canCouch: boolean;
+  isMounted: boolean;
+  canMountNearbyHorse: boolean;
   speedMps: number;
   firstPerson: boolean;
   playerKills: number;
@@ -258,44 +260,6 @@ function classStats(unitType: UnitTierId): {
 
 function hexToCss(hex: number): string {
   return `#${hex.toString(16).padStart(6, '0')}`;
-}
-
-/**
- * Bölük sancağı: uzun direk + altın tepelik + enine seren + dikey sancak bezi.
- * Bannerlord misyonlarında her formasyonun önünde taşıdığı sancağın karşılığı;
- * Bannerlord'da sancaklar bölüğü uzaktan okunur kılar. Bez, dalgalanma için
- * ayrı mesh olarak döner. (Arena'daki createTacticalBannerMesh zincirini
- * buraya taşımak yerine aynı ölçülerde yerel üretim; karakter rig'i B6'da.)
- */
-function createFormationBanner(factionHex: number): { group: THREE.Group; cloth: THREE.Mesh } {
-  const group = new THREE.Group();
-  const woodMat = new THREE.MeshStandardMaterial({ color: 0x5c3d24, roughness: 0.85, metalness: 0.05 });
-  const goldMat = new THREE.MeshStandardMaterial({ color: 0xeab308, roughness: 0.3, metalness: 0.8 });
-  const clothMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(hexToCss(factionHex)),
-    roughness: 0.8,
-    side: THREE.DoubleSide,
-  });
-
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 3.4, 8), woodMat);
-  pole.position.y = 1.7;
-  pole.castShadow = true;
-  group.add(pole);
-
-  const finial = new THREE.Mesh(new THREE.OctahedronGeometry(0.13, 0), goldMat);
-  finial.position.y = 3.48;
-  group.add(finial);
-
-  const crossbar = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.95, 6), woodMat);
-  crossbar.rotation.z = Math.PI / 2;
-  crossbar.position.set(0.4, 3.15, 0);
-  group.add(crossbar);
-
-  const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.25, 0.03), clothMat);
-  cloth.position.set(0.42, 2.5, 0);
-  cloth.castShadow = true;
-  group.add(cloth);
-  return { group, cloth };
 }
 
 /** Konuşlanma diziliş tercihleri savaşlar arasında hatırlanır (Bannerlord'da kalıcıdır). */
@@ -425,9 +389,6 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
 
     /* ── Aktörler ── */
     const actors: MissionActor[] = [];
-    // Bölük sancakları: her sınıf şeridinin ilk neferi taşır; dalgalanma için
-    // bez mesh'leri ayrı listede tutulur (Bannerlord'da formasyon sancağı).
-    const bannerCloths: THREE.Mesh[] = [];
     const groundY = (x: number, z: number) => battleGroundY(profile, x, z);
 
     const playerLoadout = derivePlayerBattleLoadout(campaign);
@@ -445,7 +406,6 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       counts: Record<UnitTierId, number>,
       factionHex: number,
       spawn: { x: number; z: number; facing: number },
-      withBanners: boolean,
     ): MissionActor[] => {
       const created: MissionActor[] = [];
       const forward = team === 'ally' ? -1 : 1; // müttefik -Z'ye, düşman +Z'ye bakar
@@ -470,14 +430,6 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
             isRanged: lane.cls === 'archer' || lane.cls === 'horseArcher',
           });
           handles.telegraphRing.visible = false;
-          if (withBanners && i === 0 && count >= 3) {
-            const banner = createFormationBanner(factionHex);
-            banner.group.position.set(0.42, 0.55, 0.1);
-            banner.group.rotation.x = -0.08;
-            banner.group.scale.setScalar(0.8);
-            handles.rightArm.add(banner.group);
-            bannerCloths.push(banner.cloth);
-          }
           handles.root.position.set(x, groundY(x, z), z);
           scene.add(handles.root);
           const numericId = actorSeq++;
@@ -551,8 +503,8 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       ally: remainingReserves(campaign.roster, allyFielded),
       enemy: remainingReserves(enemyRoster, enemyFielded),
     };
-    spawnActors('ally', allyFielded, FACTION_INFO.player.hex, profile.allySpawn, true);
-    spawnActors('enemy', enemyFielded, enemyHex, profile.enemySpawn, true);
+    spawnActors('ally', allyFielded, FACTION_INFO.player.hex, profile.allySpawn);
+    spawnActors('enemy', enemyFielded, enemyHex, profile.enemySpawn);
 
     // Düşman komutanı (ağır süvari görünümü; kadro dışı tek aktör).
     {
@@ -629,14 +581,28 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     });
     playerHandles.telegraphRing.visible = false;
     playerHandles.root.scale.setScalar(1.18);
-    {
-      const banner = createFormationBanner(FACTION_INFO.player.hex);
-      banner.group.position.set(0.42, 0.55, 0.1);
-      banner.group.rotation.x = -0.08;
-      banner.group.scale.setScalar(0.8);
-      playerHandles.rightArm.add(banner.group);
-      bannerCloths.push(banner.cloth);
+
+    // Oyuncu attan indiğinde at havada kaybolmaz; indiği noktada canlı olarak bekler!
+    const dismountedHorseHandles = createWarriorModel({
+      factionHex: FACTION_INFO.player.hex,
+      isMounted: true,
+      isCommander: true,
+    });
+    dismountedHorseHandles.telegraphRing.visible = false;
+    if (dismountedHorseHandles.riderGroup) {
+      dismountedHorseHandles.riderGroup.visible = false;
     }
+    dismountedHorseHandles.root.scale.setScalar(1.18);
+    dismountedHorseHandles.root.visible = false;
+    scene.add(dismountedHorseHandles.root);
+    const dismountedHorse = {
+      active: false,
+      x: profile.allySpawn.x,
+      z: profile.allySpawn.z + 8,
+      facing: Math.PI,
+      handles: dismountedHorseHandles,
+    };
+
     const playerNumericId = actorSeq++;
     const player: MissionActor = {
       id: 'player-commander',
@@ -911,7 +877,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       if (!plan) return;
       const hex = team === 'ally' ? FACTION_INFO.player.hex : enemyHex;
       const spawn = team === 'ally' ? profile.allySpawn : profile.enemySpawn;
-      const created = spawnActors(team, plan, hex, spawn, false);
+      const created = spawnActors(team, plan, hex, spawn);
       const divs = team === 'ally' ? divisions : enemyDivisions;
       for (const a of created) {
         const cls = a.unitType;
@@ -1109,6 +1075,12 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       );
       const enemyCasualtySplit = splitBattleCasualties(enemyFallenByClass, 30);
 
+      const canMountNearbyHorse =
+        !player.isMounted &&
+        player.horseHp > 0 &&
+        (!dismountedHorse.active ||
+          Math.hypot(player.x - dismountedHorse.x, player.z - dismountedHorse.z) <= 3.8);
+
       setCmdUi({
         selection: cmdSelection,
         menu: cmdMenu,
@@ -1161,6 +1133,8 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
         isBlocking: player.isBlocking,
         isCouched: player.isCouchedLance,
         canCouch: player.isMounted && !player.isRanged,
+        isMounted: player.isMounted,
+        canMountNearbyHorse,
         speedMps: Number(Math.hypot(player.vx, player.vz).toFixed(1)),
         firstPerson: firstPersonCam,
         playerKills: player.kills,
@@ -1555,16 +1529,61 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
           refreshCmdUi();
           return;
         }
-        if (code === 'KeyZ' && player.hp > 0 && Math.hypot(player.vx, player.vz) < 2.2) {
+        if ((code === 'KeyF' || code === 'KeyZ') && player.hp > 0) {
           if (player.isMounted) {
-            player.isMounted = false;
-            player.isCouchedLance = false;
-            player.speed = playerLoadout.footSpeed;
-            if (player.handles.horseGroup) player.handles.horseGroup.visible = false;
+            if (Math.hypot(player.vx, player.vz) < 4.5) {
+              dismountedHorse.active = true;
+              dismountedHorse.x = player.x;
+              dismountedHorse.z = player.z;
+              dismountedHorse.facing = player.facing;
+              dismountedHorse.handles.root.position.set(
+                dismountedHorse.x,
+                groundY(dismountedHorse.x, dismountedHorse.z),
+                dismountedHorse.z,
+              );
+              dismountedHorse.handles.root.rotation.y = dismountedHorse.facing;
+              dismountedHorse.handles.root.visible = true;
+
+              player.isMounted = false;
+              player.isCouchedLance = false;
+              player.speed = playerLoadout.footSpeed;
+              player.vx = 0;
+              player.vz = 0;
+              if (player.handles.horseGroup) player.handles.horseGroup.visible = false;
+
+              const dismountStep = clampToBattlefield(
+                profile,
+                player.x - Math.cos(player.facing) * 0.95,
+                player.z + Math.sin(player.facing) * 0.95,
+              );
+              player.x = dismountStep.x;
+              player.z = dismountStep.z;
+              player.handles.root.position.set(player.x, groundY(player.x, player.z), player.z);
+              pushOrderShout('Attan inildi — [F] ile tekrar binebilirsiniz.');
+            } else {
+              pushOrderShout('Attan inmek için yavaşlayın!');
+            }
           } else if (player.horseHp > 0) {
-            player.isMounted = true;
-            player.speed = playerLoadout.horseSpeed;
-            if (player.handles.horseGroup) player.handles.horseGroup.visible = true;
+            const distToHorse = dismountedHorse.active
+              ? Math.hypot(player.x - dismountedHorse.x, player.z - dismountedHorse.z)
+              : 0;
+            if (distToHorse <= 3.8) {
+              if (dismountedHorse.active) {
+                player.x = dismountedHorse.x;
+                player.z = dismountedHorse.z;
+                player.facing = dismountedHorse.facing;
+                camYaw = dismountedHorse.facing;
+                dismountedHorse.active = false;
+                dismountedHorse.handles.root.visible = false;
+              }
+              player.isMounted = true;
+              player.speed = playerLoadout.horseSpeed;
+              if (player.handles.horseGroup) player.handles.horseGroup.visible = true;
+              player.handles.root.position.set(player.x, groundY(player.x, player.z), player.z);
+              pushOrderShout('Ata binildi!');
+            } else {
+              pushOrderShout('Ata binmek için atınıza yaklaşın!');
+            }
           }
           e.preventDefault();
           refreshCmdUi();
@@ -2391,11 +2410,21 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
         }
       }
 
-      // Sancak bezleri rüzgârda dalgalanır
-      const clothT = now * 0.001;
-      for (let ci = 0; ci < bannerCloths.length; ci++) {
-        bannerCloths[ci].rotation.y = Math.sin(clothT * 2.3 + ci * 1.7) * 0.22;
-        bannerCloths[ci].rotation.x = Math.sin(clothT * 1.7 + ci * 2.3) * 0.06;
+      if (dismountedHorse.active) {
+        animateWarriorRigPose(dismountedHorse.handles, {
+          speed: 0,
+          time: now * 0.001,
+          phaseOffset: 0.7,
+          isMounted: true,
+          usingRanged: false,
+          shieldIntact: false,
+          isBlocking: false,
+          blockDirection: 'UP',
+          attackPhase: 'IDLE',
+          attackDirection: 'RIGHT',
+          attackProgress: 0,
+          isCouchedLance: false,
+        });
       }
 
       shadowTimer += frameDt;
@@ -3011,8 +3040,22 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
                   {cmdUi.isCouched ? 'KARGI KOLTUKLANDI!' : '[X] Kargı Koltukla'}
                 </span>
               )}
+              {cmdUi.horseHp > 0 && (
+                <span className="rounded bg-[#261f16] px-1.5 py-0.5 text-[10px] font-semibold text-[#fde68a]">
+                  {cmdUi.isMounted ? '[F] Attan İn' : cmdUi.canMountNearbyHorse ? '[F] Ata Bin' : 'At Bekliyor'}
+                </span>
+              )}
             </div>
           </div>
+
+          {cmdUi.canMountNearbyHorse && (
+            <div
+              data-testid="battle-mount-prompt"
+              className="pointer-events-none absolute left-1/2 top-[58%] z-10 -translate-x-1/2 rounded border border-amber-300/75 bg-black/80 px-3.5 py-1 text-xs font-bold tracking-wider text-amber-200 shadow-lg"
+            >
+              🐎 [F] Ata Bin
+            </div>
+          )}
 
           {/* 7. TAB: CANLI MUHAREBE ÇETELESİ VE KURALLI GERİ ÇEKİLME MODALI */}
           {cmdUi.scoreboardOpen && (
@@ -3093,7 +3136,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
 
           <div className="pointer-events-none absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded bg-black/55 px-3 py-1 text-[11px] tracking-wide text-[#e8dcc3]">
             Tıkla: nişan kilidi · WASD: sür · Fare yönü + Sol tık: 4 yönlü saldır · Sağ tık: yönlü
-            blok · G/Tekerlek: Yay/Kılıç · X: Kargı · V: 1./3. Şahıs · Z: At Bin/İn · Tab: Çetele
+            blok · G/Tekerlek: Yay/Kılıç · X: Kargı · V: 1./3. Şahıs · F: Ata Bin/İn · Tab: Çetele
           </div>
         </>
       ) : (

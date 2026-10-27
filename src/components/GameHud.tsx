@@ -13,6 +13,7 @@ import {
   calculatePartyDailyWage,
   calculateLearningLimit,
   calculatePartyStrength,
+  getPlayerPartyHeadcount,
   getTotalTroops,
 } from '../game/rules';
 import type {
@@ -21,7 +22,7 @@ import type {
   MapCameraTelemetry,
 } from '../game/types';
 import { isSettlementLabelVisible } from '../game/mapGen';
-import { getPartyLimit } from '../game/partySystem';
+import { calculatePartyLimitBreakdown, getPartyLimit } from '../game/partySystem';
 import {
   QUEST_KIND_ICONS,
   QUEST_KIND_LABELS,
@@ -152,7 +153,8 @@ export const GameHud: React.FC<GameHudProps> = ({
 
 
   const isInKingdom = Boolean(
-    campaign.allegianceFaction || campaign.playerKingdom?.isDeclared,
+    (campaign.playerFaction && campaign.playerFaction !== 'player') ||
+      campaign.settlements.some((s) => s.faction === 'player'),
   );
 
   React.useEffect(() => {
@@ -224,6 +226,8 @@ export const GameHud: React.FC<GameHudProps> = ({
 
   const questLog = useMemo(() => buildQuestLog(campaign), [campaign]);
   const totalTroops = getTotalTroops(campaign.roster);
+  const partyHeadcount = useMemo(() => getPlayerPartyHeadcount(campaign), [campaign]);
+  const partyLimitBreakdown = useMemo(() => calculatePartyLimitBreakdown(campaign), [campaign]);
   const partyStrength = calculatePartyStrength(
     campaign.roster,
     campaign.playerHp / campaign.playerMaxHp,
@@ -254,7 +258,7 @@ export const GameHud: React.FC<GameHudProps> = ({
     .filter((s) => s.workshopOwner === 'player' && s.workshopType && s.workshopType !== 'NONE')
     .reduce((acc, s) => acc + 20 + Math.round(s.prosperity * 0.08), 0);
   const netDailyGold = estTaxIncome + estWorkshopIncome - dailyWage;
-  const dailyFoodUse = Math.max(1, Math.ceil(totalTroops / 5));
+  const dailyFoodUse = Math.max(1, Math.ceil(partyHeadcount.totalMembers / 5));
   const daysOfFoodLeft = Math.max(0, Math.floor(campaign.food / dailyFoodUse));
 
   const currentHp = subMode === 'battle' ? battleTelemetry.playerHp : campaign.playerHp;
@@ -1390,24 +1394,43 @@ export const GameHud: React.FC<GameHudProps> = ({
                       </div>
 
                       {/* #12 Birlik & Kalkan (Asker) */}
-                      <div className="relative group cursor-help flex items-center gap-1">
+                      <div
+                        data-testid="hud-party-size"
+                        className="relative group cursor-help flex items-center gap-1"
+                      >
                         <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 fill-[#86efac]" aria-hidden="true">
                           <path d="M8 1.5L2.5 3.8v4.4c0 3.5 2.3 6.6 5.5 7.4 3.2-.8 5.5-3.9 5.5-7.4V3.8L8 1.5z" />
                         </svg>
                         <span>
-                          <strong className="text-[#86efac]">{totalTroops}</strong>
+                          <strong className="text-[#86efac]">
+                            {partyHeadcount.totalWounded > 0
+                              ? `${partyHeadcount.totalHealthy}+${partyHeadcount.totalWounded}y`
+                              : partyHeadcount.totalMembers}
+                          </strong>
                         </span>
-                        <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 z-50 w-60 p-2.5 rounded bg-[#0e0b08]/95 border border-[#c6a15b]/80 shadow-2xl text-[11px] font-sans">
+                        <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 z-50 w-64 p-2.5 rounded bg-[#0e0b08]/95 border border-[#c6a15b]/80 shadow-2xl text-[11px] font-sans">
                           <div className="font-bold text-[#86efac] border-b border-[#c6a15b]/30 pb-1 mb-1">
-                            Sancak Birliği: {totalTroops} / {partyCapacity}
+                            Sancak Birliği: {partyHeadcount.totalMembers} / {partyCapacity}
                           </div>
                           <div className="flex justify-between py-0.5">
+                            <span className="text-[#d1c5b0]">Kahramanlar (Sen &amp; Aile/Yoldaş):</span>
+                            <span className="font-mono text-[#fde68a]">{partyHeadcount.totalHeroes} Kişi</span>
+                          </div>
+                          <div className="flex justify-between py-0.5">
+                            <span className="text-[#d1c5b0]">Asker Kıtaları:</span>
+                            <span className="font-mono text-[#86efac]">{partyHeadcount.troops} Asker</span>
+                          </div>
+                          <div className="flex justify-between py-0.5 border-t border-[#c6a15b]/20 mt-1 pt-1">
                             <span className="text-[#d1c5b0]">Temel + İaşe Subayı:</span>
-                            <span className="font-mono text-[#4ade80]">+45 Kapasite</span>
+                            <span className="font-mono text-[#4ade80]">
+                              +{partyLimitBreakdown.base + partyLimitBreakdown.quartermasterBonus} Kapasite
+                            </span>
                           </div>
                           <div className="flex justify-between py-0.5">
                             <span className="text-[#d1c5b0]">Klan Kademesi ({clanInfo.tier}):</span>
-                            <span className="font-mono text-[#4ade80]">+{clanInfo.maxPartyBonus} Kapasite</span>
+                            <span className="font-mono text-[#4ade80]">
+                              +{partyLimitBreakdown.clanTierBonus} Kapasite
+                            </span>
                           </div>
                           <div className="flex justify-between py-0.5">
                             <span className="text-[#d1c5b0]">Savaş Esirleri:</span>

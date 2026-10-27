@@ -9,6 +9,7 @@ import {
   SiegeEngineType,
   getSettlementArrivalRadius,
   factionHasHorseArchers,
+  getPlayerPartyHeadcount,
   getTotalTroops,
   getVillagePrimaryProduction,
   getWallSections,
@@ -1624,22 +1625,22 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         </svg>
       </span>
       <span id="player-party-count" class="font-display font-extrabold text-[12px] text-[#fef08a] hud-stroke tracking-tight">
-        ${getTotalTroops(stateRef.current.campaign.roster)}
+        ${getPlayerPartyHeadcount(stateRef.current.campaign).totalMembers}
       </span>
     `;
     const playerPartyCountSpan = playerPartyEl.querySelector('#player-party-count');
     let playerLabelVisible = true;
     let playerLabelLastSx = -9999;
     let playerLabelLastSy = -9999;
-    let playerLabelLastText = String(getTotalTroops(stateRef.current.campaign.roster));
+    let playerLabelLastText = String(getPlayerPartyHeadcount(stateRef.current.campaign).totalMembers);
 
     playerPartyEl.addEventListener('mouseenter', () => {
       const camp = stateRef.current.campaign;
-      const totalHealthy = getTotalTroops(camp.roster);
+      const headcount = getPlayerPartyHeadcount(camp);
       const pSpeed = calculateBannerlordPartySpeed({
         x: playerOverworldX,
         z: playerOverworldZ,
-        totalHealthy,
+        totalHealthy: Math.max(1, headcount.totalHealthy),
         cavalryCount: camp.roster.cavalry,
         prisonerCount: camp.prisoners,
         foodUnits: camp.food,
@@ -1654,7 +1655,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           ${FACTION_INFO.player.emblemName}
         </div>
         <div class="my-1 border-t border-[#c6a15b]/25 pt-1 text-[10px] text-[#86efac] font-semibold">
-          Toplam Asker: ${totalHealthy} · Esirler: ${camp.prisoners}
+          Sancak Birliği: ${headcount.totalMembers} (${headcount.totalHeroes} Kahraman · ${headcount.troops} Asker) · Esirler: ${camp.prisoners}
         </div>
         <div class="text-[9px] text-[#e2e8f0] font-mono">
           Piyade: ${camp.roster.infantry} · Okçu: ${camp.roster.archer} · Süvari: ${camp.roster.cavalry} · Muhafız: ${camp.roster.horseArcher}
@@ -3079,8 +3080,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             playerPartyEl.style.transform = `translate3d(${sx}px, ${sy}px, 0) translate(-50%, 6px)`;
           }
           if (playerPartyCountSpan) {
+            const playerMembers = getPlayerPartyHeadcount(camp).totalMembers;
             const expectedPlayerText =
-              camp.prisoners > 0 ? `${totalTroops}+${camp.prisoners}e` : String(totalTroops);
+              camp.prisoners > 0 ? `${playerMembers}+${camp.prisoners}e` : String(playerMembers);
             if (playerLabelLastText !== expectedPlayerText) {
               playerLabelLastText = expectedPlayerText;
               playerPartyCountSpan.textContent = expectedPlayerText;
