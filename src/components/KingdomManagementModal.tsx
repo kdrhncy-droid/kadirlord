@@ -11,10 +11,7 @@ import {
   KingdomPolicyId,
   calculateSettlementLoyaltyAndFood,
   calculateWarDesireAndTribute,
-  computeWeatherAndAutoBattleModifiers,
-  evaluateStateDrivenKingdomDestruction,
   generateSettlementClaimantBallot,
-  resolveClanLeaderOrRegent,
   resolveKingdomCouncilVote,
 } from '../game/kingdomSystem';
 import { sound } from '../game/sound';
@@ -27,12 +24,7 @@ interface KingdomManagementModalProps {
   onClose: () => void;
 }
 
-type KingdomTabId =
-  | 'diplomacy_war'
-  | 'council_election'
-  | 'clans_succession'
-  | 'destruction_loyalty'
-  | 'architecture_matrix';
+type KingdomTabId = 'diplomacy' | 'fiefs' | 'policies' | 'clans';
 
 export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
   campaign,
@@ -41,13 +33,26 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
   onUpdateCampaign,
   onClose,
 }) => {
-  const [activeTab, setActiveTab] = useState<KingdomTabId>('diplomacy_war');
+  const [activeTab, setActiveTab] = useState<KingdomTabId>('diplomacy');
   const [selectedEnemyFaction, setSelectedEnemyFaction] = useState<FactionId>('empire');
   const [selectedElectionSettlementId, setSelectedElectionSettlementId] = useState<string>(
-    macroState.activeElection?.settlementId || 'poros',
+    macroState.activeElection?.settlementId ||
+      campaign.settlements.find((s) => s.faction === 'player' && s.type !== 'VILLAGE')?.id ||
+      'poros',
   );
-  const [hasFlexibleEthicsPerk, setHasFlexibleEthicsPerk] = useState(true);
   const [feedbackBanner, setFeedbackBanner] = useState<string | null>(null);
+
+  // Klavyeden Esc ile kapatma desteği
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Escape' || e.code === 'KeyK') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   const playerClans = useMemo(
     () => macroState.clans.filter((c) => c.isPlayerClan || c.faction === 'player'),
@@ -69,6 +74,20 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
     [campaign.settlements, selectedEnemyFaction],
   );
 
+  // Aktif savaş durumu kontrolü (Hem campaign.world.wars hem de lordların durumu)
+  const isCurrentlyAtWarWithSelected = useMemo(() => {
+    const activeWars = campaign.world?.wars ?? [];
+    const directWar = activeWars.some(
+      (w) =>
+        (w.a === 'player' && w.b === selectedEnemyFaction) ||
+        (w.b === 'player' && w.a === selectedEnemyFaction),
+    );
+    const hasHostileLords = campaign.lords.some(
+      (l) => l.faction === selectedEnemyFaction && l.isAtWarWithPlayer,
+    );
+    return directWar || hasHostileLords;
+  }, [campaign.world?.wars, campaign.lords, selectedEnemyFaction]);
+
   const liveWarReport = useMemo(() => {
     const warStats = macroState.wars[selectedEnemyFaction];
     return calculateWarDesireAndTribute({
@@ -79,13 +98,12 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
       fiefsA: playerFiefs.length > 0 ? playerFiefs : campaign.settlements.slice(0, 3),
       fiefsB: enemyFiefs,
       warStats,
-      useImprovedArchitecture: macroState.useImprovedArchitecture,
+      useImprovedArchitecture: true,
     });
   }, [
     selectedEnemyFaction,
     macroState.wars,
     macroState.clans,
-    macroState.useImprovedArchitecture,
     playerClans,
     enemyClans,
     playerFiefs,
@@ -102,42 +120,97 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
       kingdomClans: macroState.clans.slice(0, 5),
       allSettlements: campaign.settlements,
       conquerorClanId: 'clan-player',
-      useImprovedArchitecture: macroState.useImprovedArchitecture,
+      useImprovedArchitecture: true,
     });
-  }, [
-    selectedElectionSettlementId,
-    campaign.settlements,
-    macroState.clans,
-    macroState.useImprovedArchitecture,
-  ]);
+  }, [selectedElectionSettlementId, campaign.settlements, macroState.clans]);
 
-  const handleToggleArchitectureMode = () => {
-    sound.playCoinChime();
-    const nextMode = !macroState.useImprovedArchitecture;
+  // Savaş İlan Et
+  const handleDeclareWar = (targetFac: FactionId) => {
+    const cost = 50;
+    if (macroState.influence < cost) {
+      setFeedbackBanner(`Savaş ilanı için en az ${cost} Nüfuz gerekiyor.`);
+      return;
+    }
+    sound.playWarhorn();
+    const existingWars = campaign.world?.wars ?? [];
+    const newWars = [
+      ...existingWars.filter(
+        (w) =>
+          !(
+            (w.a === 'player' && w.b === targetFac) ||
+            (w.b === 'player' && w.a === targetFac)
+          ),
+      ),
+      { a: 'player' as FactionId, b: targetFac, sinceDay: campaign.day, score: 0, sieges: 0 },
+    ];
+
+    const updatedLords = campaign.lords.map((l) =>
+      l.faction === targetFac ? { ...l, isAtWarWithPlayer: true } : l,
+    );
+
+    onUpdateCampaign({
+      ...campaign,
+      world: {
+        ...(campaign.world ?? { seed: 20261021, stats: {} as any, siegeCooldowns: {} }),
+        wars: newWars,
+      },
+      lords: updatedLords,
+    });
+
     onUpdateMacroState({
       ...macroState,
-      useImprovedArchitecture: nextMode,
+      influence: macroState.influence - cost,
     });
+
     setFeedbackBanner(
-      nextMode
-        ? 'Mimari Çözüm Modu Aktif: Logaritmik Mesafe Sönümlemesi (^0.25), Kültür Eşleşmesi (+60 Puan), Savaş Yorgunluğu ve Naip (Regent) Koruması devrede.'
-        : 'Vanilla Bannerlord 1.2 Modu Aktif: Tımar-Güç Paradoksu, ^0.5 Karekök Mesafe Tuzağı ve Sabit 20 Nüfuz Eşiği (Flexible Ethics Hatası) gözlemlenebilir.',
+      `${FACTION_INFO[targetFac].name} devletine resmen savaş ilan edildi! Krallık orduları teyakkuza geçti (-${cost} Nüfuz).`,
     );
   };
 
+  // Barış İmzala
+  const handleProposePeace = (targetFac: FactionId) => {
+    sound.playCoinChime();
+    const existingWars = campaign.world?.wars ?? [];
+    const newWars = existingWars.filter(
+      (w) =>
+        !(
+          (w.a === 'player' && w.b === targetFac) ||
+          (w.b === 'player' && w.a === targetFac)
+        ),
+    );
+
+    const updatedLords = campaign.lords.map((l) =>
+      l.faction === targetFac ? { ...l, isAtWarWithPlayer: false } : l,
+    );
+
+    onUpdateCampaign({
+      ...campaign,
+      world: {
+        ...(campaign.world ?? { seed: 20261021, stats: {} as any, siegeCooldowns: {} }),
+        wars: newWars,
+      },
+      lords: updatedLords,
+    });
+
+    setFeedbackBanner(
+      `${FACTION_INFO[targetFac].name} ile barış antlaşması imzalandı! Savaş hâli resmen sona erdi.`,
+    );
+  };
+
+  // Tımar Oylaması
   const handleVoteOnFief = (clanId: string, tier: 1 | 2 | 3, isOverride = false) => {
     const res = resolveKingdomCouncilVote({
       election: currentElection,
       chosenClanId: clanId,
       influenceTier: tier,
-      hasFlexibleEthicsPerk,
+      hasFlexibleEthicsPerk: false,
       hasRoyalPrivilegePolicy: macroState.activePolicies.includes('ROYAL_PRIVILEGE'),
       isRulerOverride: isOverride,
-      useImprovedArchitecture: macroState.useImprovedArchitecture,
+      useImprovedArchitecture: true,
     });
 
     if (macroState.influence < res.influenceSpent && !isOverride) {
-      setFeedbackBanner(`Yeterli Nüfuz (Influence) yok! Gerekli: ${res.influenceSpent}`);
+      setFeedbackBanner(`Yeterli Nüfuz yok! Gerekli: ${res.influenceSpent}`);
       return;
     }
 
@@ -175,17 +248,12 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
       clans: updatedClans,
     });
 
-    if (res.flexibleEthicsBugTriggered) {
-      setFeedbackBanner(
-        `[VANILLA HATASI TETİKLENDİ] Flexible Ethics perki nüfuz maliyetini 20'den ${res.influenceSpent}'ye düşürdüğü için sabit 'influence >= 20' eşiği geçilemedi: +0 İlişki ve +0 Cazibe (Charm) XP verildi!`,
-      );
-    } else {
-      setFeedbackBanner(
-        `Konsey Kararı Onaylandı: ${currentElection.settlementName} tımarı ${winningClan?.name} sancağına verildi (-${res.influenceSpent} Nüfuz, +${res.relationGained} İlişki, +${res.charmXpGained} Cazibe XP).`,
-      );
-    }
+    setFeedbackBanner(
+      `Konsey Kararı Onaylandı: ${currentElection.settlementName} tımarı ${winningClan?.name} hanedanına verildi (-${res.influenceSpent} Nüfuz, +${res.relationGained} İlişki).`,
+    );
   };
 
+  // Politika Yürürlüğe Koy / Kaldır
   const handleTogglePolicy = (policyId: KingdomPolicyId) => {
     const exists = macroState.activePolicies.includes(policyId);
     const cost = KINGDOM_POLICIES[policyId].influenceCostToPropose;
@@ -205,28 +273,34 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
     setFeedbackBanner(
       exists
         ? `${KINGDOM_POLICIES[policyId].name} yürürlükten kaldırıldı.`
-        : `${KINGDOM_POLICIES[policyId].name} Krallık Konseyi tarafından yürürlüğe kondu!`,
+        : `${KINGDOM_POLICIES[policyId].name} Krallık Meclisi tarafından yürürlüğe kondu (-${cost} Nüfuz)!`,
     );
   };
 
+  // Yoldaşı Vasal Klana Terfi Ettir
   const handlePromoteCompanionToClan = () => {
-    const costGold = 500; // Scaled to campaign economy (represents 20,000 denars in Bannerlord)
+    const costGold = 500;
     const costInfluence = 50;
+    const playerFiefsNonVillage = campaign.settlements.filter(
+      (s) => s.faction === 'player' && s.type !== 'VILLAGE',
+    );
+    if (playerFiefsNonVillage.length === 0) {
+      setFeedbackBanner('Yoldaşı soylu yapmak için krallığınıza ait en az 1 Kale veya Şehir tımarı bağışlamalısınız.');
+      return;
+    }
     if (campaign.gold < costGold || macroState.influence < costInfluence) {
       setFeedbackBanner(
-        `Yoldaşı soylu klana terfi ettirmek için ${costGold} Dinar, ${costInfluence} Nüfuz ve 1 Tımar gerekiyor.`,
+        `Yoldaşı soylu klana terfi ettirmek için ${costGold} Dinar ve ${costInfluence} Nüfuz gerekiyor.`,
       );
       return;
     }
     sound.playWarhorn();
     const newClanId = `clan-comp-${Date.now()}`;
-    const targetFief =
-      campaign.settlements.find((s) => s.faction === 'player' && s.type !== 'VILLAGE') ||
-      campaign.settlements[0];
+    const targetFief = playerFiefsNonVillage[0];
 
     const newClan = {
       id: newClanId,
-      name: 'Aybars Sancağı (Terfi Eden Yoldaş)',
+      name: 'Sungur Hanedanı (Yoldaş Soylusu)',
       faction: 'player' as FactionId,
       culture: 'empire' as FactionId,
       tier: 3,
@@ -244,20 +318,23 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
       workshopsCount: 1,
       caravansCount: 1,
       traits: ['HONORABLE', 'DARING'] as const,
-      relationWithPlayer: 65,
-      relationWithRuler: 65,
+      relationWithPlayer: 75,
+      relationWithRuler: 75,
       succession: {
         leaderId: `hero-${newClanId}`,
-        leaderName: 'Lord Aybars',
+        leaderName: 'Lord Sungur',
         isRegentActive: false,
         regentName: null,
-        heirQueue: [{ id: `heir-${newClanId}`, name: 'Genç Sungur', age: 18, isAdult: true }],
+        heirQueue: [{ id: `heir-${newClanId}`, name: 'Alp Sungur', age: 19, isAdult: true }],
       },
     };
 
     onUpdateCampaign({
       ...campaign,
       gold: campaign.gold - costGold,
+      settlements: campaign.settlements.map((s) =>
+        s.id === targetFief.id ? { ...s, faction: 'player' as FactionId } : s,
+      ),
     });
 
     onUpdateMacroState({
@@ -267,79 +344,11 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
     });
 
     setFeedbackBanner(
-      `Yoldaşınız İzci Aybars, "${newClan.name}" adıyla Seviye 3 Soylu Vasal Klana terfi ettirildi ve ${targetFief.name} tımarı kendisine bağlandı!`,
+      `Yoldaşınız, "${newClan.name}" adıyla Seviye 3 Soylu Derebeyi ilan edildi ve ${targetFief.name} tımarı kendisine bağlandı (-${costGold} Dinar, -${costInfluence} Nüfuz).`,
     );
   };
 
-  const handleSimulateLeaderFallAndSuccession = (clanId: string) => {
-    sound.playSwordSwing();
-    const updated = macroState.clans.map((c) => {
-      if (c.id !== clanId) return c;
-      // Drain adult heirs to demonstrate Null-Safe Regent appointment if needed
-      const nextQueue = c.succession.heirQueue.slice(1);
-      const nextSucc = resolveClanLeaderOrRegent({
-        ...c,
-        succession: {
-          ...c.succession,
-          leaderName: '',
-          isRegentActive: false,
-          heirQueue: nextQueue,
-        },
-      });
-      return {
-        ...c,
-        succession: nextSucc,
-      };
-    });
-
-    onUpdateMacroState({
-      ...macroState,
-      clans: updated,
-    });
-
-    const target = updated.find((c) => c.id === clanId);
-    setFeedbackBanner(
-      `Veraset & Null-Safety Testi: ${target?.name} liderliği devredildi -> Yeni Lider: ${target?.succession.leaderName} (${
-        target?.succession.isRegentActive
-          ? 'Reşit varis kalmadığı için Naip [Regent] atandı — NullReferenceException önlendi!'
-          : 'Yetişkin Varis Tahta Geçti'
-      })`,
-    );
-  };
-
-  const handleSimulateFieflessDestruction = (targetFaction: FactionId) => {
-    sound.playWarhorn();
-    // Transfer all fortifications of targetFaction to player to trigger State-Driven Destruction
-    const updatedSettlements = campaign.settlements.map((s) =>
-      s.faction === targetFaction ? { ...s, faction: 'player' as FactionId } : s,
-    );
-
-    const check = evaluateStateDrivenKingdomDestruction({
-      settlements: updatedSettlements,
-      clans: macroState.clans,
-      alreadyDestroyed: macroState.destroyedKingdoms,
-      daysElapsed: 7,
-    });
-
-    onUpdateCampaign({
-      ...campaign,
-      settlements: updatedSettlements,
-    });
-
-    onUpdateMacroState({
-      ...macroState,
-      clans: check.updatedClans,
-      destroyedKingdoms: [
-        ...new Set([...macroState.destroyedKingdoms, ...check.newlyDestroyedFactions]),
-      ],
-    });
-
-    setFeedbackBanner(
-      `Durum Güdümlü (State-Driven) Yıkım Tetiklendi: ${FACTION_INFO[targetFaction].name} son tımarını kaybettiği anda yıkıldı! Klanları 28 günlük (4 hafta) bağımsız hayatta kalma/iltihak penceresine girdi.`,
-    );
-  };
-
-  const weatherMods = computeWeatherAndAutoBattleModifiers(macroState.weatherCondition, true);
+  const majorFactions: FactionId[] = ['empire', 'vlandia', 'battania', 'sturgia', 'khuzait', 'aserai'];
 
   return (
     <div
@@ -350,44 +359,39 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
       aria-labelledby="kingdom-macro-modal-title"
     >
       <div className="hud-panel w-full max-w-6xl max-h-[92vh] flex flex-col rounded-lg border-2 border-[#c6a15b]/55 bg-[#110e0b] text-[#f3ead8] shadow-2xl overflow-hidden">
-        {/* TOP HEADER */}
+        {/* ÜST BAŞLIK */}
         <div className="px-5 py-3.5 border-b border-[#c6a15b]/35 bg-gradient-to-r from-[#191510] via-[#231c14] to-[#191510] flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-semibold text-[#c6a15b] tracking-wider">
-              SANCAK DİVANI · KRALLIK MECLİSİ
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full border border-[#c6a15b]/60 bg-[#1c1610] flex items-center justify-center text-[#fbbf24] shadow-inner">
+              <svg viewBox="0 0 24 24" className="w-6 h-6 fill-current">
+                <path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5m14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z" />
+              </svg>
             </div>
-            <h2
-              id="kingdom-macro-modal-title"
-              className="text-xl sm:text-2xl font-display font-bold text-[#fef08a]"
-            >
-              Krallık Divanı ve Diplomasi
-            </h2>
+            <div>
+              <div className="text-[11px] font-semibold text-[#c6a15b] tracking-wider uppercase">
+                SANCAK DİVANI · DEVLET MECLİSİ
+              </div>
+              <h2
+                id="kingdom-macro-modal-title"
+                className="text-xl sm:text-2xl font-display font-bold text-[#fef08a]"
+              >
+                Krallık Divanı ve Devlet Yönetimi
+              </h2>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="px-2.5 py-1.5 rounded bg-[#18140f] border border-[#c6a15b]/30 font-mono-tabular text-xs flex items-center gap-2">
-              <span>
-                Nüfuz: <strong className="text-[#fbbf24]">{macroState.influence}</strong>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="px-3 py-1.5 rounded bg-[#18140f] border border-[#c6a15b]/30 font-mono-tabular text-xs flex items-center gap-3">
+              <span className="flex items-center gap-1.5">
+                <span className="text-[#a89b84]">Nüfuz:</span>
+                <strong className="text-[#fbbf24] font-bold">{macroState.influence}</strong>
               </span>
-              <span>·</span>
-              <span>
-                İnsan Gücü: <strong className="text-[#34d399]">{macroState.manpowerPools.player}</strong>
+              <span className="text-[#c6a15b]/40">·</span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-[#a89b84]">Hazine:</span>
+                <strong className="text-[#34d399] font-bold">{campaign.gold.toLocaleString()} Dinar</strong>
               </span>
             </div>
-
-            <button
-              type="button"
-              onClick={handleToggleArchitectureMode}
-              className={`px-2.5 py-1.5 rounded text-xs font-bold border transition-colors whitespace-nowrap ${
-                macroState.useImprovedArchitecture
-                  ? 'bg-[#15803d] text-white border-[#86efac]'
-                  : 'bg-[#7f1d1d] text-[#fecaca] border-[#f87171]'
-              }`}
-            >
-              {macroState.useImprovedArchitecture
-                ? 'Mimari: Geliştirilmiş'
-                : 'Mimari: Standart'}
-            </button>
 
             <button
               type="button"
@@ -400,43 +404,25 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
           </div>
         </div>
 
-        {/* NAVIGATION TABS */}
-        <div className="px-4 py-2 border-b border-[#c6a15b]/25 bg-[#16120d] flex flex-wrap items-center gap-1.5">
-          {(
-            [
-              {
-                id: 'diplomacy_war',
-                label: '01. Diplomasi & Haraç (DefaultDiplomacyModel)',
-              },
-              {
-                id: 'council_election',
-                label: '02. Konsey & Tımar Liyakat (CalculateMeritOfOutcome)',
-              },
-              {
-                id: 'clans_succession',
-                label: '03. Klan Ekonomisi & Naip Veraseti',
-              },
-              {
-                id: 'destruction_loyalty',
-                label: '04. Krallık Yıkımı, Sadakat & İklim',
-              },
-              {
-                id: 'architecture_matrix',
-                label: '05. 4 Katmanlı Mimari & Çözüm Matrisi',
-              },
-            ] as Array<{ id: KingdomTabId; label: string }>
-          ).map((t) => (
+        {/* 4 KANONİK BANNERLORD SEKMESİ */}
+        <div className="px-4 py-2 border-b border-[#c6a15b]/25 bg-[#16120d] flex flex-wrap items-center gap-2">
+          {[
+            { id: 'diplomacy', label: '1. DİPLOMASİ (Savaş & Barış)' },
+            { id: 'fiefs', label: '2. TIMARLAR (Mülkler & Oylama)' },
+            { id: 'policies', label: '3. POLİTİKALAR (Krallık Kanunları)' },
+            { id: 'clans', label: '4. KLANLAR (Derebeyleri & Hanedanlar)' },
+          ].map((t) => (
             <button
               key={t.id}
               type="button"
               onClick={() => {
-                setActiveTab(t.id);
+                setActiveTab(t.id as KingdomTabId);
                 setFeedbackBanner(null);
               }}
-              className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+              className={`px-4 py-2 rounded text-xs font-bold tracking-wide transition-all whitespace-nowrap ${
                 activeTab === t.id
-                  ? 'bg-[#b45309] text-white border border-[#fde68a]/50'
-                  : 'bg-[#1f1a13] text-[#d1c5b0] hover:bg-[#2c251b]'
+                  ? 'bg-gradient-to-r from-[#b45309] to-[#d97706] text-white border border-[#fde68a]/60 shadow-md'
+                  : 'bg-[#1f1a13] text-[#d1c5b0] hover:bg-[#2c251b] border border-[#c6a15b]/20'
               }`}
             >
               {t.label}
@@ -445,461 +431,361 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
         </div>
 
         {feedbackBanner && (
-          <div className="mx-5 mt-3 px-4 py-2 rounded bg-[#261f14] border border-[#f59e0b]/50 text-xs text-[#fde68a] flex items-center justify-between gap-2">
-            <span>{feedbackBanner}</span>
+          <div className="mx-5 mt-3 px-4 py-2.5 rounded bg-[#261f14] border border-[#f59e0b]/60 text-xs text-[#fde68a] flex items-center justify-between gap-2 shadow-lg">
+            <span className="font-medium">{feedbackBanner}</span>
             <button
               type="button"
               onClick={() => setFeedbackBanner(null)}
-              className="text-[#c6a15b] hover:text-white font-bold"
+              className="text-[#c6a15b] hover:text-white font-bold px-2 py-0.5"
             >
               ✕
             </button>
           </div>
         )}
 
-        {/* TAB CONTENT */}
+        {/* SEKME İÇERİKLERİ */}
         <div className="p-5 flex-1 overflow-y-auto space-y-5">
           {/* ================================================================ */}
-          {/* TAB 1: DEFAULTDIPLOMACYMODEL, WARDESIRERATIO & TRIBUTE PARADOX    */}
+          {/* SEKME 1: DİPLOMASİ (SAVAŞ & BARIŞ DURUMU)                        */}
           {/* ================================================================ */}
-          {activeTab === 'diplomacy_war' && (
+          {activeTab === 'diplomacy' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-              {/* Live Kingdom War Desire & Asymmetric Metrics (tam genişlik: sandbox laboratuvarı 10.1 ile kaldırıldı) */}
-              <div className="lg:col-span-12 space-y-4">
-                <div className="p-4 rounded bg-[#17130e] border border-[#c6a15b]/30">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#c6a15b]/20 pb-2.5 mb-3">
-                    <div>
-                      <h3 className="text-sm font-bold text-[#fef08a]">
-                        DefaultDiplomacyModel.GetScoreOfDeclaringWar & Haraç Motoru
-                      </h3>
-                      <p className="text-xs text-[#b5a890]">
-                        WarDesireRatio = ((TotalClanWarPartyCount × X) + TotalKingdomStrength) / TotalValueOfKingdomFiefs
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      {(
-                        ['empire', 'vlandia', 'battania', 'sturgia', 'khuzait', 'aserai'] as FactionId[]
-                      ).map((fac) => (
-                        <button
-                          key={fac}
-                          type="button"
-                          onClick={() => setSelectedEnemyFaction(fac)}
-                          className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors whitespace-nowrap ${
-                            selectedEnemyFaction === fac
-                              ? 'bg-[#b45309] text-white'
-                              : 'bg-[#221c15] text-[#d1c5b0] hover:bg-[#30281e]'
-                          }`}
-                        >
-                          {FACTION_INFO[fac].name.split(' ')[0]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Formula Live Breakdown */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono-tabular text-xs mb-3">
-                    <div className="p-2.5 rounded bg-[#120f0b] border border-[#c6a15b]/20">
-                      <span className="text-[10px] text-[#a89b84] block">
-                        Savaş Partisi Yoğunluğu
-                      </span>
-                      <span className="text-sm font-bold text-[#f8f0df]">
-                        {liveWarReport.totalWarPartiesA} × {liveWarReport.dynamicMultiplierX}
-                      </span>
-                    </div>
-                    <div className="p-2.5 rounded bg-[#120f0b] border border-[#c6a15b]/20">
-                      <span className="text-[10px] text-[#a89b84] block">
-                        Toplam Güç (Milis Hariç)
-                      </span>
-                      <span className="text-sm font-bold text-[#34d399]">
-                        {liveWarReport.totalStrengthA}
-                      </span>
-                    </div>
-                    <div className="p-2.5 rounded bg-[#120f0b] border border-[#c6a15b]/20">
-                      <span className="text-[10px] text-[#a89b84] block">
-                        Tımar Değeri (Payda)
-                      </span>
-                      <span className="text-sm font-bold text-[#fbbf24]">
-                        {liveWarReport.totalValueOfFiefsA}
-                      </span>
-                    </div>
-                    <div className="p-2.5 rounded bg-[#120f0b] border border-[#c6a15b]/20">
-                      <span className="text-[10px] text-[#a89b84] block">
-                        Savaş İsteği Skoru
-                      </span>
-                      <span className="text-sm font-bold text-[#f87171]">
-                        %{liveWarReport.warDesireScorePct}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Asymmetric War Metrics Table */}
-                  <div className="text-xs space-y-2 border-t border-[#c6a15b]/20 pt-3">
-                    <div className="font-semibold text-[#fde68a]">
-                      Saha Metriklerinin Asimetrik Ağırlığı ({FACTION_INFO[selectedEnemyFaction].name} Cephesi)
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono-tabular">
-                      <div className="p-2 rounded bg-[#120f0b] border border-[#c6a15b]/15">
-                        <div className="text-[10px] text-[#a89b84]">Asker Zayiatı (Düşük)</div>
-                        <div className="font-bold text-[#e2d6c1]">
-                          {macroState.wars[selectedEnemyFaction].casualtiesInflicted} /{' '}
-                          {macroState.wars[selectedEnemyFaction].casualtiesSustained}
-                        </div>
-                      </div>
-                      <div className="p-2 rounded bg-[#120f0b] border border-[#c6a15b]/15">
-                        <div className="text-[10px] text-[#34d399]">Esir Lordlar (Çok Yüksek)</div>
-                        <div className="font-bold text-[#34d399]">
-                          {macroState.wars[selectedEnemyFaction].prisonersCaptured} Esir Lord
-                        </div>
-                      </div>
-                      <div className="p-2 rounded bg-[#120f0b] border border-[#c6a15b]/15">
-                        <div className="text-[10px] text-[#f87171]">Köy Yağmaları (Aşırı Yüksek)</div>
-                        <div className="font-bold text-[#f87171]">
-                          {macroState.wars[selectedEnemyFaction].raidsInflicted} vs{' '}
-                          {macroState.wars[selectedEnemyFaction].raidsSustained} Yağma
-                        </div>
-                      </div>
-                      <div className="p-2 rounded bg-[#120f0b] border border-[#c6a15b]/15">
-                        <div className="text-[10px] text-[#fbbf24]">Kuşatmalar & Yorgunluk</div>
-                        <div className="font-bold text-[#fbbf24]">
-                          {macroState.wars[selectedEnemyFaction].siegesWon} Zafer · %
-                          {liveWarReport.warExhaustionB} Yorgunluk
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
-                      <div className="text-xs text-[#d1c5b0]">
-                        Hesaplanan Günlük Haraç:{' '}
-                        <strong
-                          className={
-                            liveWarReport.dailyTributeFromAToB <= 0
-                              ? 'text-[#34d399] font-mono-tabular'
-                              : 'text-[#f87171] font-mono-tabular'
-                          }
-                        >
-                          {liveWarReport.dailyTributeFromAToB <= 0
-                            ? `Günlük +${Math.abs(liveWarReport.dailyTributeFromAToB)} Dinar Haraç Alınır`
-                            : `Günlük -${liveWarReport.dailyTributeFromAToB} Dinar Haraç Ödenir`}
-                        </strong>
-                        {macroState.wars[selectedEnemyFaction].tributeDebt > 0 && (
-                          <span className="ml-2 text-[#fbbf24]">
-                            (Birikmiş Haraç Borcu: {macroState.wars[selectedEnemyFaction].tributeDebt} Dinar)
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            sound.playWarhorn();
-                            const currentWar = macroState.wars[selectedEnemyFaction];
-                            onUpdateMacroState({
-                              ...macroState,
-                              wars: {
-                                ...macroState.wars,
-                                [selectedEnemyFaction]: {
-                                  ...currentWar,
-                                  prisonersCaptured: currentWar.prisonersCaptured + 2,
-                                  siegesWon: currentWar.siegesWon + 1,
-                                },
-                              },
-                            });
-                            setFeedbackBanner(
-                              `${FACTION_INFO[selectedEnemyFaction].name} cephesinde 2 düşman lordu esir alındı; düşmanın aktif savaş partisi yoğunluğu düşürüldü!`,
-                            );
-                          }}
-                          className="px-2.5 py-1 rounded text-xs font-bold bg-[#15803d] hover:bg-[#16a34a] text-white whitespace-nowrap"
-                        >
-                          +2 Düşman Lordu Esir Al
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+              {/* Sol: Krallık Listesi */}
+              <div className="lg:col-span-4 space-y-2">
+                <div className="text-xs font-bold text-[#c6a15b] uppercase tracking-wider mb-2">
+                  Kalradya Krallıkları
                 </div>
-              </div>
+                <div className="space-y-1.5">
+                  {majorFactions.map((fac) => {
+                    const isSelected = selectedEnemyFaction === fac;
+                    const wars = campaign.world?.wars ?? [];
+                    const isWar =
+                      wars.some(
+                        (w) =>
+                          (w.a === 'player' && w.b === fac) ||
+                          (w.b === 'player' && w.a === fac),
+                      ) ||
+                      campaign.lords.some((l) => l.faction === fac && l.isAtWarWithPlayer);
+                    const facSettlements = campaign.settlements.filter(
+                      (s) => s.faction === fac && s.type !== 'VILLAGE',
+                    );
 
-            </div>
-          )}
-
-          {/* ================================================================ */}
-          {/* TAB 2: COUNCIL ELECTIONS, CALCULATEMERITOFOUTCOME & POLICIES     */}
-          {/* ================================================================ */}
-          {activeTab === 'council_election' && (
-            <div className="space-y-5">
-              <div className="p-4 rounded bg-[#17130e] border border-[#c6a15b]/30">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#c6a15b]/20 pb-3 mb-4">
-                  <div>
-                    <h3 className="text-sm font-bold text-[#fef08a]">
-                      Tımar Dağıtım Konseyi: SettlementClaimantDecision.CalculateMeritOfOutcome()
-                    </h3>
-                    <p className="text-xs text-[#b5a890]">
-                      En yüksek Liyakat Skorunu (Merit Score) alan 3 klan pusulaya çıkar. İç Bölge
-                      İç Bölge Tuzağını (num7 = distance^0.5) ve Flexible Ethics Perk Eşiğini inceleyin.
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label htmlFor="election-fief-select" className="text-xs text-[#c6a15b]">
-                      Oylanan Tımar:
-                    </label>
-                    <select
-                      id="election-fief-select"
-                      value={selectedElectionSettlementId}
-                      onChange={(e) => setSelectedElectionSettlementId(e.target.value)}
-                      className="bg-[#120f0b] border border-[#c6a15b]/40 rounded px-2.5 py-1 text-xs text-[#f8f0df]"
-                    >
-                      {campaign.settlements
-                        .filter((s) => s.type !== 'VILLAGE')
-                        .slice(0, 18)
-                        .map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name} ({FACTION_INFO[s.faction].name} · Refah {s.prosperity})
-                          </option>
-                        ))}
-                    </select>
-
-                    <button
-                      type="button"
-                      onClick={() => setHasFlexibleEthicsPerk((p) => !p)}
-                      className={`px-2.5 py-1 rounded text-xs font-semibold border ${
-                        hasFlexibleEthicsPerk
-                          ? 'bg-[#2b2114] border-[#f59e0b] text-[#fde68a]'
-                          : 'bg-[#14110d] border-[#c6a15b]/25 text-[#a89b84]'
-                      }`}
-                    >
-                      Flexible Ethics Perki: {hasFlexibleEthicsPerk ? 'AÇIK (Maliyet 17)' : 'KAPALI (Maliyet 20)'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Top 3 Candidates Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {currentElection.candidates.map((cand, idx) => (
-                    <div
-                      key={cand.clanId}
-                      className="p-3.5 rounded bg-[#120f0b] border border-[#c6a15b]/30 flex flex-col justify-between space-y-3"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-[#fbbf24]">
-                            #{idx + 1} Aday · Destek %{cand.councilSupportPct}
-                          </span>
-                          <span className="text-[11px] font-mono-tabular text-[#34d399]">
-                            Skor: {cand.finalMeritScore}
-                          </span>
-                        </div>
-                        <div className="text-base font-bold text-[#f8f0df] mt-1">
-                          {cand.clanName}
-                        </div>
-
-                        <div className="mt-2.5 space-y-1 text-[11px] font-mono-tabular text-[#d1c5b0] border-t border-[#c6a15b]/15 pt-2">
-                          <div className="flex justify-between">
-                            <span>Klan Seviyesi (Tier × 30):</span>
-                            <span>+{cand.tierBonus}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Askeri Güç (num8 / 10):</span>
-                            <span>+{cand.strengthContribution}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Tımarsızlık / Kral / Fetih:</span>
-                            <span>
-                              +{cand.fieflessBonus} / +{cand.rulerBonus} / +{cand.conquerorBonus}
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-[#34d399]">
-                            <span>Kültür Uyumu & İlişki Bonusu:</span>
-                            <span>
-                              +{cand.cultureMatchBonus} / +{cand.relationBonus}
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-[#fbbf24]">
-                            <span>Efektif Mesafe (val2):</span>
-                            <span>{cand.effectiveDistance}m</span>
-                          </div>
-                          <div className="flex justify-between text-[#fde68a]">
-                            <span>Mesafe Çarpanı (num7):</span>
-                            <span>
-                              Vanilla ^0.5: {cand.distanceFactorVanilla}x · Çözüm ^0.25:{' '}
-                              {cand.distanceFactorImproved}x
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-[#a89b84]">
-                            <span>Mevcut Tımar Paydası:</span>
-                            <span>/{cand.totalFiefValueDenominator}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1.5 pt-2 border-t border-[#c6a15b]/20">
-                        <button
-                          type="button"
-                          onClick={() => handleVoteOnFief(cand.clanId, 1, false)}
-                          className="w-full py-1.5 px-2.5 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white transition-colors"
-                        >
-                          Destekle ({hasFlexibleEthicsPerk ? '17' : '20'} Nüfuz · Kademe 1)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleVoteOnFief(cand.clanId, 3, true)}
-                          className="w-full py-1 px-2.5 rounded text-[11px] font-semibold bg-[#262018] hover:bg-[#382f22] text-[#fde68a] border border-[#c6a15b]/35 transition-colors"
-                        >
-                          Hükümdar Vetosu ile Ata (Override)
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Kingdom Policies */}
-              <div className="p-4 rounded bg-[#17130e] border border-[#c6a15b]/30">
-                <h3 className="text-sm font-bold text-[#fef08a] mb-2">
-                  Krallık Politikaları (Kingdom Policies) ve Sadakat / Nüfuz Etkileri
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {Object.values(KINGDOM_POLICIES).map((pol) => {
-                    const isActive = macroState.activePolicies.includes(pol.id);
                     return (
-                      <div
-                        key={pol.id}
-                        className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/25 flex flex-col justify-between gap-2"
+                      <button
+                        key={fac}
+                        type="button"
+                        onClick={() => setSelectedEnemyFaction(fac)}
+                        className={`w-full p-3 rounded text-left transition-all flex items-center justify-between border ${
+                          isSelected
+                            ? 'bg-[#2a2217] border-[#fbbf24] shadow-md'
+                            : 'bg-[#18140f] border-[#c6a15b]/20 hover:bg-[#221c15]'
+                        }`}
                       >
                         <div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-bold text-[#f8f0df]">{pol.name}</span>
-                            <span
-                              className={`text-[10px] font-bold ${
-                                isActive ? 'text-[#34d399]' : 'text-[#a89b84]'
-                              }`}
-                            >
-                              {isActive ? 'YÜRÜRLÜKTE' : 'PASİF'}
-                            </span>
+                          <div className="font-bold text-sm text-[#f8f0df]">
+                            {FACTION_INFO[fac].name}
                           </div>
-                          <p className="text-[11px] text-[#b5a890] mt-1 leading-relaxed">
-                            {pol.summary}
-                          </p>
+                          <div className="text-[11px] text-[#a89b84]">
+                            {facSettlements.length} Şehir/Kale · Kültür: {fac.toUpperCase()}
+                          </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleTogglePolicy(pol.id)}
-                          className={`w-full py-1.5 rounded text-xs font-bold transition-colors ${
-                            isActive
-                              ? 'bg-[#282118] text-[#fca5a5] hover:bg-[#3b2f22]'
-                              : 'bg-[#15803d] text-white hover:bg-[#16a34a]'
-                          }`}
-                        >
-                          {isActive
-                            ? 'Politikayı Yürürlükten Kaldır'
-                            : `Yürürlüğe Koy (${pol.influenceCostToPropose} Nüfuz)`}
-                        </button>
-                      </div>
+
+                        <div>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              isWar
+                                ? 'bg-[#7f1d1d] text-[#fecaca] border border-[#ef4444]/40'
+                                : 'bg-[#14532d] text-[#bbf7d0] border border-[#22c55e]/30'
+                            }`}
+                          >
+                            {isWar ? 'SAVAŞTA' : 'BARIŞTA'}
+                          </span>
+                        </div>
+                      </button>
                     );
                   })}
                 </div>
               </div>
+
+              {/* Sağ: Seçili Krallıkla Diplomasi Detayı */}
+              <div className="lg:col-span-8 space-y-4">
+                <div className="p-5 rounded bg-[#17130e] border border-[#c6a15b]/30 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#c6a15b]/20 pb-3">
+                    <div>
+                      <h3 className="text-lg font-bold text-[#fef08a]">
+                        {FACTION_INFO[selectedEnemyFaction].name} ile İlişkiler
+                      </h3>
+                      <p className="text-xs text-[#b5a890]">
+                        Hükümdar sancağı ve iki devlet arasındaki diplomatik denge
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {isCurrentlyAtWarWithSelected ? (
+                        <button
+                          type="button"
+                          onClick={() => handleProposePeace(selectedEnemyFaction)}
+                          className="px-4 py-2 rounded text-xs font-bold bg-[#15803d] hover:bg-[#16a34a] text-white border border-[#86efac] shadow transition-colors"
+                        >
+                          Barış Antlaşması Teklif Et
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleDeclareWar(selectedEnemyFaction)}
+                          className="px-4 py-2 rounded text-xs font-bold bg-[#991b1b] hover:bg-[#b91c1c] text-white border border-[#fca5a5] shadow transition-colors"
+                        >
+                          Savaş İlan Et (50 Nüfuz)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* İstatistik Göstergeleri */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono-tabular">
+                    <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/20">
+                      <span className="text-[11px] text-[#a89b84] block">Devlet Statüsü</span>
+                      <strong
+                        className={`text-sm font-bold ${
+                          isCurrentlyAtWarWithSelected ? 'text-[#f87171]' : 'text-[#34d399]'
+                        }`}
+                      >
+                        {isCurrentlyAtWarWithSelected ? 'Resmi Savaş Hâli' : 'Sulh ve Barış'}
+                      </strong>
+                    </div>
+
+                    <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/20">
+                      <span className="text-[11px] text-[#a89b84] block">Savaş İsteği</span>
+                      <strong className="text-sm font-bold text-[#fbbf24]">
+                        %{liveWarReport.warDesireScorePct}
+                      </strong>
+                    </div>
+
+                    <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/20">
+                      <span className="text-[11px] text-[#a89b84] block">Karşı Taraf Tımar</span>
+                      <strong className="text-sm font-bold text-[#f8f0df]">
+                        {enemyFiefs.length} Yerleşim
+                      </strong>
+                    </div>
+
+                    <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/20">
+                      <span className="text-[11px] text-[#a89b84] block">Öngörülen Haraç</span>
+                      <strong className="text-sm font-bold text-[#38bdf8]">
+                        {liveWarReport.dailyTributeFromAToB < 0
+                          ? `+${Math.abs(liveWarReport.dailyTributeFromAToB)} Dinar/gün (Bize)`
+                          : liveWarReport.dailyTributeFromAToB > 0
+                            ? `-${liveWarReport.dailyTributeFromAToB} Dinar/gün (Onlara)`
+                            : 'Denk (0)'}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Açıklama Metni */}
+                  <div className="p-3.5 rounded bg-[#130f0c] border border-[#c6a15b]/20 text-xs text-[#d1c5b0] leading-relaxed">
+                    {isCurrentlyAtWarWithSelected ? (
+                      <p>
+                        ⚔️ <strong className="text-[#f87171]">Savaş hâli devam ediyor:</strong> Bu krallığın birlikleri haritada görüldüğü yerde ordumuza hücum edebilir. Barış imzalamak için divan heyeti gönderip antlaşma teklif edebilir veya şehirlerini kuşatarak üstünlük sağlayabilirsiniz.
+                      </p>
+                    ) : (
+                      <p>
+                        🕊️ <strong className="text-[#34d399]">Barış hâli geçerli:</strong> Sınır boylarında ticaret ve kervan hareketleri serbesttir. Toprak genişletmek veya nüfuz kazanmak için 50 Nüfuz karşılığında divan oylamasıyla savaş ilan edebilirsiniz.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
           {/* ================================================================ */}
-          {/* TAB 3: CLANS, ECONOMY, COMPANION PROMOTION & REGENT SUCCESSION   */}
+          {/* SEKME 2: TIMARLAR & KONSEY OYLAMASI                              */}
           {/* ================================================================ */}
-          {activeTab === 'clans_succession' && (
-            <div className="space-y-4">
-              <div className="p-4 rounded bg-[#17130e] border border-[#c6a15b]/30 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-bold text-[#fef08a]">
-                    Hiyerarşik Veri Modeli: Klan Ekonomisi, Yoldaş Terfisi ve Zorunlu Naip (Regent)
-                    Veraseti
-                  </h3>
-                  <p className="text-xs text-[#b5a890]">
-                    Klan lideri elendiğinde <code className="text-[#fde68a]">GetRelationWithClan</code>{' '}
-                    ve <code className="text-[#fde68a]">OnSettlementOwnerChanged</code> çökmelerini
-                    önleyen varis kuyruğu (<code className="text-[#fde68a]">Queue&lt;Hero&gt;</code>)
-                    ve Naip atama mekanizması.
-                  </p>
+          {activeTab === 'fiefs' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              {/* Sol: Krallık Tımarları Listesi */}
+              <div className="lg:col-span-5 space-y-2">
+                <div className="text-xs font-bold text-[#c6a15b] uppercase tracking-wider mb-2">
+                  Krallığa Ait Şehirler ve Kaleler
                 </div>
-                <button
-                  type="button"
-                  onClick={handlePromoteCompanionToClan}
-                  className="px-3.5 py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fde68a]/50 whitespace-nowrap"
-                >
-                  + Yoldaşı Soylu Klana Terfi Ettir (500 Dinar · 50 Nüfuz · 1 Tımar)
-                </button>
+                <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
+                  {campaign.settlements
+                    .filter((s) => s.faction === 'player' && s.type !== 'VILLAGE')
+                    .map((fief) => {
+                      const isSelected = selectedElectionSettlementId === fief.id;
+                      return (
+                        <button
+                          key={fief.id}
+                          type="button"
+                          onClick={() => setSelectedElectionSettlementId(fief.id)}
+                          className={`w-full p-3 rounded text-left transition-all border ${
+                            isSelected
+                              ? 'bg-[#2a2217] border-[#fbbf24] shadow-md'
+                              : 'bg-[#18140f] border-[#c6a15b]/20 hover:bg-[#221c15]'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-sm text-[#f8f0df]">{fief.name}</span>
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-[#1c1610] text-[#fbbf24] border border-[#c6a15b]/30">
+                              {fief.type === 'TOWN' ? 'ŞEHİR' : 'KALE'}
+                            </span>
+                          </div>
+                          <div className="text-xs text-[#a89b84] mt-1 flex items-center gap-3">
+                            <span>Refah: {fief.prosperity}</span>
+                            <span>Garnizon: {fief.garrison}</span>
+                            <span>Milis: {fief.militia ?? 0}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  {campaign.settlements.filter((s) => s.faction === 'player' && s.type !== 'VILLAGE').length === 0 && (
+                    <div className="p-4 rounded bg-[#18140f] border border-[#c6a15b]/20 text-xs text-[#a89b84] text-center">
+                      Henüz krallığınıza bağlı bir Şehir veya Kale bulunmuyor. Bir kale fethederek ilk mülkünüzü edinin.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Sağ: Tımar Dağıtımı Konsey Oylaması */}
+              <div className="lg:col-span-7 space-y-4">
+                <div className="p-5 rounded bg-[#17130e] border border-[#c6a15b]/30 space-y-4">
+                  <div className="border-b border-[#c6a15b]/20 pb-3">
+                    <h3 className="text-base font-bold text-[#fef08a]">
+                      Tımar Oylaması: {currentElection.settlementName}
+                    </h3>
+                    <p className="text-xs text-[#b5a890]">
+                      Bu mülkün hangi derebeyi hanedanına verileceğine krallık meclisinde karar verin
+                    </p>
+                  </div>
+
+                  {/* 3 Aday Klan */}
+                  <div className="space-y-3">
+                    {currentElection.candidates.map((cand) => {
+                      const clan = macroState.clans.find((c) => c.id === cand.clanId);
+                      return (
+                        <div
+                          key={cand.clanId}
+                          className="p-3.5 rounded bg-[#120f0b] border border-[#c6a15b]/25 space-y-2.5"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div className="font-bold text-sm text-[#f8f0df]">
+                                {cand.clanName}
+                                {clan?.isPlayerClan && (
+                                  <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-[#14532d] text-[#86efac]">
+                                    Sizin Klanınız
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-[#a89b84]">
+                                Liyakat Puanı: {Math.round(cand.finalMeritScore)} (%{Math.round(cand.councilSupportPct)} Meclis Desteği) · Seviye {clan?.tier ?? 3} · {clan?.fiefIds.length ?? 0} Mevcut Tımar
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleVoteOnFief(cand.clanId, 1)}
+                                className="px-2.5 py-1.5 rounded text-xs font-semibold bg-[#221c14] hover:bg-[#32271a] text-[#fbbf24] border border-[#c6a15b]/30 transition-colors"
+                              >
+                                20 Nüfuz
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleVoteOnFief(cand.clanId, 2)}
+                                className="px-2.5 py-1.5 rounded text-xs font-semibold bg-[#221c14] hover:bg-[#32271a] text-[#fbbf24] border border-[#c6a15b]/30 transition-colors"
+                              >
+                                60 Nüfuz
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleVoteOnFief(cand.clanId, 3)}
+                                className="px-2.5 py-1.5 rounded text-xs font-semibold bg-[#221c14] hover:bg-[#32271a] text-[#fbbf24] border border-[#c6a15b]/30 transition-colors"
+                              >
+                                140 Nüfuz
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleVoteOnFief(cand.clanId, 1, true)}
+                                className="px-2.5 py-1.5 rounded text-xs font-bold bg-[#9a3412] hover:bg-[#c2410c] text-white border border-[#fdba74]/50 transition-colors"
+                              >
+                                Fermanla Ver
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ================================================================ */}
+          {/* SEKME 3: KRALLIK POLİTİKALARI (KANUNLAR)                         */}
+          {/* ================================================================ */}
+          {activeTab === 'policies' && (
+            <div className="space-y-4">
+              <div className="border-b border-[#c6a15b]/20 pb-2">
+                <h3 className="text-base font-bold text-[#fef08a]">
+                  Resmi Krallık Politikaları ve Kanunları
+                </h3>
+                <p className="text-xs text-[#b5a890]">
+                  Yürürlüğe konan kanunlar tüm krallık genelinde kalıcı sadakat, üretim ve nüfuz etkileri yaratır
+                </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {macroState.clans.map((clan) => {
-                  const succ = resolveClanLeaderOrRegent(clan);
+                {(Object.keys(KINGDOM_POLICIES) as KingdomPolicyId[]).map((polId) => {
+                  const policy = KINGDOM_POLICIES[polId];
+                  const isActive = macroState.activePolicies.includes(polId);
+
                   return (
                     <div
-                      key={clan.id}
-                      className="p-4 rounded bg-[#17130e] border border-[#c6a15b]/30 flex flex-col justify-between gap-3"
+                      key={polId}
+                      className={`p-4 rounded border transition-all flex flex-col justify-between gap-3 ${
+                        isActive
+                          ? 'bg-[#1f281b] border-[#22c55e]/50 shadow-md'
+                          : 'bg-[#15110d] border-[#c6a15b]/25 hover:border-[#c6a15b]/45'
+                      }`}
                     >
                       <div>
-                        <div className="flex items-center justify-between border-b border-[#c6a15b]/20 pb-2">
-                          <div>
-                            <span className="text-sm font-bold text-[#fef08a]">{clan.name}</span>
-                            <span className="ml-2 text-xs text-[#c6a15b]">
-                              Kademe {clan.tier} · {FACTION_INFO[clan.faction].name}
-                            </span>
-                          </div>
-                          <span className="font-mono-tabular text-xs font-bold text-[#34d399]">
-                            Güç: {clan.totalStrength}
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                          <span className="font-bold text-sm text-[#f8f0df]">{policy.name}</span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              isActive
+                                ? 'bg-[#14532d] text-[#86efac] border border-[#22c55e]/30'
+                                : 'bg-[#221c15] text-[#a89b84]'
+                            }`}
+                          >
+                            {isActive ? 'YÜRÜRLÜKTE' : 'PASİF'}
                           </span>
                         </div>
-
-                        <div className="grid grid-cols-2 gap-2 mt-2.5 text-xs font-mono-tabular">
-                          <div>
-                            <span className="text-[#a89b84]">Aktif Lider / Naip:</span>{' '}
-                            <strong
-                              className={
-                                succ.isRegentActive ? 'text-[#fbbf24]' : 'text-[#f8f0df]'
-                              }
-                            >
-                              {succ.leaderName}
-                            </strong>
-                          </div>
-                          <div>
-                            <span className="text-[#a89b84]">Savaş Partileri:</span>{' '}
-                            <strong className="text-[#f8f0df]">{clan.warPartyCount} Parti</strong>
-                          </div>
-                          <div>
-                            <span className="text-[#a89b84]">Klan Hazinesi:</span>{' '}
-                            <strong className="text-[#fbbf24]">{clan.gold} Dinar</strong>
-                          </div>
-                          <div>
-                            <span className="text-[#a89b84]">Atölye & Kervan:</span>{' '}
-                            <strong className="text-[#34d399]">
-                              {clan.workshopsCount} Atölye · {clan.caravansCount} Kervan
-                            </strong>
-                          </div>
-                        </div>
-
-                        <div className="mt-2 text-xs text-[#c7baa3]">
-                          Varis Kuyruğu ({succ.heirQueue.length}):{' '}
-                          {succ.heirQueue.length > 0
-                            ? succ.heirQueue
-                                .map(
-                                  (h) =>
-                                    `${h.name} (Yaş ${h.age}${h.isAdult ? ', Yetişkin' : ', Reşit Değil'})`,
-                                )
-                                .join(' -> ')
-                            : 'Yetişkin varis kalmadı — Otomatik Naip (Regent) Korumasında'}
-                        </div>
+                        <p className="text-xs text-[#c7baa3] leading-relaxed">{policy.summary}</p>
                       </div>
 
-                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#c6a15b]/20">
-                        <span className="text-[11px] text-[#a89b84]">
-                          Tımar Sayısı: {clan.fiefIds.length} · Nüfuz: {clan.influence}
-                        </span>
+                      <div className="flex items-center justify-between pt-2 border-t border-[#c6a15b]/15 text-xs">
+                        <div className="flex items-center gap-3 text-[#fbbf24] font-mono-tabular">
+                          {policy.dailyLoyaltyBonus > 0 && <span>+{policy.dailyLoyaltyBonus} Sadakat</span>}
+                          {policy.dailyInfluenceBonus > 0 && <span>+{policy.dailyInfluenceBonus} Nüfuz</span>}
+                          {policy.productionModifierPct !== 0 && (
+                            <span>{policy.productionModifierPct}% Üretim</span>
+                          )}
+                        </div>
+
                         <button
                           type="button"
-                          onClick={() => handleSimulateLeaderFallAndSuccession(clan.id)}
-                          className="px-2.5 py-1 rounded text-xs font-semibold bg-[#282118] hover:bg-[#382f22] text-[#fde68a] border border-[#c6a15b]/35"
+                          onClick={() => handleTogglePolicy(polId)}
+                          className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${
+                            isActive
+                              ? 'bg-[#7f1d1d] hover:bg-[#991b1b] text-white border border-[#f87171]/40'
+                              : 'bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fde68a]/40'
+                          }`}
                         >
-                          Lider Kaybı & Veraset Devrini Simüle Et
+                          {isActive
+                            ? 'Yürürlükten Kaldır'
+                            : `Yürürlüğe Koy (${policy.influenceCostToPropose} Nüfuz)`}
                         </button>
                       </div>
                     </div>
@@ -910,309 +796,82 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
           )}
 
           {/* ================================================================ */}
-          {/* TAB 4: FIEFLESS DESTRUCTION, LOYALTY, FOOD & WEATHER             */}
+          {/* SEKME 4: KLANLAR VE DEREBEYLERİ                                  */}
           {/* ================================================================ */}
-          {activeTab === 'destruction_loyalty' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              {/* Left: Fiefless Kingdom Destruction & 4-Week Wither */}
-              <div className="p-4 rounded bg-[#17130e] border border-[#c6a15b]/30 space-y-3">
-                <h3 className="text-sm font-bold text-[#fef08a]">
-                  Tımarsız Krallık Yıkımı (Fiefless Kingdom Destruction) & 28 Günlük Erime
-                </h3>
-                <p className="text-xs text-[#b5a890]">
-                  Yama 1.2 sonrası son tımarını (kuşatma, ikna/defection veya takas/barter ile)
-                  kaybeden krallık anında dağılır. Bağımsız kalan klanlar 4 hafta (28 gün) içinde
-                  başka krallığa katılamazsa erir veya Restorasyon İsyanı başlatır.
-                </p>
-
-                <div className="space-y-2">
-                  {(['battania', 'sturgia', 'vlandia', 'empire'] as FactionId[]).map((fac) => {
-                    const fiefCount = campaign.settlements.filter(
-                      (s) => s.faction === fac && s.type !== 'VILLAGE',
-                    ).length;
-                    const isDestroyed =
-                      fiefCount === 0 || macroState.destroyedKingdoms.includes(fac);
-                    return (
-                      <div
-                        key={fac}
-                        className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/25 flex items-center justify-between gap-2 text-xs"
-                      >
-                        <div>
-                          <div className="font-bold text-[#f8f0df]">{FACTION_INFO[fac].name}</div>
-                          <div className="text-[11px] text-[#a89b84]">
-                            Kalan Şehir/Kale: {fiefCount} · Durum:{' '}
-                            <strong className={isDestroyed ? 'text-[#f87171]' : 'text-[#34d399]'}>
-                              {isDestroyed ? 'YIKILDI (4 Haftalık Sürgün)' : 'AKTİF KRALLIK'}
-                            </strong>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={isDestroyed}
-                          onClick={() => handleSimulateFieflessDestruction(fac)}
-                          className="px-2.5 py-1.5 rounded text-xs font-bold bg-[#991b1b] hover:bg-[#b91c1c] text-white disabled:opacity-40 whitespace-nowrap"
-                        >
-                          Son Tımarı Devret & Yıkımı Test Et
-                        </button>
-                      </div>
-                    );
-                  })}
+          {activeTab === 'clans' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#c6a15b]/20 pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-[#fef08a]">
+                    Krallık Klanları ve Feodal Derebeyleri
+                  </h3>
+                  <p className="text-xs text-[#b5a890]">
+                    Krallığınıza bağlı soylu hanedanların güç dengesi, ordu mevcutları ve tımarları
+                  </p>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={handlePromoteCompanionToClan}
+                  className="px-4 py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fde68a]/50 shadow transition-colors"
+                >
+                  Yoldaşı Vasal Klana Terfi Ettir (500 Dinar + 50 Nüfuz)
+                </button>
               </div>
 
-              {/* Right: Loyalty, Food & Weather Effects */}
-              <div className="space-y-4">
-                <div className="p-4 rounded bg-[#17130e] border border-[#c6a15b]/30 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-bold text-[#fef08a]">
-                      Hava Durumu, Kuşatma Hazırlığı & Otomatik Muharebe Çarpanları
-                    </h3>
-                    <div className="flex items-center gap-1">
-                      {(['CLEAR', 'RAIN', 'SNOW'] as const).map((w) => (
-                        <button
-                          key={w}
-                          type="button"
-                          onClick={() =>
-                            onUpdateMacroState({ ...macroState, weatherCondition: w })
-                          }
-                          className={`px-2 py-1 rounded text-xs font-semibold ${
-                            macroState.weatherCondition === w
-                              ? 'bg-[#b45309] text-white'
-                              : 'bg-[#1f1a13] text-[#d1c5b0]'
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {macroState.clans.map((clan) => (
+                  <div
+                    key={clan.id}
+                    className={`p-4 rounded border ${
+                      clan.isPlayerClan
+                        ? 'bg-[#241c14] border-[#fbbf24] shadow-md'
+                        : 'bg-[#15110d] border-[#c6a15b]/25'
+                    } space-y-3`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-sm text-[#f8f0df]">
+                          {clan.name}
+                          {clan.isPlayerClan && (
+                            <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-[#15803d] text-white">
+                              Hükümdar Klanı
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-[#a89b84]">
+                          Lider: {clan.succession.leaderName || 'Lord'} · Seviye {clan.tier}
+                        </div>
+                      </div>
+
+                      <div className="text-right font-mono-tabular text-xs">
+                        <div className="text-[#fbbf24] font-bold">{clan.renown} Nam</div>
+                        <div className="text-[#a89b84]">{clan.influence} Nüfuz</div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 text-xs font-mono-tabular text-center pt-2 border-t border-[#c6a15b]/15">
+                      <div className="p-2 rounded bg-[#100c09]">
+                        <span className="text-[10px] text-[#a89b84] block">Asker Gücü</span>
+                        <span className="font-bold text-[#f8f0df]">{clan.totalStrength}</span>
+                      </div>
+                      <div className="p-2 rounded bg-[#100c09]">
+                        <span className="text-[10px] text-[#a89b84] block">Tımar Sayısı</span>
+                        <span className="font-bold text-[#fbbf24]">{clan.fiefIds.length}</span>
+                      </div>
+                      <div className="p-2 rounded bg-[#100c09]">
+                        <span className="text-[10px] text-[#a89b84] block">İlişki</span>
+                        <span
+                          className={`font-bold ${
+                            clan.relationWithPlayer >= 0 ? 'text-[#34d399]' : 'text-[#f87171]'
                           }`}
                         >
-                          {w === 'CLEAR' ? 'Açık Hava' : w === 'RAIN' ? 'Yağmurlu' : 'Karlı Zemin'}
-                        </button>
-                      ))}
+                          {clan.relationWithPlayer >= 0 ? `+${clan.relationWithPlayer}` : clan.relationWithPlayer}
+                        </span>
+                      </div>
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs font-mono-tabular">
-                    <div className="p-2 rounded bg-[#120f0b] border border-[#c6a15b]/20">
-                      <span className="text-[10px] text-[#a89b84] block">
-                        Kuşatma Kampı İnşa Süresi
-                      </span>
-                      <span className="font-bold text-[#fbbf24]">
-                        {weatherMods.siegePreparationTimeMultiplier}x Süre
-                      </span>
-                    </div>
-                    <div className="p-2 rounded bg-[#120f0b] border border-[#c6a15b]/20">
-                      <span className="text-[10px] text-[#a89b84] block">
-                        Süvari Hız / İvme Çarpanı
-                      </span>
-                      <span className="font-bold text-[#f87171]">
-                        %{Math.round(weatherMods.cavalrySpeedAndAccelMultiplier * 100)}
-                      </span>
-                    </div>
-                    <div className="p-2 rounded bg-[#120f0b] border border-[#c6a15b]/20">
-                      <span className="text-[10px] text-[#a89b84] block">
-                        Ok & Arbalet Uçuş Hızı
-                      </span>
-                      <span className="font-bold text-[#93c5fd]">
-                        %{Math.round(weatherMods.rangedMissileSpeedMultiplier * 100)}
-                      </span>
-                    </div>
-                    <div className="p-2 rounded bg-[#120f0b] border border-[#c6a15b]/20">
-                      <span className="text-[10px] text-[#a89b84] block">
-                        Kaptanlık Perk Bonusu (Sv. 8)
-                      </span>
-                      <span className="font-bold text-[#34d399]">
-                        +%{weatherMods.captainPerkTier8BonusPct} Kümülatif
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Settlement Loyalty & Food Balance */}
-                <div className="p-4 rounded bg-[#17130e] border border-[#c6a15b]/30 space-y-2">
-                  <h3 className="text-sm font-bold text-[#fef08a]">
-                    DefaultSettlementLoyaltyModel & FoodModel (Garnizon vs Açlık Dengesi)
-                  </h3>
-                  {campaign.settlements
-                    .filter((s) => s.type === 'TOWN')
-                    .slice(0, 3)
-                    .map((town) => {
-                      const bound = campaign.settlements.filter(
-                        (v) => v.boundSettlementId === town.id,
-                      );
-                      const lf = calculateSettlementLoyaltyAndFood({
-                        settlement: town,
-                        ownerCulture: 'player',
-                        boundVillages: bound,
-                        activePolicies: macroState.activePolicies,
-                      });
-                      return (
-                        <div
-                          key={town.id}
-                          className="p-2.5 rounded bg-[#120f0b] border border-[#c6a15b]/20 flex flex-wrap items-center justify-between gap-2 text-xs font-mono-tabular"
-                        >
-                          <div>
-                            <span className="font-bold text-[#f8f0df]">{town.name}</span>
-                            <span className="ml-2 text-[#a89b84]">
-                              Kültür Cezası: {lf.cultureMismatchPenalty}/gün · Politika: +
-                              {lf.policyLoyaltyBonus}/gün
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span
-                              className={
-                                lf.netDailyLoyaltyChange >= 0
-                                  ? 'text-[#34d399]'
-                                  : 'text-[#f87171]'
-                              }
-                            >
-                              Sadakat: {lf.projectedLoyalty} (
-                              {lf.netDailyLoyaltyChange >= 0
-                                ? `+${lf.netDailyLoyaltyChange}`
-                                : lf.netDailyLoyaltyChange}
-                              )
-                            </span>
-                            <span
-                              className={
-                                lf.netDailyFoodChange >= 0 ? 'text-[#fde68a]' : 'text-[#f87171]'
-                              }
-                            >
-                              Erzak: {lf.netDailyFoodChange >= 0 ? `+${lf.netDailyFoodChange}` : lf.netDailyFoodChange}/gün
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ================================================================ */}
-          {/* TAB 5: 4-LAYER ARCHITECTURE & DESIGN SOLUTION MATRIX             */}
-          {/* ================================================================ */}
-          {activeTab === 'architecture_matrix' && (
-            <div className="space-y-4">
-              <div className="p-4 rounded bg-[#17130e] border border-[#c6a15b]/30">
-                <h3 className="text-sm font-bold text-[#fef08a] mb-2">
-                  TaleWorlds.CampaignSystem 4 Katmanlı Yazılım Mimarisi
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
-                  <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/25">
-                    <div className="font-bold text-[#fbbf24]">
-                      1. Hesaplama Modelleri (Models)
-                    </div>
-                    <div className="text-[11px] text-[#c7baa3] mt-1">
-                      Durumsuz (stateless) matematiksel formüller: DefaultDiplomacyModel,
-                      DefaultSettlementLoyaltyModel, DefaultSettlementFoodModel, DefaultBarterModel.
-                    </div>
-                  </div>
-                  <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/25">
-                    <div className="font-bold text-[#fbbf24]">
-                      2. Kampanya Davranışları (Behaviors)
-                    </div>
-                    <div className="text-[11px] text-[#c7baa3] mt-1">
-                      Saatlik/günlük zaman döngüleri ve olay dinleyicileri:
-                      ClanVariablesCampaignBehavior, OnSettlementOwnerChanged.
-                    </div>
-                  </div>
-                  <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/25">
-                    <div className="font-bold text-[#fbbf24]">
-                      3. Durum Değiştiriciler (Actions)
-                    </div>
-                    <div className="text-[11px] text-[#c7baa3] mt-1">
-                      Atomik durum mutasyonları: DeclareWarAction.ApplyInternal(), mülkiyet ve
-                      esir devirleri.
-                    </div>
-                  </div>
-                  <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/25">
-                    <div className="font-bold text-[#fbbf24]">
-                      4. Konsey & Seçim Motoru (Elections)
-                    </div>
-                    <div className="text-[11px] text-[#c7baa3] mt-1">
-                      Feodal oligarşi oylamaları: KingdomDecision, KingdomElection.GetAiChoice(),
-                      SettlementClaimantDecision.CalculateMeritOfOutcome().
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 rounded bg-[#17130e] border border-[#c6a15b]/30 overflow-x-auto">
-                <h3 className="text-sm font-bold text-[#fef08a] mb-3">
-                  Bannerlord Tasarım Anomalileri ve Sancak-ı Kalradya Mimari Çözüm Sentezi
-                </h3>
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="border-b border-[#c6a15b]/30 text-[#c6a15b]">
-                      <th className="py-2 pr-3">Sistem Alanı</th>
-                      <th className="py-2 pr-3">Bannerlord Mevcut Mekanik ve Sorun</th>
-                      <th className="py-2">Uygulanan Mimari Çözüm (Sancak-ı Kalradya)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#c6a15b]/15 text-[#e2d6c1]">
-                    <tr>
-                      <td className="py-2.5 pr-3 font-bold text-[#fef08a]">
-                        Haraç ve Savaş Skoru (DefaultDiplomacyModel)
-                      </td>
-                      <td className="py-2.5 pr-3">
-                        Tımar değerinin paydada düz bölen olması nedeniyle büyük imparatorlukların
-                        tımarsız krallıklara haraç ödemesi; asker zayiatının skora etki etmemesi.
-                      </td>
-                      <td className="py-2.5 text-[#34d399]">
-                        Savaş Yorgunluğu (War Exhaustion), İnsan Gücü Havuzu (Manpower Pool) ve
-                        tımarsız krallıklar için askeri kapasiteye bağlı haraç tavanı + Zorunlu
-                        Ateşkes eşiği.
-                      </td>
-                    </tr>
-                    <tr>
-                      <td className="py-2.5 pr-3 font-bold text-[#fef08a]">
-                        Tımar Dağıtım Formülü (CalculateMeritOfOutcome)
-                      </td>
-                      <td className="py-2.5 pr-3">
-                        Karekök mesafe çarpanının (^0.5) diğer tüm faktörleri ezmesi (İç Bölge
-                        Tuzağı) ve kültür/ilişki uyumunun yok sayılması.
-                      </td>
-                      <td className="py-2.5 text-[#34d399]">
-                        Üssün 0.25 ile sönümlenmesi, geçici sahip (distance=0) hatasının
-                        filtrelenmesi, +60 Kültür Eşleşmesi Bonusu ve İlişki çarpanı.
-                      </td>
-                    </tr>
-                    <tr>
-                      <td className="py-2.5 pr-3 font-bold text-[#fef08a]">
-                        Krallık Yıkımı & İltihak (Kingdom Destruction)
-                      </td>
-                      <td className="py-2.5 pr-3">
-                        Yıkımın sadece kuşatma olayına bağlı olması; son tımar ikna (Parley) veya
-                        takasla alınırsa 0 tımarlı krallığın yıkılmaması.
-                      </td>
-                      <td className="py-2.5 text-[#34d399]">
-                        Durum Güdümlü (State-Driven) if (kingdom.Fiefs.Count == 0) kontrolü + 28
-                        günlük bağımsız klan erimesi ve Restorasyon İsyanı.
-                      </td>
-                    </tr>
-                    <tr>
-                      <td className="py-2.5 pr-3 font-bold text-[#fef08a]">
-                        Referans Güvenliği & Veraset (Succession)
-                      </td>
-                      <td className="py-2.5 pr-3">
-                        Klan lideri öldüğünde GetRelationWithClan ve OnSettlementOwnerChanged içinde
-                        NullReferenceException çökmesi.
-                      </td>
-                      <td className="py-2.5 text-[#34d399]">
-                        Zorunlu Null-Object Deseni, Queue&lt;Hero&gt; varis kuyruğu ve reşit varis
-                        yoksa otomatik Naip (Regent) ataması.
-                      </td>
-                    </tr>
-                    <tr>
-                      <td className="py-2.5 pr-3 font-bold text-[#fef08a]">
-                        Perk ve Nüfuz Etkileşimi (KingdomDecision)
-                      </td>
-                      <td className="py-2.5 pr-3">
-                        Flexible Ethics perkinin oy maliyetini 20'den 17'ye düşürerek sabit 20
-                        puanlık ödül eşiğini bozması.
-                      </td>
-                      <td className="py-2.5 text-[#34d399]">
-                        Oransal Kademe Eşikleri (Decision Tier 1/2/3): Ödüller ham nüfuz miktarına
-                        değil karar kademesine bağlandı.
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+                ))}
               </div>
             </div>
           )}

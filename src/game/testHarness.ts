@@ -193,6 +193,8 @@ export interface KadirlordTestApi {
   closeParty: () => void;
   openCharacter: () => void;
   closeCharacter: () => void;
+  openKingdom?: () => void;
+  closeKingdom?: () => void;
   openMarket: (settlementId?: string) => boolean;
   closeMarket: () => void;
   openInventory: () => void;

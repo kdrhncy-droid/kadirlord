@@ -592,6 +592,8 @@ export default function App() {
       closeParty: () => setIsPartyModalOpen(false),
       openCharacter: () => setIsCharacterModalOpen(true),
       closeCharacter: () => setIsCharacterModalOpen(false),
+      openKingdom: () => setIsKingdomModalOpen(true),
+      closeKingdom: () => setIsKingdomModalOpen(false),
       openMarket: (settlementId) => {
         const current = testStateRef.current.campaign;
         const settlement = settlementId
