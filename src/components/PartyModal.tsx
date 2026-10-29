@@ -365,7 +365,9 @@ export const PartyModal: React.FC<PartyModalProps> = ({
         {/* ÜST BAŞLIK & ÖZET ŞERİDİ */}
         <header className="flex items-center justify-between px-6 py-3.5 bg-gradient-to-r from-[#1c1610] via-[#241c14] to-[#1c1610] border-b border-[#855e2d]/40">
           <div className="flex items-center gap-4">
-            <span className="text-2xl text-[#d97706]" aria-hidden="true">⚔️</span>
+            <span className="text-2xl text-[#d97706]" aria-hidden="true">
+              <svg viewBox="0 0 24 24" className="w-7 h-7 fill-none stroke-current" strokeWidth="2"><path d="M4 20L19 5M15 4h5v5M20 20L5 5M9 4H4v5"/></svg>
+            </span>
             <div>
               <h1 className="text-xl font-bold tracking-wide text-[#f5ebd7] flex items-center gap-2">
                 Parti ve Birlikler
@@ -882,7 +884,9 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                         }`}
                       >
                         <div className="flex items-center gap-2">
-                          <span className="text-base">👑</span>
+                          <span className="text-base">
+                            <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current text-[#d4af37]"><path d="M3 18h18v2H3v-2zm0-2l2-9 4.5 4L12 5l2.5 6L19 7l2 9H3z"/></svg>
+                          </span>
                           <div>
                             <div className="font-bold text-xs">{hero.name}</div>
                             <div className="text-[10px] text-[#a89274]">
@@ -936,7 +940,7 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                             <div>
                               <div className="font-bold text-xs">{def.name}</div>
                               <div className="text-[10px] text-[#a89274]">
-                                {def.battleClass === 'horseArcher' ? '🏹🐎 Atlı Okçu' : def.battleClass === 'cavalry' ? '🐎 Süvari' : def.battleClass === 'archer' ? '🏹 Okçu' : '🛡️ Piyade'}
+                                {def.battleClass === 'horseArcher' ? 'Atlı Okçu' : def.battleClass === 'cavalry' ? 'Süvari' : def.battleClass === 'archer' ? 'Okçu' : 'Piyade'}
                               </div>
                             </div>
                           </div>

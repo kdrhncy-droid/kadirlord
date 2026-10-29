@@ -335,7 +335,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       tacticalBannerRef.current.position.set(holdX, 0, holdZ);
       tacticalBannerRef.current.rotation.y = playerYawRef.current;
     }
-    spawnDamageText('🚩 SANCAK DİKİLDİ: BU KONUMU TUT!', '#facc15', new THREE.Vector3(holdX, 0.5, holdZ));
+    spawnDamageText('SANCAK DİKİLDİ: BU KONUMU TUT!', '#facc15', new THREE.Vector3(holdX, 0.5, holdZ));
   }, [spawnDamageText]);
 
   // ── Spawn / Reset Skirmish Wave Fighters ──
@@ -826,8 +826,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         sound.playShieldHit();
         const blockMsg =
           parryRes.blockType === 'SHIELD'
-            ? '🛡️ KALKAN İLE SAVUŞTURULDU!'
-            : `⚔️ KUSURSUZ SİLAH PARRY! (${botAttackDirRef.current.toUpperCase()})`;
+            ? 'KALKAN İLE SAVUŞTURULDU!'
+            : `KUSURSUZ SİLAH PARRY! (${botAttackDirRef.current.toUpperCase()})`;
         spawnDamageText(blockMsg, '#38bdf8', pPos);
       } else {
         const dmg = Math.round(18 * parryRes.damageMultiplier);
@@ -835,7 +835,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         setPlayerHp(playerHpRef.current);
         playerAnim?.hitReact(true);
         sound.playShieldHit();
-        spawnDamageText(`🩸 -${dmg} HASAR ALDIN!`, '#ef4444', pPos);
+        spawnDamageText(`-${dmg} HASAR ALDIN!`, '#ef4444', pPos);
       }
     };
 
@@ -907,7 +907,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           if (distToDummy < reach + 0.2 && toDummy.normalize().dot(forward) > 0.15) {
             dummyObj.hit();
             sound.playShieldHit();
-            spawnDamageText(`💥 ${baseDmg + speedBonus} KESİCİ!`, '#facc15', dummyObj.group.position);
+            spawnDamageText(`${baseDmg + speedBonus} KESİCİ!`, '#facc15', dummyObj.group.position);
             setDummyHitCount((c) => c + 1);
           }
         }
@@ -922,7 +922,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             if (distToBot < reach && toBot.normalize().dot(forward) > 0.15) {
               if (arenaBattleModeRef.current === 'TRAINING') {
                 sound.playShieldHit();
-                spawnDamageText('🛡️ ANTRENMAN BLOKU (0 Hasar)', '#93c5fd', botRoot.position);
+                spawnDamageText('ANTRENMAN BLOKU (0 Hasar)', '#93c5fd', botRoot.position);
               } else {
                 // DUEL mode: evaluate directional parry!
                 const parry = evaluateDirectionalParry({

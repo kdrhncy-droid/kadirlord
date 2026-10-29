@@ -3182,9 +3182,9 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             const intel = getLordDetailedIntel(l, lx, lz);
             const statePrefix =
               route?.tacticalState === 'PURSUE'
-                ? '⚔️ '
+                ? '[TAKİP] '
                 : route?.tacticalState === 'FLEE'
-                  ? '🏃 '
+                  ? '[KAÇIYOR] '
                   : '';
             const expectedHtml = `${statePrefix}${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#fb923c]">+${intel.wounded}</span>` : ''}`;
             if (rec.lastHtml !== expectedHtml) {

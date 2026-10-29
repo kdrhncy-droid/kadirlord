@@ -478,7 +478,7 @@ export const SiegeEncounterModal: React.FC<SiegeEncounterModalProps> = ({
             </div>
             <div className="mt-0.5 flex items-center gap-2 font-display text-base font-extrabold text-[#fde68a]">
               <span className="font-mono-tabular">{view.attackerTroops}</span>
-              <span className="text-xs text-[#c6a15b]">⚔</span>
+              <span className="text-xs text-[#c6a15b]">vs</span>
               <span className="font-mono-tabular">{view.defenderTroops}</span>
             </div>
             <div className="mt-1 h-2 w-full overflow-hidden rounded-full border border-[#c6a15b]/45 bg-[#3b1d5e]">

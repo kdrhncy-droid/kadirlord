@@ -377,9 +377,9 @@ export const DiplomacyModal: React.FC<DiplomacyModalProps> = ({
                 <div className="flex flex-wrap gap-1.5">
                   {(
                     [
-                      { id: 'HONOR', label: '⚖️ Onur & Meşruiyet Argümanı (%78)' },
-                      { id: 'VALOR', label: '⚔️ Askeri Güç & Zafer Vaadi (%68)' },
-                      { id: 'CALCULATING', label: '💰 Tımar & Gümrük Çıkarı (%74)' },
+                      { id: 'HONOR', label: 'Onur & Meşruiyet Argümanı (%78)' },
+                      { id: 'VALOR', label: 'Askeri Güç & Zafer Vaadi (%68)' },
+                      { id: 'CALCULATING', label: 'Tımar & Gümrük Çıkarı (%74)' },
                     ] as const
                   ).map((arg) => (
                     <button
