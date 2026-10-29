@@ -40,7 +40,9 @@ export type CharacterAnimState =
   | 'BOW_DRAW'
   | 'BOW_RELEASE'
   | 'HIT_STAGGER'
-  | 'FALL_DEFEAT';
+  | 'FALL_DEFEAT'
+  | 'SHIELD_BASH'
+  | 'KICK';
 
 export type V3 = [number, number, number];
 export type AttackDirection = 'up' | 'down' | 'left' | 'right';
@@ -420,150 +422,250 @@ const STANCES: Record<WeaponClass, StanceDef> = {
 
 const ONE_H_OVERHEAD: ClipDef = {
   name: 'atk_overhead',
-  label: '⚔️ Tepeden Kes',
+  label: '⚔️ Tepeden Kes (Warband)',
   kind: 'attack',
   duration: 0.95,
-  holdAt: 0.28,
-  hitTime: 0.5,
+  holdAt: 0.35,
+  hitTime: 0.52,
   fadeOut: 0.28,
   keys: [
     {
-      t: 0.28,
-      body: { torso: [-0.12, -0.25, 0], pelvis: [0, -0.1, 0] },
-      r: { p: [-0.2, 1.98, -0.02], z: [0, -0.35, -1], pole: [-0.7, 0.4, -0.5] },
+      t: 0.35,
+      body: { torso: [-0.18, -0.22, 0], pelvis: [0, -0.1, 0] },
+      r: { p: [-0.18, 2.05, -0.05], z: [0, -0.35, -1], pole: [-0.7, 0.4, -0.5] },
     },
-    { t: 0.4, body: { torso: [0.05, -0.1, 0] }, r: { p: [-0.14, 1.86, 0.34], z: [0, 0.85, 0.5] } },
+    { t: 0.45, body: { torso: [0.08, -0.05, 0] }, r: { p: [-0.12, 1.88, 0.38], z: [0, 0.85, 0.5] } },
     {
-      t: 0.5,
-      body: { torso: [0.3, 0.08, 0], pelvis: [0.06, 0.05, 0] },
-      r: { p: [-0.1, 1.32, 0.46], z: [0, -0.45, 0.9] },
+      t: 0.52,
+      body: { torso: [0.32, 0.08, 0], pelvis: [0.06, 0.05, 0] },
+      r: { p: [-0.1, 1.30, 0.48], z: [0, -0.45, 0.9] },
     },
-    { t: 0.66, body: { torso: [0.22, 0.05, 0] }, r: { p: [-0.14, 1.12, 0.36], z: [0, -0.75, 0.65] } },
+    { t: 0.70, body: { torso: [0.20, 0.05, 0] }, r: { p: [-0.14, 1.10, 0.36], z: [0, -0.75, 0.65] } },
   ],
 };
 
 const ONE_H_SLASH_R: ClipDef = {
   name: 'atk_slash_r',
-  label: '⚔️ Sağdan Yatay Savur',
+  label: '⚔️ Sağdan Savur (Warband)',
   kind: 'attack',
-  duration: 0.9,
-  holdAt: 0.28,
-  hitTime: 0.47,
-  fadeOut: 0.3,
+  duration: 0.95,
+  holdAt: 0.35,
+  hitTime: 0.52,
+  fadeOut: 0.28,
   keys: [
     {
-      t: 0.28,
-      body: { torso: [0, -0.65, 0], pelvis: [0, -0.2, 0] },
-      r: { p: [-0.52, 1.6, -0.08], z: [-0.55, 0.45, -0.7], pole: [-0.4, -0.5, -0.8] },
+      t: 0.35,
+      body: { torso: [0, -0.72, 0], pelvis: [0, -0.22, 0] },
+      r: { p: [-0.55, 1.62, -0.10], z: [-0.55, 0.45, -0.7], pole: [-0.4, -0.5, -0.8] },
     },
-    { t: 0.4, body: { torso: [0.05, -0.25, 0] }, r: { p: [-0.42, 1.48, 0.36], z: [-0.6, 0.2, 0.75] } },
+    { t: 0.45, body: { torso: [0.05, -0.28, 0] }, r: { p: [-0.40, 1.48, 0.38], z: [-0.6, 0.2, 0.75] } },
     {
-      t: 0.47,
-      body: { torso: [0.12, 0.1, 0], pelvis: [0, 0.08, 0] },
-      r: { p: [-0.12, 1.42, 0.52], z: [0.15, 0.05, 1] },
+      t: 0.52,
+      body: { torso: [0.14, 0.12, 0], pelvis: [0, 0.08, 0] },
+      r: { p: [-0.10, 1.40, 0.52], z: [0.15, 0.05, 1] },
     },
     {
-      t: 0.6,
-      body: { torso: [0.1, 0.45, 0], pelvis: [0, 0.15, 0] },
-      r: { p: [0.2, 1.32, 0.4], z: [0.9, -0.1, 0.4] },
+      t: 0.70,
+      body: { torso: [0.10, 0.48, 0], pelvis: [0, 0.15, 0] },
+      r: { p: [0.22, 1.30, 0.38], z: [0.9, -0.1, 0.4] },
     },
   ],
 };
 
 const ONE_H_THRUST: ClipDef = {
   name: 'atk_thrust',
-  label: '🗡️ Dürtme Hamlesi',
+  label: '🗡️ Dürtme Hamlesi (Warband)',
   kind: 'attack',
-  duration: 0.85,
-  holdAt: 0.25,
-  hitTime: 0.42,
-  fadeOut: 0.28,
+  duration: 0.65,
+  holdAt: 0.35,
+  hitTime: 0.44,
+  fadeOut: 0.20,
   keys: [
     {
-      t: 0.25,
+      t: 0.35,
       body: { torso: [0, -0.35, 0], pelvis: [0, -0.1, 0] },
-      r: { p: [-0.3, 1.3, -0.18], z: [0.1, 0.05, 1] },
+      r: { p: [-0.32, 1.30, -0.20], z: [0.1, 0.05, 1] },
     },
     {
-      t: 0.42,
-      body: { torso: [0.18, 0.15, 0], pelvis: [0.05, 0.05, 0] },
-      pelvisPos: [0, -0.03, 0.06],
-      r: { p: [-0.12, 1.4, 0.55], z: [0.1, 0.02, 1] },
+      t: 0.44,
+      body: { torso: [0.20, 0.15, 0], pelvis: [0.06, 0.05, 0] },
+      pelvisPos: [0, -0.03, 0.08],
+      r: { p: [-0.10, 1.40, 0.58], z: [0.1, 0.02, 1] },
     },
-    { t: 0.56, r: { p: [-0.13, 1.39, 0.52], z: [0.1, 0.02, 1] } },
+    { t: 0.55, r: { p: [-0.12, 1.38, 0.52], z: [0.1, 0.02, 1] } },
   ],
 };
 
 const TWO_H_OVERHEAD: ClipDef = {
   name: 'atk_overhead',
-  label: '🗡️ Çift El Tepeden',
+  label: '🗡️ Çift El Tepeden (Warband)',
   kind: 'attack',
-  duration: 1.15,
-  holdAt: 0.34,
-  hitTime: 0.6,
-  fadeOut: 0.32,
+  duration: 0.96,
+  holdAt: 0.35,
+  hitTime: 0.54,
+  fadeOut: 0.30,
   keys: [
     {
-      t: 0.34,
-      body: { torso: [-0.15, -0.15, 0], pelvis: [0, -0.1, 0] },
-      r: { p: [-0.12, 1.95, -0.1], z: [0, -0.4, -1], pole: [-0.7, 0.4, -0.5] },
+      t: 0.35,
+      body: { torso: [-0.18, -0.15, 0], pelvis: [0, -0.1, 0] },
+      r: { p: [-0.12, 2.02, -0.12], z: [0, -0.4, -1], pole: [-0.7, 0.4, -0.5] },
     },
-    { t: 0.5, body: { torso: [0.05, 0, 0] }, r: { p: [-0.08, 1.82, 0.32], z: [0, 0.9, 0.4] } },
+    { t: 0.46, body: { torso: [0.06, 0, 0] }, r: { p: [-0.08, 1.84, 0.34], z: [0, 0.9, 0.4] } },
     {
-      t: 0.6,
-      body: { torso: [0.35, 0.05, 0], pelvis: [0.08, 0, 0] },
-      pelvisPos: [0, -0.04, 0.04],
-      r: { p: [-0.05, 1.28, 0.48], z: [0, -0.4, 0.92] },
+      t: 0.54,
+      body: { torso: [0.38, 0.05, 0], pelvis: [0.08, 0, 0] },
+      pelvisPos: [0, -0.04, 0.05],
+      r: { p: [-0.05, 1.25, 0.50], z: [0, -0.4, 0.92] },
     },
-    { t: 0.78, body: { torso: [0.28, 0, 0] }, r: { p: [-0.06, 1.1, 0.4], z: [0, -0.7, 0.7] } },
+    { t: 0.74, body: { torso: [0.26, 0, 0] }, r: { p: [-0.06, 1.08, 0.40], z: [0, -0.7, 0.7] } },
   ],
 };
 
 const TWO_H_SLASH_R: ClipDef = {
   name: 'atk_slash_r',
-  label: '🗡️ Çift El Yatay Savurma',
+  label: '🗡️ Çift El Savurma (Warband)',
   kind: 'attack',
-  duration: 1.1,
-  holdAt: 0.34,
-  hitTime: 0.56,
-  fadeOut: 0.32,
+  duration: 0.96,
+  holdAt: 0.35,
+  hitTime: 0.54,
+  fadeOut: 0.30,
   keys: [
     {
-      t: 0.34,
-      body: { torso: [0, -0.85, 0], pelvis: [0, -0.3, 0] },
-      r: { p: [-0.48, 1.62, -0.12], z: [-0.5, 0.5, -0.7], pole: [-0.4, -0.5, -0.8] },
+      t: 0.35,
+      body: { torso: [0, -0.90, 0], pelvis: [0, -0.32, 0] },
+      r: { p: [-0.50, 1.64, -0.14], z: [-0.5, 0.5, -0.7], pole: [-0.4, -0.5, -0.8] },
     },
-    { t: 0.48, body: { torso: [0.05, -0.35, 0] }, r: { p: [-0.36, 1.45, 0.38], z: [-0.5, 0.15, 0.85] } },
+    { t: 0.46, body: { torso: [0.05, -0.35, 0] }, r: { p: [-0.36, 1.46, 0.40], z: [-0.5, 0.15, 0.85] } },
     {
-      t: 0.56,
-      body: { torso: [0.12, 0.1, 0], pelvis: [0, 0.05, 0] },
-      r: { p: [-0.05, 1.38, 0.5], z: [0.2, 0, 1] },
+      t: 0.54,
+      body: { torso: [0.14, 0.12, 0], pelvis: [0, 0.06, 0] },
+      r: { p: [-0.05, 1.36, 0.52], z: [0.2, 0, 1] },
     },
     {
-      t: 0.74,
-      body: { torso: [0.1, 0.6, 0], pelvis: [0, 0.2, 0] },
-      r: { p: [0.28, 1.25, 0.32], z: [0.9, -0.15, 0.3] },
+      t: 0.72,
+      body: { torso: [0.12, 0.65, 0], pelvis: [0, 0.22, 0] },
+      r: { p: [0.30, 1.22, 0.32], z: [0.9, -0.15, 0.3] },
     },
   ],
 };
 
 const TWO_H_THRUST: ClipDef = {
   name: 'atk_thrust',
-  label: '🗡️ Çift El Dürtme',
+  label: '🗡️ Çift El Dürtme (Warband)',
   kind: 'attack',
-  duration: 0.95,
-  holdAt: 0.3,
+  duration: 0.81,
+  holdAt: 0.35,
   hitTime: 0.48,
-  fadeOut: 0.3,
+  fadeOut: 0.26,
   keys: [
-    { t: 0.3, body: { torso: [0, -0.3, 0] }, r: { p: [-0.26, 1.24, -0.18], z: [0.1, 0.1, 1] } },
+    { t: 0.35, body: { torso: [0, -0.35, 0] }, r: { p: [-0.26, 1.24, -0.18], z: [0.1, 0.1, 1] } },
     {
       t: 0.48,
-      body: { torso: [0.2, 0.1, 0] },
+      body: { torso: [0.20, 0.10, 0] },
       pelvisPos: [0, -0.03, 0.08],
       r: { p: [-0.1, 1.34, 0.5], z: [0.05, 0.03, 1] },
     },
     { t: 0.62, r: { p: [-0.1, 1.33, 0.48], z: [0.05, 0.03, 1] } },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// BannerPage Özel Mekanikleri: Kalkan Darbesi & Tekme
+// ---------------------------------------------------------------------------
+
+const SHIELD_BASH: ClipDef = {
+  name: 'shield_bash',
+  label: '🛡️ Kalkan Darbesi (BannerPage)',
+  kind: 'attack',
+  duration: 0.75,
+  hitTime: 0.30,
+  fadeOut: 0.22,
+  keys: [
+    {
+      t: 0.12,
+      body: { torso: [0.05, 0.20, 0], pelvis: [0, 0.08, 0] },
+      pelvisPos: [0, -0.02, 0.05],
+      l: { p: [0.08, 1.38, 0.32], z: [0.1, 0.05, 1], hint: [0, -1, 0], axis: 'x', pole: [0.85, -0.4, -0.2] },
+      r: { p: [-0.28, 1.20, 0.10], z: [0, 0.8, 0.4] },
+    },
+    {
+      t: 0.30,
+      body: { torso: [0.15, 0.28, 0], pelvis: [0.05, 0.10, 0] },
+      pelvisPos: [0, -0.05, 0.22],
+      l: { p: [0.05, 1.45, 0.68], z: [0, 0.02, 1], hint: [0, -1, 0], axis: 'x', pole: [0.95, -0.2, 0] },
+      r: { p: [-0.35, 1.15, -0.05], z: [0, 0.7, 0.3] },
+    },
+    {
+      t: 0.48,
+      body: { torso: [0.12, 0.22, 0], pelvis: [0.02, 0.05, 0] },
+      pelvisPos: [0, -0.03, 0.14],
+      l: { p: [0.06, 1.42, 0.50], z: [0, 0.05, 1], hint: [0, -1, 0], axis: 'x' },
+    },
+    {
+      t: 0.75,
+      body: { torso: [0.08, 0.15, 0] },
+      pelvisPos: [0, 0, 0],
+      l: { p: [0.06, 1.42, 0.40], z: [0, 0.08, 1], hint: [0, -1, 0], axis: 'x' },
+    },
+  ],
+};
+
+const KICK: ClipDef = {
+  name: 'kick',
+  label: '🦶 Tekme (Warband)',
+  kind: 'attack',
+  duration: 0.70,
+  hitTime: 0.28,
+  fadeOut: 0.20,
+  keys: [
+    {
+      t: 0.10,
+      body: {
+        torso: [-0.15, 0.05, 0],
+        pelvis: [-0.08, 0, 0],
+        rThigh: [-0.65, 0, 0],
+        rShin: [0.85, 0, 0],
+        rFoot: [-0.2, 0, 0],
+        lThigh: [0.1, 0, 0],
+        lShin: [0.15, 0, 0],
+      },
+      pelvisPos: [0, -0.04, -0.06],
+    },
+    {
+      t: 0.28,
+      body: {
+        torso: [-0.25, 0.08, 0],
+        pelvis: [-0.12, 0, 0],
+        rThigh: [-1.25, 0, 0],
+        rShin: [0.12, 0, 0],
+        rFoot: [-0.35, 0, 0],
+        lThigh: [0.12, 0, 0],
+        lShin: [0.22, 0, 0],
+      },
+      pelvisPos: [0, -0.05, 0.08],
+    },
+    {
+      t: 0.45,
+      body: {
+        torso: [-0.1, 0.04, 0],
+        pelvis: [-0.05, 0, 0],
+        rThigh: [-0.7, 0, 0],
+        rShin: [0.75, 0, 0],
+        rFoot: [0, 0, 0],
+      },
+      pelvisPos: [0, -0.03, 0.02],
+    },
+    {
+      t: 0.70,
+      body: {
+        torso: [0, 0, 0],
+        pelvis: [0, 0, 0],
+        rThigh: [0, 0, 0],
+        rShin: [0, 0, 0],
+        rFoot: [0, 0, 0],
+      },
+      pelvisPos: [0, 0, 0],
+    },
   ],
 };
 
@@ -983,7 +1085,7 @@ const FALL: ClipDef = {
   ],
 };
 
-const COMMON_CLIPS: ClipDef[] = [HIT_REACT, FALL];
+const COMMON_CLIPS: ClipDef[] = [HIT_REACT, FALL, KICK];
 
 const CLASS_CLIPS: Record<WeaponClass, ClipDef[]> = {
   '1H': [
@@ -1002,6 +1104,7 @@ const CLASS_CLIPS: Record<WeaponClass, ClipDef[]> = {
     ONE_H_SLASH_R,
     mirrorClip(ONE_H_SLASH_R, 'atk_slash_l', '⚔️ Soldan Ters Savur', 0.6),
     ONE_H_THRUST,
+    SHIELD_BASH,
     BLOCK_SHIELD,
     BLOCK_SHIELD_ALIAS,
   ],
@@ -1289,6 +1392,14 @@ export class CharacterAnimator {
     return this.play(clipName, { hold: true });
   }
 
+  shieldBash(): boolean {
+    return this.play('shield_bash', { force: true });
+  }
+
+  kick(): boolean {
+    return this.play('kick', { force: true });
+  }
+
   /**
    * Releases the currently held action (charged attack, block, bow draw).
    *
@@ -1393,6 +1504,8 @@ export class CharacterAnimator {
       BOW_RELEASE: () => this.release(),
       HIT_STAGGER: () => this.hitReact(),
       FALL_DEFEAT: () => this.fall(),
+      SHIELD_BASH: () => this.shieldBash(),
+      KICK: () => this.kick(),
     };
     map[state]?.();
   }

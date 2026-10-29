@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FactionCrest } from './FactionCrest';
 import {
   AlertTriangle,
@@ -38,6 +38,7 @@ import {
 import { BannerlordRecruitmentModal } from './BannerlordRecruitmentModal';
 import { recruitQuote, partyLimit, partySize, partyRoom } from '../game/recruitment';
 import { sound } from '../game/sound';
+import { music } from '../game/music';
 import { generateNotables, NOTABLE_POWER_INFLUENTIAL, notablePowerLabel, type NotableIconKey, type SettlementNotable } from '../game/notables';
 import {
   donateCaptiveLordToDungeon,
@@ -483,7 +484,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   onResolveNotableQuest,
   onOpenFullMarket,
   onTalkToReeve,
-  onOpenCharacterArena: _onOpenCharacterArena,
+  onOpenCharacterArena,
   onBeginSiege,
   onUpdateCampaign,
   initialTab = 'overview',
@@ -493,6 +494,14 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   onSetCampaignTimeScale,
 }) => {
   const [activeTab, setActiveTab] = useState<TownTab>(initialTab);
+
+  useEffect(() => {
+    if (activeTab === 'tavern') {
+      music.play('TAVERN');
+    } else {
+      music.play('TOWN');
+    }
+  }, [activeTab]);
   /** Faz 8: muhtarla ilişki — asker toplama kapısı ve ücret indirimi. */
   const factionRelation = (() => {
     const lords = campaign.lords.filter((l) => l.faction === settlement.faction);
@@ -1854,6 +1863,26 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     </div>
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {onOpenCharacterArena && (
+                      <div className="col-span-1 sm:col-span-2 p-3.5 rounded bg-[#18130e] border-2 border-[#b45309] shadow-lg flex flex-col sm:flex-row items-center justify-between gap-3">
+                        <div>
+                          <div className="font-extrabold text-sm text-[#fef08a] flex items-center gap-1.5">
+                            <span>⚔️</span>
+                            <span>3B Canlı Dövüş ve Karakter Arenası</span>
+                          </div>
+                          <div className="text-xs text-[#d1c5b0] mt-0.5">
+                            4 yönlü Warband saldırılarını, kalkan darbesini ve tekmeyi 3 boyutlu manken üzerinde canlı test edin.
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={onOpenCharacterArena}
+                          className="w-full sm:w-auto px-5 py-2.5 rounded text-xs font-black tracking-wide bg-gradient-to-r from-[#b45309] to-[#d97706] hover:from-[#d97706] hover:to-[#f59e0b] text-white shadow-md transition-all shrink-0 cursor-pointer"
+                        >
+                          Arenaya Gir (3B Canlı Test) →
+                        </button>
+                      </div>
+                    )}
                     <div className="p-3.5 rounded bg-[#1f1a14] border border-[#c6a15b]/30 flex flex-col justify-between">
                       <div>
                         <div className="font-bold text-sm text-[#f8f0df]">Dövüş Ustası ile Talim Yap</div>

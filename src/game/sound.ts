@@ -1,12 +1,170 @@
 import { playImpact, setArmorySoundEnabled, unlockArmorySound, armorySoundEnabled } from './armorySound.ts';
 
-// Procedural Web Audio Synthesizer for Sancak-ı Kalradya
+const SOUND_FILES = [
+  '/sounds/weapon_swing_01.ogg',
+  '/sounds/weapon_swing_02.ogg',
+  '/sounds/weapon_swing_03.ogg',
+  '/sounds/Sword_clash_01.ogg',
+  '/sounds/Sword_clash_02.ogg',
+  '/sounds/Sword_clash_03.ogg',
+  '/sounds/Sword_clash_04.ogg',
+  '/sounds/Sword_clash_05.ogg',
+  '/sounds/shield_metal_metal_01.ogg',
+  '/sounds/shield_wood_wood_01.ogg',
+  '/sounds/shield_break_01.ogg',
+  '/sounds/bow_shoot_01.ogg',
+  '/sounds/draw_bow_01.ogg',
+  '/sounds/arrow_pass_01.ogg',
+  '/sounds/arrow_ground_01.ogg',
+  '/sounds/missile_flesh_01.ogg',
+  '/sounds/horn.ogg',
+  '/sounds/man_victory_01.ogg',
+  '/sounds/man_yell_01.ogg',
+  '/sounds/man_yell_04.ogg',
+  '/sounds/metal_high_high_01.ogg',
+  '/sounds/blunt_high_high_01.ogg',
+  '/sounds/horse_gallop_01.ogg',
+  '/sounds/horse_charge_01.ogg',
+  '/sounds/decap1.ogg',
+];
+
+// Procedural Web Audio Synthesizer & Hardware Mixing Engine for Sancak-ı Kalradya
 class SoundManager {
   private ctx: AudioContext | null = null;
   public muted = false;
   public masterVolume = 0.75;
   private lastStepAt = 0;
   private stepPhase = 0;
+
+  // WebAudio AudioBuffer Memory Cache (0 GC allocation during battle)
+  private bufferCache = new Map<string, AudioBuffer>();
+  private loadingPromises = new Map<string, Promise<AudioBuffer | null>>();
+  private totalActiveVoices = 0;
+  private readonly maxTotalVoices = 16;
+  private categoryCooldowns: Record<string, number> = {};
+  private categoryActiveVoices: Record<string, number> = {};
+  private readonly CATEGORY_LIMITS: Record<string, { minIntervalMs: number; maxVoices: number }> = {
+    swing: { minIntervalMs: 40, maxVoices: 3 },
+    clash: { minIntervalMs: 35, maxVoices: 4 },
+    shield: { minIntervalMs: 40, maxVoices: 4 },
+    bow: { minIntervalMs: 60, maxVoices: 3 },
+    arrow: { minIntervalMs: 45, maxVoices: 3 },
+    hit: { minIntervalMs: 35, maxVoices: 4 },
+    horn: { minIntervalMs: 800, maxVoices: 1 },
+    voice: { minIntervalMs: 120, maxVoices: 2 },
+    horse: { minIntervalMs: 80, maxVoices: 2 },
+    decap: { minIntervalMs: 200, maxVoices: 1 },
+    general: { minIntervalMs: 30, maxVoices: 4 },
+  };
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      try {
+        const savedVol = localStorage.getItem('kadirlord_sfx_volume');
+        if (savedVol !== null) {
+          const v = parseFloat(savedVol);
+          if (!isNaN(v)) this.masterVolume = Math.max(0, Math.min(1, v));
+        }
+        const savedMute = localStorage.getItem('kadirlord_sfx_muted');
+        if (savedMute !== null) {
+          this.muted = savedMute === 'true';
+        }
+      } catch {}
+    }
+  }
+
+  public async preloadSounds(): Promise<void> {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    for (const url of SOUND_FILES) {
+      this.loadBuffer(url);
+    }
+  }
+
+  private async loadBuffer(url: string): Promise<AudioBuffer | null> {
+    if (this.bufferCache.has(url)) return this.bufferCache.get(url)!;
+    if (this.loadingPromises.has(url)) return this.loadingPromises.get(url)!;
+    const ctx = this.getContext();
+    if (!ctx) return null;
+
+    const promise = (async () => {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) return null;
+        const arrayBuf = await resp.arrayBuffer();
+        const audioBuf = await ctx.decodeAudioData(arrayBuf);
+        this.bufferCache.set(url, audioBuf);
+        return audioBuf;
+      } catch {
+        return null;
+      } finally {
+        this.loadingPromises.delete(url);
+      }
+    })();
+
+    this.loadingPromises.set(url, promise);
+    return promise;
+  }
+
+  public playClip(category: string, url: string, volumeScale = 1): boolean {
+    if (this.muted || this.masterVolume <= 0.01 || typeof window === 'undefined') return false;
+    const ctx = this.getContext();
+    if (!ctx) return false;
+
+    const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const limit = this.CATEGORY_LIMITS[category] || this.CATEGORY_LIMITS.general;
+    const lastTime = this.categoryCooldowns[category] || 0;
+    if (nowMs - lastTime < limit.minIntervalMs) {
+      return true; // Warband channel throttling: drop spam seamlessly
+    }
+
+    const currentVoices = this.categoryActiveVoices[category] || 0;
+    if (currentVoices >= limit.maxVoices || this.totalActiveVoices >= this.maxTotalVoices) {
+      return true; // Channel cap reached
+    }
+
+    this.categoryCooldowns[category] = nowMs;
+
+    const buffer = this.bufferCache.get(url);
+    if (!buffer) {
+      this.loadBuffer(url);
+      return false; // Not yet decoded, fall back cleanly
+    }
+
+    try {
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      const gainNode = ctx.createGain();
+      const finalVol = Math.max(0, Math.min(1, this.masterVolume * volumeScale));
+      gainNode.gain.setValueAtTime(finalVol, ctx.currentTime);
+
+      source.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      this.totalActiveVoices++;
+      this.categoryActiveVoices[category] = currentVoices + 1;
+
+      source.onended = () => {
+        try {
+          source.disconnect();
+          gainNode.disconnect();
+        } catch {}
+        this.totalActiveVoices = Math.max(0, this.totalActiveVoices - 1);
+        this.categoryActiveVoices[category] = Math.max(0, (this.categoryActiveVoices[category] || 1) - 1);
+      };
+
+      source.start(0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  public playRandomClip(category: string, urls: string[], volumeScale = 1): boolean {
+    if (!urls || urls.length === 0) return false;
+    const picked = urls[Math.floor(Math.random() * urls.length)];
+    return this.playClip(category, picked, volumeScale);
+  }
 
   private getContext(): AudioContext | null {
     if (this.muted || this.masterVolume <= 0.01 || typeof window === 'undefined') return null;
@@ -29,6 +187,12 @@ class SoundManager {
     } else if (this.muted) {
       this.muted = false;
     }
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem('kadirlord_sfx_volume', this.masterVolume.toString());
+        localStorage.setItem('kadirlord_sfx_muted', this.muted.toString());
+      } catch {}
+    }
     setArmorySoundEnabled(!this.muted && armorySoundEnabled());
   }
 
@@ -38,13 +202,27 @@ class SoundManager {
 
   public toggleMute(): boolean {
     this.muted = !this.muted;
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem('kadirlord_sfx_muted', this.muted.toString());
+      } catch {}
+    }
     setArmorySoundEnabled(!this.muted && armorySoundEnabled());
     return this.muted;
   }
 
-  /** İlk kullanıcı jestinde çağrılır — tarayıcı autoplay kilidini açar. */
+  public isMuted(): boolean {
+    return this.muted;
+  }
+
+  /** İlk kullanıcı jestinde çağrılır — tarayıcı autoplay kilidini açar ve sesleri RAM'e önyükler. */
   public unlock(): void {
     unlockArmorySound();
+    const ctx = this.getContext();
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+    this.preloadSounds();
   }
 
   /** Arayüz ve menü tıklama sesi (yumuşak orta çağ parşömen/demir tıkı). */
@@ -124,6 +302,7 @@ class SoundManager {
   }
 
   public playSwordSwing() {
+    if (this.playRandomClip('swing', ['/sounds/weapon_swing_01.ogg', '/sounds/weapon_swing_02.ogg', '/sounds/weapon_swing_03.ogg'], 0.85)) return;
     const ctx = this.getContext();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -174,7 +353,7 @@ class SoundManager {
   }
 
   public playWarhorn() {
-    // Rahatsız edici tiz sawtooth borazan yerine yumuşak, tok davul/mühür sesi
+    if (this.playClip('horn', '/sounds/horn.ogg', 0.85)) return;
     const ctx = this.getContext();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -201,6 +380,7 @@ class SoundManager {
   }
 
   public playBowShot() {
+    if (this.playClip('bow', '/sounds/bow_shoot_01.ogg', 0.85)) return;
     const ctx = this.getContext();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -256,6 +436,7 @@ class SoundManager {
   }
 
   public playVictoryFanfare() {
+    if (this.playClip('voice', '/sounds/man_victory_01.ogg', 0.9)) return;
     const ctx = this.getContext();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -297,36 +478,55 @@ class SoundManager {
     this.playSwordSwing();
   }
 
-  public playShieldHit() {
+  public playShieldHit(isWood = false) {
     if (!this.muted && playImpact('shieldBlock', { intensity: 1 })) return;
+    const clip = isWood ? '/sounds/shield_wood_wood_01.ogg' : '/sounds/shield_metal_metal_01.ogg';
+    if (this.playClip('shield', clip, 0.9)) return;
     this.playHeavyHit(true);
   }
 
   public playArrowFly() {
     if (!this.muted && playImpact('bowRelease', { intensity: 0.9 })) return;
+    if (this.playClip('arrow', '/sounds/arrow_pass_01.ogg', 0.85)) return;
     this.playBowShot();
   }
 
   public playClang() {
     if (!this.muted && playImpact('swordClash', { intensity: 1.1 })) return;
+    if (this.playRandomClip('clash', [
+      '/sounds/Sword_clash_01.ogg',
+      '/sounds/Sword_clash_02.ogg',
+      '/sounds/Sword_clash_03.ogg',
+      '/sounds/Sword_clash_04.ogg',
+      '/sounds/Sword_clash_05.ogg',
+    ], 0.9)) return;
     this.playHeavyHit(true);
   }
 
   /** Kılıç çınlaması (metal–metal). */
   public playSwordClash() {
     if (!this.muted && playImpact('swordClash', { intensity: 1.2 })) return;
+    if (this.playRandomClip('clash', [
+      '/sounds/Sword_clash_01.ogg',
+      '/sounds/Sword_clash_02.ogg',
+      '/sounds/Sword_clash_03.ogg',
+      '/sounds/Sword_clash_04.ogg',
+      '/sounds/Sword_clash_05.ogg',
+    ], 0.9)) return;
     this.playHeavyHit(true);
   }
 
   /** Ağır balta/2H savurma ıslığı. */
   public playHeavySwing() {
     if (!this.muted && playImpact('heavyAxeSwing', { intensity: 1.1 })) return;
+    if (this.playRandomClip('swing', ['/sounds/weapon_swing_01.ogg', '/sounds/weapon_swing_02.ogg'], 0.95)) return;
     this.playSwordSwing();
   }
 
   /** Ok gövdeye/kalkana saplandı. */
   public playArrowImpact() {
     if (!this.muted && playImpact('arrowHit', { intensity: 1 })) return;
+    if (this.playRandomClip('hit', ['/sounds/missile_flesh_01.ogg', '/sounds/arrow_ground_01.ogg'], 0.9)) return;
     this.playHeavyHit(false);
   }
 
@@ -447,7 +647,28 @@ class SoundManager {
 
   public playHit() {
     if (!this.muted && playImpact('swordClash', { intensity: 0.8 })) return;
+    if (this.playRandomClip('hit', [
+      '/sounds/Sword_clash_01.ogg',
+      '/sounds/metal_high_high_01.ogg',
+      '/sounds/blunt_high_high_01.ogg',
+    ], 0.85)) return;
     this.playHeavyHit(false);
+  }
+
+  public playShieldBreak() {
+    this.playClip('shield', '/sounds/shield_break_01.ogg', 0.95);
+  }
+
+  public playHorseGallop() {
+    this.playRandomClip('horse', ['/sounds/horse_gallop_01.ogg', '/sounds/horse_charge_01.ogg'], 0.7);
+  }
+
+  public playBattleYell() {
+    this.playRandomClip('voice', ['/sounds/man_yell_01.ogg', '/sounds/man_yell_04.ogg'], 0.85);
+  }
+
+  public playDecap() {
+    this.playClip('decap', '/sounds/decap1.ogg', 0.9);
   }
 }
 

@@ -270,16 +270,22 @@ export function computeDirectionalReticleState(params: {
     activeDirection = params.attackDir;
     statusLabel = dirLabels[activeDirection];
   } else {
-    mode = 'DIRECTION_CUE';
+    mode = 'HIDDEN';
     activeDirection = params.attackDir;
   }
+
+  const isArrowVisible =
+    mode === 'ATTACK_CHAMBER' ||
+    mode === 'ATTACK_SWING' ||
+    (mode === 'BLOCK' && !shieldBlock) ||
+    mode === 'DIRECTION_CUE';
 
   const arrows = {} as Record<AttackDirection, DirectionalArrowVisual>;
   for (const d of dirs) {
     const isTarget = d === activeDirection;
     if (mode === 'BLOCK') {
       if (shieldBlock) {
-        // Kalkan ile savunmada 4 yönlü ok çıkmaz — kalkan her yönü savunur
+        // Kalkan ile savunmada yön oku çıkmaz — kalkan her yöne siper olur
         arrows[d] = {
           active: false,
           opacity: 0,
@@ -287,41 +293,48 @@ export function computeDirectionalReticleState(params: {
           variant: 'idle',
         };
       } else {
-        // Sadece kalkansız (tek elli veya çift elli silah) blokta 4 yönlü savunma oku çıkar
+        // Silah blokunda yalnızca seçilen yönün parlak oku görünür
         arrows[d] = {
           active: isTarget,
-          opacity: isTarget ? 1.0 : 0.18,
-          scale: isTarget ? 1.28 : 0.92,
+          opacity: isTarget ? 1.0 : 0,
+          scale: isTarget ? 1.25 : 0.9,
           variant: isTarget ? 'block' : 'idle',
         };
       }
     } else if (mode === 'ATTACK_SWING') {
       arrows[d] = {
         active: isTarget,
-        opacity: isTarget ? 1.0 : 0.15,
-        scale: isTarget ? 1.35 : 0.9,
+        opacity: isTarget ? 1.0 : 0,
+        scale: isTarget ? 1.30 : 0.9,
         variant: isTarget ? 'attack' : 'idle',
       };
     } else if (mode === 'ATTACK_CHAMBER') {
       const readyBoost = params.attackPhase === 'READY';
       arrows[d] = {
         active: isTarget,
-        opacity: isTarget ? (readyBoost ? 1.0 : 0.88) : 0.18,
-        scale: isTarget ? (readyBoost ? 1.26 : 1.14) : 0.92,
+        opacity: isTarget ? (readyBoost ? 1.0 : 0.95) : 0,
+        scale: isTarget ? (readyBoost ? 1.28 : 1.15) : 0.9,
+        variant: isTarget ? 'attack' : 'idle',
+      };
+    } else if (mode === 'DIRECTION_CUE' && hasCue) {
+      arrows[d] = {
+        active: isTarget,
+        opacity: isTarget ? 0.9 : 0,
+        scale: isTarget ? 1.12 : 0.9,
         variant: isTarget ? 'attack' : 'idle',
       };
     } else {
       arrows[d] = {
-        active: isTarget,
-        opacity: isTarget ? (hasCue ? 0.82 : 0.48) : 0.14,
-        scale: isTarget ? (hasCue ? 1.12 : 1.0) : 0.9,
-        variant: isTarget ? 'attack' : 'idle',
+        active: false,
+        opacity: 0,
+        scale: 0.9,
+        variant: 'idle',
       };
     }
   }
 
   return {
-    visible: true,
+    visible: isArrowVisible || Boolean(shieldBlock),
     mode,
     activeDirection,
     statusLabel,

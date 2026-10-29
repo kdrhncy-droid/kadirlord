@@ -86,6 +86,8 @@ import {
 import { CharacterArenaView } from './components/CharacterArenaView';
 import { CharacterCreatorModal } from './components/CharacterCreatorModal';
 import { BannerlordPauseModal } from './components/BannerlordPauseModal';
+import { WarbandOptionsModal } from './components/WarbandOptionsModal';
+import { music } from './game/music';
 import { BattlePrewarmModal } from './components/BattlePrewarmModal';
 import { EncyclopediaModal } from './components/encyclopedia/EncyclopediaModal';
 import { BattleMemoryPool, PrewarmStageReport } from './game/battleEnginePool';
@@ -829,6 +831,23 @@ export default function App() {
     const timer = window.setTimeout(() => setWorldToast(null), 7000);
     return () => window.clearTimeout(timer);
   }, [worldToast]);
+
+  // BannerPage Orijinal Müzik Yönetimi (Oyun moduna ve sahneye göre dinamik geçiş)
+  useEffect(() => {
+    if (gameState === 'title') {
+      music.play('TITLE');
+    } else if (gameState === 'playing' || gameState === 'paused') {
+      if (subMode === 'battle') {
+        music.play('BATTLE');
+      } else if (viewMode === 'character_arena') {
+        music.play('ARENA');
+      } else if (activeSettlementModal) {
+        music.play('TOWN');
+      } else {
+        music.play('TRAVEL');
+      }
+    }
+  }, [gameState, subMode, viewMode, activeSettlementModal]);
 
   /** Diske yazar; dönen değer başarılı mı? */
   const persist = useCallback(
@@ -1654,6 +1673,7 @@ export default function App() {
       enemiesDefeated: number,
     ) => {
       if (victory) {
+        music.play('VICTORY');
         const pending = prepareBattleLoot(campaign, {
           enemyLordId: battleTargetLordId,
           enemiesDefeated,
@@ -1664,6 +1684,7 @@ export default function App() {
         setPendingBattleLoot(pending);
         setSubMode('overworld');
       } else {
+        music.play('DEFEAT');
         setCampaign((prev) => {
           const enemyLord =
             (battleTargetLordId
@@ -2999,102 +3020,10 @@ export default function App() {
       )}
 
       {/* 11. BANNERLORD AYARLAR (OPTIONS) MODAL */}
-      {isSettingsModalOpen && (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 pointer-events-auto"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Oyun Ayarları"
-          data-testid="settings-modal"
-        >
-          <div className="hud-panel rounded-sm border-2 border-[#8b6b36] bg-[#14110c] w-full max-w-lg p-6 text-[#f3ead8] shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-[#c6a15b]/30 pb-3">
-              <div>
-                <h2 className="font-display text-lg font-bold text-[#fde68a] tracking-wider uppercase">
-                  Oyun Ayarları (Options)
-                </h2>
-                <p className="text-xs text-[#a89b84]">Ses, Harita Performansı ve Kamera Kontrolleri</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsSettingsModalOpen(false)}
-                className="px-3 py-1 rounded text-xs font-bold bg-[#262018] hover:bg-[#382f23] text-[#fde68a] border border-[#c6a15b]/40"
-              >
-                Kapat [Esc]
-              </button>
-            </div>
-
-            <div className="space-y-4 text-xs">
-              <div className="p-3.5 rounded bg-[#1b1610] border border-[#c6a15b]/25 flex items-center justify-between">
-                <div>
-                  <div className="font-bold text-sm text-[#f8f0df]">Oyun Sesleri ve Harita Efektleri</div>
-                  <div className="text-[#a89b84] mt-0.5">
-                    At nalı sesleri, arayüz tıklamaları ve muharebe efektleri ([M] kısayolu)
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = sound.toggleMute();
-                    setMuted(next);
-                  }}
-                  className={`px-4 py-2 rounded font-bold border ${
-                    muted
-                      ? 'bg-[#3b1d1d] border-[#ef4444]/60 text-[#fecaca]'
-                      : 'bg-[#1e3a2a] border-[#34d399]/60 text-[#d1fae5]'
-                  }`}
-                >
-                  {muted ? 'Sessizde (Kapalı)' : 'Ses Açık'}
-                </button>
-              </div>
-
-              <div className="p-3.5 rounded bg-[#1b1610] border border-[#c6a15b]/25 space-y-2">
-                <div className="font-bold text-sm text-[#f8f0df]">Varsayılan Sancak Geçmişi</div>
-                <div className="grid grid-cols-3 gap-2">
-                  {(
-                    [
-                      { id: 'noble', label: 'Soylu Sancaktar' },
-                      { id: 'steppe', label: 'Bozkır Akıncısı' },
-                      { id: 'tactician', label: 'İmparatorluk Taktisyeni' },
-                    ] as const
-                  ).map((bg) => (
-                    <button
-                      key={bg.id}
-                      type="button"
-                      onClick={() => setBackgroundChoice(bg.id)}
-                      className={`p-2 rounded border text-center font-bold ${
-                        backgroundChoice === bg.id
-                          ? 'bg-[#3b2d18] border-[#fbbf24] text-[#fef08a]'
-                          : 'bg-[#14110c] border-[#c6a15b]/25 text-[#b5a890]'
-                      }`}
-                    >
-                      {bg.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded bg-[#1b1610] border border-[#c6a15b]/25 space-y-1 text-[#d1c5b0]">
-                <div className="font-bold text-sm text-[#fde68a] mb-1">Klavye &amp; Fare Rehberi</div>
-                <div>• Sol Tık: Haritada yürü / Yerleşime veya Lorda doğru takip başlat</div>
-                <div>• WASD: Stratejik kamerayı kaydır · Q/E veya Sağ Tık: Kamerayı döndür</div>
-                <div>• Space: Zamanı duraklat/başlat · 1 / 2 / 3: Zaman hızı</div>
-                <div>• I: Saha Envanteri · P: Parti &amp; Birlikler · C: Karakter · N: Ansiklopedi</div>
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2 border-t border-[#c6a15b]/25">
-              <button
-                type="button"
-                onClick={() => setIsSettingsModalOpen(false)}
-                className="px-5 py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white"
-              >
-                Tamam
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <WarbandOptionsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+      />
 
       {/* 12. BANNERLORD LOADING SCREEN OVERLAY */}
       {loadingScreen?.active && (

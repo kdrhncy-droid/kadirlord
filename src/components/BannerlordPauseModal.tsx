@@ -13,6 +13,7 @@ import {
   deleteSaveSlot,
 } from '../game/saveGame';
 import { sound } from '../game/sound';
+import { WarbandOptionsModal } from './WarbandOptionsModal';
 import { Shield, Coins, Star, Calendar, Trash2, ArrowLeft, Volume2, Monitor } from 'lucide-react';
 
 interface BannerlordPauseModalProps {
@@ -326,64 +327,10 @@ export const BannerlordPauseModal: React.FC<BannerlordPauseModalProps> = ({
 
         {/* VIEW: OPTIONS / SETTINGS */}
         {view === 'options' && (
-          <div className="w-full flex flex-col">
-            <div className="flex items-center gap-2 mb-4 border-b border-[#c6a15b]/30 pb-2">
-              <button
-                type="button"
-                onClick={() => setView('menu')}
-                className="p-1 rounded bg-[#201a14] hover:bg-[#332a20] text-[#c6a15b]"
-              >
-                <ArrowLeft size={16} />
-              </button>
-              <h3 className="text-base font-bold text-[#fde68a] tracking-wide">
-                Ayarlar (Options)
-              </h3>
-            </div>
-
-            <div className="space-y-4 text-xs">
-              <div>
-                <label className="text-[#c6a15b] font-semibold flex items-center gap-1.5 mb-1.5">
-                  <Volume2 size={14} />
-                  <span>Ana Ses Seviyesi (%{masterVolume})</span>
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={masterVolume}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setMasterVolume(val);
-                    sound.setVolume(val / 100);
-                  }}
-                  className="w-full accent-[#b45309]"
-                />
-              </div>
-
-              <div>
-                <label className="text-[#c6a15b] font-semibold flex items-center gap-1.5 mb-1.5">
-                  <Monitor size={14} />
-                  <span>3B Grafik & WebGL İşleme</span>
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="p-2 rounded bg-[#201a14] border border-[#c6a15b]/30 text-center font-bold text-[#34d399]">
-                    Donanım Hızlandırma: Aktif
-                  </div>
-                  <div className="p-2 rounded bg-[#201a14] border border-[#c6a15b]/30 text-center font-bold text-[#fde68a]">
-                    Low-Poly Instanced
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setView('menu')}
-              className="mt-6 w-full py-2 rounded bg-[#b45309] hover:bg-[#d97706] text-white font-bold transition text-xs"
-            >
-              Tamam
-            </button>
-          </div>
+          <WarbandOptionsModal
+            isOpen={true}
+            onClose={() => setView('menu')}
+          />
         )}
       </div>
     </div>

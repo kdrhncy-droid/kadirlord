@@ -68,6 +68,12 @@ import {
   type WarriorMeshHandles,
 } from '../game/proceduralModels';
 import {
+  applyRiderMountedPosture,
+  createCharacterRig,
+  deriveRigVisualOptionsFromEquipment,
+} from '../game/characterRig';
+import { CharacterAnimator } from '../game/characterAnimator';
+import {
   type AttackDirection,
   type BallisticArrow,
   type BattleAttackPhase,
@@ -370,7 +376,7 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     scene.fog = new THREE.Fog(scene.background.getHex(), 260, 620);
 
     const camera = new THREE.PerspectiveCamera(
-      55,
+      62,
       mount.clientWidth / Math.max(1, mount.clientHeight),
       0.1,
       1500,
@@ -581,13 +587,41 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       });
     }
 
-    // Oyuncu komutan (gerçek ekipman ve yeteneklerinden türetilmiş donanımla).
+    // Oyuncunun özelleştirilmiş 3B kahraman karakter modeli (Arenadakiyle birebir aynı zırh, kask, silah ve yüz DNA'sı)
+    const pDna = campaign?.playerMorphDNA;
+    const pVisuals = deriveRigVisualOptionsFromEquipment(
+      campaign?.equipment,
+      '#' + FACTION_INFO.player.hex.toString(16).padStart(6, '0'),
+    );
+    const playerHeroRig = createCharacterRig({
+      skinTone: pDna?.skinTone || '#dfa882',
+      hairColor: pDna?.hairColor || '#382212',
+      beardColor: pDna?.beardColor || '#382212',
+      factionColor: '#' + FACTION_INFO.player.hex.toString(16).padStart(6, '0'),
+      hasBeard: pDna ? pDna.beardStyle !== 'clean_shaven' : true,
+      weaponType: playerLoadout.hasRanged ? 'BOW' : pVisuals.weaponType,
+      shieldType: playerLoadout.hasShield ? pVisuals.shieldType : 'NONE',
+      helmetType: pVisuals.helmetType,
+      armorTier: pVisuals.armorTier,
+    });
+    playerHeroRig.root.scale.setScalar(1.08);
+    scene.add(playerHeroRig.root);
+    const playerHeroAnimator = new CharacterAnimator(playerHeroRig);
+    let lastHeroAttackPhase: BattleAttackPhase = 'IDLE';
+    let lastHeroAttackDir: AttackDirection = 'UP';
+    let lastHeroBlocking = false;
+    let lastHeroBlockDir: AttackDirection = 'UP';
+
+    // Eski düşük poligonlu model (arkaplanda at gövdesi için tutulur, basitleştirilmiş binici gizlenir)
     const playerHandles = createWarriorModel({
       factionHex: FACTION_INFO.player.hex,
       isMounted: playerLoadout.isMounted,
       isCommander: true,
     });
     playerHandles.telegraphRing.visible = false;
+    if (playerHandles.riderGroup) {
+      playerHandles.riderGroup.visible = false;
+    }
     playerHandles.root.scale.setScalar(1.18);
 
     // Oyuncu attan indiğinde at havada kaybolmaz; indiği noktada canlı olarak bekler!
@@ -1440,7 +1474,19 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     let lastMouseY: number | null = null;
     let camYaw = Math.PI; // oyuncu -Z'ye (düşmana) bakar
     let camPitch = 0.24;
-    const onKeyDown = (e: KeyboardEvent) => keys.add(e.code);
+    const onKeyDown = (e: KeyboardEvent) => {
+      keys.add(e.code);
+      if (e.code === 'KeyE') {
+        if (phase === 'battle' && !propsRef.current.paused && player.hp > 0 && player.cooldownTimer <= 0) {
+          if (mouseRightHeld && player.shieldHp > 0 && !player.isRanged) {
+            executePlayerShieldBash();
+          } else if (!player.isMounted) {
+            executePlayerKick();
+          }
+          refreshCmdUi();
+        }
+      }
+    };
     const onKeyUp = (e: KeyboardEvent) => keys.delete(e.code);
     const onMouseDown = (e: MouseEvent) => {
       if (e.target !== renderer.domElement) return;
@@ -1472,6 +1518,13 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
       if (e.button === 0) {
         mouseLeftHeld = true;
         mouseLeftJustPressed = true;
+        // BannerPage SHIELD BASH: Sağ Tık (blok) basılı tutulurken Sol Tık!
+        if (mouseRightHeld && player.shieldHp > 0 && !player.isRanged && player.cooldownTimer <= 0) {
+          executePlayerShieldBash();
+          refreshCmdUi();
+          return;
+        }
+
         if (!mouseRightHeld && player.attackPhase === 'IDLE' && player.cooldownTimer <= 0) {
           if (player.isRanged && player.ammo <= 0) player.isRanged = false;
           player.attackPhase = 'WINDUP';
@@ -1946,6 +1999,82 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
     const STEP_DT = 1 / 60;
     let accumulator = 0;
     let shadowTimer = 0;
+
+    // ══════════════════════════════════════════════════════════════════
+    //  BANNERPAGE / WARBAND SPECIAL COMBAT ACTIONS: SHIELD BASH & KICK
+    // ══════════════════════════════════════════════════════════════════
+
+    const executePlayerShieldBash = () => {
+      playerHeroAnimator.shieldBash();
+      player.attackPhase = 'ACTIVE';
+      player.attackTimer = 0.45;
+      player.cooldownTimer = 0.65;
+      sound.playShieldHit();
+
+      const reach = 2.45;
+      const fx = Math.sin(player.facing);
+      const fz = Math.cos(player.facing);
+      for (const o of actors) {
+        if (o.team === player.team || o.hp <= 0 || o.gone) continue;
+        const dx = o.x - player.x;
+        const dz = o.z - player.z;
+        const d = Math.hypot(dx, dz);
+        if (d > reach) continue;
+        const nx = dx / Math.max(0.01, d);
+        const nz = dz / Math.max(0.01, d);
+        if (nx * fx + nz * fz < 0.25) continue;
+
+        const bluntDmg = 16;
+        o.hp = Math.max(0, o.hp - bluntDmg);
+        o.isBlocking = false;
+        o.attackPhase = 'IDLE';
+        o.attackTimer = 0.85;
+        o.hitFlashTimer = 0.3;
+        sound.playShieldHit();
+        pushOrderShout(`🛡️ KALKAN DARBESİ! ${o.displayName} gardı kırıldı (-${bluntDmg} HP)`);
+        if (o.hp <= 0) {
+          o.gone = true;
+          player.kills++;
+          pushKillFeed(player, o, '🛡️ Kalkan');
+        }
+        break;
+      }
+    };
+
+    const executePlayerKick = () => {
+      playerHeroAnimator.kick();
+      player.attackPhase = 'ACTIVE';
+      player.attackTimer = 0.40;
+      player.cooldownTimer = 0.55;
+
+      const reach = 2.15;
+      const fx = Math.sin(player.facing);
+      const fz = Math.cos(player.facing);
+      for (const o of actors) {
+        if (o.team === player.team || o.hp <= 0 || o.gone) continue;
+        const dx = o.x - player.x;
+        const dz = o.z - player.z;
+        const d = Math.hypot(dx, dz);
+        if (d > reach) continue;
+        const nx = dx / Math.max(0.01, d);
+        const nz = dz / Math.max(0.01, d);
+        if (nx * fx + nz * fz < 0.3) continue;
+
+        const bluntDmg = 12;
+        o.hp = Math.max(0, o.hp - bluntDmg);
+        o.isBlocking = false;
+        o.attackPhase = 'IDLE';
+        o.attackTimer = 0.8;
+        o.hitFlashTimer = 0.3;
+        pushOrderShout(`🦶 TEKME DARBESİ! ${o.displayName} sersemledi (-${bluntDmg} HP)`);
+        if (o.hp <= 0) {
+          o.gone = true;
+          player.kills++;
+          pushKillFeed(player, o, '🦶 Tekme');
+        }
+        break;
+      }
+    };
 
     const executeActorAttackRelease = (actor: MissionActor) => {
       if (actor.isRanged && actor.ammo > 0) {
@@ -2516,6 +2645,83 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
           actor.handles.root.position.set(actor.x, y, actor.z);
           actor.handles.root.rotation.y = actor.facing;
           const moveSpd = Math.hypot(actor.vx, actor.vz);
+
+          if (actor.id === 'player-commander') {
+            // Arenadaki gerçek 3B karakter rigi ve BannerPage animatörü ile tam senkronizasyon
+            const mountElevation = actor.isMounted ? 0.72 : 0;
+            playerHeroRig.root.position.set(actor.x, y + mountElevation, actor.z);
+            playerHeroRig.root.rotation.y = actor.facing;
+            playerHeroRig.root.visible = !firstPersonCam && actor.hp > 0;
+
+            const toAnimDir = (d: string): 'up' | 'down' | 'left' | 'right' => {
+              const s = d.toLowerCase();
+              return s === 'up' || s === 'down' || s === 'left' || s === 'right' ? s : 'up';
+            };
+
+            // Locomotion: yürüme / koşma veya at biniş postürü
+            if (actor.isMounted) {
+              playerHeroAnimator.setMove(0, 0);
+            } else {
+              const forwardX = Math.sin(actor.facing);
+              const forwardZ = Math.cos(actor.facing);
+              const localFwd = actor.vx * forwardX + actor.vz * forwardZ;
+              const localRight = actor.vx * forwardZ - actor.vz * forwardX;
+              playerHeroAnimator.setMove(localRight, localFwd);
+            }
+
+            const animAttackDir = toAnimDir(actor.attackDir);
+            const animBlockDir = toAnimDir(actor.blockDir);
+
+            // Warband 4 yönlü saldırı hazırlığı (WINDUP/READY) ve bırakma (ACTIVE)
+            if (actor.attackPhase === 'WINDUP' || actor.attackPhase === 'READY') {
+              if (
+                lastHeroAttackPhase !== 'WINDUP' &&
+                lastHeroAttackPhase !== 'READY'
+              ) {
+                playerHeroAnimator.attack(animAttackDir, true);
+                lastHeroAttackDir = actor.attackDir;
+              } else if (lastHeroAttackDir !== actor.attackDir) {
+                playerHeroAnimator.attack(animAttackDir, true);
+                lastHeroAttackDir = actor.attackDir;
+              }
+            } else if (actor.attackPhase === 'ACTIVE') {
+              if (lastHeroAttackPhase !== 'ACTIVE') {
+                playerHeroAnimator.release();
+              }
+            } else if (actor.attackPhase === 'IDLE') {
+              if (lastHeroAttackPhase !== 'IDLE' && playerHeroAnimator.isAttacking()) {
+                playerHeroAnimator.cancelAction();
+              }
+            }
+
+            // Warband 4 yönlü savunma (BLOCK)
+            if (actor.isBlocking) {
+              if (!lastHeroBlocking || lastHeroBlockDir !== actor.blockDir) {
+                playerHeroAnimator.block(animBlockDir);
+                lastHeroBlocking = true;
+                lastHeroBlockDir = actor.blockDir;
+              }
+            } else if (lastHeroBlocking) {
+              if (playerHeroAnimator.isBlocking()) {
+                playerHeroAnimator.release();
+              }
+              lastHeroBlocking = false;
+            }
+
+            lastHeroAttackPhase = actor.attackPhase;
+
+            if (actor.hp <= 0 && !playerHeroAnimator.isDown()) {
+              playerHeroAnimator.fall();
+            }
+
+            playerHeroAnimator.update(dt);
+
+            // At üzerindeyse üzengilere basan ve eyere oturan Warband binici postürü
+            if (actor.isMounted) {
+              applyRiderMountedPosture(playerHeroRig, moveSpd, elapsed);
+            }
+          }
+
           const windupDur =
             actor.id === 'player-commander'
               ? actor.isRanged
@@ -2667,20 +2873,18 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
             pz + Math.cos(camYaw) * Math.cos(camPitch) * 18,
           );
         } else {
-          // Bannerlord yükseltilmiş omuz üstü 3. Şahıs kamera (oyuncu miğferi nişangâhı kapatmaz)
+          // Mount & Blade: Warband merkezlenmiş 3. Şahıs kamera
           player.handles.root.visible = true;
-          const dist = player.isMounted ? 5.1 : 4.15;
-          const shoulderOffset = player.isMounted ? 0.68 : 0.58;
-          const shoulderRightX = Math.sin(camYaw - Math.PI / 2) * shoulderOffset;
-          const shoulderRightZ = Math.cos(camYaw - Math.PI / 2) * shoulderOffset;
-          const cx = px + shoulderRightX - Math.sin(camYaw) * Math.cos(camPitch) * dist;
-          const cz = pz + shoulderRightZ - Math.cos(camYaw) * Math.cos(camPitch) * dist;
-          const cy = py + 2.42 + mountOffset + Math.sin(camPitch) * dist;
-          camera.position.set(cx, Math.max(cy, groundY(cx, cz) + 0.85), cz);
+          const dist = player.isMounted ? 3.35 : 2.45;
+          const pivotY = py + 1.55 + mountOffset;
+          const cx = px - Math.sin(camYaw) * Math.cos(camPitch) * dist;
+          const cz = pz - Math.cos(camYaw) * Math.cos(camPitch) * dist;
+          const cy = pivotY + 0.22 + Math.sin(camPitch) * dist * 0.65;
+          camera.position.set(cx, Math.max(cy, groundY(cx, cz) + 0.5), cz);
           camera.lookAt(
-            px + shoulderRightX * 0.45 + Math.sin(camYaw) * 14,
-            py + 1.92 + mountOffset - Math.sin(camPitch) * 5.2,
-            pz + shoulderRightZ * 0.45 + Math.cos(camYaw) * 14,
+            px + Math.sin(camYaw) * Math.cos(camPitch) * 20,
+            pivotY - Math.sin(camPitch) * 16,
+            pz + Math.cos(camYaw) * Math.cos(camPitch) * 20,
           );
         }
       } else {
@@ -2957,14 +3161,32 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
             </div>
           )}
 
-          {/* 3. EKRAN ORTASI: BANNERLORD 4 YÖNLÜ SALDIRI / SAVUNMA OKLARI VE NİŞANGÂH */}
+          {/* 3. EKRAN ORTASI: WARBAND 4 YÖNLÜ SALDIRI / SAVUNMA OKLARI VE NİŞANGÂH */}
           <div
             data-testid="battle-directional-reticle"
             data-mode={cmdUi.reticle.mode}
             data-direction={cmdUi.reticle.activeDirection}
             className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2"
           >
-            <div className="relative h-28 w-28">
+            <div className="relative h-28 w-28 flex items-center justify-center">
+              {/* Warband Orijinal Yön Oku Degrade Tanımları */}
+              <svg width="0" height="0" className="absolute">
+                <defs>
+                  <linearGradient id="wbBattleAttackGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor="#fffee0" />
+                    <stop offset="30%" stopColor="#fff266" />
+                    <stop offset="75%" stopColor="#facc15" />
+                    <stop offset="100%" stopColor="#ca8a04" />
+                  </linearGradient>
+                  <linearGradient id="wbBattleBlockGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor="#f0f9ff" />
+                    <stop offset="35%" stopColor="#7dd3fc" />
+                    <stop offset="80%" stopColor="#38bdf8" />
+                    <stop offset="100%" stopColor="#0284c7" />
+                  </linearGradient>
+                </defs>
+              </svg>
+
               {(
                 [
                   {
@@ -2992,13 +3214,8 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
                 const arrow = cmdUi.reticle.arrows[dir];
                 const isAttack = arrow.variant === 'attack' && arrow.active;
                 const isBlock = arrow.variant === 'block' && arrow.active;
-                const colorClass = isBlock
-                  ? 'text-sky-300 drop-shadow-[0_0_8px_rgba(56,189,248,0.95)]'
-                  : isAttack
-                    ? 'text-amber-300 drop-shadow-[0_0_8px_rgba(251,191,36,0.95)]'
-                    : arrow.active
-                      ? 'text-amber-200/90 drop-shadow-[0_0_4px_rgba(251,191,36,0.55)]'
-                      : 'text-stone-200/35';
+                const isVisible = arrow.active && arrow.opacity > 0;
+
                 return (
                   <div
                     key={dir}
@@ -3008,52 +3225,49 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
                     style={{
                       opacity: arrow.opacity,
                       transform: `scale(${arrow.scale})`,
+                      filter: isBlock
+                        ? 'drop-shadow(0 0 7px rgba(56,189,248,0.95)) drop-shadow(0 1px 2px rgba(0,0,0,0.85))'
+                        : isAttack
+                          ? 'drop-shadow(0 0 7px rgba(250,204,21,0.95)) drop-shadow(0 1px 2px rgba(0,0,0,0.85))'
+                          : 'none',
                     }}
-                    className={`absolute ${posClass} transition-all duration-75 ${colorClass}`}
+                    className={`absolute ${posClass} transition-all duration-75 pointer-events-none ${
+                      isVisible ? '' : 'hidden'
+                    }`}
                   >
+                    {/* Mount & Blade Warband Orijinal Yön Oku (Yuvarlak Başlı & İnce Gövdeli) */}
                     <svg
-                      width="26"
-                      height="26"
-                      viewBox="0 0 28 28"
+                      width="24"
+                      height="46"
+                      viewBox="0 0 32 64"
                       fill="none"
                       style={{ transform: `rotate(${rotationDeg}deg)` }}
                     >
-                      {/* Kavisli Bannerlord yön yayı */}
                       <path
-                        d="M5 17C8.2 12.2 19.8 12.2 23 17"
-                        stroke="currentColor"
-                        strokeWidth={arrow.active ? '2.4' : '1.5'}
-                        strokeLinecap="round"
-                      />
-                      {/* Sivri yön oku başı */}
-                      <path
-                        d="M14 3L20.5 11.5H16.2V16.5H11.8V11.5H7.5L14 3Z"
-                        fill="currentColor"
-                        fillOpacity={arrow.active ? '0.92' : '0.45'}
-                        stroke="currentColor"
-                        strokeWidth="1"
+                        d="M 16 3
+                           C 18.8 3, 22.8 7.5, 23.2 14.5
+                           C 23.5 18.2, 21.2 20.8, 18.8 21.8
+                           L 18.8 59
+                           C 18.8 61.2, 13.2 61.2, 13.2 59
+                           L 13.2 21.8
+                           C 10.8 20.8, 8.5 18.2, 8.8 14.5
+                           C 9.2 7.5, 13.2 3, 16 3 Z"
+                        fill={isBlock ? 'url(#wbBattleBlockGrad)' : 'url(#wbBattleAttackGrad)'}
+                        stroke={isBlock ? '#0284c7' : '#78350f'}
+                        strokeWidth="1.2"
                         strokeLinejoin="round"
                       />
-                      {/* Blok modunda koruma çift çizgisi */}
-                      {isBlock && (
-                        <path
-                          d="M7 20.5C10.2 17.8 17.8 17.8 21 20.5"
-                          stroke="currentColor"
-                          strokeWidth="2.2"
-                          strokeLinecap="round"
-                        />
-                      )}
                     </svg>
                   </div>
                 );
               })}
 
-              {/* Merkez Nişangâh / Blok Kalkan Simgesi */}
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-                {cmdUi.isBlocking ? (
+              {/* Merkez Blok Kalkan Simgesi (Yalnızca Blok Yaparken) */}
+              {cmdUi.isBlocking && (
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
                   <svg
-                    width="18"
-                    height="18"
+                    width="20"
+                    height="20"
                     viewBox="0 0 24 24"
                     fill="none"
                     className="text-sky-300 drop-shadow-[0_0_6px_rgba(56,189,248,0.85)]"
@@ -3066,16 +3280,8 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
                       strokeWidth="2"
                     />
                   </svg>
-                ) : (
-                  <div
-                    className={`h-2.5 w-2.5 rounded-full border transition-transform ${
-                      cmdUi.attackPhase === 'READY'
-                        ? 'scale-125 border-amber-200 bg-amber-400/80 shadow-[0_0_8px_#fbbf24]'
-                        : 'border-amber-200/80 bg-amber-300/40'
-                    }`}
-                  />
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
             {/* Saldırı Hazırlık / Savurma / Blok Durum Etiketi */}
@@ -3091,6 +3297,17 @@ export const BattlefieldView: React.FC<BattlefieldViewProps> = (props) => {
                 {cmdUi.reticle.statusLabel}
               </div>
             )}
+
+            {/* BannerPage / Warband Kontrol Kılavuzu Rozeti */}
+            <div className="mt-1 flex items-center justify-center gap-1.5 whitespace-nowrap rounded bg-black/75 px-2.5 py-0.5 text-[9px] tracking-wide text-stone-300 border border-[#c6a15b]/35 shadow-md">
+              <span>[Sol Tık] Saldır</span>
+              <span>•</span>
+              <span>[Sağ Tık] Blok</span>
+              <span>•</span>
+              <span className="font-bold text-amber-300">[E] Tekme</span>
+              <span>•</span>
+              <span className="font-bold text-sky-300">[Sağ Tık + Sol Tık] Kalkan Vuruşu</span>
+            </div>
           </div>
 
           {/* 4. SOL ALT: EMİR SESLENİŞ GÜNLÜĞÜ (Order Shout Log) */}
