@@ -149,6 +149,11 @@ export const LordPortraitCanvas: React.FC<LordPortraitCanvasProps> = ({
       if (renderer.domElement.parentNode) {
         renderer.domElement.parentNode.removeChild(renderer.domElement);
       }
+      try {
+        renderer.forceContextLoss();
+      } catch {
+        // yoksay
+      }
       renderer.dispose();
     };
   }, [lord]);

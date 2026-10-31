@@ -89,6 +89,11 @@ export const ConversationCanvas: React.FC<ConversationCanvasProps> = ({
       cancelAnimationFrame(raf);
       ro.disconnect();
       renderer.domElement.parentNode?.removeChild(renderer.domElement);
+      try {
+        renderer.forceContextLoss();
+      } catch {
+        // yoksay
+      }
       renderer.dispose();
       conv.dispose();
       sceneRef.current = null;

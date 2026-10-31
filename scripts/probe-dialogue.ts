@@ -9,6 +9,8 @@ import {
   applyOption,
   buildDialogue,
   canExit,
+  deriveLordArchetype,
+  detectLordSituationalState,
   numberedOptions,
   persuadeChance,
   validateDialogue,
@@ -170,6 +172,47 @@ ok(
   sameKingdomDlg.nodes['discuss-mercenary-node'].options.some((o) => o.id === 'mercenary-leave') &&
     !sameKingdomDlg.nodes['discuss-mercenary-node'].options.some((o) => o.id === 'mercenary-sign'),
   'aynı krallık lordunda tekrar imza yerine sözleşme fesih (mercenary-leave) seçeneği çıkıyor',
+);
+
+/* 13. Lord Kişilik Arketip Dağılımı ve Doğrulama */
+const archetypes = campaign.lords.map((l) => deriveLordArchetype(l));
+const archetypeSet = new Set(archetypes);
+ok(archetypeSet.size >= 4, 'lordlar arasında en az 4 farklı kişilik arketipi dağıtılmış', Array.from(archetypeSet).join(', '));
+const banditLord = campaign.lords.find((l) => l.faction === 'bandits')!;
+ok(deriveLordArchetype(banditLord) === 'CRUEL', 'haydut reisi ZALIM (CRUEL) arketipinde');
+
+/* 14. Durumsal Konuşma (Açlık, Yaralı, Kuşatma, Esir) */
+const starvingLord = { ...lord, foodDays: 1, morale: 30 };
+ok(detectLordSituationalState(starvingLord) === 'STARVING', 'erzak 1 günün altındayken STARVING tespit edilir');
+const starvingDlg = buildDialogue({ lord: starvingLord, campaign, atWar: false, relation: starvingLord.relation });
+ok(starvingDlg.nodes.root.text.includes('açlıktan') || starvingDlg.nodes.root.text.includes('erzak'), 'aç lord erzak sıkıntısını dile getirir');
+
+const woundedLord = { ...lord, wounded: 12, armySize: 8 };
+ok(detectLordSituationalState(woundedLord) === 'WOUNDED_SURVIVORS', 'ağır zayiatlı lord WOUNDED_SURVIVORS durumundadır');
+const woundedDlg = buildDialogue({ lord: woundedLord, campaign, atWar: false, relation: woundedLord.relation });
+ok(woundedDlg.nodes.root.text.includes('cenkten') || woundedDlg.nodes.root.text.includes('yaralı') || woundedDlg.nodes.root.text.includes('Sargı'), 'yaralı lord savaş zayiatını dile getirir');
+
+const siegeLord = { ...lord, order: { kind: 'SIEGE' as const, targetSettlementId: 'town-1', sinceDay: 1, siegeProgress: 20 } };
+ok(detectLordSituationalState(siegeLord) === 'BESIEGING', 'kuşatma emrindeki lord BESIEGING durumundadır');
+const siegeDlg = buildDialogue({ lord: siegeLord, campaign, atWar: false, relation: siegeLord.relation });
+ok(siegeDlg.nodes.root.text.includes('surlarda') || siegeDlg.nodes.root.text.includes('Kuşatma'), 'kuşatmadaki lord sur ve mancınık hattından bahseder');
+
+const prisonerLord = { ...lord, prisoners: 9 };
+ok(detectLordSituationalState(prisonerLord) === 'CARRYING_PRISONERS', 'yüklü esir taşıyan lord CARRYING_PRISONERS durumundadır');
+const prisonerDlg = buildDialogue({ lord: prisonerLord, campaign, atWar: false, relation: prisonerLord.relation });
+ok(prisonerDlg.nodes.root.text.includes('zincirlerimiz') || prisonerDlg.nodes.root.text.includes('esir'), 'esir taşıyan lord kafilesini dile getirir');
+
+/* 15. Siyasi Divan Müzakeresi Düğmesi ve OPEN_COUNCIL Aksiyonu */
+const discussDlg = buildDialogue({ lord, campaign, atWar: false, hasMet: true, relation: lord.relation });
+const discussMenu = discussDlg.nodes['discuss-menu'];
+ok(
+  discussMenu.options.some((o) => o.id === 'discuss-council'),
+  'Müzakere menüsünde 4 Aşamalı İkna & Divan (discuss-council) seçeneği var',
+);
+const councilApplied = applyOption(discussDlg, 'discuss-menu', 'discuss-council', { relation: 10, gold: 100 });
+ok(
+  councilApplied.closed === true && councilApplied.encounterAction?.kind === 'OPEN_COUNCIL',
+  'discuss-council seçilince OPEN_COUNCIL aksiyonu tetiklenir ve diyalog penceresi divana devreder',
 );
 
 console.log(fails === 0 ? '\n✅ DİYALOG SİSTEMİ DOĞRU' : `\n❌ ${fails} hata`);

@@ -30,6 +30,12 @@ import {
   upgradeSettlementBuilding,
   setSettlementDailyDefault,
   buyOrChangeWorkshop,
+  sellWorkshop,
+  countPlayerWorkshops,
+  getSettlementWorkshops,
+  calculateSingleWorkshopIncome,
+  getWorkshopSameTownRequiredTier,
+  settlementWorkshopIncome,
   forgeCustomWeaponAtSmithy,
   constructSiegeEngine,
   deployReservedSiegeEngines,
@@ -2270,6 +2276,91 @@ test('P3 party system: capacity breakdown, troopStacks single source of truth, b
   assert.ok(healthTick.prisonersBecameReady >= 1, 'En az 1 tutsak devşirilmeye hazır hale gelmeli');
   assert.ok((healthTick.nextState.prisonerStacks![0].ready ?? 0) >= 1);
 });
+
+test('Bannerlord Workshop System: her şehirden serbestçe atölye alınabilir ama aynı şehirde birden fazla atölye için klan seviyesi istenir', () => {
+  let state = createInitialCampaignState();
+  state = { ...state, gold: 10000, renown: 60 }; // Clan tier 1, max global workshops = 2
+
+  assert.equal(calculateClanTier(state.renown).tier, 1);
+  const initialCounts = countPlayerWorkshops(state);
+  assert.equal(initialCounts.total, 0);
+
+  // 1. Farklı bir şehirden (Zeonica) 1. atölyeyi satın al
+  const zeonicaRes = buyOrChangeWorkshop(state, 'zeonica', 'BREWERY', 0);
+  assert.equal(zeonicaRes.success, true, zeonicaRes.reason);
+  state = zeonicaRes.nextState;
+
+  let counts = countPlayerWorkshops(state);
+  assert.equal(counts.total, 1);
+  assert.equal(counts.bySettlement['zeonica'], 1);
+
+  // 2. Farklı bir şehirden (Pravend) 2. atölyeyi satın al (Klan Kademesi 1 sınırı 2'dir, serbestçe alınabilir)
+  const pravendRes = buyOrChangeWorkshop(state, 'pravend', 'OLIVE_PRESS', 0);
+  assert.equal(pravendRes.success, true, pravendRes.reason);
+  state = pravendRes.nextState;
+
+  counts = countPlayerWorkshops(state);
+  assert.equal(counts.total, 2);
+  assert.equal(counts.bySettlement['zeonica'], 1);
+  assert.equal(counts.bySettlement['pravend'], 1);
+
+  // 3. Global limit doluyken (2/2) 3. atölyeyi satın alma denemesi reddedilir
+  const galendBlocked = buyOrChangeWorkshop(state, 'galend', 'SMITHY', 0);
+  assert.equal(galendBlocked.success, false);
+  assert.match(galendBlocked.reason ?? '', /Maksimum atölye sınırına ulaştınız/);
+
+  // 4. Aynı şehir kuralı testi:
+  // Pravend'deki atölyeyi satalım, böylece toplam 1 atölyemiz kalacak (limit 2 iken 1 açık yerimiz olacak)
+  const sellPravend = sellWorkshop(state, 'pravend', 0);
+  assert.equal(sellPravend.success, true);
+  state = sellPravend.nextState;
+  assert.equal(countPlayerWorkshops(state).total, 1);
+
+  // Şu an oyuncu Klan Kademesi 1'de, 1 boş yeri var ama Zeonica'da zaten 1 atölyesi var.
+  // Zeonica'da 2. bir atölye almaya çalıştığında AYNI ŞEHİR KLAN KADEMESİ 2 KURALI gereği reddedilmelidir!
+  const zeonicaSecondBlocked = buyOrChangeWorkshop(state, 'zeonica', 'SMITHY', 1);
+  assert.equal(zeonicaSecondBlocked.success, false);
+  assert.match(zeonicaSecondBlocked.reason ?? '', /Aynı şehirde 2\. bir atölye işletebilmek için Klan Kademesi 2/);
+
+  // Farklı bir şehirde ise serbestçe atölye açabilmelidir (Pravend'de açabilir)
+  const pravendReopen = buyOrChangeWorkshop(state, 'pravend', 'SMITHY', 0);
+  assert.equal(pravendReopen.success, true);
+  state = pravendReopen.nextState;
+
+  // 5. Klan kademesini 2'ye yükseltelim (renown: 160 -> tier 2, max global = 3)
+  state = { ...state, renown: 160 };
+  assert.equal(calculateClanTier(state.renown).tier, 2);
+
+  // Artık Klan Kademesi 2 olduğu için Zeonica'da 2. atölyeyi satın alabilir!
+  const zeonicaSecondSuccess = buyOrChangeWorkshop(state, 'zeonica', 'POTTERY_SHOP', 1);
+  assert.equal(zeonicaSecondSuccess.success, true, zeonicaSecondSuccess.reason);
+  state = zeonicaSecondSuccess.nextState;
+
+  counts = countPlayerWorkshops(state);
+  assert.equal(counts.total, 3);
+  assert.equal(counts.bySettlement['zeonica'], 2);
+  assert.equal(counts.bySettlement['pravend'], 1);
+
+  // 6. Üretim değiştirme testi (Zeonica yuva 0'daki BREWERY'yi WINE_PRESS'e çevir)
+  const initialGold = state.gold;
+  const changeRes = buyOrChangeWorkshop(state, 'zeonica', 'WINE_PRESS', 0);
+  assert.equal(changeRes.success, true);
+  assert.equal(changeRes.nextState.gold, initialGold - 100);
+  state = changeRes.nextState;
+
+  const zeonicaTown = state.settlements.find((s) => s.id === 'zeonica')!;
+  const zeonicaWorkshops = getSettlementWorkshops(zeonicaTown, state.settlements);
+  assert.equal(zeonicaWorkshops[0].type, 'WINE_PRESS');
+  assert.equal(zeonicaWorkshops[0].owner, 'player');
+
+  // 7. Günlük gelir hesabı testi
+  const totalIncome = settlementWorkshopIncome(zeonicaTown, state.settlements);
+  assert.ok(totalIncome > 0, 'Zeonica atölyeleri toplam gelir üretmeli');
+  const slot0Income = calculateSingleWorkshopIncome(zeonicaWorkshops[0], zeonicaTown, state.settlements);
+  const slot1Income = calculateSingleWorkshopIncome(zeonicaWorkshops[1], zeonicaTown, state.settlements);
+  assert.equal(totalIncome, slot0Income + slot1Income, 'Şehirdeki tüm oyuncu atölyelerinin geliri toplanmalı');
+});
+
 
 
 

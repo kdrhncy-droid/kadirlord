@@ -272,7 +272,7 @@ export const BannerlordRecruitmentModal: React.FC<BannerlordRecruitmentModalProp
       cost: p.slot.cost,
       slotKey: p.key,
     }));
-    sound.playWarhorn();
+    sound.playCoin();
     onCommitRecruits(payload);
   };
 

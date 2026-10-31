@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import './index.css';
 import { setArmoryVisualsEnabled, armoryVisualsEnabled } from './game/armoryBridge.ts';
 import { setArmorySoundEnabled, armorySoundEnabled } from './game/armorySound.ts';
@@ -15,7 +16,11 @@ if (e2eRequest.enabled) {
   installDeterministicRandom(e2eRequest.seed);
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>,
+);
 
 /**
  * BannerForge teşhis kancası — konsoldan görsel/ses katmanını kıyaslayın:

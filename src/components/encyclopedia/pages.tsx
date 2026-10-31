@@ -18,6 +18,7 @@ import { OCCUPATION_LABELS, ageOf, lastSeenLabel, type HeroRecord } from '../../
 import { BannerBadge, Chip, InfoCell, LinkCard, SectionTitle, initials, occupationColor } from './parts';
 import { HeroPortrait } from './HeroPortrait';
 import { SettlementIcon } from './icons';
+import { getSettlementOwnerDetails } from '../../game/settlementOwnership';
 
 interface PageProps {
   index: EncyclopediaIndex;
@@ -465,25 +466,28 @@ export const SettlementListPage: React.FC<PageProps> = ({ index, onNavigate }) =
         </>
       }
     >
-      {list.map((s) => (
-        <button
-          key={s.id}
-          type="button"
-          onClick={() => onNavigate({ section: 'SETTLEMENT', id: s.id })}
-          className="w-full flex items-center gap-3 px-3 py-2 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10 text-left"
-        >
-          <span className="w-8 h-8 shrink-0 rounded-sm border border-[#c6a15b]/40 flex items-center justify-center text-[#c6a15b]">
-            <SettlementIcon type={s.type} size={15} />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="text-xs text-[#f8f0df] truncate block">{s.name}</span>
-            <span className="block text-[10px] text-[#a2957f] truncate">
-              {SETTLEMENT_TYPE_LABELS[s.type]} · {FACTION_INFO[s.faction]?.name ?? s.faction}
+      {list.map((s) => {
+        const sOwner = getSettlementOwnerDetails(s, { settlements: index.settlements, lords: [] });
+        return (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onNavigate({ section: 'SETTLEMENT', id: s.id })}
+            className="w-full flex items-center gap-3 px-3 py-2 border-b border-[#c6a15b]/12 hover:bg-[#c6a15b]/10 text-left"
+          >
+            <span className="w-8 h-8 shrink-0 rounded-sm border border-[#c6a15b]/40 flex items-center justify-center text-[#c6a15b]">
+              <SettlementIcon type={s.type} size={15} />
             </span>
-          </span>
-          <span className="shrink-0 text-[10px] text-[#8b8072]">{Math.round(s.prosperity)} refah</span>
-        </button>
-      ))}
+            <span className="min-w-0 flex-1">
+              <span className="text-xs text-[#f8f0df] truncate block">{s.name}</span>
+              <span className="block text-[10px] text-[#a2957f] truncate">
+                {SETTLEMENT_TYPE_LABELS[s.type]} · {FACTION_INFO[s.faction]?.name ?? s.faction} · Sahibi: {sOwner.heroName} ({sOwner.clanName})
+              </span>
+            </span>
+            <span className="shrink-0 text-[10px] text-[#8b8072]">{Math.round(s.prosperity)} refah</span>
+          </button>
+        );
+      })}
     </ListShell>
   );
 };
@@ -493,45 +497,79 @@ export const SettlementDetailPage: React.FC<PageProps & { settlementId?: string 
   settlementId,
   onNavigate,
 }) => {
-  const settlement = settlementId ? index.settlementById[settlementId] : undefined;
-  if (!settlement) return <EmptyNote>Yerleşim bulunamadı.</EmptyNote>;
+    const settlement = settlementId ? index.settlementById[settlementId] : undefined;
+    if (!settlement) return <EmptyNote>Yerleşim bulunamadı.</EmptyNote>;
 
-  const kingdom: KingdomSummary | null = settlementKingdom(index, settlement);
-  const heroes = settlementHeroes(index, settlement.id);
+    const kingdom: KingdomSummary | null = settlementKingdom(index, settlement);
+    const heroes = settlementHeroes(index, settlement.id);
+    const owner = getSettlementOwnerDetails(settlement, { settlements: index.settlements, lords: [] });
 
-  return (
-    <div className="h-full overflow-y-auto p-4">
-      <div className="flex items-start gap-3 rounded border border-[#c6a15b]/30 p-3 mb-3">
-        <span
-          className="w-14 h-14 shrink-0 rounded-sm border border-[#c6a15b]/40 flex items-center justify-center text-[#d8b977]"
-          style={{ background: 'linear-gradient(160deg,#2a2015,#120f0b)' }}
-        >
-          <SettlementIcon type={settlement.type} size={26} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="font-display text-sm text-[#f8f0df] truncate">{settlement.name}</div>
-          {/* Faz 9g: krallık bilgisi yalnız sağdaki LinkCard'da; altyazı sadece tür. */}
-          <div className="text-[11px] text-[#a89b84] mb-1">
-            {SETTLEMENT_TYPE_LABELS[settlement.type]}
+    return (
+      <div className="h-full overflow-y-auto p-4">
+        <div className="flex flex-col md:flex-row items-start gap-3 rounded border border-[#c6a15b]/30 p-3 mb-3">
+          <span
+            className="w-14 h-14 shrink-0 rounded-sm border border-[#c6a15b]/40 flex items-center justify-center text-[#d8b977]"
+            style={{ background: 'linear-gradient(160deg,#2a2015,#120f0b)' }}
+          >
+            <SettlementIcon type={settlement.type} size={26} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="font-display text-sm text-[#f8f0df] truncate">{settlement.name}</div>
+            <div className="text-[11px] text-[#a89b84] mb-1">
+              {SETTLEMENT_TYPE_LABELS[settlement.type]}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              <Chip>{Math.round(settlement.prosperity)} refah</Chip>
+              <Chip>{settlement.garrison} garnizon</Chip>
+              <Chip>{Math.round(settlement.foodStock)} erzak</Chip>
+              {settlement.isRaided && (
+                <Chip className="text-[#fca5a5] border-[#991b1b] bg-[#991b1b]/20">Yağmalandı</Chip>
+              )}
+            </div>
           </div>
-          <div className="flex flex-wrap gap-1">
-            <Chip>{Math.round(settlement.prosperity)} refah</Chip>
-            <Chip>{settlement.garrison} garnizon</Chip>
-            <Chip>{Math.round(settlement.foodStock)} erzak</Chip>
-            {settlement.isRaided && (
-              <Chip className="text-[#fca5a5] border-[#991b1b] bg-[#991b1b]/20">Yağmalandı</Chip>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full md:w-[360px] shrink-0">
+            <LinkCard
+              label="Mülk Sahibi"
+              value={owner.heroTitle ? `${owner.heroTitle} ${owner.heroName}` : owner.heroName}
+              onClick={() => onNavigate({ section: 'HERO', id: owner.heroId })}
+              disabled={!owner.heroId}
+            />
+            <LinkCard
+              label="Yönetici Klan"
+              value={owner.clanName}
+              onClick={() => onNavigate({ section: 'CLAN', id: owner.clanId })}
+              disabled={!owner.clanId}
+            />
+            <LinkCard
+              label="Krallık"
+              value={kingdom?.name ?? owner.factionName}
+              onClick={() => kingdom && onNavigate({ section: 'KINGDOM', id: kingdom.id })}
+              disabled={!kingdom}
+            />
+            {settlement.type === 'VILLAGE' && (
+              <LinkCard
+                label="Bağlı Olduğu Yerleşke"
+                value={owner.boundParentName || settlement.boundSettlementName || 'Merkez Yerleşim'}
+                onClick={() =>
+                  settlement.boundSettlementId &&
+                  onNavigate({ section: 'SETTLEMENT', id: settlement.boundSettlementId })
+                }
+                disabled={!settlement.boundSettlementId}
+              />
             )}
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-2 w-[190px] shrink-0">
-          <LinkCard
-            label="Krallık"
-            value={kingdom?.name ?? 'Bağımsız'}
-            onClick={() => kingdom && onNavigate({ section: 'KINGDOM', id: kingdom.id })}
-            disabled={!kingdom}
-          />
-        </div>
-      </div>
+
+        {settlement.type === 'VILLAGE' && (
+          <div className="rounded border border-[#c6a15b]/30 bg-[#251b10]/70 p-2.5 mb-3 flex items-start gap-2.5 text-[11px] text-[#fde68a]">
+            <span className="text-base shrink-0">🌾</span>
+            <div className="leading-relaxed">
+              <span className="font-bold text-[#fef08a]">Bannerlord Mülkiyet Kuralı:</span> Köyler bağımsız alınıp verilmez. Bu köy, bağlı olduğu{' '}
+              <strong className="text-[#f8f0df]">{owner.boundParentName || 'merkez yerleşkenin'}</strong> mülk sahibi olan{' '}
+              <strong className="text-[#fef08a]">{owner.heroName}</strong> ({owner.clanName}) tarafından yönetilmektedir.
+            </div>
+          </div>
+        )}
 
       <div className="rounded border border-[#c6a15b]/30 p-3 mb-3">
         <SectionTitle>Açıklama</SectionTitle>

@@ -22,6 +22,7 @@ import {
   bombardSettlementWalls,
   buyFoodAtSettlement,
   buyOrChangeWorkshop,
+  sellWorkshop,
   buyTavernRound,
   calculatePartyStrength,
   constructSiegeEngine,
@@ -878,21 +879,27 @@ export default function App() {
     (nextCampaign = campaign, nextMacro = macroState) => {
       // Senaryo durumları oyuncunun gerçek sefer kaydını asla ezmemeli.
       if (e2eRequest.enabled) return false;
+      
+      // v5: Lord canlı pozisyonlarını kaydet
+      const lordLivePositions = new Map(lordPositionsRef.current);
+      
       const ok = writeSave(defaultStorage(), {
         campaign: nextCampaign,
         macroState: nextMacro,
         metHeroIds,
         backgroundChoice,
+        lordLivePositions,
       });
       if (ok) {
         setSaveInfo(
           summarizeSave({
-            version: 4,
+            version: 5,
             savedAt: Date.now(),
             backgroundChoice,
             metHeroIds,
             campaign: nextCampaign,
             macroState: nextMacro,
+            lordLivePositions: Object.fromEntries(lordLivePositions),
           }),
         );
       }
@@ -946,6 +953,26 @@ export default function App() {
     setIsKingdomModalOpen(false);
     setIsEncyclopediaOpen(false);
     setOutcomeSnapshot(null);
+    
+    // Oyuncu canlı pozisyonunu WorldCanvas motoruna emret
+    playerPositionCommandRef.current = { x: fresh.playerX, z: fresh.playerZ };
+
+    // v5: Lord canlı pozisyonlarını geri yükle ve WorldCanvas canlı rotalarına emret
+    lordPositionsRef.current.clear();
+    lordPositionCommandsRef.current.clear();
+    if (data.lordLivePositions) {
+      Object.entries(data.lordLivePositions).forEach(([lordId, pos]) => {
+        lordPositionsRef.current.set(lordId, { x: pos.x, z: pos.z });
+        lordPositionCommandsRef.current.set(lordId, { x: pos.x, z: pos.z });
+      });
+    } else {
+      // v4 ve öncesi: campaign.lords pozisyonlarından başlat
+      fresh.lords.forEach((lord) => {
+        lordPositionsRef.current.set(lord.id, { x: lord.x, z: lord.z });
+        lordPositionCommandsRef.current.set(lord.id, { x: lord.x, z: lord.z });
+      });
+    }
+    
     setGameState('playing');
     document.body.dataset.state = 'playing';
     lastAutosaveDayRef.current = fresh.day;
@@ -967,6 +994,25 @@ export default function App() {
     setViewMode('campaign');
     setCampaignTimeScale(1);
     setActiveSettlementModal(null);
+    
+    // Oyuncu canlı pozisyonunu WorldCanvas motoruna emret
+    playerPositionCommandRef.current = { x: fresh.playerX, z: fresh.playerZ };
+
+    // v5: Lord canlı pozisyonlarını geri yükle ve WorldCanvas canlı rotalarına emret
+    lordPositionsRef.current.clear();
+    lordPositionCommandsRef.current.clear();
+    if (data.lordLivePositions) {
+      Object.entries(data.lordLivePositions).forEach(([lordId, pos]) => {
+        lordPositionsRef.current.set(lordId, { x: pos.x, z: pos.z });
+        lordPositionCommandsRef.current.set(lordId, { x: pos.x, z: pos.z });
+      });
+    } else {
+      // v4 ve öncesi: campaign.lords pozisyonlarından başlat
+      fresh.lords.forEach((lord) => {
+        lordPositionsRef.current.set(lord.id, { x: lord.x, z: lord.z });
+        lordPositionCommandsRef.current.set(lord.id, { x: lord.x, z: lord.z });
+      });
+    }
     setActiveSiegeSettlementId(null);
     setActiveDiplomacyLord(null);
     setDialogueLord(null);
@@ -1201,7 +1247,7 @@ export default function App() {
   useEffect(() => {
     if (!isWaitingInSettlement || !activeSettlementModal) return;
     const hostile = campaign.lords.find((l) => {
-      if (!isHostileToPlayer(l) || l.characterState === 'CAPTIVE' || l.characterState === 'DEAD') return false;
+      if (!isHostileToPlayer(l, campaign) || l.characterState === 'CAPTIVE' || l.characterState === 'DEAD') return false;
       const live = lordPositionsRef.current.get(l.id) ?? { x: l.x, z: l.z };
       return Math.hypot(live.x - activeSettlementModal.x, live.z - activeSettlementModal.z) < 16;
     });
@@ -1795,6 +1841,8 @@ export default function App() {
               : `${l.title} ${l.name} sancağınızı kıstırdı!`,
           );
         }}
+        onCampaignUpdate={(next) => setCampaign(next)}
+        onToast={showToast}
       />
 
       {/* 10.2/B1: meydan savaşı ayrı misyon sahnesinde (arazi profili sefer
@@ -2166,6 +2214,7 @@ export default function App() {
           }}
           onUpdateCampaign={(next) => setCampaign(next)}
           onOpenFullMarket={() => setIsMarketModalOpen(true)}
+          onOpenEncyclopedia={() => setIsEncyclopediaOpen(true)}
           onTalkToReeve={() => {
             setDialogueSettlement(activeSettlementModal);
           }}
@@ -2207,8 +2256,13 @@ export default function App() {
             if (res.success) setCampaign(res.nextState);
             return null;
           }}
-          onBuyWorkshop={(settlementId, workshopType) => {
-            const res = buyOrChangeWorkshop(campaign, settlementId, workshopType);
+          onBuyWorkshop={(settlementId, workshopType, slotIndex) => {
+            const res = buyOrChangeWorkshop(campaign, settlementId, workshopType, slotIndex);
+            if (res.success) setCampaign(res.nextState);
+            return res.reason || null;
+          }}
+          onSellWorkshop={(settlementId, slotIndex) => {
+            const res = sellWorkshop(campaign, settlementId, slotIndex);
             if (res.success) setCampaign(res.nextState);
             return res.reason || null;
           }}
@@ -2685,6 +2739,12 @@ export default function App() {
           campaign={campaign}
           pendingLoot={pendingBattleLoot}
           onClose={() => {
+            if (pendingBattleLoot?.enemyLordId) {
+              const defeatedLord = campaign.lords.find((l) => l.id === pendingBattleLoot.enemyLordId);
+              if (defeatedLord) {
+                lordPositionCommandsRef.current.set(defeatedLord.id, { x: defeatedLord.x, z: defeatedLord.z });
+              }
+            }
             setPendingBattleLoot(null);
             setBattleSiegeSettlementContextId(null);
             setGameState('playing');
@@ -2702,6 +2762,12 @@ export default function App() {
                   nextState.day,
                 ),
               };
+            }
+            if (pendingBattleLoot?.enemyLordId) {
+              const defeatedLord = nextState.lords.find((l) => l.id === pendingBattleLoot.enemyLordId);
+              if (defeatedLord) {
+                lordPositionCommandsRef.current.set(defeatedLord.id, { x: defeatedLord.x, z: defeatedLord.z });
+              }
             }
             setCampaign(nextState);
             setPendingBattleLoot(null);

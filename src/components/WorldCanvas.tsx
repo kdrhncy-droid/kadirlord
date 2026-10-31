@@ -21,6 +21,7 @@ import {
 } from '../game/siegeEncounter';
 import { getPlayerArmy } from '../game/armySystem';
 import { getLordPartyStrength } from '../game/encounter';
+import { getSettlementOwnerDetails } from '../game/settlementOwnership';
 import {
   CONTINENTAL_LANDMARKS,
   MAP_HEIGHT,
@@ -59,6 +60,13 @@ import {
   getPlayerPartyStrength,
   isHostileToPlayer,
 } from '../game/encounter';
+import {
+  type DiplomacyStance,
+  getDiplomacyVisualTheme,
+  getLordDiplomacyStance,
+  getSettlementDiplomacyStance,
+} from '../game/mapDiplomacy';
+import { resolveLordBanditClash } from '../game/lordBanditAi';
 import type {
   BattleTelemetry,
   CameraControlActions,
@@ -122,6 +130,8 @@ interface WorldCanvasProps {
   onOpenSettlement: (settlement: Settlement) => void;
   onOpenDiplomacy: (lord: LordAgent) => void;
   onHostileEncounter?: (lord: LordAgent, scenario: EncounterScenario) => void;
+  onCampaignUpdate?: (next: CampaignState) => void;
+  onToast?: (message: string) => void;
 }
 
 interface SiegeMapMarker {
@@ -839,6 +849,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   onOpenSettlement,
   onOpenDiplomacy,
   onHostileEncounter,
+  onCampaignUpdate,
+  onToast,
 }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
@@ -857,6 +869,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     onOpenSettlement,
     onOpenDiplomacy,
     onHostileEncounter,
+    onCampaignUpdate,
+    onToast,
   });
 
   useEffect(() => {
@@ -875,6 +889,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       onOpenSettlement,
       onOpenDiplomacy,
       onHostileEncounter,
+      onCampaignUpdate,
+      onToast,
     };
   }, [
     gameState,
@@ -891,6 +907,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     onOpenSettlement,
     onOpenDiplomacy,
     onHostileEncounter,
+    onCampaignUpdate,
+    onToast,
   ]);
 
   useEffect(() => {
@@ -916,6 +934,19 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       container.clientHeight || window.innerHeight,
     );
     container.appendChild(renderer.domElement);
+
+    let isContextLost = false;
+    const handleContextLost = (e: Event) => {
+      e.preventDefault();
+      isContextLost = true;
+      console.warn('[WorldCanvas] WebGL context geçici olarak kaybedildi.');
+    };
+    const handleContextRestored = () => {
+      isContextLost = false;
+      console.info('[WorldCanvas] WebGL context geri yüklendi.');
+    };
+    renderer.domElement.addEventListener('webglcontextlost', handleContextLost);
+    renderer.domElement.addEventListener('webglcontextrestored', handleContextRestored);
 
     const scene = new THREE.Scene();
     const skyColor = new THREE.Color(0x1e384b);
@@ -1365,10 +1396,135 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       tooltipCard.classList.remove('hidden');
     }
 
+    let hoveredSettlementRecord: { s: Settlement; el: HTMLElement } | null = null;
+
+    function renderSettlementTooltip(liveS: Settlement, el: HTMLElement, isAltHeld: boolean) {
+      const liveFac = FACTION_INFO[liveS.faction] ?? FACTION_INFO.empire;
+      const owner = getSettlementOwnerDetails(liveS, stateRef.current.campaign);
+      const spotRange = computePlayerSpottingRange(
+        playerOverworldX,
+        playerOverworldZ,
+        stateRef.current.campaign.roster,
+      );
+      const isScouted =
+        liveS.faction === 'player' ||
+        isWithinSpottingRange(
+          playerOverworldX,
+          playerOverworldZ,
+          liveS.x,
+          liveS.z,
+          spotRange * 1.15,
+        );
+
+      const boundVillages =
+        liveS.type !== 'VILLAGE'
+          ? stateRef.current.campaign.settlements
+              .filter((v) => v.type === 'VILLAGE' && v.boundSettlementId === liveS.id)
+              .map((v) => `${getVillagePrimaryProduction(v).icon} ${v.name}`)
+          : [];
+      const liveProd = liveS.type === 'VILLAGE' ? getVillagePrimaryProduction(liveS) : null;
+
+      const altInspectionHeader = isAltHeld
+        ? `
+          <div class="mb-2 p-2 rounded bg-[#2b1f14]/95 border-2 border-[#f59e0b] shadow-lg text-left">
+            <div class="flex items-center justify-between text-[9px] font-mono text-[#fcd34d] font-bold uppercase tracking-wider">
+              <span>👑 MÜLK SAHİBİ (LORD / LEYDİ)</span>
+              <span class="px-1 py-0.2 rounded bg-[#1f2937] text-[#86efac] text-[8px]">${owner.isPlayerOwned ? 'OYUNCU MÜLKÜ' : 'DEREBEYİ'}</span>
+            </div>
+            <div class="mt-1 text-[13px] font-display font-bold text-[#fef08a] flex items-center justify-between">
+              <span>${owner.heroTitle ? `${owner.heroTitle} ` : ''}${owner.heroName}</span>
+            </div>
+            <div class="text-[10px] text-[#d6c9b1] mt-0.5">
+              Yönetici Klan: <span class="text-[#fde68a] font-semibold">${owner.clanName}</span>
+            </div>
+            <div class="text-[9px] text-[#9ca3af] mt-0.5">
+              Bağlı Krallık: <span class="text-[#e2e8f0] font-semibold">${owner.factionName}</span>
+            </div>
+            ${
+              liveS.type === 'VILLAGE'
+                ? `<div class="mt-1 pt-1 border-t border-[#c6a15b]/25 text-[8px] text-[#fbbf24] italic">
+                     ℹ️ Bannerlord Mülkiyet Kuralı: Köyler bağımsız alınıp verilmez, bağlı olduğu ${owner.boundParentName || 'merkez yerleşkenin'} sahibine aittir.
+                   </div>`
+                : ''
+            }
+          </div>
+        `
+        : '';
+
+      const fiefLine =
+        liveS.type === 'VILLAGE'
+          ? `<div class="text-[9px] text-[#fde68a]/90 mt-0.5">Bağlı Mülk: <span class="font-semibold">${owner.boundParentName || liveS.boundSettlementName || 'Bağımsız'}</span></div>
+             <div class="text-[9px] text-[#86efac] mt-0.5">Birincil Üretim: <span class="font-semibold">${liveProd?.icon ?? '🌾'} ${liveProd?.name ?? 'Tahıl'}</span></div>
+             <div class="text-[9px] text-[#d6c9b1] mt-0.5">Ocak (Hane): <span class="font-mono font-semibold">${liveS.hearths ?? Math.round(liveS.prosperity * 1.15)}</span> · Durum: <span class="font-semibold">${liveS.isRaided ? '🔥 Yağmalanmış' : 'Normal'}</span></div>`
+          : boundVillages.length > 0
+            ? `<div class="text-[9px] text-[#fde68a]/90 mt-0.5">Bağlı Köyler (${boundVillages.length}): <span class="font-semibold">${boundVillages.join(', ')}</span></div>`
+            : '';
+
+      const intelHtml = isScouted
+        ? `
+          <div class="my-1 border-t border-[#c6a15b]/25 pt-1 text-[10px] text-[#c6a15b] font-semibold">
+            Refah: ${liveS.prosperity} · Garnizon: ${liveS.garrison} · Erzak: ${liveS.foodStock}
+          </div>
+          <div class="text-[9px] text-[#d1d5db]">
+            Piyade: ${liveS.recruitPool.infantry + liveS.recruitPool.horseArcher} · Okçu: ${liveS.recruitPool.archer} · Süvari: ${liveS.recruitPool.cavalry}
+          </div>
+        `
+        : `
+          <div class="my-1 border-t border-[#c6a15b]/25 pt-1 text-[10px] text-[#9ca3af] italic">
+            Garnizon ve Erzak: ? (Görüş Menzili Dışında)
+          </div>
+          <div class="text-[9px] text-[#fde68a]/80">
+            Detaylı istihbarat için yerleşime yaklaşın veya tıklayıp yürüyün
+          </div>
+        `;
+
+      const insideLords = stateRef.current.campaign.lords.filter((lordItem) => {
+        if (lordItem.characterState === 'CAPTIVE' || lordItem.characterState === 'DEAD') return false;
+        if (lordItem.insideSettlementId === liveS.id) return true;
+        const lPos = lordLiveRoutes.get(lordItem.id) ?? { x: lordItem.x, z: lordItem.z };
+        return Math.hypot(lPos.x - liveS.x, lPos.z - liveS.z) < 4.2;
+      });
+      const lordsHtml =
+        insideLords.length > 0
+          ? `<div class="mt-1 pt-1 border-t border-[#c6a15b]/25 text-[9px] text-left">
+              <span class="font-bold text-[#fde68a]">Şehirdeki Soylular (${insideLords.length}):</span>
+              <div class="text-[#e2e8f0] font-mono mt-0.5 max-h-16 overflow-y-auto">
+                ${insideLords.map((l) => `${l.title} ${l.name} (${l.armySize})`).join(', ')}
+              </div>
+            </div>`
+          : '';
+
+      const altPromptFooter = !isAltHeld
+        ? `<div class="mt-2 pt-1 border-t border-[#c6a15b]/30 text-[9px] text-[#fcd34d] flex items-center justify-center gap-1.5 font-mono">
+             <span class="px-1 py-0.2 rounded bg-[#282116] border border-[#f59e0b]/60 text-[8px] font-bold text-[#fde68a]">ALT</span>
+             <span>Basılı Tut: Mülk Sahibi İncelemesi</span>
+           </div>`
+        : '';
+
+      tooltipCard.innerHTML = `
+        ${altInspectionHeader}
+        <div class="font-display font-bold text-xs text-[#fbbf24] border-b border-[#c6a15b]/30 pb-1 mb-1.5">
+          ${liveS.name} (${liveS.type === 'CASTLE' ? 'Kale' : liveS.type === 'TOWN' ? 'Şehir' : 'Köy'})
+        </div>
+        <div class="text-[10px] text-[#a3b19b]">
+          Krallık: <span class="font-semibold text-[#fde68a]">${liveFac.name}</span> · Klan: <span class="font-semibold text-[#f8f0df]">${owner.clanName}</span>
+        </div>
+        ${fiefLine}
+        ${intelHtml}
+        ${lordsHtml}
+        ${altPromptFooter}
+      `;
+      const rect = el.getBoundingClientRect();
+      tooltipCard.style.transform = `translate3d(${Math.round(rect.left + rect.width / 2)}px, ${Math.round(rect.top - 8)}px, 0) translate(-50%, -100%)`;
+      tooltipCard.classList.remove('hidden');
+    }
+
     interface SettlementLabelRecord {
       settlement: Settlement;
       el: HTMLDivElement;
       gSpan: HTMLElement | null;
+      boxEl: HTMLElement | null;
+      nameSpan: HTMLElement | null;
       sMesh: THREE.Group | undefined;
       worldY: number;
       meshCullDist: number;
@@ -1378,11 +1534,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       lastSy: number;
       lastText: string;
       bannerEl: HTMLElement | null;
+      clanBannerEl?: HTMLElement | null;
       siegeBadgeEl: HTMLElement | null;
       siegeMarkers: SiegeMapMarker[];
       siegeEngineSignature: string | null;
       lastFaction: string;
       lastBesieged: boolean;
+      lastStance?: DiplomacyStance;
     }
 
     const settlementLabelRecords: SettlementLabelRecord[] = [];
@@ -1397,15 +1555,18 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       el.setAttribute('data-testid', `map-label-${s.id}`);
       el.setAttribute('data-settlement-type', s.type);
 
-      const fac = FACTION_INFO[s.faction];
+      const sStance = getSettlementDiplomacyStance(s, stateRef.current.campaign);
+      const sTheme = getDiplomacyVisualTheme(sStance, s.faction);
+      const sOwner = getSettlementOwnerDetails(s, stateRef.current.campaign);
       const isTown = s.type === 'TOWN';
       const isCastle = s.type === 'CASTLE';
       const isVillage = s.type === 'VILLAGE';
       const villageProd = isVillage ? getVillagePrimaryProduction(s) : null;
 
       el.innerHTML = `
-        <div data-role="banner-shield" data-faction="${s.faction}" style="background-color: ${fac.color}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
-             class="${isVillage ? 'w-4 h-5' : isCastle ? 'w-5 h-6' : 'w-6 h-7'} flex items-center justify-center border border-[#d4af37] z-10 shrink-0 shadow">
+        <div data-role="banner-shield" data-faction="${s.faction}" data-stance="${sStance}" style="background-color: ${sTheme.shieldBgColor}; border-color: ${sTheme.shieldBorderColor}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
+             title="Krallık Sancağı: ${FACTION_INFO[s.faction]?.name || s.faction}"
+             class="${isVillage ? 'w-4 h-5' : isCastle ? 'w-5 h-6' : 'w-6 h-7'} flex items-center justify-center border z-10 shrink-0 shadow">
           <svg viewBox="0 0 16 16" class="w-3 h-3 fill-[#fde68a]">
             ${
               isTown
@@ -1416,9 +1577,20 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             }
           </svg>
         </div>
-        <div style="background: linear-gradient(90deg, rgba(20, 17, 13, 0.92) 0%, rgba(30, 26, 20, 0.82) 84%, rgba(30, 26, 20, 0.32) 100%); clip-path: polygon(0% 0%, 91% 0%, 100% 50%, 91% 100%, 0% 100%);"
-             class="-ml-1 pl-2 pr-3 py-0.5 border-y border-[#c6a15b]/45 group-hover:border-[#e6c885]/80 flex items-center gap-1.5 shadow">
-          <span class="font-display font-semibold ${isVillage ? 'text-[10px]' : isCastle ? 'text-[11px]' : 'text-[12px]'} text-[#f5ead4] tracking-wide hud-stroke">
+        ${
+          !isVillage
+            ? `<div data-role="clan-shield" style="background-color: ${sOwner.clanBannerColor}; border-color: #fde68a; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
+                    title="Klan Sancağı: ${sOwner.clanName} (${sOwner.heroName})"
+                    class="-ml-1.5 ${isCastle ? 'w-4 h-5' : 'w-5 h-6'} flex items-center justify-center border z-10 shrink-0 shadow">
+                 <svg viewBox="0 0 16 16" class="w-2.5 h-2.5 fill-[#fef08a]">
+                   <path d="M8 1L10 6H15L11 9.5L12.5 15L8 11.8L3.5 15L5 9.5L1 6H6L8 1Z"/>
+                 </svg>
+               </div>`
+            : ''
+        }
+        <div data-role="name-box" style="background: ${sTheme.containerBgStyle}; clip-path: polygon(0% 0%, 91% 0%, 100% 50%, 91% 100%, 0% 100%);"
+             class="-ml-1 pl-2 pr-3 py-0.5 border-y ${sTheme.containerBorderClass} flex items-center gap-1.5 shadow">
+          <span data-role="name-text" class="font-display font-semibold ${isVillage ? 'text-[10px]' : isCastle ? 'text-[11px]' : 'text-[12px]'} ${sTheme.nameTextClass} tracking-wide hud-stroke">
             ${s.name}
           </span>
           ${
@@ -1459,72 +1631,15 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       el.addEventListener('mouseenter', () => {
         const liveS =
           stateRef.current.campaign.settlements.find((item) => item.id === s.id) ?? s;
-        const liveFac = FACTION_INFO[liveS.faction];
-        const spotRange = computePlayerSpottingRange(
-          playerOverworldX,
-          playerOverworldZ,
-          stateRef.current.campaign.roster,
-        );
-        const isScouted =
-          liveS.faction === 'player' ||
-          isWithinSpottingRange(
-            playerOverworldX,
-            playerOverworldZ,
-            liveS.x,
-            liveS.z,
-            spotRange * 1.15,
-          );
-
-        const boundVillages =
-          liveS.type !== 'VILLAGE'
-            ? stateRef.current.campaign.settlements
-                .filter((v) => v.type === 'VILLAGE' && v.boundSettlementId === liveS.id)
-                .map((v) => `${getVillagePrimaryProduction(v).icon} ${v.name}`)
-            : [];
-        const liveProd = liveS.type === 'VILLAGE' ? getVillagePrimaryProduction(liveS) : null;
-        const fiefLine =
-          liveS.type === 'VILLAGE'
-            ? `<div class="text-[9px] text-[#fde68a]/90 mt-0.5">Bağlı Mülk: <span class="font-semibold">${liveS.boundSettlementName || 'Bağımsız'}</span></div>
-               <div class="text-[9px] text-[#86efac] mt-0.5">Birincil Üretim: <span class="font-semibold">${liveProd?.icon ?? '🌾'} ${liveProd?.name ?? 'Tahıl'}</span></div>
-               <div class="text-[9px] text-[#d6c9b1] mt-0.5">Ocak (Hane): <span class="font-mono font-semibold">${liveS.hearths ?? Math.round(liveS.prosperity * 1.15)}</span> · Durum: <span class="font-semibold">${liveS.isRaided ? '🔥 Yağmalanmış' : 'Normal'}</span></div>`
-            : boundVillages.length > 0
-              ? `<div class="text-[9px] text-[#fde68a]/90 mt-0.5">Bağlı Köyler (${boundVillages.length}): <span class="font-semibold">${boundVillages.join(', ')}</span></div>`
-              : '';
-
-        const intelHtml = isScouted
-          ? `
-            <div class="my-1 border-t border-[#c6a15b]/25 pt-1 text-[10px] text-[#c6a15b] font-semibold">
-              Refah: ${liveS.prosperity} · Garnizon: ${liveS.garrison} · Erzak: ${liveS.foodStock}
-            </div>
-            <div class="text-[9px] text-[#d1d5db]">
-              Piyade: ${liveS.recruitPool.infantry + liveS.recruitPool.horseArcher} · Okçu: ${liveS.recruitPool.archer} · Süvari: ${liveS.recruitPool.cavalry}
-            </div>
-          `
-          : `
-            <div class="my-1 border-t border-[#c6a15b]/25 pt-1 text-[10px] text-[#9ca3af] italic">
-              Garnizon ve Erzak: ? (Görüş Menzili Dışında)
-            </div>
-            <div class="text-[9px] text-[#fde68a]/80">
-              Detaylı istihbarat için yerleşime yaklaşın veya tıklayıp yürüyün
-            </div>
-          `;
-
-        tooltipCard.innerHTML = `
-          <div class="font-display font-bold text-xs text-[#fbbf24] border-b border-[#c6a15b]/30 pb-1 mb-1.5">
-            ${liveS.name} (${liveS.type === 'CASTLE' ? 'Kale' : liveS.type === 'TOWN' ? 'Şehir' : 'Köy'})
-          </div>
-          <div class="text-[10px] text-[#a3b19b]">
-            Krallık: <span class="font-semibold text-[#fde68a]">${liveFac.name}</span>
-          </div>
-          ${fiefLine}
-          ${intelHtml}
-        `;
-        const rect = el.getBoundingClientRect();
-        tooltipCard.style.transform = `translate3d(${Math.round(rect.left + rect.width / 2)}px, ${Math.round(rect.top - 8)}px, 0) translate(-50%, -100%)`;
-        tooltipCard.classList.remove('hidden');
+        hoveredSettlementRecord = { s: liveS, el };
+        const isAlt = Boolean(keysHeld.has('AltLeft') || keysHeld.has('AltRight') || keysHeld.has('Alt'));
+        renderSettlementTooltip(liveS, el, isAlt);
       });
 
       el.addEventListener('mouseleave', () => {
+        if (hoveredSettlementRecord?.s.id === s.id) {
+          hoveredSettlementRecord = null;
+        }
         tooltipCard.classList.add('hidden');
       });
 
@@ -1534,6 +1649,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         settlement: s,
         el,
         gSpan: el.querySelector('[data-role="garrison-count"]'),
+        boxEl: el.querySelector('[data-role="name-box"]'),
+        nameSpan: el.querySelector('[data-role="name-text"]'),
         sMesh: settlementMeshes.get(s.id),
         worldY: baseH + (isVillage ? 4.4 : isCastle ? 6.8 : 7.4),
         // Stagger village 3D model culling distance (225m..265m) so all 131 villages never pop on the same frame
@@ -1544,45 +1661,57 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         lastSy: -9999,
         lastText: String(s.garrison),
         bannerEl: el.querySelector('[data-role="banner-shield"]'),
+        clanBannerEl: el.querySelector('[data-role="clan-shield"]'),
         siegeBadgeEl: el.querySelector('[data-role="siege-badge"]'),
         siegeMarkers,
         siegeEngineSignature: null,
         lastFaction: s.faction,
         lastBesieged: false,
+        lastStance: sStance,
       });
     });
 
     interface LordLabelRecord {
       id: string;
       el: HTMLDivElement;
+      shieldSpan: HTMLElement | null;
       troopSpan: HTMLElement | null;
       visible: boolean;
       lastSx: number;
       lastSy: number;
       lastHtml: string;
+      lastStance?: DiplomacyStance;
     }
 
     // Under-Foot Lord Coat-of-Arms + Troop & Wounded Nameplates (Directly underneath each Lord's horse!)
     const lordLabelRecords = new Map<string, LordLabelRecord>();
     stateRef.current.campaign.lords.forEach((l) => {
       const el = document.createElement('div');
-      // NOT: transition-transform ve hover:scale-110 kaldırıldı; fare üzerine gelince lord etiketi sabit kalır!
-      el.className =
-        'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120e]/90 border border-[#c6a15b]/50 hover:border-[#f3d999] cursor-pointer select-none group shadow-md';
+      const lStance = getLordDiplomacyStance(l, stateRef.current.campaign);
+      const lTheme = getDiplomacyVisualTheme(lStance, l.faction);
+
+      const baseBorderClass =
+        lStance === 'HOSTILE'
+          ? 'bg-[#1f1010]/95 border border-[#ef4444] shadow-md shadow-red-900/40'
+          : lStance === 'FRIENDLY'
+            ? 'bg-[#0d1f13]/95 border border-[#22c55e] shadow-md shadow-green-900/40'
+            : 'bg-[#14120e]/90 border border-[#c6a15b]/50 hover:border-[#f3d999] shadow-md';
+
+      el.className = `absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded cursor-pointer select-none group ${baseBorderClass}`;
       el.style.contain = 'layout style';
       el.style.willChange = 'transform';
       el.setAttribute('data-testid', `map-label-${l.id}`);
       const intel = getLordDetailedIntel(l);
-      const initialTroopHtml = `${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#d97706]">+${intel.wounded}</span>` : ''}`;
+      const initialTroopHtml = `${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#fb923c]">+${intel.wounded}</span>` : ''}`;
       el.innerHTML = `
-        <span style="background-color: ${l.bannerColor}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
-              class="w-4 h-5 flex items-center justify-center border border-[#d4af37]/90 shadow shrink-0">
+        <span data-role="lord-shield" style="background-color: ${lTheme.shieldBgColor}; border-color: ${lTheme.shieldBorderColor}; clip-path: polygon(0% 0%, 100% 0%, 100% 68%, 50% 100%, 0% 68%);"
+              class="w-4 h-5 flex items-center justify-center border shadow shrink-0">
           <svg viewBox="0 0 16 16" class="w-2.5 h-2.5 fill-[#fde68a]">
             <path d="M8 2L10.5 6.5L15 8L10.5 9.5L8 14L5.5 9.5L1 8L5.5 6.5L8 2Z"/>
           </svg>
         </span>
         <span data-role="lord-troops" class="font-display font-extrabold text-[12px] ${
-          l.isAtWarWithPlayer ? 'text-[#f87171]' : 'text-[#e6d8b8]'
+          lStance === 'HOSTILE' ? 'text-[#f87171]' : lStance === 'FRIENDLY' ? 'text-[#4ade80]' : 'text-[#e6d8b8]'
         } hud-stroke tracking-tight">${initialTroopHtml}</span>
       `;
       el.addEventListener('click', (e) => {
@@ -1613,11 +1742,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       lordLabelRecords.set(l.id, {
         id: l.id,
         el,
+        shieldSpan: el.querySelector('[data-role="lord-shield"]'),
         troopSpan: el.querySelector('[data-role="lord-troops"]'),
         visible: true,
         lastSx: -9999,
         lastSy: -9999,
         lastHtml: initialTroopHtml,
+        lastStance: lStance,
       });
     });
 
@@ -1765,6 +1896,13 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       }
       keysHeld.add(e.code);
 
+      if (e.key === 'Alt' || e.code === 'AltLeft' || e.code === 'AltRight') {
+        if (hoveredSettlementRecord) {
+          e.preventDefault();
+          renderSettlementTooltip(hoveredSettlementRecord.s, hoveredSettlementRecord.el, true);
+        }
+      }
+
       if (stateRef.current.gameState === 'playing' && stateRef.current.subMode === 'overworld') {
         const stepDist = Math.max(10, targetCamZoomDist * 0.16);
         let tapX = 0;
@@ -1818,6 +1956,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
     const handleKeyUp = (e: KeyboardEvent) => {
       keysHeld.delete(e.code);
+      if (e.key === 'Alt' || e.code === 'AltLeft' || e.code === 'AltRight') {
+        if (hoveredSettlementRecord) {
+          renderSettlementTooltip(hoveredSettlementRecord.s, hoveredSettlementRecord.el, false);
+        }
+      }
     };
 
     const clearInputs = () => {
@@ -1826,6 +1969,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       mouseLeftJustPressed = false;
       mouseRightHeld = false;
       mouseMiddleHeld = false;
+      hoveredSettlementRecord = null;
+      tooltipCard.classList.add('hidden');
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -2024,7 +2169,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
       // Tam ekran bir modal (Karakter Oluşturma, Kayıt Yükle, Envanter, Pazar vb.) açıkken
       // arka plandaki ağır 3B kıta renderını duraklat -> 0 GPU yükü, %100 akıcı 60 FPS arayüz!
-      if (stateRef.current.isRenderPaused) {
+      if (isContextLost || stateRef.current.isRenderPaused) {
         lastTime = now;
         keysJustPressed.clear();
         mouseLeftJustPressed = false;
@@ -2070,7 +2215,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         _camTarget.set(-18, groundHeightAt(-18, -4) + 2.5, -4);
         camera.lookAt(_camTarget);
 
-        renderer.render(scene, camera);
+        try {
+          renderer.render(scene, camera);
+        } catch (err) {
+          console.warn('[WorldCanvas] Title render hatası bastırıldı:', err);
+        }
         keysJustPressed.clear();
         mouseLeftJustPressed = false;
         return;
@@ -2241,6 +2390,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             route.orderKey = undefined;
             route.tacticalState = null;
             route.cachedY = Math.max(0.25, groundHeightAt(route.x, route.z));
+            encounterCooldowns.set(l.id, elapsedTotal + Math.max(ENCOUNTER_COOLDOWN_SEC, 60));
             lordPositionCommandsRef!.current.delete(l.id);
           }
 
@@ -2356,6 +2506,10 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
                 armyEscortIndex: escortIdx >= 0 ? escortIdx : undefined,
                 armyLeaderFacing: overworldPlayer.root.rotation.y,
               },
+              allLords: camp.lords,
+              lordPositions: lordPositionsRef?.current,
+              cooldowns: encounterCooldowns,
+              nowSec: elapsedTotal,
             });
             stepLordCampaignRoute(l, route, dt, timeScale, camp.settlements);
             route.cachedY = Math.max(0.25, groundHeightAt(route.x, route.z));
@@ -2593,7 +2747,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               if (dist <= INTERCEPT_RADIUS) {
                 reached = true;
                 encounterCooldowns.set(l.id, elapsedTotal + ENCOUNTER_COOLDOWN_SEC);
-                if (isHostileToPlayer(l) && stateRef.current.onHostileEncounter) {
+                if (isHostileToPlayer(l, camp) && stateRef.current.onHostileEncounter) {
                   const info = classifyEncounterScenario(l, camp, 'player');
                   stateRef.current.onHostileEncounter(l, info.scenario);
                 } else {
@@ -2649,6 +2803,41 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
               stateRef.current.onHostileEncounter(l, hit.scenario);
             } else {
               stateRef.current.onOpenDiplomacy(l);
+            }
+          }
+        }
+
+        // I-3. Lord vs Haydut Otomatik Muharebe (AI vs AI)
+        if (!isWorldEffectivelyPaused && timeScale > 0) {
+          for (const lordItem of camp.lords) {
+            if (lordItem.faction === 'bandits' || lordItem.characterState === 'CAPTIVE' || lordItem.characterState === 'DEAD') continue;
+            const lRoute = lordLiveRoutes.get(lordItem.id);
+            if (!lRoute) continue;
+
+            for (const banditItem of camp.lords) {
+              if (banditItem.faction !== 'bandits' || banditItem.characterState === 'CAPTIVE' || banditItem.characterState === 'DEAD') continue;
+              const bRoute = lordLiveRoutes.get(banditItem.id);
+              if (!bRoute) continue;
+
+              const d = Math.hypot(lRoute.x - bRoute.x, lRoute.z - bRoute.z);
+              if (d <= INTERCEPT_RADIUS) {
+                const clash = resolveLordBanditClash(camp, lordItem, banditItem);
+                encounterCooldowns.set(lordItem.id, elapsedTotal + 35);
+                encounterCooldowns.set(banditItem.id, elapsedTotal + 60);
+
+                bRoute.x = -62;
+                bRoute.z = 102;
+                bRoute.waypoints = [];
+                bRoute.tacticalState = null;
+                bRoute.currentAction = 'Karageçit Hisarı eteklerinde toplanıyor';
+
+                lRoute.tacticalState = null;
+                lRoute.currentAction = `${banditItem.name} çetesini dağıttı`;
+
+                stateRef.current.onCampaignUpdate?.(clash.nextState);
+                stateRef.current.onToast?.(clash.summaryText);
+                break;
+              }
             }
           }
         }
@@ -2949,12 +3138,28 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             }
           }
 
-          // Fetih sonrası harita etiketi yeni sahibin rengini alır (Faz 11).
-          if (rec.lastFaction !== s.faction) {
+          // Diplomasi ve fetih sonrası harita etiketi rengini günceller (Bannerlord standardı: Düşman Kırmızı, Dost Yeşil)
+          const sStance = getSettlementDiplomacyStance(s, camp);
+          if (rec.lastFaction !== s.faction || rec.lastStance !== sStance) {
             rec.lastFaction = s.faction;
+            rec.lastStance = sStance;
+            const sTheme = getDiplomacyVisualTheme(sStance, s.faction);
             if (rec.bannerEl) {
-              rec.bannerEl.style.backgroundColor = FACTION_INFO[s.faction].color;
+              rec.bannerEl.style.backgroundColor = sTheme.shieldBgColor;
+              rec.bannerEl.style.borderColor = sTheme.shieldBorderColor;
               rec.bannerEl.setAttribute('data-faction', s.faction);
+              rec.bannerEl.setAttribute('data-stance', sStance);
+            }
+            if (rec.clanBannerEl) {
+              const liveOwner = getSettlementOwnerDetails(s, camp);
+              rec.clanBannerEl.style.backgroundColor = liveOwner.clanBannerColor;
+            }
+            if (rec.boxEl) {
+              rec.boxEl.style.background = sTheme.containerBgStyle;
+              rec.boxEl.className = `-ml-1 pl-2 pr-3 py-0.5 border-y ${sTheme.containerBorderClass} flex items-center gap-1.5 shadow`;
+            }
+            if (rec.nameSpan) {
+              rec.nameSpan.className = `font-display font-semibold ${s.type === 'VILLAGE' ? 'text-[10px]' : s.type === 'CASTLE' ? 'text-[11px]' : 'text-[12px]'} ${sTheme.nameTextClass} tracking-wide hud-stroke`;
             }
           }
 
@@ -3178,15 +3383,25 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             }
             continue;
           }
+          const lStance = getLordDiplomacyStance(l, camp);
+          if (rec.lastStance !== lStance) {
+            rec.lastStance = lStance;
+            const lTheme = getDiplomacyVisualTheme(lStance, l.faction);
+            if (rec.shieldSpan) {
+              rec.shieldSpan.style.backgroundColor = lTheme.shieldBgColor;
+              rec.shieldSpan.style.borderColor = lTheme.shieldBorderColor;
+            }
+            if (lStance === 'HOSTILE') {
+              rec.el.className = 'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#1f1010]/95 border border-[#ef4444] cursor-pointer select-none group shadow-md shadow-red-900/40';
+            } else if (lStance === 'FRIENDLY') {
+              rec.el.className = 'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#0d1f13]/95 border border-[#22c55e] cursor-pointer select-none group shadow-md shadow-green-900/40';
+            } else {
+              rec.el.className = 'absolute top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#14120e]/90 border border-[#c6a15b]/50 hover:border-[#f3d999] cursor-pointer select-none group shadow-md';
+            }
+          }
           if (rec.troopSpan) {
             const intel = getLordDetailedIntel(l, lx, lz);
-            const statePrefix =
-              route?.tacticalState === 'PURSUE'
-                ? '[TAKİP] '
-                : route?.tacticalState === 'FLEE'
-                  ? '[KAÇIYOR] '
-                  : '';
-            const expectedHtml = `${statePrefix}${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#fb923c]">+${intel.wounded}</span>` : ''}`;
+            const expectedHtml = `${intel.totalHealthy}${intel.wounded > 0 ? `<span class="text-[10px] text-[#fb923c]">+${intel.wounded}</span>` : ''}`;
             if (rec.lastHtml !== expectedHtml) {
               rec.lastHtml = expectedHtml;
               rec.troopSpan.innerHTML = expectedHtml;
@@ -3196,9 +3411,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
                 ? 'text-[#f87171]'
                 : route?.tacticalState === 'FLEE'
                   ? 'text-[#fbbf24]'
-                  : l.isAtWarWithPlayer || l.faction === 'bandits'
-                    ? 'text-[#fca5a5]'
-                    : 'text-[#86efac]'
+                  : lStance === 'HOSTILE'
+                    ? 'text-[#f87171]'
+                    : lStance === 'FRIENDLY'
+                      ? 'text-[#4ade80]'
+                      : 'text-[#e6d8b8]'
             } hud-stroke tracking-tight`;
           }
           const sx = Math.round(((_projVec.x + 1) / 2) * cw);
@@ -3290,7 +3507,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
 
       keysJustPressed.clear();
       mouseLeftJustPressed = false;
-      renderer.render(scene, camera);
+      try {
+        renderer.render(scene, camera);
+      } catch (err) {
+        console.warn('[WorldCanvas] Overworld render hatası bastırıldı:', err);
+      }
     };
 
     rafId = requestAnimationFrame(tick);
@@ -3306,6 +3527,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
       renderer.domElement.removeEventListener('wheel', handleWheel);
       renderer.domElement.removeEventListener('contextmenu', handleContextMenu);
+      renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
+      renderer.domElement.removeEventListener('webglcontextrestored', handleContextRestored);
       renderer.dispose();
       if (container.contains(labelOverlay)) {
         container.removeChild(labelOverlay);

@@ -217,7 +217,7 @@ export const BannerlordPauseModal: React.FC<BannerlordPauseModalProps> = ({
                     data-testid={`load-slot-${slot.id}`}
                     onClick={() => {
                       if (!data) return;
-                      sound.playWarhorn();
+                      sound.playUiClick();
                       onLoadSave(data);
                     }}
                     className={`p-3 rounded-lg border flex items-center justify-between transition ${

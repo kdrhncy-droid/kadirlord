@@ -79,8 +79,27 @@ export interface InterceptionEvent {
 }
 
 /** Bir lord/haydut oyuncu için düşman mı? */
-export function isHostileToPlayer(lord: LordAgent): boolean {
-  return Boolean(lord.isAtWarWithPlayer || lord.faction === 'bandits');
+export function isHostileToPlayer(lord: LordAgent, campaign?: CampaignState): boolean {
+  if (lord.isAtWarWithPlayer || lord.faction === 'bandits') return true;
+  if (
+    campaign &&
+    campaign.playerFaction &&
+    campaign.playerFaction !== 'player' &&
+    campaign.playerFaction !== 'bandits'
+  ) {
+    if (lord.faction === campaign.playerFaction) return false;
+    const role = campaign.allegianceRole ?? 'MERCENARY';
+    if (role === 'MERCENARY' || role === 'VASSAL' || role === 'RULER') {
+      const activeWars = campaign.world?.wars ?? [];
+      const atWar = activeWars.some(
+        (w) =>
+          (w.a === campaign.playerFaction && w.b === lord.faction) ||
+          (w.b === campaign.playerFaction && w.a === lord.faction),
+      );
+      if (atWar) return true;
+    }
+  }
+  return false;
 }
 
 /** Bir lordun mevcut birliğinin toplam muharebe gücünü hesaplar. */
@@ -372,7 +391,7 @@ export function classifyEncounterScenario(
   const enemyStrength = getLordPartyStrength(lord);
   const playerStrength = getPlayerPartyStrength(campaign);
   const strengthRatio = Number((enemyStrength / Math.max(1, playerStrength)).toFixed(2));
-  const hostile = isHostileToPlayer(lord);
+  const hostile = isHostileToPlayer(lord, campaign);
 
   if (!hostile) {
     return {
@@ -443,7 +462,7 @@ export function checkHostileMapInterception(params: {
 
   for (const lord of campaign.lords) {
     if (lord.characterState === 'CAPTIVE' || lord.characterState === 'DEAD') continue;
-    if (!isHostileToPlayer(lord)) continue;
+    if (!isHostileToPlayer(lord, campaign)) continue;
     const cooldownUntil = cooldowns.get(lord.id) ?? 0;
     if (nowSec < cooldownUntil) continue;
 

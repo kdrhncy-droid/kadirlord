@@ -20,27 +20,43 @@ import { ensureBannerlordFoundation } from './bannerlordFoundation';
  * v2 → v3 (Faz B0): her `Settlement` için `notables` (ileri gelenler, nüfuz, ilişki).
  * v3 → v4 (P1): adetli eşya yığınları, kalıcı eşya tanımları, kahraman kayıtları ve
  * XP/yaralı taşıyan birlik/tutsak yığınları.
+ * v4 → v5 (Save/Load Fix): Lord canlı pozisyonları (`lordLivePositions`) - oyun sırasında
+ * WorldCanvas'ın güncellediği gerçek pozisyonlar kaydedilir ve geri yüklenir.
  * Eski kayıtlar **reddedilmez**; yükleme sırasında `ensureWorld` + `ensureNotables` +
  * `ensureBannerlordFoundation` ile göç ettirilir. Üretim deterministik olduğu için
  * eski seferdeki türetilen veriler de aynı girdiden aynı sonucu verir.
  */
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 export const MIN_SUPPORTED_VERSION = 1;
 export const SAVE_KEY = 'sancak-kalradya/sefer-v1';
 
 export type BackgroundChoice = 'noble' | 'steppe' | 'tactician';
+
+/** Lord canlı pozisyon kaydı - WorldCanvas'ın kullandığı gerçek pozisyonlar */
+export interface LordLivePosition {
+  x: number;
+  z: number;
+}
 
 export interface SaveInput {
   campaign: CampaignState;
   macroState: KingdomMacroState;
   metHeroIds: string[];
   backgroundChoice: BackgroundChoice;
+  /** v5: Lord canlı pozisyonları (WorldCanvas'tan) */
+  lordLivePositions?: Map<string, LordLivePosition>;
 }
 
-export interface SaveData extends SaveInput {
+export interface SaveData {
   version: number;
   /** `Date.now()` — "ne zaman kaydedildi" bilgisi için. */
   savedAt: number;
+  backgroundChoice: BackgroundChoice;
+  metHeroIds: string[];
+  campaign: CampaignState;
+  macroState: KingdomMacroState;
+  /** v5: Lord canlı pozisyonları serialize edilmiş halde */
+  lordLivePositions?: Record<string, LordLivePosition>;
 }
 
 export interface SaveSummary {
@@ -76,6 +92,14 @@ function isValidMacroState(value: unknown): value is KingdomMacroState {
 }
 
 export function createSaveData(input: SaveInput, now = Date.now()): SaveData {
+  // Lord live positions'ı Map'ten Record'a çevir (JSON serializable)
+  const lordLivePositions: Record<string, LordLivePosition> = {};
+  if (input.lordLivePositions) {
+    input.lordLivePositions.forEach((pos, lordId) => {
+      lordLivePositions[lordId] = { x: pos.x, z: pos.z };
+    });
+  }
+
   return {
     version: SAVE_VERSION,
     savedAt: now,
@@ -83,6 +107,7 @@ export function createSaveData(input: SaveInput, now = Date.now()): SaveData {
     metHeroIds: [...input.metHeroIds],
     campaign: ensureBannerlordFoundation(input.campaign),
     macroState: input.macroState,
+    lordLivePositions: Object.keys(lordLivePositions).length > 0 ? lordLivePositions : undefined,
   };
 }
 
@@ -126,6 +151,18 @@ export function parseSave(raw: string | null | undefined): SaveData | null {
     parsed.backgroundChoice === 'steppe' || parsed.backgroundChoice === 'tactician'
       ? parsed.backgroundChoice
       : 'noble';
+  
+  // v5: Lord live positions'ı parse et (varsa)
+  let lordLivePositions: Record<string, LordLivePosition> | undefined;
+  if (version >= 5 && isObject(parsed.lordLivePositions)) {
+    lordLivePositions = {};
+    Object.entries(parsed.lordLivePositions).forEach(([lordId, pos]) => {
+      if (isObject(pos) && typeof pos.x === 'number' && typeof pos.z === 'number') {
+        lordLivePositions![lordId] = { x: pos.x, z: pos.z };
+      }
+    });
+  }
+  
   return {
     version: SAVE_VERSION,
     savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
@@ -133,6 +170,7 @@ export function parseSave(raw: string | null | undefined): SaveData | null {
     metHeroIds,
     campaign: migratedCampaign,
     macroState: parsed.macroState,
+    lordLivePositions,
   };
 }
 

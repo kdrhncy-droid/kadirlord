@@ -131,8 +131,12 @@
 
 ### ADIM 6 — 11 Resmi Atölye, Paralı Asker Sözleşmesi, Kendi Krallığını Kurma ve Krallık/Klan Veri Tekilleştirmesi
 
-- [ ] **6.1. 11 Resmi Bannerlord Atölyesi (`Workshops`) ve Hammadde Kâr Zinciri (`SettlementModal.tsx`, `rules.ts`, `worldSim.ts`):**
-  - Şehirlerdeki 4 basit atölye yerine Bannerlord'un **11 resmi atölyesi** (*Bira Fabrikası, Şarap İmalathanesi, Zeytinyağı Presi, Çömlek Atölyesi, Kadife Atölyesi, Keten Dokuma, Yün Dokuma, Tabakhane, Ahşap Atölyesi, Demirci, Gümüşçü/Kuyumcu*); bağlı köylerin ürettiği hammadde bolluğuna göre günlük net kâr hesabı, atölye türünü değiştirme ve satma.
+- [x] **6.1. 11 Resmi Bannerlord Atölyesi (`Workshops`) ve Hammadde Kâr Zinciri (`SettlementModal.tsx`, `rules.ts`, `rules.test.ts`):** *(2026-11-01 yapıldı)*
+  - **11 Resmi Atölye:** *Bira Fabrikası, Şarap Presi, Zeytinyağı Presi, Çömlek Atölyesi, Kadife Dokuma, Keten Dokuma, Yün Dokuma, Tabakhane, Ahşap Atölyesi, Demirci Atölyesi, Gümüşçü / Kuyumcu* `WORKSHOP_CATALOG` kataloğunda tam girdi-çıktı ve ikonlarıyla tanımlandı.
+  - **Çoklu Yuva (Multi-Slot):** Her şehirde refaha göre 3-4 atölye yuvası (`TownWorkshop[]`) ve yerel tüccar sahipleri modellendi.
+  - **Klan Kuralı (Farklı Şehirler vs Aynı Şehir):** Oyuncu klan atölye limiti (`Klan Kademesi + 1`) dahilinde Kalradya'daki farklı şehirlerden serbestçe atölye satın alabilir; fakat **aynı şehirde birden fazla atölye işletebilmek için klan kademesi şartı** aranır (aynı şehirde 2. atölye için Klan Kademesi 2, 3. atölye için Klan Kademesi 3 gerekir).
+  - **Hammadde Tedarik Zinciri & Kâr Hesabı:** Şehre bağlı köylerin ürettiği hammaddeler (`primaryProduction`) atölyeye girdi sağladığında +35 Dinar/gün yerel tedarik bonusu eklenir; aynı şehirdeki aynı tür atölyeler pazar doygunluğu nedeniyle %25 rekabet kesintisi yaşar.
+  - **Arayüz & Aksiyonlar:** `SettlementModal` içindeki Smithy sekmesi ve 11'li atölye seçim modali ile satın alma (220 D), üretimi değiştirme (100 D) ve atölyeyi satma (+180 D) eklendi; `rules.test.ts` ve `verify:fast` ile doğrulandı.
 - [ ] **6.2. Arena Turnuva Bahis (`Betting`) & İpucu ve Taverna Masa Oyunu (`SettlementModal.tsx`):**
   - Arenada **Turnuva Ustası** ile konuşup aktif turnuva olan şehirleri öğrenme, turlarda **kendi üzerine bahis yatırma** ve kazanınca **Nadir Ödül Eşyası + +3 Ün (`Renown`)** alma; Tavernada masa oyunu oynama.
 - [ ] **6.3. Klan Seviyesi 1 Paralı Asker (`Mercenary`) Sözleşmesi ve Klan Seviyesi 3 Kendi Krallığını Kurma (`KingdomManagementModal.tsx`, `DialogueModal.tsx`):**
@@ -366,3 +370,14 @@
   - Düşman lord partileri haritada çarpıştığında veya kuşatma yapan bir lordun (ör. Rhagaea) üzerine savunma/destek orduları geldiğinde iç içe geçip beklemek veya anında el değiştirmek yerine **aktif harita muharebesi (`MapEvent`)** başlaması.
   - Savaşan lordların ve kuşatılan yerleşimlerin üzerinde çapraz kılıç / kuşatma göstergesi, bilgi kartında **"Savaşıyor: [Karşı Taraf]"** / **"Kuşatma Altında"** yazması ve her iki tarafın asker sayısının zaman aktıkça **kademeli olarak düşmesi** (canlı erime / attrition).
   - Oyuncunun haritada süren bir AI-AI meydan savaşına veya kuşatma muharebesine tıklayarak müttefik/dost tarafa **destek olarak savaşa katılabilmesi** (veya düşmana saldırabilmesi).
+- [ ] **11.7. Bannerlord Diplomacy Sistemi — Barış Paktı (Cooldown), Savaş Yorgunluğu (War Exhaustion) ve Dinamik Tazminat (Tribute) (`references/Bannerlord.Diplomacy`):**
+  - *(Kullanıcı talimatıyla kayıt edildi — sırası gelince `references/Bannerlord.Diplomacy` dosyalarından aktarılacak)*
+  - **1) Barış Paktı (`CooldownManager.cs`):** Bir krallıkla barış yapıldıktan hemen sonra (örneğin 5 saniye/1 gün sonra) tekrar savaş açılmasını engeller (örneğin 20 günlük barış paktı süresi).
+  - **2) Savaş Yorgunluğu (`WarExhaustionManager.cs`):** Savaş uzadıkça, asker kaybettikçe (Casualty), köyler yağmalandıkça (Raid), kaleler kuşatıldıkça (Siege) ve lordlar esir düştükçe krallığın savaş yorgunluğu %0'dan %100'e doğru tırmanır. %100'e ulaşan krallık barış istemek veya teslim olmak zorunda kalır.
+  - **3) Otomatik Günlük Tazminat Hesabı (`TributeHelper.cs`):** Barış antlaşması imzalandığında kimin kime günlük ne kadar dinar ödeyeceği savaşta verilen zayiata ve güç dengesine göre otomatik hesaplanır.
+- [ ] **11.8. Kademe / Rütbe Bazlı Asker Muharebe Yapay Zekası ve Terfi Zinciri Bağlantısı (`CharacterArenaView.tsx`, `troops.ts`):**
+  - *(Kullanıcı talimatıyla not edildi — hemen yapılmayacak, asker gelişimi ve terfi zincirinin savaş alanıyla bağlantısı kurulduktan sonra işlenecek)*
+  - **1) Rütbeye Göre Zeka:** Düşük kademe askerler (T1 Acemi) taktik bilmeden hedefe dümdüz koşup saldırırken; elit/üst kademe askerler (T4-T6 Soylu) formasyonu koruma, okçuları siperleme, düşmanın hamlesine göre kalkan duvarı örme, feint ve yönlü blok yapma gibi çok daha mantıklı kararlar alacak.
+  - **2) Oyuncuya Kilitli Dönme Hatasının Düzeltilmesi:** Oyuncu kendi etrafında döndüğünde tüm askerlerin de anında fırıldak gibi onunla beraber dönmesi engellenecek; askerler formasyon hattına ve karşı cepheye sadık kalacak.
+
+

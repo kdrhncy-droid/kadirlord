@@ -43,10 +43,20 @@ import {
   type LordAgent,
   type Settlement,
   type TroopRoster,
+  type UnitTierId,
   FACTION_INFO,
   getTotalTroops,
 } from '../game/rules';
 import type { BattleTelemetry } from '../game/types';
+import {
+  createDivisionMoraleState,
+  applyDivisionCasualtyShock,
+  stepDivisionMorale,
+  splitBattleCasualties,
+  MORALE_ROUT_THRESHOLD,
+  type DivisionMoraleState,
+} from '../game/battleCombat';
+import { DIVISION_LABEL } from '../game/deployment';
 import {
   BATTLE_SCALE_PRESETS,
   BattleMemoryPool,
@@ -102,6 +112,7 @@ interface FlyingArrow {
   velocity: THREE.Vector3;
   inFlight: boolean;
   spawnTime: number;
+  despawnAt?: number;
   team: 'ALLY' | 'ENEMY';
   /** Çekiş gücü 0..1 — hız ve hasarı bu belirler. */
   power: number;
@@ -121,7 +132,7 @@ interface SkirmishFighter {
   id: string;
   name: string;
   team: 'ALLY' | 'ENEMY';
-  division: 'INFANTRY' | 'ARCHERS' | 'CAVALRY';
+  division: 'INFANTRY' | 'ARCHERS' | 'CAVALRY' | 'HORSE_ARCHERS';
   rig: CharacterRig;
   animator: CharacterAnimator;
   horse?: WarHorseRig;
@@ -140,6 +151,29 @@ interface SkirmishFighter {
   respawnTimer: number;
   isLord?: boolean;
   badge?: THREE.Sprite;
+  isRouting?: boolean;
+  routed?: boolean;
+  isRiderlessHorse?: boolean;
+  panicVelocity?: number;
+  panicDir?: number;
+  panicTimer?: number;
+  /** At üstünde vurulup düşme fiziği ve yuvarlanma animasyonu */
+  fallingFromHorse?: boolean;
+  fallY?: number;
+  fallVy?: number;
+  fallRoll?: number;
+  fallRollSpeed?: number;
+  /** LOD & Performans İyileştiricileri (50v50 ve 500v500 için) */
+  animTickCounter?: number;
+  currentShadowState?: boolean;
+}
+
+/** Kalradya Meydan Muharebesi Prosedürel Arazi Yükselti Fonksiyonu */
+export function getFieldElevation(x: number, z: number): number {
+  const h1 = Math.sin(x * 0.02) * Math.cos(z * 0.025) * 2.8;
+  const h2 = Math.sin(x * 0.045 + 1.2) * 1.2;
+  const ridge = Math.cos(z * 0.03) * 1.6;
+  return h1 + h2 + ridge;
 }
 
 export interface KillFeedItem {
@@ -239,6 +273,43 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     victory: boolean;
     enemiesDefeated: number;
     losses: Partial<TroopRoster>;
+    wounded?: Partial<TroopRoster>;
+    survivalRate?: number;
+  } | null>(null);
+
+  // 11.4: Canlı Tab Muharebe Skor Tablosu & Bölük Morali
+  const [showScoreboard, setShowScoreboard] = useState<boolean>(false);
+  const [scoreboardData, setScoreboardData] = useState<{
+    allies: Array<{
+      division: UnitTierId;
+      label: string;
+      initial: number;
+      alive: number;
+      wounded: number;
+      killed: number;
+      routed: number;
+      morale: number;
+      isRouting: boolean;
+    }>;
+    enemies: Array<{
+      division: UnitTierId;
+      label: string;
+      initial: number;
+      alive: number;
+      wounded: number;
+      killed: number;
+      routed: number;
+      morale: number;
+      isRouting: boolean;
+    }>;
+    totalAlliesAlive: number;
+    totalEnemiesAlive: number;
+    totalAlliesKilled: number;
+    totalEnemiesKilled: number;
+    totalAlliesWounded: number;
+    totalEnemiesWounded: number;
+    totalAlliesRouted: number;
+    totalEnemiesRouted: number;
   } | null>(null);
 
   // Combat Telemetry HUD State
@@ -302,6 +373,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
   const botRespawnTimerRef = useRef(0);
   const trampleCooldownRef = useRef(0);
   const hudSyncThrottleRef = useRef(0);
+  const fieldSpawnZRef = useRef(58);
 
   const keysDownRef = useRef<Record<string, boolean>>({});
   const controlModeRef = useRef<'INSPECTOR' | 'PLAYABLE'>('PLAYABLE');
@@ -325,6 +397,139 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     z: 1.5,
     facing: Math.PI,
   });
+
+  const showScoreboardRef = useRef(false);
+  useEffect(() => { showScoreboardRef.current = showScoreboard; }, [showScoreboard]);
+  const battleOutcomeRef = useRef(battleOutcome);
+  useEffect(() => { battleOutcomeRef.current = battleOutcome; }, [battleOutcome]);
+
+  const allyMoraleStatesRef = useRef<Map<UnitTierId, DivisionMoraleState>>(new Map());
+  const enemyMoraleStatesRef = useRef<Map<UnitTierId, DivisionMoraleState>>(new Map());
+  const allyCasualtiesRef = useRef<Partial<TroopRoster>>({});
+  const enemyCasualtiesRef = useRef<Partial<TroopRoster>>({});
+  const allyRoutedRef = useRef<Partial<TroopRoster>>({});
+  const enemyRoutedRef = useRef<Partial<TroopRoster>>({});
+  const battleElapsedSecRef = useRef<number>(0);
+  const playerFallenNoticeRef = useRef<boolean>(false);
+
+  const divisionIdToUnitTierId = useCallback(
+    (div: 'INFANTRY' | 'ARCHERS' | 'CAVALRY' | 'HORSE_ARCHERS'): UnitTierId => {
+      if (div === 'ARCHERS') return 'archer';
+      if (div === 'CAVALRY') return 'cavalry';
+      if (div === 'HORSE_ARCHERS') return 'horseArcher';
+      return 'infantry';
+    },
+    [],
+  );
+
+  const unitTierIdToDivision = useCallback(
+    (cls: UnitTierId): 'INFANTRY' | 'ARCHERS' | 'CAVALRY' | 'HORSE_ARCHERS' => {
+      if (cls === 'archer') return 'ARCHERS';
+      if (cls === 'cavalry') return 'CAVALRY';
+      if (cls === 'horseArcher') return 'HORSE_ARCHERS';
+      return 'INFANTRY';
+    },
+    [],
+  );
+
+  const recordUnitCasualty = useCallback(
+    (unit: SkirmishFighter, isCavalryCharge = false) => {
+      const cls = divisionIdToUnitTierId(unit.division);
+      if (unit.team === 'ALLY') {
+        allyCasualtiesRef.current[cls] = (allyCasualtiesRef.current[cls] || 0) + 1;
+        const st = allyMoraleStatesRef.current.get(cls);
+        if (st) {
+          applyDivisionCasualtyShock(st, 1, isCavalryCharge);
+        }
+      } else {
+        enemyCasualtiesRef.current[cls] = (enemyCasualtiesRef.current[cls] || 0) + 1;
+        const st = enemyMoraleStatesRef.current.get(cls);
+        if (st) {
+          applyDivisionCasualtyShock(st, 1, isCavalryCharge);
+        }
+      }
+    },
+    [divisionIdToUnitTierId],
+  );
+
+  const recordUnitRouted = useCallback(
+    (unit: SkirmishFighter) => {
+      const cls = divisionIdToUnitTierId(unit.division);
+      if (unit.team === 'ALLY') {
+        allyRoutedRef.current[cls] = (allyRoutedRef.current[cls] || 0) + 1;
+        const st = allyMoraleStatesRef.current.get(cls);
+        if (st) st.routedCount++;
+      } else {
+        enemyRoutedRef.current[cls] = (enemyRoutedRef.current[cls] || 0) + 1;
+        const st = enemyMoraleStatesRef.current.get(cls);
+        if (st) st.routedCount++;
+      }
+    },
+    [divisionIdToUnitTierId],
+  );
+
+  const dismountFallenRider = useCallback((fighter: SkirmishFighter) => {
+    if (!fighter.horse) return;
+    const group = skirmishGroupRef.current;
+    const horse = fighter.horse;
+    const fallSide = Math.random() < 0.5 ? 1 : -1;
+    const perpX = Math.cos(fighter.yaw) * (0.85 * fallSide);
+    const perpZ = -Math.sin(fighter.yaw) * (0.85 * fallSide);
+
+    // Detach rider rig from horse saddle mount and add directly to world skirmish group
+    horse.riderMount.remove(fighter.rig.root);
+    if (group) {
+      group.add(fighter.rig.root);
+    }
+    const startY = horse.root.position.y + 1.35;
+    fighter.x = horse.root.position.x + perpX * 0.4;
+    fighter.z = horse.root.position.z + perpZ * 0.4;
+    fighter.rig.root.position.set(fighter.x, startY, fighter.z);
+    fighter.rig.root.rotation.set(0, fighter.yaw + fallSide * 0.35, 0);
+
+    // Reset rider lower body so it is not frozen in mounted saddle pose
+    fighter.rig.pelvis.position.set(0, 0, 0);
+    fighter.rig.pelvis.rotation.set(0, 0, 0);
+    fighter.rig.leftThigh.rotation.set(0, 0, 0);
+    fighter.rig.rightThigh.rotation.set(0, 0, 0);
+    fighter.rig.leftShin.rotation.set(0, 0, 0);
+    fighter.rig.rightShin.rotation.set(0, 0, 0);
+    fighter.rig.leftFoot.rotation.set(0, 0, 0);
+    fighter.rig.rightFoot.rotation.set(0, 0, 0);
+
+    // Play fall animation and start airborne tumbling off horse
+    fighter.animator.fall();
+    fighter.fallingFromHorse = true;
+    fighter.fallY = startY;
+    fighter.fallVy = 1.4;
+    fighter.fallRoll = 0;
+    fighter.fallRollSpeed = fallSide * 4.2;
+    sound.playDeathScream();
+
+    // Mark horse as riderless; it gallops forward in panic away from the fallen rider
+    fighter.isRiderlessHorse = true;
+    fighter.panicVelocity = 7.8;
+    fighter.panicDir = fighter.yaw + (Math.random() - 0.5) * 0.5;
+    fighter.panicTimer = 3.8;
+  }, []);
+
+  const handleTacticalRetreat = useCallback(() => {
+    if (battleOutcome) return;
+    if (document.pointerLockElement) document.exitPointerLock();
+    sound.playWarhorn();
+    setShowScoreboard(false);
+
+    const medSkill = campaign?.skills?.medicine?.level ?? 35;
+    const split = splitBattleCasualties(allyCasualtiesRef.current, medSkill);
+
+    setBattleOutcome({
+      victory: false,
+      enemiesDefeated: killsCountRef.current,
+      losses: split.killed,
+      wounded: split.wounded,
+      survivalRate: split.survivalRate,
+    });
+  }, [battleOutcome, campaign]);
 
   const animSpeedRef = useRef(1.0);
   const weaponTypeRef = useRef<WeaponType>(initialEquipmentVisuals.weaponType);
@@ -445,10 +650,24 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       playerRig.root.position.set(0, 0, 0);
       playerRig.root.rotation.set(0, 0, 0);
     } else {
-      horseRig.root.visible = false;
+      // Authentic Mount & Blade: dismounted horse remains in the world standing idle
+      horseRig.root.visible = true;
+      horseRig.riderMount.remove(playerRig.root);
+      scene.add(horseRig.root);
       scene.add(playerRig.root);
+      playerPosRef.current.x += Math.cos(playerYawRef.current) * 1.15;
+      playerPosRef.current.z -= Math.sin(playerYawRef.current) * 1.15;
       playerRig.root.position.copy(playerPosRef.current);
       playerRig.root.rotation.y = playerYawRef.current;
+      // Reset rider posture
+      playerRig.pelvis.position.set(0, 0, 0);
+      playerRig.pelvis.rotation.set(0, 0, 0);
+      playerRig.leftThigh.rotation.set(0, 0, 0);
+      playerRig.rightThigh.rotation.set(0, 0, 0);
+      playerRig.leftShin.rotation.set(0, 0, 0);
+      playerRig.rightShin.rotation.set(0, 0, 0);
+      playerRig.leftFoot.rotation.set(0, 0, 0);
+      playerRig.rightFoot.rotation.set(0, 0, 0);
     }
   }, [isMounted]);
 
@@ -522,13 +741,42 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     const enemyArcCount = Math.min(10, Math.max(2, eRoster.archer ?? 6));
     const enemyCavCount = Math.min(6, Math.max(1, eRoster.cavalry ?? 3));
 
+    const isSiege = effectiveMode === 'SIEGE';
+
+    const totalPlayerTroops = getTotalTroops(pRoster);
+    const totalEnemyTroops = getTotalTroops(eRoster);
+    const totalBattleTroops = totalPlayerTroops + totalEnemyTroops;
+
+    // Warband / Bannerlord dinamik savaş meydanı ölçeklemesi:
+    // Ordu büyüklüğüne göre spawn mesafesi ve savaş alanı derinliği genişler
+    const baseSpawnZ = isSiege
+      ? 11.0
+      : Math.min(150, Math.max(38, 32 + Math.sqrt(Math.max(1, totalBattleTroops)) * 6.5));
+    fieldSpawnZRef.current = baseSpawnZ;
+
+    // Oyuncuyu kendi ordusunun safında, düşmana bakacak şekilde konumlandır
+    if (resetAllies && isFieldOrSiege) {
+      const playerStartZ = isSiege ? 8.0 : baseSpawnZ - 3.0;
+      playerPosRef.current.set(0, isSiege ? 0 : getFieldElevation(0, playerStartZ), playerStartZ);
+      playerYawRef.current = Math.PI; // Düşman ordusuna doğru bak (-Z)
+      if (playerRigRef.current && !isMountedRef.current) {
+        playerRigRef.current.root.position.copy(playerPosRef.current);
+        playerRigRef.current.root.rotation.y = playerYawRef.current;
+      }
+      if (playerHorseRef.current && isMountedRef.current) {
+        playerHorseRef.current.root.position.copy(playerPosRef.current);
+        playerHorseRef.current.root.rotation.y = playerYawRef.current;
+      }
+    }
+
     // 1. ALLIED FORCES (Player's Real Army)
     // 1.1 Allied Infantry (Sword & Shield Ranks)
     for (let i = 0; i < allyInfCount; i++) {
       const col = (i % 7) - 3.0;
       const row = Math.floor(i / 7);
       const x = col * 2.0;
-      const z = 11.0 + row * 2.0;
+      const z = isSiege ? 11.0 + row * 2.0 : baseSpawnZ + row * 2.2;
+      const y = isSiege ? 0 : getFieldElevation(x, z);
 
       const rig = createCharacterRig({
         skinTone: '#d9a17c',
@@ -539,7 +787,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         helmetType: i % 3 === 0 ? 'SPANGENHELM' : 'KETTLE_HAT',
         armorTier: i % 2 === 0 ? 'CHAINMAIL' : 'LEATHER',
       });
-      rig.root.position.set(x, 0, z);
+      rig.root.position.set(x, y, z);
       rig.root.rotation.y = Math.PI;
       group.add(rig.root);
 
@@ -572,7 +820,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       const col = (i % 6) - 2.5;
       const row = Math.floor(i / 6);
       const x = col * 2.2;
-      const z = 16.5 + row * 2.0;
+      const z = isSiege ? 16.5 + row * 2.0 : baseSpawnZ + 6.0 + row * 2.0;
+      const y = isSiege ? 0 : getFieldElevation(x, z);
 
       const rig = createCharacterRig({
         skinTone: '#c68a62',
@@ -583,7 +832,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         helmetType: 'KETTLE_HAT',
         armorTier: 'LEATHER',
       });
-      rig.root.position.set(x, 0, z);
+      rig.root.position.set(x, y, z);
       rig.root.rotation.y = Math.PI;
       group.add(rig.root);
 
@@ -613,8 +862,9 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
     // 1.3 Allied Cavalry (Mounted on WarHorses on Left Flank)
     for (let i = 0; i < allyCavCount; i++) {
-      const x = -11.0 - (i % 3) * 2.4;
-      const z = 12.0 + Math.floor(i / 3) * 2.6;
+      const x = isSiege ? -11.0 - (i % 3) * 2.4 : -16.0 - (i % 3) * 2.6;
+      const z = isSiege ? 12.0 + Math.floor(i / 3) * 2.6 : baseSpawnZ + 2.0 + Math.floor(i / 3) * 2.6;
+      const y = isSiege ? 0 : getFieldElevation(x, z);
 
       const rig = createCharacterRig({
         skinTone: '#d9a17c',
@@ -630,7 +880,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         factionColor: playerFactionColor,
         armoredBarding: true,
       });
-      horse.root.position.set(x, 0, z);
+      horse.root.position.set(x, y, z);
       horse.root.rotation.y = Math.PI;
       horse.riderMount.add(rig.root);
       rig.root.position.set(0, 0, 0);
@@ -680,8 +930,9 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         armoredBarding: true,
       });
       const lx = 0;
-      const lz = -18.0;
-      lordHorse.root.position.set(lx, 0, lz);
+      const lz = isSiege ? -18.0 : -(baseSpawnZ + 10.0);
+      const ly = isSiege ? 0 : getFieldElevation(lx, lz);
+      lordHorse.root.position.set(lx, ly, lz);
       lordHorse.root.rotation.y = 0;
       lordHorse.riderMount.add(lordRig.root);
       lordRig.root.position.set(0, 0, 0);
@@ -726,7 +977,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       const col = (i % 7) - 3.0;
       const row = Math.floor(i / 7);
       const x = col * 2.0;
-      const z = -22.0 - row * 2.0;
+      const z = isSiege ? -22.0 - row * 2.0 : -baseSpawnZ - row * 2.2;
+      const y = isSiege ? 0 : getFieldElevation(x, z);
 
       const rig = createCharacterRig({
         skinTone: '#c68a62',
@@ -737,7 +989,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         helmetType: i % 2 === 0 ? 'SPANGENHELM' : 'KETTLE_HAT',
         armorTier: i % 2 === 0 ? 'CHAINMAIL' : 'LEATHER',
       });
-      rig.root.position.set(x, 0, z);
+      rig.root.position.set(x, y, z);
       rig.root.rotation.y = 0;
       group.add(rig.root);
 
@@ -766,13 +1018,12 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     }
 
     // 2.3 Enemy Archers (On Parapet Walls in Siege, or in Formation in Field)
-    const isSiege = effectiveMode === 'SIEGE';
     for (let i = 0; i < enemyArcCount; i++) {
       const col = (i % 6) - 2.5;
       const row = Math.floor(i / 6);
       const x = col * 2.2;
-      const z = isSiege ? -20.8 : -26.0 - row * 2.0;
-      const y = isSiege ? 5.4 : 0;
+      const z = isSiege ? -20.8 : -(baseSpawnZ + 6.0) - row * 2.0;
+      const y = isSiege ? 5.4 : getFieldElevation(x, z);
 
       const rig = createCharacterRig({
         skinTone: '#d9a17c',
@@ -813,8 +1064,9 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
     // 2.4 Enemy Cavalry (Mounted on WarHorses on Right Flank)
     for (let i = 0; i < enemyCavCount; i++) {
-      const x = 11.0 + (i % 3) * 2.4;
-      const z = -20.0 - Math.floor(i / 3) * 2.6;
+      const x = isSiege ? 11.0 + (i % 3) * 2.4 : 16.0 + (i % 3) * 2.6;
+      const z = isSiege ? -20.0 - Math.floor(i / 3) * 2.6 : -(baseSpawnZ + 2.0) - Math.floor(i / 3) * 2.6;
+      const y = isSiege ? 0 : getFieldElevation(x, z);
 
       const rig = createCharacterRig({
         skinTone: '#c68a62',
@@ -830,7 +1082,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         factionColor: enemyFactionColor,
         armoredBarding: true,
       });
-      horse.root.position.set(x, 0, z);
+      horse.root.position.set(x, y, z);
       horse.root.rotation.y = 0;
       horse.riderMount.add(rig.root);
       rig.root.position.set(0, 0, 0);
@@ -869,8 +1121,10 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     playerHpRef.current = 100;
     setPlayerHp(100);
 
-    // Position player directly at the vanguard
-    playerPosRef.current.set(0, 0, 13.5);
+    // Position player directly at the vanguard (facing north toward enemy line)
+    const initPz = isSiege ? 13.5 : 52.0;
+    const initPy = isSiege ? 0 : getFieldElevation(0, initPz);
+    playerPosRef.current.set(0, initPy, initPz);
     playerYawRef.current = Math.PI;
 
     if (isMountedRef.current && playerHorseRef.current) {
@@ -899,7 +1153,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       );
     }
 
-    sound.playWarhorn();
+    if (resetAllies) sound.playWarhorn();
   }, [campaign?.heroes, campaign?.playerName, campaign?.roster, effectiveMode]);
 
   // ── Spawn / Reset Skirmish Wave Fighters ──
@@ -1031,12 +1285,20 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       const keptAllies: SkirmishFighter[] = [];
       for (const u of skirmishUnitsRef.current) {
         if (u.team === 'ENEMY') {
-          group.remove(u.horse ? u.horse.root : u.rig.root);
+          if (u.horse) group.remove(u.horse.root);
+          group.remove(u.rig.root);
         } else {
           if (!u.alive) {
             u.alive = true;
             u.hp = u.maxHp;
             u.animator.reset();
+            if (u.horse) {
+              group.remove(u.rig.root);
+              u.horse.riderMount.add(u.rig.root);
+              u.rig.root.position.set(0, 0, 0);
+              u.rig.root.rotation.set(0, 0, 0);
+              u.isRiderlessHorse = false;
+            }
           } else {
             u.hp = Math.min(u.maxHp, u.hp + 35);
           }
@@ -1140,7 +1402,39 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
     setAllyAliveCount(skirmishUnitsRef.current.filter((u) => u.team === 'ALLY' && u.alive).length);
     setEnemyAliveCount(4);
-  }, []);
+
+    // 11.4: Bölük Başlangıç Moralleri ve Bozgun Durumları
+    allyMoraleStatesRef.current.clear();
+    const allyDivCounts: Partial<Record<UnitTierId, number>> = { infantry: 2, archer: 1, cavalry: 1 };
+    for (const [cls, cnt] of Object.entries(allyDivCounts) as [UnitTierId, number][]) {
+      allyMoraleStatesRef.current.set(
+        cls,
+        createDivisionMoraleState(cls, cnt, {
+          campaignMorale: campaign?.morale ?? 70,
+          leadershipSkill: campaign?.skills?.leadership?.level ?? 35,
+        }),
+      );
+    }
+
+    enemyMoraleStatesRef.current.clear();
+    const enemyDivCounts: Partial<Record<UnitTierId, number>> = { infantry: 3, archer: 1 };
+    for (const [cls, cnt] of Object.entries(enemyDivCounts) as [UnitTierId, number][]) {
+      enemyMoraleStatesRef.current.set(
+        cls,
+        createDivisionMoraleState(cls, cnt, {
+          campaignMorale: targetLord?.morale ?? 65,
+          leadershipSkill: Math.round(35 + (targetLord?.clanTier ?? 2) * 8),
+        }),
+      );
+    }
+
+    allyCasualtiesRef.current = {};
+    enemyCasualtiesRef.current = {};
+    allyRoutedRef.current = {};
+    enemyRoutedRef.current = {};
+    battleElapsedSecRef.current = 0;
+    playerFallenNoticeRef.current = false;
+  }, [campaign, targetLord]);
 
   // ── Launch 500v500 Mass Battle & Siege with Ahead-of-Time Object Pool Pre-Warm Screen ──
   const launchMassBattleWithPrewarm = useCallback(
@@ -1194,7 +1488,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       skirmishGroup.visible = true;
       if (instancedScene) instancedScene.root.visible = false;
       if (perimeterGroup) perimeterGroup.visible = false;
-      if (floorMesh) floorMesh.scale.set(3.5, 1, 3.5);
+      if (floorMesh) floorMesh.scale.set(1, 1, 1);
       spawnCampaignForces(true);
     } else if (arenaBattleMode === 'MASS_BATTLE') {
       botRig.root.visible = false;
@@ -1245,8 +1539,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     // ---- Scene ----
     const scene = new THREE.Scene();
     if (isFieldOrSiege) {
-      scene.background = new THREE.Color('#6ba3d6');
-      scene.fog = new THREE.Fog('#6ba3d6', 55, 250);
+      scene.background = new THREE.Color('#7baed8');
+      scene.fog = new THREE.Fog('#7baed8', 90, 360);
     } else {
       scene.background = new THREE.Color('#0f0c09');
       scene.fog = new THREE.FogExp2('#0f0c09', 0.014);
@@ -1254,7 +1548,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     sceneRef.current = scene;
 
     // ---- Camera ----
-    const camera = new THREE.PerspectiveCamera(62, width / height, 0.1, 140);
+    const camera = new THREE.PerspectiveCamera(62, width / height, 0.1, 450);
     const initDist = isFieldOrSiege && Boolean(campaign?.equipment?.MOUNT) ? 4.25 : 3.4;
     const initFwdX = Math.sin(playerYawRef.current);
     const initFwdZ = Math.cos(playerYawRef.current);
@@ -1274,7 +1568,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     // ---- Renderer ----
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.2;
@@ -1285,12 +1579,24 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
     // ---- Arena Environment / Battlefield Terrain ----
     const floorGeo = isFieldOrSiege
-      ? new THREE.PlaneGeometry(380, 380, 20, 20)
+      ? new THREE.PlaneGeometry(540, 540, 48, 48)
       : new THREE.CylinderGeometry(18, 18, 0.2, 32);
+
+    if (isFieldOrSiege && effectiveMode !== 'SIEGE') {
+      const pos = floorGeo.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const vx = pos.getX(i);
+        const vy = pos.getY(i);
+        const elev = getFieldElevation(vx, -vy);
+        pos.setZ(i, elev);
+      }
+      floorGeo.computeVertexNormals();
+    }
+
     const floorMat = new THREE.MeshStandardMaterial({
-      color: isFieldOrSiege ? '#3e5229' : '#453526',
-      roughness: 0.92,
-      metalness: 0.04,
+      color: isFieldOrSiege ? '#425828' : '#453526',
+      roughness: 0.94,
+      metalness: 0.03,
       flatShading: true,
     });
     const floor = new THREE.Mesh(floorGeo, floorMat);
@@ -1303,6 +1609,92 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     floor.receiveShadow = true;
     scene.add(floor);
     floorMeshRef.current = floor;
+
+    // ---- Procedural Battlefield Scenery (Pine Trees, Boulders, Old Pasture Fences) ----
+    const sceneryGroup = new THREE.Group();
+    if (isFieldOrSiege && effectiveMode !== 'SIEGE') {
+      const trunkMat = new THREE.MeshStandardMaterial({ color: '#332015', roughness: 0.95 });
+      const foliageMat1 = new THREE.MeshStandardMaterial({ color: '#1e3818', roughness: 0.9, flatShading: true });
+      const foliageMat2 = new THREE.MeshStandardMaterial({ color: '#27471f', roughness: 0.9, flatShading: true });
+      const trunkGeo = new THREE.CylinderGeometry(0.28, 0.42, 3.8, 6);
+      const coneGeo1 = new THREE.ConeGeometry(2.1, 2.8, 6);
+      const coneGeo2 = new THREE.ConeGeometry(1.6, 2.4, 6);
+
+      const treeSeeds = [
+        { x: -32, z: 25 }, { x: -44, z: 50 }, { x: -28, z: 75 }, { x: -38, z: 0 },
+        { x: -45, z: -35 }, { x: -30, z: -65 }, { x: -50, z: -85 }, { x: -35, z: 95 },
+        { x: 34, z: 20 }, { x: 42, z: 45 }, { x: 30, z: 70 }, { x: 40, z: -10 },
+        { x: 46, z: -45 }, { x: 32, z: -70 }, { x: 48, z: -90 }, { x: 36, z: 100 },
+        { x: -18, z: -115 }, { x: 5, z: -125 }, { x: 22, z: -120 }, { x: -12, z: 125 }, { x: 18, z: 130 },
+      ];
+
+      treeSeeds.forEach((seed, i) => {
+        const tree = new THREE.Group();
+        const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+        trunk.position.y = 1.9;
+        trunk.castShadow = true;
+        tree.add(trunk);
+
+        const f1 = new THREE.Mesh(coneGeo1, i % 2 === 0 ? foliageMat1 : foliageMat2);
+        f1.position.y = 3.6;
+        f1.castShadow = true;
+        tree.add(f1);
+
+        const f2 = new THREE.Mesh(coneGeo2, i % 2 === 0 ? foliageMat2 : foliageMat1);
+        f2.position.y = 5.0;
+        f2.castShadow = true;
+        tree.add(f2);
+
+        const elev = getFieldElevation(seed.x, seed.z);
+        tree.position.set(seed.x, elev, seed.z);
+        const sc = 0.85 + (i % 5) * 0.12;
+        tree.scale.set(sc, sc, sc);
+        sceneryGroup.add(tree);
+      });
+
+      const rockMat = new THREE.MeshStandardMaterial({ color: '#57554f', roughness: 0.92, flatShading: true });
+      const rockSeeds = [
+        { x: -22, z: 35, s: 1.4 }, { x: 24, z: 30, s: 1.6 },
+        { x: -18, z: -40, s: 1.3 }, { x: 20, z: -48, s: 1.7 },
+        { x: -35, z: 5, s: 2.1 }, { x: 36, z: -5, s: 1.9 },
+        { x: -10, z: 85, s: 1.5 }, { x: 12, z: -95, s: 1.6 },
+      ];
+      rockSeeds.forEach((r, i) => {
+        const geo = new THREE.DodecahedronGeometry(r.s, 0);
+        const mesh = new THREE.Mesh(geo, rockMat);
+        const elev = getFieldElevation(r.x, r.z);
+        mesh.position.set(r.x, elev + r.s * 0.5, r.z);
+        mesh.rotation.set(i * 0.4, i * 0.7, i * 0.3);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        sceneryGroup.add(mesh);
+      });
+
+      const fenceMat = new THREE.MeshStandardMaterial({ color: '#4a3525', roughness: 0.9 });
+      const fencePostGeo = new THREE.CylinderGeometry(0.08, 0.1, 1.3, 5);
+      const railGeo = new THREE.BoxGeometry(3.2, 0.1, 0.12);
+      const fenceCoords = [
+        { x: -24, z: 12, rot: 0.3 }, { x: -27, z: 15, rot: 0.4 },
+        { x: 25, z: -15, rot: -0.2 }, { x: 28, z: -12, rot: -0.1 },
+      ];
+      fenceCoords.forEach((fc) => {
+        const fGroup = new THREE.Group();
+        const post1 = new THREE.Mesh(fencePostGeo, fenceMat);
+        post1.position.set(-1.4, 0.65, 0);
+        const post2 = new THREE.Mesh(fencePostGeo, fenceMat);
+        post2.position.set(1.4, 0.65, 0);
+        const rail1 = new THREE.Mesh(railGeo, fenceMat);
+        rail1.position.set(0, 0.5, 0);
+        const rail2 = new THREE.Mesh(railGeo, fenceMat);
+        rail2.position.set(0, 0.9, 0);
+        fGroup.add(post1, post2, rail1, rail2);
+        const elev = getFieldElevation(fc.x, fc.z);
+        fGroup.position.set(fc.x, elev, fc.z);
+        fGroup.rotation.y = fc.rot;
+        sceneryGroup.add(fGroup);
+      });
+    }
+    scene.add(sceneryGroup);
 
     const arenaPerimeterGroup = new THREE.Group();
     arenaPerimeterGroupRef.current = arenaPerimeterGroup;
@@ -1339,11 +1731,11 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     sunLight.shadow.mapSize.width = 1024;
     sunLight.shadow.mapSize.height = 1024;
     sunLight.shadow.camera.near = 0.5;
-    sunLight.shadow.camera.far = 140;
-    sunLight.shadow.camera.left = -50;
-    sunLight.shadow.camera.right = 50;
-    sunLight.shadow.camera.top = 50;
-    sunLight.shadow.camera.bottom = -50;
+    sunLight.shadow.camera.far = 380;
+    sunLight.shadow.camera.left = -110;
+    sunLight.shadow.camera.right = 110;
+    sunLight.shadow.camera.top = 110;
+    sunLight.shadow.camera.bottom = -110;
     scene.add(sunLight);
 
     const skyFill = new THREE.HemisphereLight(
@@ -1604,8 +1996,13 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                 sound.playShieldHit();
                 if (unit.hp <= 0) {
                   unit.alive = false;
-                  unit.animator.fall();
+                  if (unit.horse) {
+                    dismountFallenRider(unit);
+                  } else {
+                    unit.animator.fall();
+                  }
                   setKillsCount((k) => k + 1);
+                  recordUnitCasualty(unit, isMountedRef.current);
                   if (unit.isLord) {
                     sound.playVictoryFanfare();
                     spawnDamageText(`👑 ${unit.name.toUpperCase()} MAĞLUP EDİLDİ!`, '#fbbf24', uPos);
@@ -1766,7 +2163,14 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             spawnDamageText('🛡️ -18 (GARD KIRILDI!)', '#38bdf8', uPos);
             if (u.hp <= 0) {
               u.alive = false;
-              u.animator.fall();
+              if (u.horse) {
+                dismountFallenRider(u);
+              } else {
+                u.animator.fall();
+              }
+              setKillsCount((k) => k + 1);
+              recordUnitCasualty(u, false);
+              pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', u.name, 'ALLY', '🛡️');
             }
           }
         }
@@ -1815,7 +2219,14 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             spawnDamageText('🦶 -14 (SERSEMLİK!)', '#f59e0b', uPos);
             if (u.hp <= 0) {
               u.alive = false;
-              u.animator.fall();
+              if (u.horse) {
+                dismountFallenRider(u);
+              } else {
+                u.animator.fall();
+              }
+              setKillsCount((k) => k + 1);
+              recordUnitCasualty(u, false);
+              pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', u.name, 'ALLY', '🦶');
             }
           }
         }
@@ -1845,7 +2256,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         }
 
         const anim = playerAnimatorRef.current;
-        if (!anim) return;
+        if (!anim || playerHpRef.current <= 0) return;
 
         if (e.button === 0) {
           // BannerPage SHIELD BASH: Sağ Tık (blok) basılıyken Sol Tık!
@@ -2028,7 +2439,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       if (e.code === 'KeyH') setDockCollapsed((prev) => !prev);
 
       // BannerPage Key Actions: [E] Tekme / Kalkan Vuruşu
-      if (e.code === 'KeyE') {
+      if (e.code === 'KeyE' && playerHpRef.current > 0) {
         if (controlModeRef.current === 'PLAYABLE') {
           if (isBlockingRef.current && shieldTypeRef.current !== 'NONE') {
             triggerPlayerShieldBash();
@@ -2039,99 +2450,131 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       }
 
       // KeyM -> Toggle WarHorse Mount!
-      if (e.code === 'KeyM') {
+      if (e.code === 'KeyM' && playerHpRef.current > 0) {
         setIsMounted((prev) => !prev);
       }
 
       // Bannerlord Tactical Orders (F1 / F2 / F3 / F4 / F5 / F6)
-      if (e.code === 'F1') {
-        e.preventDefault();
-        if (activeTacticalMenuRef.current === 'MOVEMENT') {
-          issueHoldPositionOrder();
-          setActiveTacticalMenu(null);
-        } else if (activeTacticalMenuRef.current === 'FACING') {
-          showOrderShout('👀 [F2-F1] Düşmana Dönüldü!');
-          setActiveTacticalMenu(null);
-        } else if (activeTacticalMenuRef.current === 'FORMATION') {
-          setFormationArrangement('LINE');
-          showOrderShout('➖ [F3-F1] Çizgi Düzenine Geçildi!');
-          setActiveTacticalMenu(null);
-        } else {
-          setActiveTacticalMenu('MOVEMENT');
-          sound.playUiClick();
+      if (playerHpRef.current > 0) {
+        if (e.code === 'F1') {
+          e.preventDefault();
+          if (activeTacticalMenuRef.current === 'MOVEMENT') {
+            issueHoldPositionOrder();
+            setActiveTacticalMenu(null);
+          } else if (activeTacticalMenuRef.current === 'FACING') {
+            showOrderShout('👀 [F2-F1] Düşmana Dönüldü!');
+            setActiveTacticalMenu(null);
+          } else if (activeTacticalMenuRef.current === 'FORMATION') {
+            setFormationArrangement('LINE');
+            showOrderShout('➖ [F3-F1] Çizgi Düzenine Geçildi!');
+            setActiveTacticalMenu(null);
+          } else {
+            setActiveTacticalMenu('MOVEMENT');
+            sound.playUiClick();
+          }
+        } else if (e.code === 'F2') {
+          e.preventDefault();
+          if (activeTacticalMenuRef.current === 'MOVEMENT') {
+            setFormationOrder('FOLLOW_ME');
+            if (tacticalBannerRef.current) tacticalBannerRef.current.visible = false;
+            showOrderShout('🛡️ [F1-F2] Beni Takip Et Emri!');
+            setActiveTacticalMenu(null);
+          } else if (activeTacticalMenuRef.current === 'FACING') {
+            showOrderShout('🧭 [F2-F2] Bu Yöne Dönüldü!');
+            setActiveTacticalMenu(null);
+          } else if (activeTacticalMenuRef.current === 'FORMATION') {
+            setFormationArrangement('SHIELD_WALL');
+            showOrderShout('🛡️ [F3-F2] Kalkan Duvarı Örüldü!');
+            sound.playShieldHit();
+            setActiveTacticalMenu(null);
+          } else {
+            setActiveTacticalMenu('FACING');
+            sound.playUiClick();
+          }
+        } else if (e.code === 'F3') {
+          e.preventDefault();
+          if (activeTacticalMenuRef.current === 'MOVEMENT') {
+            setFormationOrder('CHARGE');
+            if (tacticalBannerRef.current) tacticalBannerRef.current.visible = false;
+            showOrderShout('⚔️ [F1-F3] Hücum Emri! Düşmana saldırın!');
+            sound.playWarhorn();
+            setActiveTacticalMenu(null);
+          } else if (activeTacticalMenuRef.current === 'FORMATION') {
+            setFormationArrangement('LOOSE');
+            showOrderShout('〰️ [F3-F3] Dağınık Düzene Geçildi!');
+            setActiveTacticalMenu(null);
+          } else {
+            setActiveTacticalMenu('FORMATION');
+            sound.playUiClick();
+          }
+        } else if (e.code === 'F4') {
+          e.preventDefault();
+          if (activeTacticalMenuRef.current === 'MOVEMENT') {
+            setFormationOrder('ADVANCE');
+            showOrderShout('➡️ [F1-F4] İlerle Emri Verildi!');
+            setActiveTacticalMenu(null);
+          } else if (activeTacticalMenuRef.current === 'FORMATION') {
+            setFormationArrangement('SQUARE');
+            showOrderShout('⏹️ [F3-F4] Kare Düzene Geçildi!');
+            setActiveTacticalMenu(null);
+          } else {
+            setFireOrder((prev) => {
+              const next = prev === 'FREE_FIRE' ? 'HOLD_FIRE' : 'FREE_FIRE';
+              showOrderShout(next === 'FREE_FIRE' ? '🏹 [F4] Serbest Atış Emri Verildi!' : '🛡️ [F4] Ateşi Kes Emri Verildi!');
+              return next;
+            });
+            sound.playUiClick();
+          }
+        } else if (e.code === 'F5') {
+          e.preventDefault();
+          if (activeTacticalMenuRef.current === 'MOVEMENT') {
+            setFormationOrder('RETREAT');
+            showOrderShout('◀️ [F1-F5] Ricat Emri! Geri çekilin!');
+            setActiveTacticalMenu(null);
+          } else if (activeTacticalMenuRef.current === 'FORMATION') {
+            setFormationArrangement('WEDGE');
+            showOrderShout('🔺 [F3-F5] Kama Düzenine Geçildi!');
+            setActiveTacticalMenu(null);
+          }
+        } else if (e.code === 'F6') {
+          e.preventDefault();
+          if (activeTacticalMenuRef.current === 'FORMATION') {
+            setFormationArrangement('COLUMN');
+            showOrderShout('❚ [F3-F6] Kolon Düzenine Geçildi!');
+            setActiveTacticalMenu(null);
+          }
         }
-      } else if (e.code === 'F2') {
+      }
+
+      if (e.code === 'Tab') {
         e.preventDefault();
-        if (activeTacticalMenuRef.current === 'MOVEMENT') {
-          setFormationOrder('FOLLOW_ME');
-          if (tacticalBannerRef.current) tacticalBannerRef.current.visible = false;
-          showOrderShout('🛡️ [F1-F2] Beni Takip Et Emri!');
-          setActiveTacticalMenu(null);
-        } else if (activeTacticalMenuRef.current === 'FACING') {
-          showOrderShout('🧭 [F2-F2] Bu Yöne Dönüldü!');
-          setActiveTacticalMenu(null);
-        } else if (activeTacticalMenuRef.current === 'FORMATION') {
-          setFormationArrangement('SHIELD_WALL');
-          showOrderShout('🛡️ [F3-F2] Kalkan Duvarı Örüldü!');
-          sound.playShieldHit();
-          setActiveTacticalMenu(null);
-        } else {
-          setActiveTacticalMenu('FACING');
-          sound.playUiClick();
+        if (battleOutcomeRef.current) {
+          if (document.pointerLockElement) document.exitPointerLock();
+          if (onBattleCompleteRef.current) {
+            onBattleCompleteRef.current(
+              battleOutcomeRef.current.victory,
+              battleOutcomeRef.current.losses,
+              battleOutcomeRef.current.enemiesDefeated,
+            );
+          } else {
+            onReturnToMap();
+          }
+          return;
         }
-      } else if (e.code === 'F3') {
-        e.preventDefault();
-        if (activeTacticalMenuRef.current === 'MOVEMENT') {
-          setFormationOrder('CHARGE');
-          if (tacticalBannerRef.current) tacticalBannerRef.current.visible = false;
-          showOrderShout('⚔️ [F1-F3] Hücum Emri! Düşmana saldırın!');
-          sound.playWarhorn();
-          setActiveTacticalMenu(null);
-        } else if (activeTacticalMenuRef.current === 'FORMATION') {
-          setFormationArrangement('LOOSE');
-          showOrderShout('〰️ [F3-F3] Dağınık Düzene Geçildi!');
-          setActiveTacticalMenu(null);
-        } else {
-          setActiveTacticalMenu('FORMATION');
-          sound.playUiClick();
-        }
-      } else if (e.code === 'F4') {
-        e.preventDefault();
-        if (activeTacticalMenuRef.current === 'MOVEMENT') {
-          setFormationOrder('ADVANCE');
-          showOrderShout('➡️ [F1-F4] İlerle Emri Verildi!');
-          setActiveTacticalMenu(null);
-        } else if (activeTacticalMenuRef.current === 'FORMATION') {
-          setFormationArrangement('SQUARE');
-          showOrderShout('⏹️ [F3-F4] Kare Düzene Geçildi!');
-          setActiveTacticalMenu(null);
-        } else {
-          setFireOrder((prev) => {
-            const next = prev === 'FREE_FIRE' ? 'HOLD_FIRE' : 'FREE_FIRE';
-            showOrderShout(next === 'FREE_FIRE' ? '🏹 [F4] Serbest Atış Emri Verildi!' : '🛡️ [F4] Ateşi Kes Emri Verildi!');
-            return next;
-          });
-          sound.playUiClick();
-        }
-      } else if (e.code === 'F5') {
-        e.preventDefault();
-        if (activeTacticalMenuRef.current === 'MOVEMENT') {
-          setFormationOrder('RETREAT');
-          showOrderShout('◀️ [F1-F5] Ricat Emri! Geri çekilin!');
-          setActiveTacticalMenu(null);
-        } else if (activeTacticalMenuRef.current === 'FORMATION') {
-          setFormationArrangement('WEDGE');
-          showOrderShout('🔺 [F3-F5] Kama Düzenine Geçildi!');
-          setActiveTacticalMenu(null);
-        }
-      } else if (e.code === 'F6') {
-        e.preventDefault();
-        if (activeTacticalMenuRef.current === 'FORMATION') {
-          setFormationArrangement('COLUMN');
-          showOrderShout('❚ [F3-F6] Kolon Düzenine Geçildi!');
-          setActiveTacticalMenu(null);
-        }
+        setShowScoreboard((prev) => {
+          const next = !prev;
+          if (next && document.pointerLockElement) {
+            document.exitPointerLock();
+          }
+          return next;
+        });
+        sound.playUiClick();
       } else if (e.code === 'Escape') {
+        if (showScoreboardRef.current) {
+          e.preventDefault();
+          setShowScoreboard(false);
+          return;
+        }
         if (activeTacticalMenuRef.current) {
           e.preventDefault();
           setActiveTacticalMenu(null);
@@ -2139,7 +2582,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       }
 
       // Space → quick attack in selected direction
-      if (e.code === 'Space' && controlModeRef.current === 'PLAYABLE') {
+      if (e.code === 'Space' && controlModeRef.current === 'PLAYABLE' && playerHpRef.current > 0) {
         const anim = playerAnimatorRef.current;
         if (anim) anim.attack(combatDirRef.current, false);
       }
@@ -2179,14 +2622,16 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
       if (mode === 'PLAYABLE' && anim) {
         const localMove = new THREE.Vector3();
-        if (keys['KeyW'] || keys['ArrowUp']) localMove.z += 1;
-        if (keys['KeyS'] || keys['ArrowDown']) localMove.z -= 1;
-        if (keys['KeyA'] || keys['ArrowLeft']) localMove.x += 1;
-        if (keys['KeyD'] || keys['ArrowRight']) localMove.x -= 1;
+        if (playerHpRef.current > 0) {
+          if (keys['KeyW'] || keys['ArrowUp']) localMove.z += 1;
+          if (keys['KeyS'] || keys['ArrowDown']) localMove.z -= 1;
+          if (keys['KeyA'] || keys['ArrowLeft']) localMove.x += 1;
+          if (keys['KeyD'] || keys['ArrowRight']) localMove.x -= 1;
+        }
 
         const isSprint = keys['ShiftLeft'] || keys['ShiftRight'];
 
-        if (localMove.lengthSq() > 0) {
+        if (playerHpRef.current > 0 && localMove.lengthSq() > 0) {
           localMove.normalize();
           const moveSpeed = mounted
             ? isSprint
@@ -2202,7 +2647,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           playerPosRef.current.addScaledVector(worldMove, moveSpeed * delta);
 
           const maxR = isFieldOrSiege
-            ? 140.0
+            ? Math.max(160.0, fieldSpawnZRef.current + 50.0)
             : arenaBattleModeRef.current === 'MASS_BATTLE'
               ? MASS_BATTLE_RADIUS
               : ARENA_RADIUS - 0.6;
@@ -2213,6 +2658,12 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           playerSpeedRef.current = 0;
           anim.setMove(0, 0);
         }
+
+        // Adjust player position Y based on field terrain elevation
+        const pElevation = isFieldOrSiege && effectiveMode !== 'SIEGE'
+          ? getFieldElevation(playerPosRef.current.x, playerPosRef.current.z)
+          : 0;
+        playerPosRef.current.y = pElevation;
 
         const rig = playerRigRef.current!;
         const horse = playerHorseRef.current;
@@ -2257,7 +2708,11 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   sound.playShieldHit();
                   if (u.hp <= 0) {
                     u.alive = false;
-                    u.animator.fall();
+                    if (u.horse) {
+                      dismountFallenRider(u);
+                    } else {
+                      u.animator.fall();
+                    }
                     setKillsCount((k) => k + 1);
                     spawnDamageText(`🏇 SÜVARİ HÜCUMU: ${u.name} Yıkıldı!`, '#facc15', new THREE.Vector3(u.x, 0, u.z));
                   } else {
@@ -2390,9 +2845,61 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         const grid = spatialGridRef.current;
         grid.rebuild(units);
 
+        battleElapsedSecRef.current += delta;
+
+        // 11.4: Bölük Morali & Bozgun Kontrolü (Bannerlord)
+        const curAlliesAlive = units.filter((u) => u.team === 'ALLY' && u.alive && !u.routed).length;
+        const curEnemiesAlive = units.filter((u) => u.team === 'ENEMY' && u.alive && !u.routed).length;
+        const totalAlive = Math.max(1, curAlliesAlive + curEnemiesAlive);
+        const allyRatio = curAlliesAlive / totalAlive;
+        const enemyRatio = curEnemiesAlive / totalAlive;
+
+        for (const [cls, st] of allyMoraleStatesRef.current.entries()) {
+          const divName = unitTierIdToDivision(cls);
+          const aliveInDiv = units.filter((u) => u.team === 'ALLY' && u.alive && !u.routed && u.division === divName).length;
+          const wasRouting = st.isRouting;
+          stepDivisionMorale(st, delta, {
+            aliveInDivision: aliveInDiv,
+            commanderDown: playerHpRef.current <= 0,
+            hasReserves: false,
+            battleElapsedSec: battleElapsedSecRef.current,
+            allyStrengthRatio: allyRatio,
+          });
+          if (st.isRouting && !wasRouting) {
+            spawnDamageText(`🚩 ${DIVISION_LABEL[cls].toUpperCase()} BOZGUNA UĞRADI!`, '#ef4444', playerPosRef.current);
+            sound.playDefeatSting();
+            pushKillFeedEntry('Sancak Ordusu', `${DIVISION_LABEL[cls]} Kaçıyor!`, 'ALLY', '🏳️');
+          }
+        }
+
+        for (const [cls, st] of enemyMoraleStatesRef.current.entries()) {
+          const divName = unitTierIdToDivision(cls);
+          const aliveInDiv = units.filter((u) => u.team === 'ENEMY' && u.alive && !u.routed && u.division === divName).length;
+          const wasRouting = st.isRouting;
+          stepDivisionMorale(st, delta, {
+            aliveInDivision: aliveInDiv,
+            commanderDown: false,
+            hasReserves: false,
+            battleElapsedSec: battleElapsedSecRef.current,
+            allyStrengthRatio: enemyRatio,
+          });
+          if (st.isRouting && !wasRouting) {
+            spawnDamageText(`🏳️ DÜŞMAN ${DIVISION_LABEL[cls].toUpperCase()} KAÇIYOR!`, '#22c55e', playerPosRef.current);
+            pushKillFeedEntry(targetLord?.name ?? 'Düşman Ordusu', `${DIVISION_LABEL[cls]} Bozguna Uğradı!`, 'ENEMY', '🏳️');
+          }
+        }
+
         // Compute tactical formation slots for alive ALLY units
-        const aliveAllies = units.filter((u) => u.team === 'ALLY' && u.alive);
-        const aliveEnemies = units.filter((u) => u.team === 'ENEMY' && u.alive);
+        const aliveAllies = units.filter((u) => u.team === 'ALLY' && u.alive && !u.routed);
+        const aliveEnemies = units.filter((u) => u.team === 'ENEMY' && u.alive && !u.routed);
+
+        // Komutan düştüğünde Çavuş yapay zekası devreye girer: ordu hücum moduna geçer!
+        if (playerHpRef.current <= 0 && formationOrderRef.current !== 'CHARGE') {
+          formationOrderRef.current = 'CHARGE';
+          setFormationOrder('CHARGE');
+          showOrderShout('🚩 KOMUTAN DÜŞTÜ! ÇAVUŞ KOMUTAYI ALDI: HÜCUM!');
+          sound.playWarhorn();
+        }
 
         const order = formationOrderRef.current;
         const arrangement = formationArrangementRef.current;
@@ -2409,9 +2916,78 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
         const allySlots = computeFormationSlots(aliveAllies.length, anchor, arrangement);
 
+        // 11.5: Düşman Lordu Taktik Yapay Zekası ve Ordu Düzeni (Bannerlord AI)
+        const enemyCommander = aliveEnemies.find((u) => u.isLord) ?? aliveEnemies[0];
+        let sumAllyX = playerPosRef.current.x;
+        let sumAllyZ = playerPosRef.current.z;
+        let allyCenterCount = 1;
+        for (const a of aliveAllies) {
+          sumAllyX += a.x;
+          sumAllyZ += a.z;
+          allyCenterCount++;
+        }
+        const avgAllyX = sumAllyX / allyCenterCount;
+        const avgAllyZ = sumAllyZ / allyCenterCount;
+
+        const cmdDistToFrontline = enemyCommander
+          ? Math.hypot(avgAllyX - enemyCommander.x, avgAllyZ - enemyCommander.z)
+          : 999;
+        const enemyFacing = enemyCommander
+          ? Math.atan2(avgAllyX - enemyCommander.x, avgAllyZ - enemyCommander.z)
+          : 0;
+
+        // Düşman lordu stratejik kararı:
+        // - Uzak mesafe (> 30m): Savunma hattı / Kalkan duvarı tutulur, okçular geride bekler
+        // - Orta mesafe (15m - 30m): Düzenli hatla ilerlenir (ADVANCE)
+        // - Yakın mesafe (< 15m) veya komutan düştüyse: Doğrudan hücum (CHARGE)
+        const enemyTacticalMode: 'HOLD' | 'ADVANCE' | 'CHARGE' =
+          !enemyCommander || cmdDistToFrontline < 15
+            ? 'CHARGE'
+            : cmdDistToFrontline > 30
+              ? 'HOLD'
+              : 'ADVANCE';
+
+        const enemyAnchor = enemyCommander
+          ? {
+              x: enemyCommander.x + Math.sin(enemyFacing) * (enemyTacticalMode === 'ADVANCE' ? 3.5 : 0),
+              z: enemyCommander.z + Math.cos(enemyFacing) * (enemyTacticalMode === 'ADVANCE' ? 3.5 : 0),
+              facing: enemyFacing,
+            }
+          : { x: 0, z: -50, facing: 0 };
+
+        const enemySlots = computeFormationSlots(
+          aliveEnemies.length,
+          enemyAnchor,
+          cmdDistToFrontline > 24 ? 'SHIELD_WALL' : 'LINE',
+        );
+
         aliveAllies.forEach((ally, idx) => {
+          const cls = divisionIdToUnitTierId(ally.division);
+          const divMorale = allyMoraleStatesRef.current.get(cls);
+          const isFleeing = ally.isRouting || divMorale?.isRouting;
+
+          // 11.4: Bozguna uğrayan asker silahını bırakıp geriye doğru kaçar
+          if (isFleeing) {
+            ally.isRouting = true;
+            ally.animator.release();
+            const fleeSpd = ally.horse ? HORSE_GALLOP_SPEED : SPRINT_SPEED;
+            ally.yaw = 0; // Kendi spawn sınırına (+Z) doğru kaçış
+            ally.z += fleeSpd * delta;
+            ally.animator.setMove(0, ally.horse ? 0 : fleeSpd);
+            const fleeBoundaryZ = isFieldOrSiege ? (fieldSpawnZRef.current + 40) : (ARENA_RADIUS - 0.5);
+            if (ally.z >= fleeBoundaryZ) {
+              ally.alive = false;
+              ally.routed = true;
+              recordUnitRouted(ally);
+              const grp = skirmishGroupRef.current;
+              if (grp) grp.remove(ally.horse ? ally.horse.root : ally.rig.root);
+              spawnDamageText(`🏃 ${ally.name} kaçtı!`, '#f87171', new THREE.Vector3(ally.x, 1, ally.z));
+            }
+            return;
+          }
+
           const slot = allySlots[idx];
-          const nearestEnemy = grid.findNearest(ally.x, ally.z, 28, (c) => c.team === 'ENEMY' && c.alive);
+          const nearestEnemy = grid.findNearest(ally.x, ally.z, isFieldOrSiege ? 280 : 28, (c) => c.team === 'ENEMY' && c.alive && !c.routed);
           const targetEnemy = nearestEnemy?.agent;
           const distToEnemy = nearestEnemy?.dist ?? 999;
 
@@ -2425,7 +3001,6 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           ) {
             desiredFacing = Math.atan2(targetEnemy.x - ally.x, targetEnemy.z - ally.z);
             if (ally.division === 'ARCHERS') {
-              // Archers hold standoff distance
               if (distToEnemy > 11.5 && order === 'CHARGE') {
                 goalX = targetEnemy.x;
                 goalZ = targetEnemy.z;
@@ -2436,7 +3011,6 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             }
           }
 
-          // Move toward goal with O(N) spatial separation
           const toGoalX = goalX - ally.x;
           const toGoalZ = goalZ - ally.z;
           const distToGoal = Math.hypot(toGoalX, toGoalZ);
@@ -2450,23 +3024,24 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             ally.z += (toGoalZ / distToGoal) * moveSpd * delta;
           }
 
-          // Separation push from neighbors
-          const neighbors = grid.queryRadius(ally.x, ally.z, 1.05);
+          // Elastik İtme / Yumuşak Gövde Çarpışması (Askerlerin İç İçe Girmesini Önler)
+          const neighbors = grid.queryRadius(ally.x, ally.z, ally.horse ? 1.6 : 1.15);
           for (const nb of neighbors) {
             if (nb.id === ally.id || !nb.alive) continue;
             const sx = ally.x - nb.x;
             const sz = ally.z - nb.z;
             const sd = Math.hypot(sx, sz) || 0.01;
-            if (sd < 0.95) {
-              ally.x += (sx / sd) * 1.6 * delta;
-              ally.z += (sz / sd) * 1.6 * delta;
+            const minDist = (ally.horse || nb.horse) ? 1.55 : (ally.team === nb.team ? 1.05 : 0.88);
+            if (sd < minDist) {
+              const pushForce = ((minDist - sd) / minDist) * (ally.horse ? 3.4 : 2.5);
+              ally.x += (sx / sd) * pushForce * delta;
+              ally.z += (sz / sd) * pushForce * delta;
             }
           }
 
           ally.yaw = desiredFacing;
           ally.animator.setMove(0, ally.horse ? 0 : moveSpd);
 
-          // Combat AI for Ally
           ally.aiTimer -= delta;
           if (arrMeta.forceShieldBlock && ally.hasShield && distToEnemy > 2.2) {
             ally.animator.block('up');
@@ -2489,7 +3064,6 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             ally.animator.attack(dir, false);
             ally.aiTimer = 1.15 + Math.random() * 0.4;
 
-            // Resolve ally melee strike against targetEnemy
             const enemyParry = evaluateDirectionalParry({
               attackDir: dir,
               defenderBlockDir: targetEnemy.blockDir,
@@ -2502,9 +3076,15 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
               targetEnemy.hp = Math.max(0, targetEnemy.hp - dmg);
               if (targetEnemy.hp <= 0) {
                 targetEnemy.alive = false;
-                targetEnemy.animator.fall();
+                if (targetEnemy.horse) {
+                  dismountFallenRider(targetEnemy);
+                } else {
+                  targetEnemy.animator.fall();
+                }
                 setKillsCount((k) => k + 1);
+                recordUnitCasualty(targetEnemy, ally.horse ? true : false);
                 spawnDamageText(`⚔️ Müttefik Leşi: ${targetEnemy.name}`, '#34d399', new THREE.Vector3(targetEnemy.x, 0, targetEnemy.z));
+                pushKillFeedEntry(ally.name, targetEnemy.name, 'ALLY', '⚔️');
               } else {
                 targetEnemy.animator.hitReact(true);
               }
@@ -2513,29 +3093,95 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         });
 
         // Update Enemy Fighters
-        for (const enemy of aliveEnemies) {
-          const nearestAlly = grid.findNearest(enemy.x, enemy.z, 60, (c) => c.team === 'ALLY' && c.alive);
+        aliveEnemies.forEach((enemy, idx) => {
+          const cls = divisionIdToUnitTierId(enemy.division);
+          const divMorale = enemyMoraleStatesRef.current.get(cls);
+          const isFleeing = enemy.isRouting || divMorale?.isRouting;
+
+          // 11.4: Bozguna uğrayan düşman harita sınırına (-Z) doğru kaçar
+          if (isFleeing) {
+            enemy.isRouting = true;
+            enemy.animator.release();
+            const fleeSpd = enemy.horse ? HORSE_GALLOP_SPEED : SPRINT_SPEED;
+            enemy.yaw = Math.PI; // Düşman kaçış sınırı (-Z)
+            enemy.z -= fleeSpd * delta;
+            enemy.animator.setMove(0, fleeSpd);
+            const fleeBoundaryZ = isFieldOrSiege ? (fieldSpawnZRef.current + 40) : (ARENA_RADIUS - 0.5);
+            if (enemy.z <= -fleeBoundaryZ) {
+              enemy.alive = false;
+              enemy.routed = true;
+              recordUnitRouted(enemy);
+              const grp = skirmishGroupRef.current;
+              if (grp) grp.remove(enemy.horse ? enemy.horse.root : enemy.rig.root);
+              spawnDamageText(`🏳️ ${enemy.name} kaçarak kurtuldu!`, '#4ade80', new THREE.Vector3(enemy.x, 1, enemy.z));
+            }
+            return;
+          }
+
+          const nearestAlly = grid.findNearest(enemy.x, enemy.z, isFieldOrSiege ? 280 : 60, (c) => c.team === 'ALLY' && c.alive && !c.routed);
           const distToPlayer = Math.hypot(playerPosRef.current.x - enemy.x, playerPosRef.current.z - enemy.z);
-          // Target player if player is within close combat range (< 4.2m) or if no allies are alive
           const targetPlayer = playerHpRef.current > 0 && (!nearestAlly || distToPlayer < 4.2);
+
+          if (!targetPlayer && !nearestAlly) {
+            enemy.animator.setMove(0, 0);
+            enemy.animator.play('cheer');
+            return;
+          }
 
           const tx = targetPlayer ? playerPosRef.current.x : nearestAlly!.agent.x;
           const tz = targetPlayer ? playerPosRef.current.z : nearestAlly!.agent.z;
           const dist = targetPlayer ? distToPlayer : nearestAlly!.dist;
 
-          enemy.yaw = Math.atan2(tx - enemy.x, tz - enemy.z);
+          // 11.5: Taktik Formasyon veya Doğrudan Hücum Hedefi
+          const slot = enemySlots[idx];
+          let goalX = tx;
+          let goalZ = tz;
+          let desiredFacing = Math.atan2(tx - enemy.x, tz - enemy.z);
+
+          if (enemyTacticalMode !== 'CHARGE' && dist > 5.5 && enemy.division !== 'CAVALRY') {
+            if (slot) {
+              goalX = slot.x;
+              goalZ = slot.z;
+              desiredFacing = slot.facing;
+            }
+          }
+
+          const toGoalX = goalX - enemy.x;
+          const toGoalZ = goalZ - enemy.z;
+          const distToGoal = Math.hypot(toGoalX, toGoalZ);
+          const standOff = enemy.division === 'ARCHERS' ? 10.5 : (enemyTacticalMode === 'CHARGE' ? 1.85 : 0.45);
 
           let moveSpd = 0;
-          const standOff = enemy.division === 'ARCHERS' ? 10.5 : 1.95;
-          if (dist > standOff) {
-            moveSpd = 3.1;
-            enemy.x += ((tx - enemy.x) / dist) * moveSpd * delta;
-            enemy.z += ((tz - enemy.z) / dist) * moveSpd * delta;
+          if (distToGoal > standOff) {
+            const baseSpd = enemy.horse ? 5.2 : 3.1;
+            const tacticSpeedMod = enemyTacticalMode === 'HOLD' ? 0.65 : 1.0;
+            moveSpd = baseSpd * tacticSpeedMod;
+            enemy.x += (toGoalX / distToGoal) * moveSpd * delta;
+            enemy.z += (toGoalZ / distToGoal) * moveSpd * delta;
           }
-          enemy.animator.setMove(0, moveSpd);
+
+          // Düşmanlar İçin Elastik İtme Fiziği (İç İçe Geçmeyi Engeller)
+          const neighbors = grid.queryRadius(enemy.x, enemy.z, enemy.horse ? 1.6 : 1.15);
+          for (const nb of neighbors) {
+            if (nb.id === enemy.id || !nb.alive) continue;
+            const sx = enemy.x - nb.x;
+            const sz = enemy.z - nb.z;
+            const sd = Math.hypot(sx, sz) || 0.01;
+            const minDist = (enemy.horse || nb.horse) ? 1.55 : (enemy.team === nb.team ? 1.05 : 0.88);
+            if (sd < minDist) {
+              const pushForce = ((minDist - sd) / minDist) * (enemy.horse ? 3.4 : 2.5);
+              enemy.x += (sx / sd) * pushForce * delta;
+              enemy.z += (sz / sd) * pushForce * delta;
+            }
+          }
+
+          enemy.yaw = desiredFacing;
+          enemy.animator.setMove(0, enemy.horse ? 0 : moveSpd);
 
           enemy.aiTimer -= delta;
-          if (enemy.division === 'ARCHERS' && enemy.aiTimer <= 0 && dist < 22) {
+          if (enemyTacticalMode === 'HOLD' && enemy.hasShield && dist > 3.5) {
+            enemy.animator.block('up');
+          } else if (enemy.division === 'ARCHERS' && enemy.aiTimer <= 0 && dist < 22) {
             enemy.animator.play('bow_release', { force: true });
             const origin = new THREE.Vector3(enemy.x, 1.45, enemy.z);
             const dir = new THREE.Vector3(tx - enemy.x, 0.55 + dist * 0.04, tz - enemy.z).normalize();
@@ -2572,16 +3218,35 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   setPlayerHp(playerHpRef.current);
                   spawnDamageText(`-${dmg} HASAR ALDIN!`, '#ef4444', playerPosRef.current);
                   if (playerHpRef.current <= 0) {
+                    if (isMountedRef.current && playerHorseRef.current && playerRigRef.current) {
+                      const pHorse = playerHorseRef.current;
+                      pHorse.riderMount.remove(playerRigRef.current.root);
+                      const scn = sceneRef.current;
+                      if (scn) scn.add(playerRigRef.current.root);
+                      setIsMounted(false);
+                      isMountedRef.current = false;
+                      playerPosRef.current.x += 0.85;
+                      playerRigRef.current.root.position.set(playerPosRef.current.x, 0, playerPosRef.current.z);
+                      playerRigRef.current.root.rotation.set(0, playerYawRef.current + 0.45, 0);
+                      playerRigRef.current.pelvis.position.set(0, 0, 0);
+                      playerRigRef.current.pelvis.rotation.set(0, 0, 0);
+                      playerRigRef.current.leftThigh.rotation.set(0, 0, 0);
+                      playerRigRef.current.rightThigh.rotation.set(0, 0, 0);
+                      playerRigRef.current.leftShin.rotation.set(0, 0, 0);
+                      playerRigRef.current.rightShin.rotation.set(0, 0, 0);
+                      playerRigRef.current.leftFoot.rotation.set(0, 0, 0);
+                      playerRigRef.current.rightFoot.rotation.set(0, 0, 0);
+                    }
                     pAnim?.fall();
-                    sound.playDefeatSting();
-                    spawnDamageText('☠️ AĞIR YARALANDIN VE YERE DÜŞTÜN!', '#dc2626', playerPosRef.current);
-                    setTimeout(() => {
-                      setBattleOutcome((prev) => prev ?? {
-                        victory: false,
-                        enemiesDefeated: killsCountRef.current,
-                        losses: { infantry: 3, archer: 2, cavalry: 1 },
-                      });
-                    }, 1500);
+                    if (!playerFallenNoticeRef.current) {
+                      playerFallenNoticeRef.current = true;
+                      sound.playDefeatSting();
+                      spawnDamageText('☠️ AĞIR YARALANDIN VE YERE DÜŞTÜN!', '#dc2626', playerPosRef.current);
+                      // Komutan düştü: müttefiklere -22 moral şoku
+                      for (const st of allyMoraleStatesRef.current.values()) {
+                        st.commanderDown = true;
+                      }
+                    }
                   } else {
                     pAnim?.hitReact(true);
                   }
@@ -2601,7 +3266,14 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   ally.hp = Math.max(0, ally.hp - Math.round(18 * parry.damageMultiplier));
                   if (ally.hp <= 0) {
                     ally.alive = false;
-                    ally.animator.fall();
+                    if (ally.horse) {
+                      dismountFallenRider(ally);
+                    } else {
+                      ally.animator.fall();
+                    }
+                    recordUnitCasualty(ally, false);
+                    spawnDamageText(`☠️ ${ally.name} Düştü!`, '#f87171', new THREE.Vector3(ally.x, 0, ally.z));
+                    pushKillFeedEntry(enemy.name, ally.name, 'ENEMY', '⚔️');
                   } else {
                     ally.animator.hitReact(true);
                   }
@@ -2609,36 +3281,204 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
               }
             }
           }
-        }
+        });
 
         // Sync transforms & animators for all skirmish units
         for (const u of units) {
-          if (!u.alive) u.animator.setMove(0, 0);
-          u.animator.update(delta);
+          const elev = isFieldOrSiege && effectiveMode !== 'SIEGE' ? getFieldElevation(u.x, u.z) : 0;
+          if (u.fallingFromHorse) {
+            u.fallVy = (u.fallVy || 0) - 9.8 * delta;
+            u.fallY = (u.fallY ?? 1.35) + u.fallVy * delta;
+            u.fallRoll = (u.fallRoll || 0) + (u.fallRollSpeed || 3.2) * delta;
+            if (u.fallY <= elev) {
+              u.fallingFromHorse = false;
+              u.fallY = elev;
+              u.rig.root.position.set(u.x, elev, u.z);
+              u.rig.root.rotation.set(0, u.yaw, THREE.MathUtils.clamp(u.fallRoll, -1.4, 1.4));
+              sound.playShieldHit();
+            } else {
+              u.rig.root.position.set(u.x, u.fallY, u.z);
+              u.rig.root.rotation.set(u.fallRoll * 0.5, u.yaw, u.fallRoll);
+            }
+            u.animator.fall();
+            u.animator.update(delta);
+            if (u.horse && u.isRiderlessHorse) {
+              const hElev = isFieldOrSiege && effectiveMode !== 'SIEGE' ? getFieldElevation(u.horse.root.position.x, u.horse.root.position.z) : 0;
+              u.horse.root.position.y = hElev;
+              if (u.panicTimer && u.panicTimer > 0) {
+                u.panicTimer -= delta;
+                const spd = THREE.MathUtils.lerp(0, u.panicVelocity || 7.5, Math.min(1, u.panicTimer / 1.5));
+                const fwdX = -Math.sin(u.panicDir || u.yaw);
+                const fwdZ = -Math.cos(u.panicDir || u.yaw);
+                u.horse.root.position.x += fwdX * spd * delta;
+                u.horse.root.position.z += fwdZ * spd * delta;
+                u.horse.root.rotation.y = u.panicDir || u.yaw;
+                updateWarHorseAnimation(u.horse, spd, elapsed);
+              } else {
+                updateWarHorseAnimation(u.horse, 0, elapsed);
+              }
+            }
+            continue;
+          }
+
+          if (!u.alive) {
+            u.animator.setMove(0, 0);
+            u.animator.update(delta);
+            u.rig.root.position.set(u.x, elev, u.z);
+            if (u.horse && u.isRiderlessHorse) {
+              const hElev = isFieldOrSiege && effectiveMode !== 'SIEGE' ? getFieldElevation(u.horse.root.position.x, u.horse.root.position.z) : 0;
+              u.horse.root.position.y = hElev;
+              if (u.panicTimer && u.panicTimer > 0) {
+                u.panicTimer -= delta;
+                const spd = THREE.MathUtils.lerp(0, u.panicVelocity || 7.5, Math.min(1, u.panicTimer / 1.5));
+                const fwdX = -Math.sin(u.panicDir || u.yaw);
+                const fwdZ = -Math.cos(u.panicDir || u.yaw);
+                u.horse.root.position.x += fwdX * spd * delta;
+                u.horse.root.position.z += fwdZ * spd * delta;
+                u.horse.root.rotation.y = u.panicDir || u.yaw;
+                updateWarHorseAnimation(u.horse, spd, elapsed);
+              } else {
+                updateWarHorseAnimation(u.horse, 0, elapsed);
+              }
+            }
+            continue;
+          }
+
+          const cam = cameraRef.current;
+          const distToCam = cam ? Math.hypot(cam.position.x - u.x, cam.position.z - u.z) : 10;
+
+          // 1. Dinamik Gölge Culling (Yalnızca kameraya < 34m mesafedeki birimler gölge döker)
+          const shouldCastShadow = distToCam < 34;
+          if (u.currentShadowState !== shouldCastShadow) {
+            u.currentShadowState = shouldCastShadow;
+            u.rig.root.traverse((child) => {
+              if ((child as THREE.Mesh).isMesh) {
+                child.castShadow = shouldCastShadow;
+              }
+            });
+            if (u.horse) {
+              u.horse.root.traverse((child) => {
+                if ((child as THREE.Mesh).isMesh) {
+                  child.castShadow = shouldCastShadow;
+                }
+              });
+            }
+          }
+
+          // 2. İskelet Animasyonu Kademelendirmesi (Tick Staggering / Skeletal LOD)
+          u.animTickCounter = (u.animTickCounter || 0) + 1;
+          const shouldUpdateAnim =
+            distToCam < 25
+              ? true
+              : distToCam < 55
+                ? u.animTickCounter % 2 === 0
+                : u.animTickCounter % 3 === 0;
+
+          if (shouldUpdateAnim) {
+            const animDelta = delta * (distToCam < 25 ? 1 : distToCam < 55 ? 2 : 3);
+            u.animator.update(animDelta);
+            if (u.horse) {
+              updateWarHorseAnimation(u.horse, 4.2, elapsed);
+              applyRiderMountedPosture(u.rig, 4.2, elapsed);
+            }
+          }
+
           if (u.horse) {
-            u.horse.root.position.set(u.x, 0, u.z);
+            u.horse.root.position.set(u.x, elev, u.z);
             u.horse.root.rotation.y = u.yaw;
-            updateWarHorseAnimation(u.horse, u.alive ? 4.2 : 0, elapsed);
-            applyRiderMountedPosture(u.rig, u.alive ? 4.2 : 0, elapsed);
           } else {
-            u.rig.root.position.set(u.x, 0, u.z);
+            u.rig.root.position.set(u.x, elev, u.z);
             u.rig.root.rotation.y = u.yaw;
           }
         }
 
-        const curAllies = units.filter((u) => u.team === 'ALLY' && u.alive).length;
-        const curEnemies = units.filter((u) => u.team === 'ENEMY' && u.alive).length;
+        // Update live counts
+        const curAllies = units.filter((u) => u.team === 'ALLY' && u.alive && !u.routed).length;
+        const curEnemies = units.filter((u) => u.team === 'ENEMY' && u.alive && !u.routed).length;
         setAllyAliveCount(curAllies);
         setEnemyAliveCount(curEnemies);
+
+        // 11.4: Skor Tablosu senkronizasyonu (~6Hz)
+        hudSyncThrottleRef.current += delta;
+        if (hudSyncThrottleRef.current >= 0.16) {
+          hudSyncThrottleRef.current = 0;
+          const medSkill = campaign?.skills?.medicine?.level ?? 35;
+          const allySplit = splitBattleCasualties(allyCasualtiesRef.current, medSkill);
+          const enemySplit = splitBattleCasualties(
+            enemyCasualtiesRef.current,
+            Math.round(35 + (targetLord?.clanTier ?? 2) * 8)
+          );
+
+          const alliesRows = Array.from(allyMoraleStatesRef.current.entries()).map(([cls, st]) => {
+            const divName = unitTierIdToDivision(cls);
+            const alive = units.filter((u) => u.team === 'ALLY' && u.alive && !u.routed && u.division === divName).length;
+            const killed = allySplit.killed[cls] ?? 0;
+            const wounded = allySplit.wounded[cls] ?? 0;
+            const routed = allyRoutedRef.current[cls] ?? 0;
+            return {
+              division: cls,
+              label: DIVISION_LABEL[cls],
+              initial: st.initialFielded,
+              alive,
+              wounded,
+              killed,
+              routed,
+              morale: st.currentMorale,
+              isRouting: st.isRouting,
+            };
+          });
+
+          const enemiesRows = Array.from(enemyMoraleStatesRef.current.entries()).map(([cls, st]) => {
+            const divName = unitTierIdToDivision(cls);
+            const alive = units.filter((u) => u.team === 'ENEMY' && u.alive && !u.routed && u.division === divName).length;
+            const killed = enemySplit.killed[cls] ?? 0;
+            const wounded = enemySplit.wounded[cls] ?? 0;
+            const routed = enemyRoutedRef.current[cls] ?? 0;
+            return {
+              division: cls,
+              label: DIVISION_LABEL[cls],
+              initial: st.initialFielded,
+              alive,
+              wounded,
+              killed,
+              routed,
+              morale: st.currentMorale,
+              isRouting: st.isRouting,
+            };
+          });
+
+          setScoreboardData({
+            allies: alliesRows,
+            enemies: enemiesRows,
+            totalAlliesAlive: curAllies,
+            totalEnemiesAlive: curEnemies,
+            totalAlliesKilled: allySplit.totalKilled,
+            totalEnemiesKilled: enemySplit.totalKilled,
+            totalAlliesWounded: allySplit.totalWounded,
+            totalEnemiesWounded: enemySplit.totalWounded,
+            totalAlliesRouted: Object.values(allyRoutedRef.current).reduce((a, b) => a + (b || 0), 0),
+            totalEnemiesRouted: Object.values(enemyRoutedRef.current).reduce((a, b) => a + (b || 0), 0),
+          });
+        }
 
         // Next wave check OR Campaign Battle Victory/Defeat
         if (curEnemies === 0 && units.length > 0) {
           if (isFieldOrSiege) {
             if (!battleOutcome) {
+              const medSkill = campaign?.skills?.medicine?.level ?? 35;
+              const split = splitBattleCasualties(allyCasualtiesRef.current, medSkill);
+              const defeatedCount = units.filter((u) => u.team === 'ENEMY' && (!u.alive || u.routed)).length;
+              sound.playVictoryFanfare();
+              aliveAllies.forEach((a) => {
+                a.animator.setMove(0, 0);
+                a.animator.play('cheer');
+              });
               setBattleOutcome({
                 victory: true,
-                enemiesDefeated: killsCountRef.current || units.filter((u) => u.team === 'ENEMY').length,
-                losses: { infantry: 1, archer: 1 },
+                enemiesDefeated: killsCountRef.current || defeatedCount,
+                losses: split.killed,
+                wounded: split.wounded,
+                survivalRate: split.survivalRate,
               });
             }
           } else {
@@ -2650,10 +3490,20 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             });
           }
         } else if (isFieldOrSiege && playerHpRef.current <= 0 && curAllies === 0 && !battleOutcome) {
+          // Oyuncu da düştü ve tüm müttefikler elendi/kaçtı: YENİLGİ & ESARET
+          const medSkill = campaign?.skills?.medicine?.level ?? 35;
+          const split = splitBattleCasualties(allyCasualtiesRef.current, medSkill);
+          sound.playDefeatSting();
+          aliveEnemies.forEach((e) => {
+            e.animator.setMove(0, 0);
+            e.animator.play('cheer');
+          });
           setBattleOutcome({
             victory: false,
             enemiesDefeated: killsCountRef.current,
-            losses: { infantry: 4, archer: 2, cavalry: 2 },
+            losses: split.killed,
+            wounded: split.wounded,
+            survivalRate: split.survivalRate,
           });
         }
       } else if (battleMode === 'MASS_BATTLE') {
@@ -2729,17 +3579,35 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           // Campaign battle completion check
           if (isFieldOrSiege && !battleOutcome) {
             const preset = BATTLE_SCALE_PRESETS[battleScaleRef.current];
+            const medSkill = campaign?.skills?.medicine?.level ?? 35;
             if (pool.enemiesAliveCount <= 0 && pool.alliesAliveCount > 0) {
+              const fallenAllies = Math.max(0, preset.alliesCount - pool.alliesAliveCount);
+              const rawLosses = {
+                infantry: Math.round(fallenAllies * 0.5),
+                archer: Math.round(fallenAllies * 0.3),
+                cavalry: Math.round(fallenAllies * 0.2),
+              };
+              const split = splitBattleCasualties(rawLosses, medSkill);
               setBattleOutcome({
                 victory: true,
                 enemiesDefeated: preset.enemiesCount,
-                losses: { infantry: 2, archer: 1 },
+                losses: split.killed,
+                wounded: split.wounded,
+                survivalRate: split.survivalRate,
               });
             } else if (pool.alliesAliveCount <= 0) {
+              const rawLosses = {
+                infantry: Math.round(preset.alliesCount * 0.5),
+                archer: Math.round(preset.alliesCount * 0.3),
+                cavalry: Math.round(preset.alliesCount * 0.2),
+              };
+              const split = splitBattleCasualties(rawLosses, medSkill);
               setBattleOutcome({
                 victory: false,
                 enemiesDefeated: Math.floor(preset.enemiesCount * 0.4),
-                losses: { infantry: 5, archer: 3, cavalry: 2 },
+                losses: split.killed,
+                wounded: split.wounded,
+                survivalRate: split.survivalRate,
               });
             }
           }
@@ -2808,6 +3676,19 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       }
 
       // ─ 5. Flying arrows ─
+      const now = Date.now();
+      flyingArrowsRef.current = flyingArrowsRef.current.filter((arrow) => {
+        if (arrow.despawnAt && now >= arrow.despawnAt) {
+          scene.remove(arrow.mesh);
+          return false;
+        }
+        if (now - arrow.spawnTime > ARROW_LIFETIME) {
+          scene.remove(arrow.mesh);
+          return false;
+        }
+        return true;
+      });
+
       const arrows = flyingArrowsRef.current;
       for (const arrow of arrows) {
         if (!arrow.inFlight) continue;
@@ -2818,10 +3699,15 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         const forward = arrow.velocity.clone().normalize();
         arrow.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), forward);
 
+        const groundElev = isFieldOrSiege && effectiveMode !== 'SIEGE'
+          ? getFieldElevation(arrow.mesh.position.x, arrow.mesh.position.z)
+          : 0;
+
         // Ground collision
-        if (arrow.mesh.position.y <= 0.05) {
+        if (arrow.mesh.position.y <= groundElev + 0.05) {
           arrow.inFlight = false;
-          arrow.mesh.position.y = 0.05;
+          arrow.mesh.position.y = groundElev + 0.05;
+          arrow.despawnAt = now + 4000;
           continue;
         }
 
@@ -2829,6 +3715,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         const distToTarget = arrow.mesh.position.distanceTo(new THREE.Vector3(-5.5, 1.25, -8));
         if (distToTarget < 0.6) {
           arrow.inFlight = false;
+          arrow.despawnAt = now + 4000;
           sound.playShieldHit();
           const bullseye = distToTarget < 0.2;
           const full = arrow.power > 0.9;
@@ -2845,6 +3732,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           const distToDummy = arrow.mesh.position.distanceTo(new THREE.Vector3(4.5, 1.2, -5.5));
           if (distToDummy < 0.7) {
             arrow.inFlight = false;
+            arrow.despawnAt = now + 3000;
             dummyObj.hit();
             sound.playShieldHit();
             const dummyDmg = Math.round(50 + 40 * arrow.power);
@@ -2867,6 +3755,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             );
             if (distToBot < 0.85) {
               arrow.inFlight = false;
+              arrow.despawnAt = now + 1500;
               sound.playShieldHit();
               if (botAnimatorRef.current?.isBlocking()) {
                 spawnDamageText('🛡️ KALKAN OKU YUTTU!', '#38bdf8', botRoot.position);
@@ -2878,9 +3767,11 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   botAnimatorRef.current?.fall();
                   botRespawnTimerRef.current = 2.6;
                   setKillsCount((k) => k + 1);
+                  sound.playDeathScream();
                   spawnDamageText(`🏹 OK İLE DEVİRDİN! (+${bowDmg})`, '#facc15', botRoot.position);
                 } else {
                   botAnimatorRef.current?.hitReact(true);
+                  sound.playPainReaction();
                   spawnDamageText(`🏹 -${bowDmg} DELİCİ OK!`, arrow.power > 0.9 ? '#fb923c' : '#ef4444', botRoot.position);
                 }
               }
@@ -2899,6 +3790,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             );
             if (dToP < 0.95) {
               arrow.inFlight = false;
+              arrow.despawnAt = now + 1500;
               sound.playShieldHit();
               const pAnim = playerAnimatorRef.current;
               const hasShield = shieldTypeRef.current !== 'NONE';
@@ -2911,17 +3803,38 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                 setPlayerHp(playerHpRef.current);
                 spawnDamageText(`🏹 -${dmg} OK HASARI!`, '#ef4444', pPos);
                 if (playerHpRef.current <= 0) {
+                  sound.playDeathScream();
+                  if (isMountedRef.current && playerHorseRef.current && playerRigRef.current) {
+                    const pHorse = playerHorseRef.current;
+                    pHorse.riderMount.remove(playerRigRef.current.root);
+                    const scn = sceneRef.current;
+                    if (scn) scn.add(playerRigRef.current.root);
+                    setIsMounted(false);
+                    isMountedRef.current = false;
+                    playerPosRef.current.x += 0.85;
+                    const pElev = isFieldOrSiege && effectiveMode !== 'SIEGE' ? getFieldElevation(playerPosRef.current.x, playerPosRef.current.z) : 0;
+                    playerRigRef.current.root.position.set(playerPosRef.current.x, pElev, playerPosRef.current.z);
+                    playerRigRef.current.root.rotation.set(0, playerYawRef.current + 0.45, 0);
+                    playerRigRef.current.pelvis.position.set(0, 0, 0);
+                    playerRigRef.current.pelvis.rotation.set(0, 0, 0);
+                    playerRigRef.current.leftThigh.rotation.set(0, 0, 0);
+                    playerRigRef.current.rightThigh.rotation.set(0, 0, 0);
+                    playerRigRef.current.leftShin.rotation.set(0, 0, 0);
+                    playerRigRef.current.rightShin.rotation.set(0, 0, 0);
+                    playerRigRef.current.leftFoot.rotation.set(0, 0, 0);
+                    playerRigRef.current.rightFoot.rotation.set(0, 0, 0);
+                  }
                   pAnim?.fall();
-                  sound.playDefeatSting();
-                  spawnDamageText('☠️ OKLA VURULDUN VE YERE DÜŞTÜN!', '#dc2626', pPos);
-                  setTimeout(() => {
-                    setBattleOutcome((prev) => prev ?? {
-                      victory: false,
-                      enemiesDefeated: killsCountRef.current,
-                      losses: { infantry: 2, archer: 1 },
-                    });
-                  }, 1500);
+                  if (!playerFallenNoticeRef.current) {
+                    playerFallenNoticeRef.current = true;
+                    sound.playDefeatSting();
+                    spawnDamageText('☠️ OKLA VURULDUN VE YERE DÜŞTÜN!', '#dc2626', pPos);
+                    for (const st of allyMoraleStatesRef.current.values()) {
+                      st.commanderDown = true;
+                    }
+                  }
                 } else {
+                  sound.playPainReaction();
                   pAnim?.hitReact(true);
                 }
               }
@@ -2935,6 +3848,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             const d = arrow.mesh.position.distanceTo(new THREE.Vector3(u.x, 1.2, u.z));
             if (d < 0.85) {
               arrow.inFlight = false;
+              arrow.despawnAt = now + 1500;
               hitUnit = true;
               sound.playShieldHit();
               const inSW = u.team === 'ALLY' && formationArrangementRef.current === 'SHIELD_WALL';
@@ -2943,10 +3857,17 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                 if (reduced > 0) u.hp = Math.max(0, u.hp - reduced);
                 spawnDamageText('🛡️ KALKAN DUVARI OKU TUTTU!', '#38bdf8', new THREE.Vector3(u.x, 0, u.z));
               } else {
-                u.hp = Math.max(0, u.hp - 38);
+                const bowDmg = Math.round(38 * (0.8 + 0.4 * arrow.power));
+                u.hp = Math.max(0, u.hp - bowDmg);
                 if (u.hp <= 0) {
                   u.alive = false;
-                  u.animator.fall();
+                  sound.playDeathScream();
+                  if (u.horse) {
+                    dismountFallenRider(u);
+                  } else {
+                    u.animator.fall();
+                  }
+                  recordUnitCasualty(u, false);
                   if (u.team === 'ENEMY') {
                     setKillsCount((k) => k + 1);
                     if (u.isLord) {
@@ -2956,8 +3877,11 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                     } else {
                       pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', u.name, 'ALLY', '🏹');
                     }
+                  } else {
+                    pushKillFeedEntry(arrow.team === 'ENEMY' ? (targetLord?.name ?? 'Düşman Okçusu') : 'Düşman', u.name, 'ENEMY', '🏹');
                   }
                 } else {
+                  sound.playPainReaction();
                   u.animator.hitReact(true);
                 }
               }
@@ -2974,13 +3898,17 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           for (const cand of nearby) {
             if (cand.team !== 2 || pool.soldierAlive[cand.index] === 0) continue;
             arrow.inFlight = false;
+            arrow.despawnAt = now + 1500;
             pool.soldierHp[cand.index] -= 48;
             sound.playShieldHit();
             if (pool.soldierHp[cand.index] <= 0) {
               pool.soldierAlive[cand.index] = 0;
               pool.recordFallenCorpse(pool.soldierX[cand.index], 0.08, pool.soldierZ[cand.index], pool.soldierYaw[cand.index], 2);
               setKillsCount((k) => k + 1);
+              sound.playDeathScream();
               spawnDamageText('🏹 OK İLE DEVİRDİN!', '#facc15', arrow.mesh.position);
+            } else {
+              sound.playPainReaction();
             }
             break;
           }
@@ -2988,7 +3916,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         }
 
         // Lifetime
-        if (Date.now() - arrow.spawnTime > ARROW_LIFETIME) {
+        if (now - arrow.spawnTime > ARROW_LIFETIME) {
           arrow.inFlight = false;
           scene.remove(arrow.mesh);
         }
@@ -3021,6 +3949,11 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       window.removeEventListener('keyup', onKeyUp);
       if (document.pointerLockElement === renderer.domElement) {
         document.exitPointerLock();
+      }
+      try {
+        renderer.forceContextLoss();
+      } catch {
+        // yoksay
       }
       renderer.dispose();
       if (container.contains(renderer.domElement)) {
@@ -3145,44 +4078,34 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       {/* TOP STATUS, BATTLE MODE & TACTICAL COMMAND BAR */}
       <header className="relative z-30 p-3 flex flex-col gap-2 pointer-events-none">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2 pointer-events-auto">
-            <button
-              type="button"
-              onClick={() => {
-                if (document.pointerLockElement) document.exitPointerLock();
-                onReturnToMap();
-              }}
-              className="px-3.5 py-1.5 rounded text-xs font-bold bg-[#1e1913] hover:bg-[#2b2218] text-[#fde68a] border border-[#c6a15b]/40 shadow-lg flex items-center gap-1.5 transition-colors"
-            >
-              <span>←</span>
-              <span>Sefer Haritası</span>
-            </button>
-
-            {onOpenMarket && (
-              // Arena bir yerleşim değil: pazar buradan açılmaz (Bannerlord'da
-              // pazaryeri yalnız şehir/kale/köy menüsündedir). Yalnız envanter.
+          {!isFieldOrSiege && (
+            <div className="flex flex-wrap items-center gap-2 pointer-events-auto">
               <button
                 type="button"
-                onClick={onOpenMarket}
-                title="Savaş alanında pazaryeri yok — yalnız envanter"
-                className="px-3 py-1.5 rounded text-xs font-bold bg-[#2a2015] hover:bg-[#3d2e20] text-[#fde68a] border border-[#c6a15b]/50 shadow transition-colors flex items-center gap-1.5"
+                onClick={() => {
+                  if (document.pointerLockElement) document.exitPointerLock();
+                  onReturnToMap();
+                }}
+                className="px-3.5 py-1.5 rounded text-xs font-bold bg-[#1e1913] hover:bg-[#2b2218] text-[#fde68a] border border-[#c6a15b]/40 shadow-lg flex items-center gap-1.5 transition-colors"
               >
-                <span aria-hidden="true">⚖</span>
-                <span>Envanter</span>
+                <span>←</span>
+                <span>Sefer Haritası</span>
               </button>
-            )}
 
-            {/* Arena Mode Switcher OR Field/Siege Encounter Badge */}
-            {isFieldOrSiege ? (
-              <div className="px-3 py-1.5 rounded bg-[#18130e]/95 border border-[#c6a15b]/50 text-xs font-bold text-[#fde68a] flex items-center gap-2 shadow-lg">
-                <span className="text-amber-400">⚔️</span>
-                <span>
-                  {effectiveMode === 'SIEGE'
-                    ? `${targetSettlement?.name ?? 'Kale'} Kuşatması`
-                    : `${targetLord?.name ?? 'Düşman Ordusu'} ile Meydan Muharebesi`}
-                </span>
-              </div>
-            ) : (
+              {onOpenMarket && (
+                // Arena bir yerleşim değil: pazar buradan açılmaz (Bannerlord'da
+                // pazaryeri yalnız şehir/kale/köy menüsündedir). Yalnız envanter.
+                <button
+                  type="button"
+                  onClick={onOpenMarket}
+                  title="Savaş alanında pazaryeri yok — yalnız envanter"
+                  className="px-3 py-1.5 rounded text-xs font-bold bg-[#2a2015] hover:bg-[#3d2e20] text-[#fde68a] border border-[#c6a15b]/50 shadow transition-colors flex items-center gap-1.5"
+                >
+                  <span aria-hidden="true">⚖</span>
+                  <span>Envanter</span>
+                </button>
+              )}
+
               <div className="p-0.5 rounded bg-[#18130e] border border-[#c6a15b]/40 flex flex-wrap items-center gap-1 text-xs">
                 {(
                   [
@@ -3207,22 +4130,22 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   </button>
                 ))}
               </div>
-            )}
 
-            {/* Mounted WarHorse Toggle (Faz 1.4) */}
-            <button
-              type="button"
-              onClick={() => setIsMounted((prev) => !prev)}
-              className={`px-3 py-1.5 rounded text-xs font-bold border shadow transition-colors flex items-center gap-1.5 ${
-                isMounted
-                  ? 'bg-amber-700 text-white border-amber-300'
-                  : 'bg-[#1e1913] text-[#e2d6c1] border-[#c6a15b]/40 hover:bg-[#2b2218]'
-              }`}
-            >
-              <span>🏇</span>
-              <span>{isMounted ? 'Savaş Atında [M: İn]' : 'Savaş Atına Bin [M]'}</span>
-            </button>
-          </div>
+              {/* Mounted WarHorse Toggle (Faz 1.4) */}
+              <button
+                type="button"
+                onClick={() => setIsMounted((prev) => !prev)}
+                className={`px-3 py-1.5 rounded text-xs font-bold border shadow transition-colors flex items-center gap-1.5 ${
+                  isMounted
+                    ? 'bg-amber-700 text-white border-amber-300'
+                    : 'bg-[#1e1913] text-[#e2d6c1] border-[#c6a15b]/40 hover:bg-[#2b2218]'
+                }`}
+              >
+                <span>🏇</span>
+                <span>{isMounted ? 'Savaş Atında [M: İn]' : 'Savaş Atına Bin [M]'}</span>
+              </button>
+            </div>
+          )}
 
           {/* Right: Health / Kills / Pool Stats / Camera Mode */}
           <div className="flex items-center gap-2 pointer-events-auto">
@@ -3291,8 +4214,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
         {/* BANNERLORD LIVE BATTLE STRENGTH & GATE HP BAR */}
         {(isFieldOrSiege || arenaBattleMode === 'MASS_BATTLE' || arenaBattleMode === 'SKIRMISH') && (
-          <div className="mx-auto w-full max-w-xl pointer-events-auto flex flex-col items-center gap-1 my-1">
-            <div className="w-full flex items-center justify-between text-xs font-bold px-2 text-[#e2d6c1]">
+          <div className={isFieldOrSiege ? "fixed top-2.5 left-1/2 -translate-x-1/2 w-full max-w-xl z-30 pointer-events-none flex flex-col items-center gap-1" : "mx-auto w-full max-w-xl pointer-events-auto flex flex-col items-center gap-1 my-1"}>
+            <div className="w-full flex items-center justify-between text-xs font-bold px-2 text-[#e2d6c1] drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
               <div className="flex items-center gap-1.5 text-emerald-400">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]" />
                 <span>Müttefik Kuvvetler ({allyAliveCount})</span>
@@ -3330,6 +4253,19 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   width: `${Math.round((enemyAliveCount / Math.max(1, allyAliveCount + enemyAliveCount)) * 100)}%`,
                 }}
               />
+            </div>
+          </div>
+        )}
+
+        {/* 11.4: Oyuncu Yere Düştüğünde Devam Eden Savaş Şeridi (Spectator) */}
+        {playerHp <= 0 && !battleOutcome && (
+          <div className="mx-auto my-1 px-4 py-2 rounded-lg bg-red-950/90 border-2 border-red-500/80 shadow-[0_0_20px_rgba(239,68,68,0.5)] text-center pointer-events-auto max-w-xl">
+            <div className="text-xs sm:text-sm font-black text-rose-200 tracking-wide flex items-center justify-center gap-2">
+              <span>☠️ AĞIR YARALANDINIZ (BAYGIN)</span>
+              <span className="text-amber-300">• Birlikleriniz çarpışmaya devam ediyor!</span>
+            </div>
+            <div className="text-[11px] text-rose-300/80 mt-0.5">
+              [TAB] tuşuna basarak muharebe tablosunu açabilir veya taktiksel geri çekilebilirsiniz.
             </div>
           </div>
         )}
@@ -3496,7 +4432,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             )}
 
             {/* Division Cards and Tactical Command Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded bg-[#14100c]/95 border border-[#c6a15b]/40 text-xs pointer-events-auto shadow-xl">
+            {(!isFieldOrSiege || activeTacticalMenu) && (
+              <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded bg-[#14100c]/95 border border-[#c6a15b]/40 text-xs pointer-events-auto shadow-xl">
               <div className="flex items-center gap-1.5">
                 <span className="text-[#c6a15b] font-bold mr-1">BÖLÜK:</span>
                 {(
@@ -3640,8 +4577,9 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                 </div>
               )}
             </div>
-          </div>
-        )}
+          )}
+        </div>
+      )}
       </header>
 
       {/* BANNERLORD AUTHENTIC KILL FEED (Top Right) */}
@@ -3678,14 +4616,202 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         </div>
       )}
 
-      {/* 🏆 VICTORY / ☠️ DEFEAT BATTLE OUTCOME MODAL */}
-      {battleOutcome && (
+      {/* ⚔️ BANNERLORD LIVE TAB SCOREBOARD & MORALE MODAL (11.4) */}
+      {showScoreboard && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md pointer-events-auto"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md pointer-events-auto"
           role="dialog"
           aria-modal="true"
         >
-          <div className="w-full max-w-md p-6 rounded-lg bg-[#14100c] border-2 border-[#c6a15b] shadow-2xl text-center space-y-4">
+          <div className="w-full max-w-4xl p-5 sm:p-7 rounded-xl bg-gradient-to-b from-[#181410] to-[#0e0c09] border-2 border-[#c6a15b] shadow-2xl space-y-5 text-[#e2d6c1]">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-[#c6a15b]/30 pb-3">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-widest text-[#c6a15b]">
+                  {effectiveMode === 'SIEGE' ? 'Kuşatma Muharebesi' : 'Meydan Muharebesi'} • Canlı Durum
+                </div>
+                <h2 className="text-xl sm:text-2xl font-black text-[#fde68a] tracking-wider uppercase">
+                  ⚔️ MUHAREBE SKOR TABLOSU & BÖLÜK MORALİ
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowScoreboard(false)}
+                className="px-3 py-1.5 rounded text-xs font-bold bg-black/60 hover:bg-[#b45309] text-amber-200 border border-[#c6a15b]/40 transition-colors cursor-pointer"
+              >
+                Kapat [TAB / ESC]
+              </button>
+            </div>
+
+            {/* Scoreboard Two-Column Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Ally Column */}
+              <div className="p-3.5 rounded-lg bg-black/50 border border-emerald-500/30 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-emerald-500/20">
+                    <span className="font-black text-emerald-400 text-sm tracking-wide flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]" />
+                      Sancak Ordusu (Müttefikler)
+                    </span>
+                    <span className="text-xs font-mono text-emerald-300">
+                      Sağlam: {scoreboardData?.totalAlliesAlive ?? allyAliveCount}
+                    </span>
+                  </div>
+                  <table className="w-full text-xs font-mono text-left">
+                    <thead>
+                      <tr className="text-[#a89984] border-b border-[#c6a15b]/20">
+                        <th className="py-1">Bölük</th>
+                        <th className="py-1 text-center">Mevcut</th>
+                        <th className="py-1 text-center">Sağlam</th>
+                        <th className="py-1 text-center text-amber-400">Yaralı</th>
+                        <th className="py-1 text-center text-rose-400">Şehit</th>
+                        <th className="py-1 text-center text-gray-400">Kaçan</th>
+                        <th className="py-1 text-right">Moral</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#c6a15b]/10">
+                      {(scoreboardData?.allies ?? []).map((row) => (
+                        <tr key={row.division} className={row.isRouting ? 'bg-red-950/20' : ''}>
+                          <td className="py-1.5 font-bold text-[#fde68a] flex items-center gap-1">
+                            {row.label}
+                            {row.isRouting && (
+                              <span className="text-[10px] px-1 py-0.2 rounded bg-red-900 text-red-200 font-sans">
+                                BOZGUNA UĞRADI
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-1.5 text-center text-gray-300">{row.initial}</td>
+                          <td className="py-1.5 text-center font-bold text-emerald-400">{row.alive}</td>
+                          <td className="py-1.5 text-center text-amber-300">{row.wounded}</td>
+                          <td className="py-1.5 text-center text-rose-400">{row.killed}</td>
+                          <td className="py-1.5 text-center text-gray-400">{row.routed}</td>
+                          <td className="py-1.5 text-right font-bold">
+                            <span
+                              className={
+                                row.morale >= 50
+                                  ? 'text-emerald-400'
+                                  : row.morale >= 20
+                                    ? 'text-amber-400'
+                                    : 'text-rose-500 animate-pulse'
+                              }
+                            >
+                              %{row.morale}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="mt-3 pt-2 border-t border-emerald-500/20 flex justify-between text-xs font-mono text-emerald-300">
+                  <span>Toplam Kayıp: {(scoreboardData?.totalAlliesKilled ?? 0) + (scoreboardData?.totalAlliesWounded ?? 0)}</span>
+                  <span>Toplam Kaçan: {scoreboardData?.totalAlliesRouted ?? 0}</span>
+                </div>
+              </div>
+
+              {/* Enemy Column */}
+              <div className="p-3.5 rounded-lg bg-black/50 border border-rose-500/30 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-rose-500/20">
+                    <span className="font-black text-rose-400 text-sm tracking-wide flex items-center gap-1.5 truncate max-w-[220px]">
+                      <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-[0_0_8px_#f43f5e]" />
+                      {targetLord
+                        ? `👑 ${targetLord.title ? `${targetLord.title} ` : ''}${targetLord.name}`
+                        : (targetSettlement ? `🏰 ${targetSettlement.name} Garnizonu` : 'Düşman Ordusu')}
+                    </span>
+                    <span className="text-xs font-mono text-rose-300">
+                      Sağlam: {scoreboardData?.totalEnemiesAlive ?? enemyAliveCount}
+                    </span>
+                  </div>
+                  <table className="w-full text-xs font-mono text-left">
+                    <thead>
+                      <tr className="text-[#a89984] border-b border-[#c6a15b]/20">
+                        <th className="py-1">Bölük</th>
+                        <th className="py-1 text-center">Mevcut</th>
+                        <th className="py-1 text-center">Sağlam</th>
+                        <th className="py-1 text-center text-amber-400">Yaralı</th>
+                        <th className="py-1 text-center text-rose-400">Ölü</th>
+                        <th className="py-1 text-center text-gray-400">Kaçan</th>
+                        <th className="py-1 text-right">Moral</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#c6a15b]/10">
+                      {(scoreboardData?.enemies ?? []).map((row) => (
+                        <tr key={row.division} className={row.isRouting ? 'bg-red-950/20' : ''}>
+                          <td className="py-1.5 font-bold text-[#fde68a] flex items-center gap-1">
+                            {row.label}
+                            {row.isRouting && (
+                              <span className="text-[10px] px-1 py-0.2 rounded bg-red-900 text-red-200 font-sans">
+                                KAÇIYOR
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-1.5 text-center text-gray-300">{row.initial}</td>
+                          <td className="py-1.5 text-center font-bold text-rose-400">{row.alive}</td>
+                          <td className="py-1.5 text-center text-amber-300">{row.wounded}</td>
+                          <td className="py-1.5 text-center text-rose-400">{row.killed}</td>
+                          <td className="py-1.5 text-center text-gray-400">{row.routed}</td>
+                          <td className="py-1.5 text-right font-bold">
+                            <span
+                              className={
+                                row.morale >= 50
+                                  ? 'text-emerald-400'
+                                  : row.morale >= 20
+                                    ? 'text-amber-400'
+                                    : 'text-rose-500 animate-pulse'
+                              }
+                            >
+                              %{row.morale}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="mt-3 pt-2 border-t border-rose-500/20 flex justify-between text-xs font-mono text-rose-300">
+                  <span>Etkisiz Hale Getirilen: {(scoreboardData?.totalEnemiesKilled ?? 0) + (scoreboardData?.totalEnemiesWounded ?? 0)}</span>
+                  <span>Kaçan Düşman: {scoreboardData?.totalEnemiesRouted ?? 0}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-[#c6a15b]/20">
+              <div className="text-xs text-[#a89984]">
+                💡 <span className="text-amber-200">İpucu:</span> Bölük morali %20 altına düşen birlikler paniğe kapılarak harita kenarına kaçar.
+              </div>
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={handleTacticalRetreat}
+                  className="w-full sm:w-auto px-4 py-2 rounded text-xs font-bold bg-[#7f1d1d] hover:bg-[#991b1b] text-white border border-rose-500/40 shadow-lg transition-colors cursor-pointer"
+                >
+                  ◀️ Taktiksel Geri Çekil (Ricat Et)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowScoreboard(false)}
+                  className="w-full sm:w-auto px-5 py-2 rounded text-xs font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fde68a]/50 shadow-lg transition-colors cursor-pointer"
+                >
+                  Muharebeye Dön [TAB]
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🏆 VICTORY / ☠️ DEFEAT & ESARET BATTLE OUTCOME MODAL */}
+      {battleOutcome && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md pointer-events-auto"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-lg p-6 sm:p-7 rounded-xl bg-gradient-to-b from-[#181410] to-[#0e0c09] border-2 border-[#c6a15b] shadow-2xl text-center space-y-4">
             <div className="text-xs font-bold tracking-widest uppercase text-[#c6a15b]">
               {effectiveMode === 'SIEGE' ? 'Kuşatma Muharebesi' : 'Meydan Muharebesi'}
             </div>
@@ -3694,24 +4820,42 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                 battleOutcome.victory ? 'text-emerald-400' : 'text-rose-400'
               }`}
             >
-              {battleOutcome.victory ? '🏆 ZAFER KAZANILDI!' : '☠️ YENİLGİ!'}
+              {battleOutcome.victory ? '🏆 ZAFER KAZANILDI!' : '☠️ YENİLGİ — ESARET DÜŞTÜNÜZ!'}
             </h2>
-            <p className="text-xs text-[#e2d6c1]">
+            <p className="text-xs sm:text-sm text-[#e2d6c1] leading-relaxed">
               {battleOutcome.victory
                 ? 'Düşman ordusu dağıtıldı ve savaş alanı tamamen kontrolünüz altına geçti.'
-                : 'Birlikleriniz ağır kayıplar verdi ve geri çekilmek zorunda kaldınız.'}
+                : 'Birlikleriniz ağır kayıplar vererek dağıtıldı. Düşman komutanı sizi ve kalan birliklerinizi kıskaca alarak esir aldı!'}
             </p>
-            <div className="p-3.5 rounded bg-black/60 border border-[#c6a15b]/30 text-xs font-mono space-y-1.5 text-[#d6cbb5]">
-              <div className="flex justify-between">
+            <div className="p-3.5 rounded bg-black/60 border border-[#c6a15b]/30 text-xs font-mono space-y-2 text-[#d6cbb5] text-left">
+              <div className="flex justify-between border-b border-[#c6a15b]/20 pb-1">
                 <span>Etkisiz Hale Getirilen Düşman:</span>
                 <span className="font-bold text-amber-300">{battleOutcome.enemiesDefeated}</span>
               </div>
-              <div className="flex justify-between">
-                <span>Kayıplarınız:</span>
-                <span className="font-bold text-rose-300">
+              <div className="flex justify-between border-b border-[#c6a15b]/20 pb-1">
+                <span>Şehit Sayısı (Kalıcı Kayıp):</span>
+                <span className="font-bold text-rose-400">
                   {Object.entries(battleOutcome.losses)
-                    .map(([t, c]) => `${t}: ${c}`)
-                    .join(', ') || 'Yok (Kusursuz Zafer)'}
+                    .filter(([, c]) => (c ?? 0) > 0)
+                    .map(([t, c]) => `${DIVISION_LABEL[t as UnitTierId] || t}: ${c}`)
+                    .join(', ') || '0 (Kusursuz Zafer)'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Yaralı Kurtulanlar (Hekimlik):</span>
+                <span className="font-bold text-emerald-400">
+                  {battleOutcome.wounded &&
+                  Object.entries(battleOutcome.wounded).filter(([, c]) => (c ?? 0) > 0).length > 0
+                    ? Object.entries(battleOutcome.wounded)
+                        .filter(([, c]) => (c ?? 0) > 0)
+                        .map(([t, c]) => `${DIVISION_LABEL[t as UnitTierId] || t}: ${c}`)
+                        .join(', ')
+                    : 'Yok'}
+                  {battleOutcome.survivalRate !== undefined && (
+                    <span className="text-gray-400 text-[10px] ml-1">
+                      (%{Math.round(battleOutcome.survivalRate * 100)} Cerrah)
+                    </span>
+                  )}
                 </span>
               </div>
             </div>
@@ -3730,9 +4874,13 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   onReturnToMap();
                 }
               }}
-              className="w-full py-2.5 rounded font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fde68a]/50 shadow-lg transition-colors cursor-pointer"
+              className={`w-full py-2.5 rounded font-bold text-white border shadow-lg transition-colors cursor-pointer ${
+                battleOutcome.victory
+                  ? 'bg-[#b45309] hover:bg-[#d97706] border-[#fde68a]/50'
+                  : 'bg-[#7f1d1d] hover:bg-[#991b1b] border-rose-500/50'
+              }`}
             >
-              Sefer Haritasına Dön
+              {battleOutcome.victory ? '[TAB] Ganimet ve Sefer Haritasına Dön' : '[TAB] Esarete Teslim Ol (Sefer Haritasına Dön)'}
             </button>
           </div>
         </div>
@@ -3773,13 +4921,17 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   />
                 </div>
               </div>
-              <div className="mt-2 text-[11px] font-bold tracking-wider px-2.5 py-0.5 rounded bg-black/60 border border-[#c6a15b]/40 backdrop-blur-none text-[#fbbf24]">
-                {isAimingBow ? '🏹 NİŞAN ALINIYOR (Bırak: Fırlat | Sağ Tık: İptal)' : '🏹 Sol Tık: Ger & Nişan Al'}
-              </div>
-              {isAimingBow && (
-                <div className="mt-1.5 text-[9px] tracking-wide px-2 py-0.5 rounded bg-black/50 text-[#a8a29e]">
-                  %25 altında bırakırsan ok takılı kalır
-                </div>
+              {!isFieldOrSiege && (
+                <>
+                  <div className="mt-2 text-[11px] font-bold tracking-wider px-2.5 py-0.5 rounded bg-black/60 border border-[#c6a15b]/40 backdrop-blur-none text-[#fbbf24]">
+                    {isAimingBow ? '🏹 NİŞAN ALINIYOR (Bırak: Fırlat | Sağ Tık: İptal)' : '🏹 Sol Tık: Ger & Nişan Al'}
+                  </div>
+                  {isAimingBow && (
+                    <div className="mt-1.5 text-[9px] tracking-wide px-2 py-0.5 rounded bg-black/50 text-[#a8a29e]">
+                      %25 altında bırakırsan ok takılı kalır
+                    </div>
+                  )}
+                </>
               )}
             </div>
           ) : (
@@ -3898,56 +5050,60 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                 })}
               </div>
 
-              {/* Warband Yön Bilgi Rozeti */}
-              <div className="mt-3 flex items-center gap-2 text-[11px] font-bold tracking-wider px-3 py-1 rounded-sm bg-black/80 border border-[#c6a15b]/50 backdrop-blur-sm text-[#fbbf24] shadow-lg">
-                <span>
-                  {isBlocking
-                    ? `🛡️ SAVUNMA: ${
-                        combatDirection === 'up'
-                          ? 'ÜST BLOK'
-                          : combatDirection === 'down'
-                            ? 'ALT BLOK'
-                            : combatDirection === 'left'
-                              ? 'SOL BLOK'
-                              : 'SAĞ BLOK'
-                      }`
-                    : isAttacking
-                      ? `⚔️ SALDIRI: ${
-                          combatDirection === 'up'
-                            ? 'TEPEDEN KESİŞ'
-                            : combatDirection === 'down'
-                              ? 'DÜRTME / SAPLAMA'
-                              : combatDirection === 'left'
-                                ? 'SOL SAVURMA'
-                                : 'SAĞ SAVURMA'
-                        }`
-                      : `${
-                          combatDirection === 'up'
-                            ? '⬆️ ÜST VURUŞ / BLOK'
-                            : combatDirection === 'down'
-                              ? '⬇️ SAPLAMA / ALT BLOK'
-                              : combatDirection === 'left'
-                                ? '⬅️ SOL KESİK / BLOK'
-                                : '➡️ SAĞ KESİK / BLOK'
-                        }`}
-                </span>
-                {shieldType !== 'NONE' && (
-                  <span className="text-[10px] text-emerald-400 font-semibold border-l border-[#c6a15b]/40 pl-2">
-                    🛡️ Kalkan Koruması Aktif
-                  </span>
-                )}
-              </div>
+              {!isFieldOrSiege && (
+                <>
+                  {/* Warband Yön Bilgi Rozeti */}
+                  <div className="mt-3 flex items-center gap-2 text-[11px] font-bold tracking-wider px-3 py-1 rounded-sm bg-black/80 border border-[#c6a15b]/50 backdrop-blur-sm text-[#fbbf24] shadow-lg">
+                    <span>
+                      {isBlocking
+                        ? `🛡️ SAVUNMA: ${
+                            combatDirection === 'up'
+                              ? 'ÜST BLOK'
+                              : combatDirection === 'down'
+                                ? 'ALT BLOK'
+                                : combatDirection === 'left'
+                                  ? 'SOL BLOK'
+                                  : 'SAĞ BLOK'
+                          }`
+                        : isAttacking
+                          ? `⚔️ SALDIRI: ${
+                              combatDirection === 'up'
+                                ? 'TEPEDEN KESİŞ'
+                                : combatDirection === 'down'
+                                  ? 'DÜRTME / SAPLAMA'
+                                  : combatDirection === 'left'
+                                    ? 'SOL SAVURMA'
+                                    : 'SAĞ SAVURMA'
+                            }`
+                          : `${
+                              combatDirection === 'up'
+                                ? '⬆️ ÜST VURUŞ / BLOK'
+                                : combatDirection === 'down'
+                                  ? '⬇️ SAPLAMA / ALT BLOK'
+                                  : combatDirection === 'left'
+                                    ? '⬅️ SOL KESİK / BLOK'
+                                    : '➡️ SAĞ KESİK / BLOK'
+                            }`}
+                    </span>
+                    {shieldType !== 'NONE' && (
+                      <span className="text-[10px] text-emerald-400 font-semibold border-l border-[#c6a15b]/40 pl-2">
+                        🛡️ Kalkan Koruması Aktif
+                      </span>
+                    )}
+                  </div>
 
-              {/* BannerPage / Warband Kontrol Kılavuzu Rozeti */}
-              <div className="mt-1.5 flex items-center gap-2 text-[10px] tracking-wide px-2.5 py-0.5 rounded bg-black/60 border border-[#c6a15b]/30 text-[#d1c5b0]">
-                <span>[Sol Tık] Saldır</span>
-                <span>•</span>
-                <span>[Sağ Tık] Blok</span>
-                <span>•</span>
-                <span className="text-[#fbbf24] font-bold">[E] Tekme</span>
-                <span>•</span>
-                <span className="text-sky-300 font-bold">[Sağ Tık + Sol Tık] Kalkan Darbesi</span>
-              </div>
+                  {/* BannerPage / Warband Kontrol Kılavuzu Rozeti */}
+                  <div className="mt-1.5 flex items-center gap-2 text-[10px] tracking-wide px-2.5 py-0.5 rounded bg-black/60 border border-[#c6a15b]/30 text-[#d1c5b0]">
+                    <span>[Sol Tık] Saldır</span>
+                    <span>•</span>
+                    <span>[Sağ Tık] Blok</span>
+                    <span>•</span>
+                    <span className="text-[#fbbf24] font-bold">[E] Tekme</span>
+                    <span>•</span>
+                    <span className="text-sky-300 font-bold">[Sağ Tık + Sol Tık] Kalkan Darbesi</span>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>

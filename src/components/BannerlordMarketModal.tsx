@@ -450,7 +450,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
       setFeedback(res.reason || 'Eşya kuşanılamadı.');
       return;
     }
-    sound.playWarhorn();
+    sound.playUiClick();
     setDraftCampaign(res.nextState);
     setFeedback('Eşya taslakta kuşanıldı; Bitti ile kalıcı olur, Vazgeç geri alır.');
   };

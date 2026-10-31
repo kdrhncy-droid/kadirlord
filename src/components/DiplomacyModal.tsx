@@ -112,7 +112,7 @@ export const DiplomacyModal: React.FC<DiplomacyModalProps> = ({
         ...prev,
         {
           speaker: `${selectedLord.title} ${selectedLord.name}`,
-          text: `Sözlerin диванımızda yankı buldu ${campaign.playerName}. Şartları değerlendireceğiz.`,
+          text: `Sözlerin divanımızda yankı buldu ${campaign.playerName}. Şartları değerlendireceğiz.`,
           outcome: 'İlişki: +4 · Karar: NONE',
         },
       ]);

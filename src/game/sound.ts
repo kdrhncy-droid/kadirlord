@@ -667,6 +667,44 @@ class SoundManager {
     this.playRandomClip('voice', ['/sounds/man_yell_01.ogg', '/sounds/man_yell_04.ogg'], 0.85);
   }
 
+  /** Savaşçı ölüm feryadı / düşüş nidası (Bannerlord gerçek savaş sesleri). */
+  public playDeathScream() {
+    if (this.playRandomClip('voice', ['/sounds/man_yell_01.ogg', '/sounds/man_yell_04.ogg', '/sounds/decap1.ogg'], 0.9)) return;
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(260 + Math.random() * 80, now);
+    osc.frequency.exponentialRampToValueAtTime(70, now + 0.35);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.4);
+  }
+
+  /** Darbe alma inlemesi / acı homurtusu. */
+  public playPainReaction() {
+    if (this.playRandomClip('voice', ['/sounds/man_yell_01.ogg', '/sounds/man_yell_04.ogg'], 0.65)) return;
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(180 + Math.random() * 40, now);
+    osc.frequency.exponentialRampToValueAtTime(90, now + 0.18);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.22);
+  }
+
   public playDecap() {
     this.playClip('decap', '/sounds/decap1.ogg', 0.9);
   }

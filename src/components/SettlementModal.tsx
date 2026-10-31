@@ -29,6 +29,12 @@ import {
   UNIT_DEFINITIONS,
   UnitTierId,
   WorkshopTypeId,
+  WORKSHOP_CATALOG,
+  getSettlementWorkshops,
+  calculateSingleWorkshopIncome,
+  countPlayerWorkshops,
+  getWorkshopSameTownRequiredTier,
+  TownWorkshop,
   calculateClanTier,
   calculatePrisonerRansomValue,
   calculateSettlementDailyStats,
@@ -36,6 +42,7 @@ import {
   settlementWorkshopIncome,
 } from '../game/rules';
 import { BannerlordRecruitmentModal } from './BannerlordRecruitmentModal';
+import { getSettlementOwnerDetails } from '../game/settlementOwnership';
 import { recruitQuote, partyLimit, partySize, partyRoom } from '../game/recruitment';
 import { sound } from '../game/sound';
 import { music } from '../game/music';
@@ -418,7 +425,12 @@ interface SettlementModalProps {
   onForceRecruits?: (villageId: string) => string | null;
   onUpgradeBuilding?: (settlementId: string, buildingId: BuildingProjectId) => string | null;
   onSetDailyDefault?: (settlementId: string, defaultType: SettlementDailyDefault) => string | null;
-  onBuyWorkshop?: (settlementId: string, workshopType: WorkshopTypeId) => string | null;
+  onBuyWorkshop?: (
+    settlementId: string,
+    workshopType: WorkshopTypeId,
+    slotIndex?: number,
+  ) => string | null;
+  onSellWorkshop?: (settlementId: string, slotIndex: number) => string | null;
   onForgeWeapon?: (settlementId: string, blueprintId: 'SPATHA' | 'FALX' | 'LANCE') => string | null;
   onBuildSiegeEngine?: (
     settlementId: string,
@@ -453,6 +465,7 @@ interface SettlementModalProps {
   campaignTimeScale?: number;
   /** Zaman hızı değiştir */
   onSetCampaignTimeScale?: (scale: number) => void;
+  onOpenEncyclopedia?: (route?: { section: string; id?: string }) => void;
 }
 
 export const SettlementModal: React.FC<SettlementModalProps> = ({
@@ -477,6 +490,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   onUpgradeBuilding,
   onSetDailyDefault,
   onBuyWorkshop,
+  onSellWorkshop,
   onForgeWeapon,
   onBuildSiegeEngine,
   onDeployReserveEngines,
@@ -492,6 +506,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   onToggleWaiting,
   campaignTimeScale = 1,
   onSetCampaignTimeScale,
+  onOpenEncyclopedia,
 }) => {
   const [activeTab, setActiveTab] = useState<TownTab>(initialTab);
 
@@ -526,6 +541,19 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
   const isVillage = settlement.type === 'VILLAGE';
   const isCastle = settlement.type === 'CASTLE';
   const isTown = settlement.type === 'TOWN';
+  const ownerDetails = getSettlementOwnerDetails(settlement, campaign);
+
+  // Atölye yuvaları (Bannerlord kuralı: Şehir başına 3-4 atölye yuvası)
+  const townWorkshops = React.useMemo(
+    () => (isTown ? getSettlementWorkshops(settlement, campaign.settlements) : []),
+    [isTown, settlement, campaign.settlements],
+  );
+
+  // Atölye satın alma / üretim değiştirme seçim modalı durumu
+  const [selectedSlotForChange, setSelectedSlotForChange] = useState<{
+    slotIndex: number;
+    isBuying: boolean;
+  } | null>(null);
 
   // Faz B0: ileri gelenler artık sefer verisinde (her yerleşime özgü, deterministik).
   const notables: SettlementNotable[] = React.useMemo(
@@ -777,25 +805,57 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
         {/* TOP-LEFT: Faction Shield + Settlement Name + 6 Stat Columns + Present Lords Sub-Bar */}
         <div className="flex flex-col pointer-events-auto" data-testid="settlement-top-stats">
           <div className="flex items-center bg-[#120f0b]/95 border-2 border-[#8b6b36] rounded-sm shadow-[0_10px_28px_rgba(0,0,0,0.9)]">
-            {/* Faction Shield & Settlement Name */}
+            {/* Faction & Clan Shields + Settlement & Owner Name */}
             <div className="flex items-center gap-2.5 px-3.5 py-2 border-r border-[#8b6b36]/55 bg-gradient-to-r from-[#1f1912] to-[#15110c]">
-              <div
-                style={{ backgroundColor: factionInfo.color }}
-                className="w-9 h-11 flex items-center justify-center border-2 border-[#fcd34d] shadow-md shrink-0 text-[#fde68a]"
-                title={factionInfo.emblemName}
-              >
-                <FactionCrest faction={settlement.faction} size={22} className="border-0 shadow-none" />
+              <div className="flex items-center">
+                {/* Krallık Sancağı */}
+                <div
+                  style={{ backgroundColor: factionInfo.color }}
+                  className="w-8 h-11 flex items-center justify-center border-2 border-[#fcd34d] shadow-md shrink-0 text-[#fde68a]"
+                  title={`Krallık Sancağı: ${factionInfo.name}`}
+                >
+                  <FactionCrest faction={settlement.faction} size={18} className="border-0 shadow-none" />
+                </div>
+                {/* Yönetici Klan Sancağı */}
+                <div
+                  style={{ backgroundColor: ownerDetails.clanBannerColor }}
+                  className={`w-7 h-10 flex items-center justify-center border-2 border-[#fcd34d] shadow-md shrink-0 text-[#fde68a] -ml-1.5 ${
+                    onOpenEncyclopedia ? 'cursor-pointer hover:brightness-125' : ''
+                  }`}
+                  title={`Yönetici Klan: ${ownerDetails.clanName} · Sahibi: ${ownerDetails.heroName}`}
+                  onClick={() => onOpenEncyclopedia?.({ section: 'CLAN', id: ownerDetails.ownerClanId })}
+                >
+                  <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 fill-[#fef08a]">
+                    <path d="M8 1L10 6H15L11 9.5L12.5 15L8 11.8L3.5 15L5 9.5L1 6H6L8 1Z" />
+                  </svg>
+                </div>
               </div>
               <div>
                 <div className="text-[10px] text-[#c6a15b] uppercase tracking-wider font-semibold">
-                  {isTown ? 'Ticaret Şehri' : isCastle ? 'Müstahkem Kale' : 'Kırsal Köy'} · {factionInfo.name}
+                  {isTown ? 'Ticaret Şehri' : isCastle ? 'Müstahkem Kale' : 'Kırsal Köy'} · {factionInfo.name} · Klan: {ownerDetails.clanName}
                 </div>
                 <h2
                   id="settlement-modal-title"
-                  className="text-xl font-display font-extrabold text-[#f7eed7] tracking-wide leading-tight"
+                  className="text-lg font-display font-extrabold text-[#f7eed7] tracking-wide leading-tight"
                 >
                   {settlement.name}
                 </h2>
+                <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-[#fde68a]">
+                  <span className="text-sm">👑</span>
+                  <span className="text-[#a89b84]">Sahibi:</span>
+                  <span className="font-bold text-[#fef08a]">
+                    {ownerDetails.heroTitle ? `${ownerDetails.heroTitle} ` : ''}
+                    {ownerDetails.heroName}
+                  </span>
+                  <span className="text-[10px] text-[#86efac] font-mono">
+                    ({ownerDetails.clanName})
+                  </span>
+                  {isVillage && (
+                    <span className="text-[10px] text-[#fcd34d] ml-1 font-normal italic">
+                      · {ownerDetails.boundParentName ?? 'Merkez'} mülkü
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1056,9 +1116,15 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-b border border-t-0 border-[#8b6b36]/50 bg-[#14100b]/85 text-[10px] text-[#d1c5b0]">
                 <Hammer size={11} className="text-[#c6a15b]" />
                 <span>Atölyeler:</span>
-                <span className="text-[#fde68a] font-semibold">
-                  {settlement.workshopType && settlement.workshopType !== 'NONE'
-                    ? `${settlement.workshopType} (Sizin)`
+                <span className="text-[#fde68a] font-semibold truncate max-w-[280px]">
+                  {townWorkshops.length > 0
+                    ? townWorkshops
+                        .map((w) =>
+                          w.owner === 'player'
+                            ? `${WORKSHOP_CATALOG[w.type]?.name ?? w.type} (Sizin)`
+                            : (WORKSHOP_CATALOG[w.type]?.name ?? w.type),
+                        )
+                        .join(' · ')
                     : 'Bira · Demirhane · Dokuma'}
                 </span>
               </div>
@@ -1703,7 +1769,7 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        sound.playWarhorn();
+                        sound.playUiClick();
                         if (onTalkToReeve) onTalkToReeve();
                         else setFeedback('Nöbetçiler divan kapısını açtı. Şehir hakimi huzuruna kabul edildiniz.');
                       }}
@@ -2319,63 +2385,242 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
 
               {/* SMITHY & WORKSHOPS TAB */}
               {activeTab === 'smithy' && isTown && (
-                <div className="space-y-4">
+                <div className="space-y-3.5">
                   {(() => {
                     const clanTier = calculateClanTier(campaign.renown).tier;
                     const maxWorkshops = clanTier + 1;
-                    const ownedWorkshops = campaign.settlements.filter((s) => s.workshopOwner === 'player').length;
-                    const isAlreadyOwnedHere = settlement.workshopOwner === 'player';
-                    const limitReached = !isAlreadyOwnedHere && ownedWorkshops >= maxWorkshops;
+                    const { total: ownedWorkshops } = countPlayerWorkshops(campaign);
+                    const playerSlotsHere = townWorkshops.filter((w) => w.owner === 'player');
+                    const ownedHere = playerSlotsHere.length;
+                    const globalLimitReached = ownedWorkshops >= maxWorkshops;
+
+                    // Bound villages providing raw materials
+                    const boundVillages = campaign.settlements.filter(
+                      (s) => s.type === 'VILLAGE' && s.boundSettlementId === settlement.id,
+                    );
+
                     return (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="font-bold text-xs text-[#fef08a]">Şehir Zanaat Atölyeleri</div>
-                          <div className="text-[11px] font-mono text-[#c6a15b]">
-                            Atölye Limiti: <span className="text-white font-bold">{ownedWorkshops} / {maxWorkshops}</span> (Klan Kademesi {clanTier})
+                      <div className="space-y-3">
+                        {/* HEADER STATS */}
+                        <div className="flex items-center justify-between pb-2 border-b border-[#c6a15b]/25">
+                          <div>
+                            <div className="font-bold text-sm text-[#fef08a] flex items-center gap-1.5">
+                              <Hammer size={15} className="text-[#c6a15b]" />
+                              Şehir Zanaat Atölyeleri
+                            </div>
+                            <div className="text-[11px] text-[#a89b84]">
+                              {settlement.name} şehrinde {townWorkshops.length} zanaat atölyesi faaliyet gösteriyor.
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs font-mono text-[#c6a15b]">
+                              Atölye Limiti:{' '}
+                              <span className="text-white font-bold">
+                                {ownedWorkshops} / {maxWorkshops}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-[#9ca3af]">
+                              Klan Kademesi {clanTier} (Maks. {maxWorkshops})
+                            </div>
                           </div>
                         </div>
-                        {limitReached && (
-                          <div className="mb-2 p-2 rounded bg-[#2b1414] border border-[#ef4444]/40 text-[11px] text-[#fca5a5]">
-                            Klan Kademesi {clanTier} en fazla {maxWorkshops} atölyeye izin verir. Yeni atölye için Nam kazanarak klan kademenizi yükseltin.
+
+                        {/* CLAN RULES & SAME-TOWN EXPLANATION CARD */}
+                        <div className="p-2.5 rounded bg-[#18130d] border border-[#c6a15b]/30 text-[11px] space-y-1">
+                          <div className="font-semibold text-[#fde68a] flex items-center gap-1">
+                            <span>📜</span>
+                            <span>Klan Atölye ve Şehir Kuralları:</span>
                           </div>
-                        )}
-                        <div className="grid grid-cols-2 gap-2">
-                          {(
-                            [
-                              { id: 'BREWERY', name: 'Bira Fabrikası', input: 'Tahıl işler' },
-                              { id: 'SMITHY', name: 'Demirci Atölyesi', input: 'Demir işler' },
-                              { id: 'OLIVE_PRESS', name: 'Zeytinyağı Presi', input: 'Zeytin işler' },
-                              { id: 'WEAVERY', name: 'Kadife Dokuma', input: 'İpek/Yün işler' },
-                            ] as const
-                          ).map((ws) => {
-                            const isActive = settlement.workshopType === ws.id && settlement.workshopOwner === 'player';
-                            return (
-                              <div key={ws.id} className="p-2.5 rounded border border-[#c6a15b]/25 bg-[#1f1a14] flex items-center justify-between gap-2">
-                                <div>
-                                  <div className="font-bold text-xs text-[#f8f0df]">{ws.name}</div>
-                                  <div className="text-[10px] text-[#a89b84]">
-                                    {ws.input} · +{settlementWorkshopIncome({ ...settlement, workshopType: ws.id })} D/gün
+                          <ul className="text-[#d1c5b0] text-[10px] space-y-0.5 list-disc list-inside">
+                            <li>
+                              <strong className="text-white">Farklı Şehirler:</strong> Klan atölye limitiniz dahilinde Kalradya'daki her şehirden serbestçe atölye satın alabilirsiniz.
+                            </li>
+                            <li>
+                              <strong className="text-white">Aynı Şehirde Birden Fazla Atölye:</strong> Aynı şehirde 2. atölye için Klan Kademesi 2, 3. atölye için Klan Kademesi 3 gerekir.
+                            </li>
+                          </ul>
+                        </div>
+
+                        {/* BOUND VILLAGE RAW MATERIAL SUPPLY BAR */}
+                        <div className="p-2.5 rounded bg-[#1c1812] border border-[#8b6b36]/40">
+                          <div className="text-[11px] font-bold text-[#fef08a] mb-1 flex items-center justify-between">
+                            <span>🌾 Bağlı Köylerin Hammadde Tedariki</span>
+                            <span className="text-[10px] font-normal text-[#c6a15b]">
+                              Yerel Tedarik Primi: <span className="text-green-400 font-bold">+35 D/gün</span>
+                            </span>
+                          </div>
+                          {boundVillages.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5 mt-1">
+                              {boundVillages.map((v) => {
+                                const prod = getVillagePrimaryProduction(v);
+                                return (
+                                  <span
+                                    key={v.id}
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border ${
+                                      v.isRaided
+                                        ? 'bg-red-950/60 border-red-700/50 text-red-300'
+                                        : 'bg-[#261f17] border-[#c6a15b]/30 text-[#f3e8d2]'
+                                    }`}
+                                  >
+                                    <span>{prod.icon}</span>
+                                    <span className="font-semibold">{v.name}:</span>
+                                    <span className="text-[#fde68a]">{prod.name}</span>
+                                    {v.isRaided && <span className="text-red-400">(Yağmalı)</span>}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-[10px] text-[#a89b84]">
+                              Bu şehre doğrudan bağlı hammadde köyü bulunmuyor (İthal girdiler kullanılır).
+                            </div>
+                          )}
+                        </div>
+
+                        {/* WORKSHOP SLOTS GRID */}
+                        <div className="space-y-2">
+                          <div className="text-xs font-bold text-[#c6a15b]">
+                            Şehirdeki Atölye Yuvaları ({townWorkshops.length} Yuva)
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {townWorkshops.map((ws, slotIndex) => {
+                              const wsDef = WORKSHOP_CATALOG[ws.type] ?? WORKSHOP_CATALOG.BREWERY;
+                              const isPlayer = ws.owner === 'player';
+                              const dailyIncome = calculateSingleWorkshopIncome(
+                                ws,
+                                settlement,
+                                campaign.settlements,
+                              );
+
+                              // Check if local village supplies input
+                              const hasLocalSupply = boundVillages.some(
+                                (v) =>
+                                  !v.isRaided &&
+                                  wsDef.rawMaterialKeywords.some((kw) =>
+                                    (v.primaryProduction || '').includes(kw),
+                                  ),
+                              );
+
+                              // Requirements for buying
+                              const reqTierForSlot = getWorkshopSameTownRequiredTier(ownedHere);
+                              const tierBlocked = !isPlayer && clanTier < reqTierForSlot;
+                              const limitBlocked = !isPlayer && globalLimitReached;
+                              const goldBlocked = !isPlayer && campaign.gold < 220;
+
+                              return (
+                                <div
+                                  key={ws.id}
+                                  className={`p-3 rounded border flex flex-col justify-between gap-2.5 transition-colors ${
+                                    isPlayer
+                                      ? 'bg-[#1b261b] border-green-600/50 shadow-[0_0_12px_rgba(34,197,94,0.15)]'
+                                      : 'bg-[#1f1a14] border-[#c6a15b]/30'
+                                  }`}
+                                >
+                                  <div>
+                                    {/* CARD TOP ROW */}
+                                    <div className="flex items-center justify-between gap-2 mb-1">
+                                      <div className="font-bold text-xs text-[#f8f0df] flex items-center gap-1.5">
+                                        <span className="text-base">{wsDef.icon}</span>
+                                        <span>{wsDef.name}</span>
+                                      </div>
+                                      {isPlayer ? (
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-green-900/80 border border-green-500/70 text-green-300">
+                                          Sizin Atölyeniz
+                                        </span>
+                                      ) : (
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-[#2b2218] border border-[#8b6b36]/40 text-[#d1c5b0]">
+                                          {ws.notableName ?? 'Yerel Tüccar'}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* PRODUCTION INFO */}
+                                    <div className="text-[11px] text-[#c6a15b] font-medium">
+                                      {wsDef.inputDescription} ➔ {wsDef.outputDescription}
+                                    </div>
+
+                                    <div className="mt-1 flex items-center justify-between text-[10px]">
+                                      <span
+                                        className={
+                                          hasLocalSupply
+                                            ? 'text-green-400 font-semibold'
+                                            : 'text-[#9ca3af]'
+                                        }
+                                      >
+                                        {hasLocalSupply
+                                          ? '✅ Yerel Tedarik (+Kâr)'
+                                          : '⚠️ İthal Girdi'}
+                                      </span>
+                                      <span className="font-mono font-bold text-[#fde68a]">
+                                        +{dailyIncome} D/gün
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* ACTION BUTTONS */}
+                                  <div className="pt-2 border-t border-[#c6a15b]/20 flex items-center justify-end gap-1.5">
+                                    {isPlayer ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setSelectedSlotForChange({
+                                              slotIndex,
+                                              isBuying: false,
+                                            })
+                                          }
+                                          className="px-2.5 py-1 rounded text-[10px] font-bold bg-[#854d0e] hover:bg-[#a16207] text-[#fef08a] border border-[#ca8a04]/40"
+                                        >
+                                          Üretimi Değiştir (100 D)
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (!onSellWorkshop) return;
+                                            const err = onSellWorkshop(settlement.id, slotIndex);
+                                            if (err) setFeedback(err);
+                                            else {
+                                              sound.playCoin();
+                                              setFeedback(`${wsDef.name} atölyesi 180 Dinara satıldı.`);
+                                            }
+                                          }}
+                                          className="px-2 py-1 rounded text-[10px] font-bold bg-[#7f1d1d] hover:bg-[#991b1b] text-red-200 border border-red-700/50"
+                                        >
+                                          Sat (+180 D)
+                                        </button>
+                                      </>
+                                    ) : tierBlocked ? (
+                                      <div
+                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold bg-[#291717] border border-red-800/40 text-red-300"
+                                        title={`Aynı şehirde ${ownedHere + 1}. atölye için Klan Kademesi ${reqTierForSlot} gereklidir. Farklı bir şehirden atölye satın alabilirsiniz.`}
+                                      >
+                                        <Lock size={10} />
+                                        <span>Klan Kademesi {reqTierForSlot} Gerekli</span>
+                                      </div>
+                                    ) : limitBlocked ? (
+                                      <div className="px-2.5 py-1 rounded text-[10px] font-bold bg-[#221c15] text-[#9ca3af] border border-[#44382c]">
+                                        Limit Dolu ({ownedWorkshops}/{maxWorkshops})
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        disabled={goldBlocked}
+                                        onClick={() =>
+                                          setSelectedSlotForChange({
+                                            slotIndex,
+                                            isBuying: true,
+                                          })
+                                        }
+                                        className="px-3 py-1 rounded text-[10px] font-extrabold bg-[#15803d] hover:bg-[#16a34a] text-white border border-green-500/50 disabled:opacity-40"
+                                      >
+                                        🛒 Satın Al (220 D)
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
-                                <button
-                                  type="button"
-                                  disabled={isActive || campaign.gold < 220 || limitReached}
-                                  onClick={() => {
-                                    if (!onBuyWorkshop) return;
-                                    const err = onBuyWorkshop(settlement.id, ws.id);
-                                    if (err) setFeedback(err);
-                                    else {
-                                      sound.playCoin();
-                                      setFeedback(`${ws.name} faaliyete geçti!`);
-                                    }
-                                  }}
-                                  className="px-2.5 py-1 rounded text-[10px] font-bold bg-[#15803d] text-white disabled:opacity-40"
-                                >
-                                  {isActive ? 'Aktif' : '220 D'}
-                                </button>
-                              </div>
-                            );
-                          })}
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
                     );
@@ -2605,6 +2850,170 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
           }}
           onClose={() => setIsRecruitmentModalOpen(false)}
         />
+      )}
+
+      {/* ═════════════════════════════════════════════════════════════════════════
+          5. BANNERLORD WORKSHOP TYPE PICKER MODAL OVERLAY (11 WORKSHOPS)
+         ═════════════════════════════════════════════════════════════════════════ */}
+      {selectedSlotForChange !== null && (
+        <div
+          data-testid="workshop-picker-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm pointer-events-auto"
+        >
+          <div className="relative w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-lg border-2 border-[#8b6b36] bg-[#14100b] p-4 text-[#f8f0df] shadow-[0_20px_60px_rgba(0,0,0,0.95)]">
+            {/* MODAL HEADER */}
+            <div className="flex items-center justify-between pb-3 border-b border-[#8b6b36]/50">
+              <div className="flex items-center gap-2">
+                <Hammer className="text-[#c6a15b]" size={20} />
+                <div>
+                  <h3 className="font-extrabold text-base text-[#fef08a]">
+                    {selectedSlotForChange.isBuying
+                      ? `Atölye Satın Al — Yuva #${selectedSlotForChange.slotIndex + 1}`
+                      : `Üretimi Değiştir — Yuva #${selectedSlotForChange.slotIndex + 1}`}
+                  </h3>
+                  <div className="text-[11px] text-[#a89b84]">
+                    {selectedSlotForChange.isBuying
+                      ? 'Satın alma bedeli: 220 Dinar. Bir üretim dalı seçin:'
+                      : 'Üretim değiştirme bedeli: 100 Dinar. Yeni üretim dalını seçin:'}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedSlotForChange(null)}
+                className="w-7 h-7 rounded border border-[#8b6b36] bg-[#221a12] hover:bg-[#332518] text-[#c6a15b] font-bold text-sm flex items-center justify-center"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* BOUND VILLAGE SUPPLY HINT */}
+            <div className="my-3 p-2 rounded bg-[#1c1812] border border-[#c6a15b]/25 text-[11px] text-[#d1c5b0] flex items-center gap-2">
+              <span className="text-lg">💡</span>
+              <div>
+                <strong className="text-[#fde68a]">{settlement.name} Bağlı Köyleri:</strong>{' '}
+                {campaign.settlements
+                  .filter((s) => s.type === 'VILLAGE' && s.boundSettlementId === settlement.id)
+                  .map((v) => `${getVillagePrimaryProduction(v).icon} ${v.name} (${getVillagePrimaryProduction(v).name})`)
+                  .join(' · ') || 'Bağlı hammadde köyü yok.'}
+                <div className="text-[10px] text-green-400 mt-0.5">
+                  Yeşil rozetli atölyeler yerel köylerden hammadde aldığı için en yüksek net kârı üretir.
+                </div>
+              </div>
+            </div>
+
+            {/* 11 WORKSHOP CARDS GRID */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+              {(
+                [
+                  'BREWERY',
+                  'WINE_PRESS',
+                  'OLIVE_PRESS',
+                  'POTTERY_SHOP',
+                  'WEAVERY',
+                  'LINEN_WEAVERY',
+                  'WOOL_WEAVERY',
+                  'TANNERY',
+                  'WOOD_WORKSHOP',
+                  'SMITHY',
+                  'SILVERSMITH',
+                ] as const
+              ).map((wsType) => {
+                const def = WORKSHOP_CATALOG[wsType];
+                const dummyWs: TownWorkshop = {
+                  id: 'temp',
+                  type: wsType,
+                  owner: 'player',
+                };
+                const estimatedIncome = calculateSingleWorkshopIncome(
+                  dummyWs,
+                  settlement,
+                  campaign.settlements,
+                );
+
+                const boundVillages = campaign.settlements.filter(
+                  (s) => s.type === 'VILLAGE' && s.boundSettlementId === settlement.id,
+                );
+                const hasLocalSupply = boundVillages.some(
+                  (v) =>
+                    !v.isRaided &&
+                    def.rawMaterialKeywords.some((kw) => (v.primaryProduction || '').includes(kw)),
+                );
+
+                const currentSlot = townWorkshops[selectedSlotForChange.slotIndex];
+                const isCurrentType = currentSlot?.type === wsType && currentSlot.owner === 'player';
+
+                return (
+                  <div
+                    key={wsType}
+                    className={`p-3 rounded border flex flex-col justify-between gap-2 transition-all ${
+                      hasLocalSupply
+                        ? 'bg-[#182318] border-green-700/50 hover:border-green-500'
+                        : 'bg-[#1e1913] border-[#8b6b36]/30 hover:border-[#c6a15b]/60'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <div className="font-bold text-xs text-[#fef08a] flex items-center gap-1.5">
+                          <span className="text-base">{def.icon}</span>
+                          <span>{def.name}</span>
+                        </div>
+                        {hasLocalSupply && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-green-900/80 border border-green-500/60 text-green-300">
+                            +35 D Yerel
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="text-[10px] text-[#c6a15b]">
+                        <div>{def.inputDescription}</div>
+                        <div className="text-[#a89b84]">➔ {def.outputDescription}</div>
+                      </div>
+
+                      <div className="mt-1.5 flex items-center justify-between text-[11px]">
+                        <span className="text-[10px] text-[#9ca3af]">Beklenen Kâr:</span>
+                        <span className="font-mono font-bold text-green-400">
+                          +{estimatedIncome} D/gün
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isCurrentType}
+                      onClick={() => {
+                        if (!onBuyWorkshop) return;
+                        const err = onBuyWorkshop(
+                          settlement.id,
+                          wsType,
+                          selectedSlotForChange.slotIndex,
+                        );
+                        if (err) {
+                          setFeedback(err);
+                        } else {
+                          sound.playCoin();
+                          setFeedback(
+                            selectedSlotForChange.isBuying
+                              ? `${def.name} faaliyete geçti!`
+                              : `${def.name} üretimine geçildi!`,
+                          );
+                          setSelectedSlotForChange(null);
+                        }
+                      }}
+                      className="w-full mt-1 py-1.5 rounded text-[11px] font-bold bg-[#15803d] hover:bg-[#16a34a] text-white border border-green-500/40 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      {isCurrentType
+                        ? 'Zaten Aktif'
+                        : selectedSlotForChange.isBuying
+                          ? 'Bu Atölyeyi Kur (220 D)'
+                          : 'Bu Üretime Geç (100 D)'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

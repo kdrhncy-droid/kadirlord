@@ -96,7 +96,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   const handleAllocateAttribute = (attrId: AttributeId) => {
     const res = allocateHeroAttribute(currentHero, attrId);
     if (res.success) {
-      sound.playWarhorn();
+      sound.playCoin();
       toast(`${ATTRIBUTE_LABELS[attrId].name} niteliği artırıldı!`);
       const nextCampaign = syncPlayerHeroToCampaign(res.hero, campaign);
       onUpdateCampaign(nextCampaign);
@@ -122,7 +122,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   const handleUnlockPerk = (perkId: string) => {
     const res = unlockHeroPerk(currentHero, perkId);
     if (res.success) {
-      sound.playWarhorn();
+      sound.playCoin();
       toast('Yeni perk başarıyla açıldı!');
       const nextCampaign = syncPlayerHeroToCampaign(res.hero, campaign);
       onUpdateCampaign(nextCampaign);

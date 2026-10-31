@@ -4,6 +4,9 @@ import {
   FACTION_INFO,
   FactionId,
   Settlement,
+  calculateClanTier,
+  getTotalTroops,
+  getVillagePrimaryProduction,
 } from '../game/rules';
 import {
   KINGDOM_POLICIES,
@@ -14,6 +17,7 @@ import {
   generateSettlementClaimantBallot,
   resolveKingdomCouncilVote,
 } from '../game/kingdomSystem';
+import { getSettlementOwnerDetails } from '../game/settlementOwnership';
 import { sound } from '../game/sound';
 
 interface KingdomManagementModalProps {
@@ -25,6 +29,7 @@ interface KingdomManagementModalProps {
 }
 
 type KingdomTabId = 'diplomacy' | 'fiefs' | 'policies' | 'clans';
+type IndependentSubTab = 'progression' | 'kingdoms';
 
 export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
   campaign,
@@ -34,6 +39,7 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
   onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<KingdomTabId>('diplomacy');
+  const [independentSubTab, setIndependentSubTab] = useState<IndependentSubTab>('progression');
   const [selectedEnemyFaction, setSelectedEnemyFaction] = useState<FactionId>('empire');
   const [selectedElectionSettlementId, setSelectedElectionSettlementId] = useState<string>(
     macroState.activeElection?.settlementId ||
@@ -54,6 +60,37 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
+  // Klan & Krallık Bağlılık Statüsü (Bannerlord Kanonik)
+  const isServingFaction = Boolean(
+    campaign.playerFaction &&
+      campaign.playerFaction !== 'player' &&
+      campaign.playerFaction !== 'bandits',
+  );
+  const allegianceRole =
+    campaign.allegianceRole ?? (isServingFaction ? 'MERCENARY' : 'INDEPENDENT');
+  const playerOwnedFortified = useMemo(
+    () => campaign.settlements.filter((s) => s.faction === 'player' && s.type !== 'VILLAGE'),
+    [campaign.settlements],
+  );
+  const isRuler =
+    allegianceRole === 'RULER' ||
+    (campaign.playerFaction === 'player' && playerOwnedFortified.length > 0);
+  const isMercenary = allegianceRole === 'MERCENARY';
+  const isKingdomMember = isServingFaction || isRuler;
+  const currentKingdomFaction = isServingFaction ? campaign.playerFaction! : 'player';
+
+  // Bağımsız klan kontrolü ve krallık kurma şartları
+  const playerTotalTroops = useMemo(
+    () => getTotalTroops(campaign.roster),
+    [campaign.roster],
+  );
+  const playerClanTier = calculateClanTier(campaign.renown).tier;
+  const canFoundKingdom =
+    playerClanTier >= 3 &&
+    playerOwnedFortified.length >= 1 &&
+    playerTotalTroops >= 100 &&
+    allegianceRole === 'INDEPENDENT';
+
   const playerClans = useMemo(
     () => macroState.clans.filter((c) => c.isPlayerClan || c.faction === 'player'),
     [macroState.clans],
@@ -65,8 +102,8 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
   );
 
   const playerFiefs = useMemo(
-    () => campaign.settlements.filter((s) => s.faction === 'player'),
-    [campaign.settlements],
+    () => campaign.settlements.filter((s) => s.faction === currentKingdomFaction),
+    [campaign.settlements, currentKingdomFaction],
   );
 
   const enemyFiefs = useMemo(
@@ -79,19 +116,19 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
     const activeWars = campaign.world?.wars ?? [];
     const directWar = activeWars.some(
       (w) =>
-        (w.a === 'player' && w.b === selectedEnemyFaction) ||
-        (w.b === 'player' && w.a === selectedEnemyFaction),
+        (w.a === currentKingdomFaction && w.b === selectedEnemyFaction) ||
+        (w.b === currentKingdomFaction && w.a === selectedEnemyFaction),
     );
     const hasHostileLords = campaign.lords.some(
       (l) => l.faction === selectedEnemyFaction && l.isAtWarWithPlayer,
     );
     return directWar || hasHostileLords;
-  }, [campaign.world?.wars, campaign.lords, selectedEnemyFaction]);
+  }, [campaign.world?.wars, campaign.lords, selectedEnemyFaction, currentKingdomFaction]);
 
   const liveWarReport = useMemo(() => {
     const warStats = macroState.wars[selectedEnemyFaction];
     return calculateWarDesireAndTribute({
-      factionA: 'player',
+      factionA: currentKingdomFaction,
       factionB: selectedEnemyFaction,
       clansA: playerClans,
       clansB: enemyClans.length > 0 ? enemyClans : macroState.clans.slice(1, 3),
@@ -109,6 +146,7 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
     playerFiefs,
     enemyFiefs,
     campaign.settlements,
+    currentKingdomFaction,
   ]);
 
   const currentElection = useMemo(() => {
@@ -126,6 +164,10 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
 
   // Savaş İlan Et
   const handleDeclareWar = (targetFac: FactionId) => {
+    if (!isKingdomMember || isMercenary) {
+      setFeedbackBanner('Yalnızca tam yetkili krallık üyeleri savaş oylaması başlatabilir.');
+      return;
+    }
     const cost = 50;
     if (macroState.influence < cost) {
       setFeedbackBanner(`Savaş ilanı için en az ${cost} Nüfuz gerekiyor.`);
@@ -137,11 +179,11 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
       ...existingWars.filter(
         (w) =>
           !(
-            (w.a === 'player' && w.b === targetFac) ||
-            (w.b === 'player' && w.a === targetFac)
+            (w.a === currentKingdomFaction && w.b === targetFac) ||
+            (w.b === currentKingdomFaction && w.a === targetFac)
           ),
       ),
-      { a: 'player' as FactionId, b: targetFac, sinceDay: campaign.day, score: 0, sieges: 0 },
+      { a: currentKingdomFaction, b: targetFac, sinceDay: campaign.day, score: 0, sieges: 0 },
     ];
 
     const updatedLords = campaign.lords.map((l) =>
@@ -169,13 +211,17 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
 
   // Barış İmzala
   const handleProposePeace = (targetFac: FactionId) => {
+    if (!isKingdomMember || isMercenary) {
+      setFeedbackBanner('Yalnızca tam yetkili krallık üyeleri barış teklifi yapabilir.');
+      return;
+    }
     sound.playCoinChime();
     const existingWars = campaign.world?.wars ?? [];
     const newWars = existingWars.filter(
       (w) =>
         !(
-          (w.a === 'player' && w.b === targetFac) ||
-          (w.b === 'player' && w.a === targetFac)
+          (w.a === currentKingdomFaction && w.b === targetFac) ||
+          (w.b === currentKingdomFaction && w.a === targetFac)
         ),
     );
 
@@ -199,6 +245,18 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
 
   // Tımar Oylaması
   const handleVoteOnFief = (clanId: string, tier: 1 | 2 | 3, isOverride = false) => {
+    if (!isKingdomMember) {
+      setFeedbackBanner('Tımar oylamasına katılmak için bir krallık üyesi olmalısınız.');
+      return;
+    }
+    if (isMercenary) {
+      setFeedbackBanner('Paralı askerler krallık divanında tımar oylamasına katılamaz.');
+      return;
+    }
+    if (isOverride && !isRuler) {
+      setFeedbackBanner('Yalnızca Krallık Hükümdarı fermanla doğrudan tımar tahsis edebilir.');
+      return;
+    }
     const res = resolveKingdomCouncilVote({
       election: currentElection,
       chosenClanId: clanId,
@@ -228,14 +286,19 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
       };
     });
 
-    const updatedSettlements = campaign.settlements.map((s) =>
-      s.id === currentElection.settlementId || s.boundSettlementId === currentElection.settlementId
-        ? {
-            ...s,
-            faction: (winningClan?.isPlayerClan ? 'player' : winningClan?.faction || 'player') as FactionId,
-          }
-        : s,
-    );
+    const updatedSettlements = campaign.settlements.map((s) => {
+      if (s.id === currentElection.settlementId || s.boundSettlementId === currentElection.settlementId) {
+        return {
+          ...s,
+          faction: (winningClan?.isPlayerClan ? 'player' : winningClan?.faction || currentKingdomFaction) as FactionId,
+          ownerClanId: winningClan?.id,
+          ownerClanName: winningClan?.name,
+          ownerHeroId: winningClan?.succession.leaderId,
+          ownerHeroName: winningClan?.succession.leaderName,
+        };
+      }
+      return s;
+    });
 
     onUpdateCampaign({
       ...campaign,
@@ -255,6 +318,10 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
 
   // Politika Yürürlüğe Koy / Kaldır
   const handleTogglePolicy = (policyId: KingdomPolicyId) => {
+    if (!isKingdomMember || isMercenary) {
+      setFeedbackBanner('Yalnızca tam yetkili derebeyleri krallık politikası oylaması başlatabilir.');
+      return;
+    }
     const exists = macroState.activePolicies.includes(policyId);
     const cost = KINGDOM_POLICIES[policyId].influenceCostToPropose;
     if (!exists && macroState.influence < cost) {
@@ -369,13 +436,21 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
             </div>
             <div>
               <div className="text-[11px] font-semibold text-[#c6a15b] tracking-wider uppercase">
-                SANCAK DİVANI · DEVLET MECLİSİ
+                {isKingdomMember
+                  ? isRuler
+                    ? 'SANCAK DİVANI · DEVLET MECLİSİ'
+                    : isMercenary
+                      ? 'PARALI ASKER BİRLİĞİ · KRALLIK DİVANI'
+                      : 'DEREBEYİ MECLİSİ · KRALLIK DİVANI'
+                  : 'KALRADYA KRALLIKLARI VE DEVLET YÖNETİMİ'}
               </div>
               <h2
                 id="kingdom-macro-modal-title"
                 className="text-xl sm:text-2xl font-display font-bold text-[#fef08a]"
               >
-                Krallık Divanı ve Devlet Yönetimi
+                {isKingdomMember
+                  ? `${FACTION_INFO[currentKingdomFaction]?.name ?? 'Krallık'} Divanı`
+                  : 'Bir Krallığa Bağlı Değilsiniz'}
               </h2>
             </div>
           </div>
@@ -391,6 +466,11 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
                 <span className="text-[#a89b84]">Hazine:</span>
                 <strong className="text-[#34d399] font-bold">{campaign.gold.toLocaleString()} Dinar</strong>
               </span>
+              <span className="text-[#c6a15b]/40">·</span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-[#a89b84]">Klan:</span>
+                <strong className="text-[#f5ebd6] font-bold">Sv.{playerClanTier}</strong>
+              </span>
             </div>
 
             <button
@@ -404,31 +484,73 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
           </div>
         </div>
 
-        {/* 4 KANONİK BANNERLORD SEKMESİ */}
-        <div className="px-4 py-2 border-b border-[#c6a15b]/25 bg-[#16120d] flex flex-wrap items-center gap-2">
-          {[
-            { id: 'diplomacy', label: '1. DİPLOMASİ (Savaş & Barış)' },
-            { id: 'fiefs', label: '2. TIMARLAR (Mülkler & Oylama)' },
-            { id: 'policies', label: '3. POLİTİKALAR (Krallık Kanunları)' },
-            { id: 'clans', label: '4. KLANLAR (Derebeyleri & Hanedanlar)' },
-          ].map((t) => (
+        {/* SEKME ÇUBUĞU: KRALLIK ÜYESİ YA DA BAĞIMSIZ KLAN */}
+        {isKingdomMember ? (
+          <div className="px-4 py-2 border-b border-[#c6a15b]/25 bg-[#16120d] flex flex-wrap items-center gap-2">
+            {[
+              { id: 'diplomacy', label: '1. DİPLOMASİ (Savaş & Barış)' },
+              { id: 'fiefs', label: '2. TIMARLAR (Mülkler & Oylama)' },
+              { id: 'policies', label: '3. POLİTİKALAR (Krallık Kanunları)' },
+              { id: 'clans', label: '4. KLANLAR (Derebeyleri & Hanedanlar)' },
+            ].map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => {
+                  setActiveTab(t.id as KingdomTabId);
+                  setFeedbackBanner(null);
+                }}
+                className={`px-4 py-2 rounded text-xs font-bold tracking-wide transition-all whitespace-nowrap ${
+                  activeTab === t.id
+                    ? 'bg-gradient-to-r from-[#b45309] to-[#d97706] text-white border border-[#fde68a]/60 shadow-md'
+                    : 'bg-[#1f1a13] text-[#d1c5b0] hover:bg-[#2c251b] border border-[#c6a15b]/20'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="px-4 py-2 border-b border-[#c6a15b]/25 bg-[#16120d] flex flex-wrap items-center gap-2">
             <button
-              key={t.id}
               type="button"
               onClick={() => {
-                setActiveTab(t.id as KingdomTabId);
+                setIndependentSubTab('progression');
                 setFeedbackBanner(null);
               }}
               className={`px-4 py-2 rounded text-xs font-bold tracking-wide transition-all whitespace-nowrap ${
-                activeTab === t.id
+                independentSubTab === 'progression'
                   ? 'bg-gradient-to-r from-[#b45309] to-[#d97706] text-white border border-[#fde68a]/60 shadow-md'
                   : 'bg-[#1f1a13] text-[#d1c5b0] hover:bg-[#2c251b] border border-[#c6a15b]/20'
               }`}
             >
-              {t.label}
+              1. KRALLIK KURMA & İLERLEME REHBERİ
             </button>
-          ))}
-        </div>
+            <button
+              type="button"
+              onClick={() => {
+                setIndependentSubTab('kingdoms');
+                setFeedbackBanner(null);
+              }}
+              className={`px-4 py-2 rounded text-xs font-bold tracking-wide transition-all whitespace-nowrap ${
+                independentSubTab === 'kingdoms'
+                  ? 'bg-gradient-to-r from-[#b45309] to-[#d97706] text-white border border-[#fde68a]/60 shadow-md'
+                  : 'bg-[#1f1a13] text-[#d1c5b0] hover:bg-[#2c251b] border border-[#c6a15b]/20'
+              }`}
+            >
+              2. KALRADYA KRALLIKLARI (6 BÜYÜK DEVLET)
+            </button>
+          </div>
+        )}
+
+        {isMercenary && isKingdomMember && (
+          <div className="mx-5 mt-3 px-4 py-2 rounded bg-[#2e1d0c] border border-[#f59e0b]/60 text-xs text-[#fde68a] flex items-center gap-2">
+            <span>⚔️</span>
+            <span>
+              <strong>Paralı Asker Sözleşmesi:</strong> Krallık divanında oy kullanamaz, politika teklif edemez ve tımar alamazsınız. Hükümdar ile yüz yüze konuşup vasallık yemini ederek tam yetkili derebeyi olabilirsiniz.
+            </span>
+          </div>
+        )}
 
         {feedbackBanner && (
           <div className="mx-5 mt-3 px-4 py-2.5 rounded bg-[#261f14] border border-[#f59e0b]/60 text-xs text-[#fde68a] flex items-center justify-between gap-2 shadow-lg">
@@ -446,9 +568,262 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
         {/* SEKME İÇERİKLERİ */}
         <div className="p-5 flex-1 overflow-y-auto space-y-5">
           {/* ================================================================ */}
+          {/* DURUM A: BAĞIMSIZ KLAN GÖRÜNÜMÜ                                  */}
+          {/* ================================================================ */}
+          {!isKingdomMember && independentSubTab === 'progression' && (
+            <div className="space-y-5">
+              <div className="p-4 rounded bg-[#18130e] border border-[#c6a15b]/30 space-y-2">
+                <h3 className="text-base font-bold text-[#fef08a] flex items-center gap-2">
+                  <span>🛡️</span>
+                  <span>Bağımsız Klan Statüsü</span>
+                </h3>
+                <p className="text-xs text-[#d1c5b0] leading-relaxed">
+                  Kalradya'da bir krallık meclisine katılıp politika belirlemek, orduları yönetmek veya tımar sahibi olmak için ya mevcut bir krallığa yemin etmeli ya da kendi egemen krallığınızı kurmalısınız.
+                </p>
+              </div>
+
+              {/* 3 İlerleme Kartı */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* 1. Paralı Askerlik */}
+                <div className="p-4 rounded bg-[#130f0c] border border-[#c6a15b]/25 flex flex-col justify-between space-y-3">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sm text-[#f8f0df]">1. Paralı Askerlik</span>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                          playerClanTier >= 1
+                            ? 'bg-[#14532d] text-[#86efac] border border-[#22c55e]/40'
+                            : 'bg-[#221c15] text-[#a89b84]'
+                        }`}
+                      >
+                        {playerClanTier >= 1 ? '✅ Şart Sağlandı' : '❌ Seviye 1 Gerekli'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#a89b84] leading-relaxed">
+                      Herhangi bir krallığın lorduyla konuşarak kılıcınızı kiralayın. Günlük altın maaşı ve savaş zaferi başına nüfuz kazanırsınız.
+                    </p>
+                  </div>
+                  <div className="pt-2 border-t border-[#c6a15b]/15 text-[11px] text-[#fbbf24] font-mono">
+                    Gereksinim: Klan Seviyesi 1+ (Mevcut: Sv.{playerClanTier})
+                  </div>
+                </div>
+
+                {/* 2. Vasal Derebeyi Olma */}
+                <div className="p-4 rounded bg-[#130f0c] border border-[#c6a15b]/25 flex flex-col justify-between space-y-3">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sm text-[#f8f0df]">2. Vasallık & Derebeylik</span>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                          playerClanTier >= 2
+                            ? 'bg-[#14532d] text-[#86efac] border border-[#22c55e]/40'
+                            : 'bg-[#221c15] text-[#a89b84]'
+                        }`}
+                      >
+                        {playerClanTier >= 2 ? '✅ Şart Sağlandı' : '❌ Seviye 2 Gerekli'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#a89b84] leading-relaxed">
+                      İlgili krallığın hükümdarıyla (Kral/İmparator/Sultan) bizzat konuşup sadakat yemini edin. Krallık divanında oy kullanma ve tımar alma hakkı elde edersiniz.
+                    </p>
+                  </div>
+                  <div className="pt-2 border-t border-[#c6a15b]/15 text-[11px] text-[#fbbf24] font-mono">
+                    Gereksinim: Klan Seviyesi 2+ (Mevcut: Sv.{playerClanTier})
+                  </div>
+                </div>
+
+                {/* 3. Kendi Krallığını Kurma */}
+                <div className="p-4 rounded bg-[#1f1810] border-2 border-[#f59e0b]/50 flex flex-col justify-between space-y-3 shadow-lg">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sm text-[#fef08a]">3. Kendi Krallığını Kur</span>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                          canFoundKingdom
+                            ? 'bg-[#14532d] text-[#86efac] border border-[#22c55e]/40 animate-pulse'
+                            : 'bg-[#221c15] text-[#a89b84]'
+                        }`}
+                      >
+                        {canFoundKingdom ? '👑 Hazır!' : '⏳ Bekliyor'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#d1c5b0] leading-relaxed">
+                      Kalradya'da bağımsız bir hükümdar olarak tahta çıkın. Kendi divanınızı toplayın, politikalar yürürlüğe koyun ve lordları vasalınız yapın.
+                    </p>
+                  </div>
+                  <div className="space-y-1 pt-2 border-t border-[#c6a15b]/20 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-[#a89b84]">Klan Seviyesi 3+:</span>
+                      <strong className={playerClanTier >= 3 ? 'text-[#4ade80]' : 'text-[#f87171]'}>
+                        {playerClanTier >= 3 ? `✅ Sv.${playerClanTier}` : `❌ Sv.${playerClanTier} / 3`}
+                      </strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[#a89b84]">1+ Şehir veya Kale:</span>
+                      <strong className={playerOwnedFortified.length >= 1 ? 'text-[#4ade80]' : 'text-[#f87171]'}>
+                        {playerOwnedFortified.length >= 1 ? `✅ ${playerOwnedFortified.length} Mülk` : '❌ 0 Mülk'}
+                      </strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[#a89b84]">100+ Kişilik Ordu:</span>
+                      <strong className={playerTotalTroops >= 100 ? 'text-[#4ade80]' : 'text-[#f87171]'}>
+                        {playerTotalTroops >= 100 ? `✅ ${playerTotalTroops} Asker` : `❌ ${playerTotalTroops} / 100`}
+                      </strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[#a89b84]">Bağımsız Statü:</span>
+                      <strong className="text-[#4ade80]">✅ Bağımsız</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Krallık İlan Etme Aksiyon Alanı */}
+              <div className="p-4 rounded bg-[#15110d] border border-[#c6a15b]/30 text-center space-y-3">
+                {canFoundKingdom ? (
+                  <div className="space-y-2">
+                    <div className="text-xs text-[#86efac] font-bold">
+                      Tüm krallık kurma şartları eksiksiz sağlandı! Kalradya tacını giyebilirsiniz.
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sound.playWarhorn();
+                        onUpdateCampaign({
+                          ...campaign,
+                          allegianceRole: 'RULER',
+                          playerFaction: 'player',
+                        });
+                        setFeedbackBanner(
+                          '👑 Tebrikler! Kalradya üzerinde kendi egemen krallığınızı ilan ettiniz. Sancak Divanı ve Devlet Meclisi açıldı!',
+                        );
+                      }}
+                      className="px-6 py-3 rounded bg-gradient-to-r from-[#b45309] via-[#d97706] to-[#b45309] hover:brightness-110 text-white font-display font-bold text-sm border-2 border-[#fde68a] shadow-xl inline-flex items-center gap-2 transition-all cursor-pointer"
+                    >
+                      <span>👑</span>
+                      <span>Kendi Bağımsız Krallığını İlan Et</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-xs text-[#a89b84] py-2">
+                    ⚠️ Krallık ilan edebilmek için klan seviyenizi 3'e çıkarmalı, bağımsız olarak en az 1 kale veya şehir fethetmeli ve ordunuzda 100 asker bulundurmalısınız.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ================================================================ */}
+          {/* DURUM B: 6 BÜYÜK DEVLET İNCELEME (BAĞIMSIZ KLAN)                   */}
+          {/* ================================================================ */}
+          {!isKingdomMember && independentSubTab === 'kingdoms' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              <div className="lg:col-span-4 space-y-2">
+                <div className="text-xs font-bold text-[#c6a15b] uppercase tracking-wider mb-2">
+                  Kalradya Krallıkları
+                </div>
+                <div className="space-y-1.5">
+                  {majorFactions.map((fac) => {
+                    const isSelected = selectedEnemyFaction === fac;
+                    const facInfo = FACTION_INFO[fac];
+                    const count = campaign.settlements.filter(
+                      (s) => s.faction === fac && s.type !== 'VILLAGE',
+                    ).length;
+                    return (
+                      <button
+                        key={fac}
+                        type="button"
+                        onClick={() => setSelectedEnemyFaction(fac)}
+                        className={`w-full p-3 rounded text-left transition-all flex items-center justify-between border ${
+                          isSelected
+                            ? 'bg-[#2a2217] border-[#fbbf24] shadow-md'
+                            : 'bg-[#18140f] border-[#c6a15b]/20 hover:bg-[#221c15]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span
+                            className="w-3.5 h-3.5 rounded-full border border-[#fde68a]/50 shrink-0"
+                            style={{ backgroundColor: facInfo.color }}
+                          />
+                          <span className="font-bold text-sm text-[#f8f0df]">{facInfo.name}</span>
+                        </div>
+                        <span className="text-xs text-[#fbbf24] font-mono">{count} Tımar</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="lg:col-span-8 space-y-4">
+                {(() => {
+                  const facInfo = FACTION_INFO[selectedEnemyFaction];
+                  const facLords = campaign.lords.filter((l) => l.faction === selectedEnemyFaction);
+                  const facSettlements = campaign.settlements.filter(
+                    (s) => s.faction === selectedEnemyFaction && s.type !== 'VILLAGE',
+                  );
+                  const facStrength = facLords.reduce((acc, l) => acc + l.armySize, 0);
+                  const ruler =
+                    facLords.find(
+                      (l) =>
+                        FACTION_INFO[l.faction]?.ruler === l.name ||
+                        l.title === 'Kral' ||
+                        l.title === 'İmparatoriçe' ||
+                        l.title === 'Sultan' ||
+                        l.title === 'Prens' ||
+                        l.title === 'Kağan',
+                    ) || facLords[0];
+                  return (
+                    <div className="p-5 rounded bg-[#17130e] border border-[#c6a15b]/30 space-y-4">
+                      <div className="flex items-center justify-between border-b border-[#c6a15b]/20 pb-3">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-8 h-10 border border-[#fde68a] shadow flex items-center justify-center font-bold text-white text-xs"
+                            style={{ backgroundColor: facInfo.color }}
+                          >
+                            🛡️
+                          </div>
+                          <div>
+                            <h3 className="text-lg font-bold text-[#fef08a]">{facInfo.name}</h3>
+                            <div className="text-xs text-[#a89b84]">
+                              Kültür: {facInfo.name}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right text-xs">
+                          <span className="text-[#a89b84]">Hükümdar:</span>{' '}
+                          <strong className="text-[#fde68a]">{ruler ? `${ruler.title} ${ruler.name}` : 'Kral'}</strong>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-3 text-center font-mono-tabular">
+                        <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/20">
+                          <span className="text-[10px] text-[#a89b84] block">Şehir & Kale</span>
+                          <span className="text-base font-bold text-[#fbbf24]">{facSettlements.length}</span>
+                        </div>
+                        <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/20">
+                          <span className="text-[10px] text-[#a89b84] block">Derebeyi Sayısı</span>
+                          <span className="text-base font-bold text-[#38bdf8]">{facLords.length}</span>
+                        </div>
+                        <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/20">
+                          <span className="text-[10px] text-[#a89b84] block">Askeri Güç</span>
+                          <span className="text-base font-bold text-[#34d399]">{facStrength}</span>
+                        </div>
+                      </div>
+
+                      <div className="p-3.5 rounded bg-[#120f0b] border border-[#c6a15b]/20 text-xs text-[#c7baa3] leading-relaxed">
+                        ℹ️ <strong>Bağımsız Klan Notu:</strong> Bağımsız bir klan olarak diğer krallıkların iç divanlarına, politika oylamalarına veya tımar dağıtımlarına müdahale edemezsiniz. Politika yürürlüğe koymak veya tımar dağıtmak için bir krallığa katılmalı veya kendi krallığınızı kurmalısınız.
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
+          {/* ================================================================ */}
           {/* SEKME 1: DİPLOMASİ (SAVAŞ & BARIŞ DURUMU)                        */}
           {/* ================================================================ */}
-          {activeTab === 'diplomacy' && (
+          {isKingdomMember && activeTab === 'diplomacy' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
               {/* Sol: Krallık Listesi */}
               <div className="lg:col-span-4 space-y-2">
@@ -598,20 +973,25 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
           )}
 
           {/* ================================================================ */}
-          {/* SEKME 2: TIMARLAR & KONSEY OYLAMASI                              */}
+          {/* SEKME 2: TIMARLAR & SAHİPLİK BİLGİSİ & KONSEY OYLAMASI             */}
           {/* ================================================================ */}
           {activeTab === 'fiefs' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
               {/* Sol: Krallık Tımarları Listesi */}
               <div className="lg:col-span-5 space-y-2">
                 <div className="text-xs font-bold text-[#c6a15b] uppercase tracking-wider mb-2">
-                  Krallığa Ait Şehirler ve Kaleler
+                  Krallığa Ait Şehirler ve Kaleler ({campaign.settlements.filter((s) => s.faction === currentKingdomFaction && s.type !== 'VILLAGE').length})
                 </div>
-                <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-[460px] overflow-y-auto pr-1">
                   {campaign.settlements
-                    .filter((s) => s.faction === 'player' && s.type !== 'VILLAGE')
+                    .filter((s) => s.faction === currentKingdomFaction && s.type !== 'VILLAGE')
                     .map((fief) => {
                       const isSelected = selectedElectionSettlementId === fief.id;
+                      const owner = getSettlementOwnerDetails(fief, campaign, macroState);
+                      const boundVillages = campaign.settlements.filter(
+                        (v) => v.type === 'VILLAGE' && v.boundSettlementId === fief.id,
+                      );
+
                       return (
                         <button
                           key={fief.id}
@@ -629,15 +1009,31 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
                               {fief.type === 'TOWN' ? 'ŞEHİR' : 'KALE'}
                             </span>
                           </div>
-                          <div className="text-xs text-[#a89b84] mt-1 flex items-center gap-3">
-                            <span>Refah: {fief.prosperity}</span>
+
+                          {/* Sahibi & Klan Bilgisi */}
+                          <div className="mt-1 text-xs text-[#e6d8c0] flex flex-wrap items-center gap-1.5">
+                            <span className="text-[#a89b84]">Sahibi:</span>
+                            <strong className="text-[#fde68a]">{owner.heroName}</strong>
+                            <span className="text-[#c6a15b]/50">·</span>
+                            <span className="text-[#38bdf8]">{owner.clanName}</span>
+                          </div>
+
+                          <div className="text-xs text-[#a89b84] mt-1 flex items-center gap-3 font-mono-tabular">
+                            <span>Refah: {Math.round(fief.prosperity)}</span>
                             <span>Garnizon: {fief.garrison}</span>
                             <span>Milis: {fief.militia ?? 0}</span>
                           </div>
+
+                          {boundVillages.length > 0 && (
+                            <div className="mt-1.5 pt-1.5 border-t border-[#c6a15b]/15 text-[10px] text-[#a89b84]">
+                              <span className="text-[#c6a15b]">Bağlı Köyler:</span>{' '}
+                              {boundVillages.map((v) => `${v.name} (${getVillagePrimaryProduction(v).shortLabel})`).join(', ')}
+                            </div>
+                          )}
                         </button>
                       );
                     })}
-                  {campaign.settlements.filter((s) => s.faction === 'player' && s.type !== 'VILLAGE').length === 0 && (
+                  {campaign.settlements.filter((s) => s.faction === currentKingdomFaction && s.type !== 'VILLAGE').length === 0 && (
                     <div className="p-4 rounded bg-[#18140f] border border-[#c6a15b]/20 text-xs text-[#a89b84] text-center">
                       Henüz krallığınıza bağlı bir Şehir veya Kale bulunmuyor. Bir kale fethederek ilk mülkünüzü edinin.
                     </div>
@@ -650,10 +1046,10 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
                 <div className="p-5 rounded bg-[#17130e] border border-[#c6a15b]/30 space-y-4">
                   <div className="border-b border-[#c6a15b]/20 pb-3">
                     <h3 className="text-base font-bold text-[#fef08a]">
-                      Tımar Oylaması: {currentElection.settlementName}
+                      Tımar Meclis Oylaması: {currentElection.settlementName}
                     </h3>
                     <p className="text-xs text-[#b5a890]">
-                      Bu mülkün hangi derebeyi hanedanına verileceğine krallık meclisinde karar verin
+                      Yeni fethedilen veya hükümdar tarafından meclise sunulan tımarların tahsisi konsey oylamasıyla yapılır.
                     </p>
                   </div>
 
@@ -684,37 +1080,59 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
                             <div className="flex items-center gap-1.5">
                               <button
                                 type="button"
+                                disabled={isMercenary}
                                 onClick={() => handleVoteOnFief(cand.clanId, 1)}
-                                className="px-2.5 py-1.5 rounded text-xs font-semibold bg-[#221c14] hover:bg-[#32271a] text-[#fbbf24] border border-[#c6a15b]/30 transition-colors"
+                                className={`px-2.5 py-1.5 rounded text-xs font-semibold ${
+                                  isMercenary
+                                    ? 'bg-[#18140f] text-[#6b7280] cursor-not-allowed border border-[#374151]'
+                                    : 'bg-[#221c14] hover:bg-[#32271a] text-[#fbbf24] border border-[#c6a15b]/30'
+                                } transition-colors`}
                               >
                                 20 Nüfuz
                               </button>
                               <button
                                 type="button"
+                                disabled={isMercenary}
                                 onClick={() => handleVoteOnFief(cand.clanId, 2)}
-                                className="px-2.5 py-1.5 rounded text-xs font-semibold bg-[#221c14] hover:bg-[#32271a] text-[#fbbf24] border border-[#c6a15b]/30 transition-colors"
+                                className={`px-2.5 py-1.5 rounded text-xs font-semibold ${
+                                  isMercenary
+                                    ? 'bg-[#18140f] text-[#6b7280] cursor-not-allowed border border-[#374151]'
+                                    : 'bg-[#221c14] hover:bg-[#32271a] text-[#fbbf24] border border-[#c6a15b]/30'
+                                } transition-colors`}
                               >
                                 60 Nüfuz
                               </button>
                               <button
                                 type="button"
+                                disabled={isMercenary}
                                 onClick={() => handleVoteOnFief(cand.clanId, 3)}
-                                className="px-2.5 py-1.5 rounded text-xs font-semibold bg-[#221c14] hover:bg-[#32271a] text-[#fbbf24] border border-[#c6a15b]/30 transition-colors"
+                                className={`px-2.5 py-1.5 rounded text-xs font-semibold ${
+                                  isMercenary
+                                    ? 'bg-[#18140f] text-[#6b7280] cursor-not-allowed border border-[#374151]'
+                                    : 'bg-[#221c14] hover:bg-[#32271a] text-[#fbbf24] border border-[#c6a15b]/30'
+                                } transition-colors`}
                               >
                                 140 Nüfuz
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => handleVoteOnFief(cand.clanId, 1, true)}
-                                className="px-2.5 py-1.5 rounded text-xs font-bold bg-[#9a3412] hover:bg-[#c2410c] text-white border border-[#fdba74]/50 transition-colors"
-                              >
-                                Fermanla Ver
-                              </button>
+                              {isRuler && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleVoteOnFief(cand.clanId, 1, true)}
+                                  className="px-2.5 py-1.5 rounded text-xs font-bold bg-[#9a3412] hover:bg-[#c2410c] text-white border border-[#fdba74]/50 transition-colors"
+                                  title="Hükümdar fermanıyla doğrudan bağışla"
+                                >
+                                  Fermanla Ver
+                                </button>
+                              )}
                             </div>
                           </div>
                         </div>
                       );
                     })}
+                  </div>
+
+                  <div className="p-3 rounded bg-[#120f0b] border border-[#c6a15b]/20 text-[11px] text-[#a89b84] leading-relaxed">
+                    🌾 <strong>Bannerlord Mülkiyet Kuralı:</strong> Köyler tek başına oylanamaz veya ayrı olarak devredilemez. Bağlı olduğu şehir veya kale hangi klana verilirse, o mülke bağlı tüm köyler de otomatik olarak aynı klanın yönetimine geçer.
                   </div>
                 </div>
               </div>
@@ -724,7 +1142,7 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
           {/* ================================================================ */}
           {/* SEKME 3: KRALLIK POLİTİKALARI (KANUNLAR)                         */}
           {/* ================================================================ */}
-          {activeTab === 'policies' && (
+          {isKingdomMember && activeTab === 'policies' && (
             <div className="space-y-4">
               <div className="border-b border-[#c6a15b]/20 pb-2">
                 <h3 className="text-base font-bold text-[#fef08a]">
@@ -798,7 +1216,7 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
           {/* ================================================================ */}
           {/* SEKME 4: KLANLAR VE DEREBEYLERİ                                  */}
           {/* ================================================================ */}
-          {activeTab === 'clans' && (
+          {isKingdomMember && activeTab === 'clans' && (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#c6a15b]/20 pb-3">
                 <div>

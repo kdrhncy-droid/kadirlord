@@ -15,6 +15,7 @@ import { factionHasHorseArchers } from './rules.ts';
 import type { LordAgent, Settlement, TroopRoster } from './rules.ts';
 import { getArmyEscortSlotPoint } from './armySystem.ts';
 import { getSiegeCampPoint, getSiegeCampSlotPoint } from './siegeMechanics.ts';
+import { evaluateLordVsBanditTactics } from './lordBanditAi.ts';
 
 export interface BannerlordSpeedBreakdown {
   baseSpeed: number;
@@ -213,12 +214,14 @@ export interface LordLiveRouteState {
   orderKey?: string;
   /** Gerçek zamanlı kovalama / kaçma durumu (harita rozetleri ve animasyon hızı için). */
   tacticalState?: 'PURSUE' | 'FLEE' | null;
-  /**
-   * Sıkışma bekçisi: rota noktası varken net ilerleme yoksa (kıyıda kayma
-   * salınımı vb.) geçen sim süresi; eşik aşılınca mevcut rota noktası
-   * atlanır, birlik sonsuza dek aynı yerde takılı kalmaz.
-   */
+  /** Sıkışma bekçisi */
   stuckWatch?: { x: number; z: number; elapsed: number };
+  /** Hedef varlık kimliği (kovalanan haydut / kaçılan lord ID'si) */
+  targetEntityId?: string | null;
+  /** Yerleşkede asker toplarken hareketsiz bekleme sayacı (saniye) */
+  recruitingTimer?: number;
+  /** Hareketsiz bekleme durumu */
+  isWaiting?: boolean;
 }
 
 /**
@@ -233,6 +236,21 @@ export function stepLordCampaignRoute(
 ): void {
   if (timeScale <= 0 || dt <= 0) return;
 
+  // Hareketsiz bekleme (asker toplarken veya mola verirken fırıl fırıl dönmeme!)
+  if (route.isWaiting) {
+    if (route.recruitingTimer !== undefined) {
+      route.recruitingTimer -= dt * timeScale;
+      if (route.recruitingTimer <= 0) {
+        route.isWaiting = false;
+        route.recruitingTimer = undefined;
+        route.targetSettlementId = null;
+        route.waypoints = [];
+        route.currentAction = 'Devriyeye çıkıyor';
+      }
+    }
+    return;
+  }
+
   const intel = getLordDetailedIntel(
     lord,
     route.x,
@@ -243,6 +261,23 @@ export function stepLordCampaignRoute(
 
   // Pick a new patrol destination settlement if waypoints are empty (never override an active SIEGE camp!)
   if (route.waypoints.length === 0 && lord.order?.kind !== 'SIEGE') {
+    // Hedef köye varış: hemen başka köye koşmak yerine durup asker topla!
+    const arrivedVillage = settlements.find(
+      (s) => s.id === route.targetSettlementId && s.type === 'VILLAGE',
+    );
+    if (
+      arrivedVillage &&
+      lord.faction !== 'bandits' &&
+      !route.isWaiting &&
+      route.recruitingTimer === undefined
+    ) {
+      route.isWaiting = true;
+      route.recruitingTimer = 8.0;
+      route.waypoints = [];
+      route.currentAction = `${arrivedVillage.name} köyünden asker topluyor`;
+      return;
+    }
+
     const candidateSettlements = settlements.filter(
       (s) =>
         (lord.faction === 'bandits' ? s.type === 'VILLAGE' : s.faction === lord.faction) &&
@@ -539,6 +574,10 @@ export function applyTacticalPlayerReactionToRoute(params: {
   siegeDefenderStrength?: number;
   totalBesiegerStrength?: number;
   routeOptions?: ApplyLordOrderOptions;
+  allLords?: LordAgent[];
+  lordPositions?: Map<string, { x: number; z: number }>;
+  cooldowns?: Map<string, number>;
+  nowSec?: number;
 }): HostileReactionKind {
   const {
     lord,
@@ -552,6 +591,10 @@ export function applyTacticalPlayerReactionToRoute(params: {
     siegeDefenderStrength = 0,
     totalBesiegerStrength,
     routeOptions,
+    allLords,
+    lordPositions,
+    cooldowns,
+    nowSec = 0,
   } = params;
 
   // Karşılaşma dokunulmazlığı (cooldown) aktifse düşman oyuncudan uzaklaşır
@@ -585,6 +628,7 @@ export function applyTacticalPlayerReactionToRoute(params: {
 
   if (reaction.kind === 'PURSUE_PLAYER' && reaction.targetPos) {
     route.tacticalState = 'PURSUE';
+    route.targetEntityId = 'player';
     route.currentAction = reaction.actionLabel;
     // Yakın takipte (<= 22m) doğrudan oyuncunun canlı konumuna yürü (16m ızgaraya takılma!)
     if (reaction.distance <= 22) {
@@ -604,6 +648,7 @@ export function applyTacticalPlayerReactionToRoute(params: {
 
   if (reaction.kind === 'FLEE_FROM_PLAYER' && reaction.targetPos) {
     route.tacticalState = 'FLEE';
+    route.targetEntityId = 'player';
     route.currentAction = reaction.actionLabel;
     const qx = Math.round(reaction.targetPos.x / 4) * 4;
     const qz = Math.round(reaction.targetPos.z / 4) * 4;
@@ -618,10 +663,54 @@ export function applyTacticalPlayerReactionToRoute(params: {
     return 'FLEE_FROM_PLAYER';
   }
 
+  // II. AI vs AI: Lordlar haydutları kovalar, haydutlar güçlü lordlardan kaçar!
+  if (allLords && lordPositions) {
+    const banditTactic = evaluateLordVsBanditTactics({
+      lord,
+      route,
+      allLords,
+      lordPositions,
+      cooldowns,
+      nowSec,
+    });
+    if (banditTactic.action === 'PURSUE' && banditTactic.targetPos) {
+      route.tacticalState = 'PURSUE';
+      route.targetEntityId = banditTactic.targetLordId;
+      route.currentAction = banditTactic.actionLabel;
+      const dist = Math.hypot(route.x - banditTactic.targetPos.x, route.z - banditTactic.targetPos.z);
+      if (dist <= 22) {
+        route.orderKey = `pursue-bandit-dir:${banditTactic.targetLordId}:${Math.round(banditTactic.targetPos.x)}:${Math.round(banditTactic.targetPos.z)}`;
+        route.waypoints = [{ x: banditTactic.targetPos.x, z: banditTactic.targetPos.z }];
+      } else {
+        const key = `pursue-bandit:${banditTactic.targetLordId}:${Math.round(banditTactic.targetPos.x / 4)}:${Math.round(banditTactic.targetPos.z / 4)}`;
+        if (route.orderKey !== key || route.waypoints.length === 0) {
+          route.orderKey = key;
+          route.waypoints = computeLandPath(route.x, route.z, banditTactic.targetPos.x, banditTactic.targetPos.z);
+        }
+      }
+      return 'PURSUE_PLAYER'; // kovalama hız çarpanı için
+    }
+    if (banditTactic.action === 'FLEE' && banditTactic.targetPos) {
+      route.tacticalState = 'FLEE';
+      route.targetEntityId = banditTactic.targetLordId;
+      route.currentAction = banditTactic.actionLabel;
+      const key = `flee-lord:${banditTactic.targetLordId}:${Math.round(banditTactic.targetPos.x / 4)}:${Math.round(banditTactic.targetPos.z / 4)}`;
+      if (route.orderKey !== key || route.waypoints.length === 0) {
+        route.orderKey = key;
+        route.waypoints = computeLandPath(route.x, route.z, banditTactic.targetPos.x, banditTactic.targetPos.z);
+        if (route.waypoints.length === 0) {
+          route.waypoints = [{ x: banditTactic.targetPos.x, z: banditTactic.targetPos.z }];
+        }
+      }
+      return 'FLEE_FROM_PLAYER';
+    }
+  }
+
   // Normal devriye veya stratejik emir
   if (route.tacticalState) {
     route.tacticalState = null;
     route.orderKey = undefined;
+    route.targetEntityId = null;
   }
   applyLordOrderToRoute(lord, route, settlements, { x: playerX, z: playerZ }, routeOptions);
   return 'PATROL';

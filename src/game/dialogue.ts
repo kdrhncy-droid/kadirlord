@@ -18,7 +18,7 @@ import {
   calculateSacrificeEscape,
   classifyEncounterScenario,
 } from './encounter.ts';
-import { deriveClan, deriveOccupation, nearestSettlement } from './heroes.ts';
+import { deriveClan, deriveOccupation, deriveTraits, nearestSettlement } from './heroes.ts';
 import type { Quest } from './quests.ts';
 import {
   type CampaignState,
@@ -30,6 +30,105 @@ import {
 } from './rules.ts';
 
 export type DialogueNodeId = string;
+
+export type LordPersonalityArchetype = 'HONORABLE' | 'CRUEL' | 'CUNNING' | 'DARING' | 'CALM';
+
+export type LordSituationalState =
+  | 'STARVING'
+  | 'WOUNDED_SURVIVORS'
+  | 'BESIEGING'
+  | 'CARRYING_PRISONERS'
+  | 'NORMAL';
+
+/**
+ * Lordun kişilik metni, özellikleri (traits) ve fraksiyonuna göre 5 temel arketipten birini türetir:
+ *  - HONORABLE (Onurlu): Feodal kanunlara, şerefe ve adalete bağlı.
+ *  - CRUEL (Zalim): Acımasız, yağmacı, kaba ve kandan beslenen.
+ *  - CUNNING (Kurnaz): Hesapçı, pazarlıkçı, çıkarcı ve sabırlı.
+ *  - DARING (Cüretkâr): Gözü pek, savaşa susamış, atılgan ve meydan okuyan.
+ *  - CALM (Sakin/Bilge): Soğukkanlı, diplomatik, itidalli ve hikmetli.
+ */
+export function deriveLordArchetype(lord: LordAgent): LordPersonalityArchetype {
+  const p = (lord.personality || '').toLowerCase();
+
+  // Haydutlar ve çete liderleri daima zalim / acımasız arketiptir
+  if (lord.faction === 'bandits') return 'CRUEL';
+
+  // 1. Lordun tanımlı kişilik metni anahtar kelimeleri
+  if (p.includes('acımasız') || p.includes('yağma') || p.includes('kanla') || p.includes('kelle')) {
+    return 'CRUEL';
+  }
+  if (
+    p.includes('onurlu') ||
+    p.includes('senato') ||
+    p.includes('yasası') ||
+    p.includes('meşruiyet') ||
+    p.includes('sadık') ||
+    p.includes('adalet')
+  ) {
+    return 'HONORABLE';
+  }
+  if (
+    p.includes('kurnaz') ||
+    p.includes('hesapçı') ||
+    p.includes('müzakere') ||
+    p.includes('hırslı') ||
+    p.includes('pragmatist')
+  ) {
+    return 'CUNNING';
+  }
+  if (
+    p.includes('atılgan') ||
+    p.includes('cesur') ||
+    p.includes('hücum') ||
+    p.includes('yayla') ||
+    p.includes('sert mizaçlı') ||
+    p.includes('bağımsız')
+  ) {
+    return 'DARING';
+  }
+  if (
+    p.includes('bilge') ||
+    p.includes('diplomatik') ||
+    p.includes('soğukkanlı') ||
+    p.includes('cömert') ||
+    p.includes('denge') ||
+    p.includes('taktikçi')
+  ) {
+    return 'CALM';
+  }
+
+  // 2. Trait bazlı deterministik türetme (mercy, honor, valor, generosity)
+  const traits = deriveTraits(lord.id);
+  if (traits.mercy <= -1 && traits.honor <= 0) return 'CRUEL';
+  if (traits.honor >= 1) return 'HONORABLE';
+  if (traits.valor >= 1) return 'DARING';
+  if (traits.generosity >= 1 || traits.mercy >= 1) return 'CALM';
+  return 'CUNNING';
+}
+
+/**
+ * Lordun haritadaki anlık durumunu (açlık, yaralı, kuşatma, esir kafilesi) tespit eder.
+ */
+export function detectLordSituationalState(lord: LordAgent): LordSituationalState {
+  // Açlık veya aşırı düşük moral
+  if ((lord.foodDays !== undefined && lord.foodDays <= 2) || (lord.morale !== undefined && lord.morale < 35)) {
+    return 'STARVING';
+  }
+  // Ağır yaralı veya savaştan kaçan dağınık birlik
+  if ((lord.wounded !== undefined && lord.wounded >= 8) || lord.armySize < 12) {
+    return 'WOUNDED_SURVIVORS';
+  }
+  // Aktif kuşatma emri veya eylemi
+  if (lord.order?.kind === 'SIEGE' || lord.currentAction?.toLowerCase().includes('kuşat')) {
+    return 'BESIEGING';
+  }
+  // Yüklü miktarda esir taşıma
+  if (lord.prisoners !== undefined && lord.prisoners >= 6) {
+    return 'CARRYING_PRISONERS';
+  }
+  return 'NORMAL';
+}
 
 export interface DialogueOption {
   id: string;
@@ -115,13 +214,6 @@ export interface DialogueContext {
 
 /* ─────────────────────────── yardımcılar ─────────────────────────── */
 
-const relationTone = (relation: number): string => {
-  if (relation >= 40) return 'Yüzünde sıcak bir gülümseme var.';
-  if (relation >= 10) return 'Seni tanıdık biri gibi selamlıyor.';
-  if (relation > -10) return 'Sana ölçülü bir baş selamı veriyor.';
-  if (relation > -40) return 'Bakışları soğuk; seni pek sevmiyor.';
-  return 'Seni görünce eli kılıcına gidiyor.';
-};
 
 const formatGold = (n: number) => `${n} dinar`;
 
@@ -195,6 +287,7 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
   const name = ctx.lord?.name ?? ctx.settlement?.name ?? 'Yabancı';
   const title = ctx.lord?.title ?? (ctx.settlement ? 'Yerleşim Reisi' : 'Muhatap');
   const relation = ctx.relation;
+  const playerName = ctx.campaign.playerName || 'Komutan';
 
   const nodes: Record<DialogueNodeId, DialogueNode> = {};
   const isBandit = ctx.lord?.faction === 'bandits';
@@ -372,19 +465,76 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
       rootOptions.push({ id: 'war-leave', text: 'Vedalaş.', effect: { kind: 'CLOSE' } });
     }
 
+    const warArchetype = ctx.lord ? deriveLordArchetype(ctx.lord) : 'DARING';
+    let hostileText = '';
+    if (lordCaughtPlayer) {
+      switch (warArchetype) {
+        case 'HONORABLE':
+          hostileText = `${name}: "Savaşın kuralları açıktır ${playerName}. Sancağım adına teslim olmanı talep ediyorum; sana ve maiyetine onurlu bir esir gibi davranılacaktır. Ya kılıcını teslim et ya da dövüş."`;
+          break;
+        case 'CRUEL':
+          hostileText = `${name}: "Sonunda seni kıstırdım ${playerName}! Kaçacak deliğin kalmadı; ya kılıcını çekersin ya da adamlarını kurtlara yem edip kelleni eyerime asarım!"`;
+          break;
+        case 'CUNNING':
+          hostileText = `${name}: "Taktiksel bir hata yaptın ${playerName}. Seni burada kıstırmak bana hem altın hem itibar kazandıracak. Ya kılıcını çekersin ya da pazarlık masasına oturursun."`;
+          break;
+        case 'DARING':
+          hostileText = `${name}: "Sonunda seni kıstırdım! İşte tam aradığım er meydanı; ya kılıcını çekersin ya da bu ovada esirim olursun!"`;
+          break;
+        case 'CALM':
+          hostileText = `${name}: "Kader seni bu ovaya getirdi ${playerName}. Gereksiz kan dökülmesini istemem; ya kılıcını çekersin ya da teslim olursun."`;
+          break;
+      }
+    } else {
+      switch (warArchetype) {
+        case 'HONORABLE':
+          hostileText = `${name}: "Geri adım atmayacağız ${playerName}. Savaş meşru bir meydan okumadır; ya kılıcını çekersin ya da onurumuzdan çekinip buradan gidersin."`;
+          break;
+        case 'CRUEL':
+          hostileText = `${name}: "Beni korkutabileceğini mi sandın? Ya kılıcını çekersin ya da cesetlerini çiğnemeden buradan tek bir adım atmam!"`;
+          break;
+        case 'CUNNING':
+          hostileText = `${name}: "Sayıca üstün olabilirsin ama zafer sadece sayıyla kazanılmaz. Ya kılıcını çekersin ya da bedelini ağır ödeyeceğin bu sefere son verirsin."`;
+          break;
+        case 'DARING':
+          hostileText = `${name}: "Sayıca üstün olabilirsin ama korkacağımızı sanma! Ya kılıcını çekersin ya da er meydanından çekip gidersin!"`;
+          break;
+        case 'CALM':
+          hostileText = `${name}: "Sakin ol ${playerName}. Gurur insanı felakete sürükler; ya kılıcını çekersin ya da kan dökülmeden buradan gidersin."`;
+          break;
+      }
+    }
+
     nodes.root = {
       id: 'root',
       speaker: 'NPC',
-      text: lordCaughtPlayer
-        ? `${name}: "Sonunda seni kıstırdım! Sancaklarımız aynı ovada; ya kılıcını çekersin ya da esirim olursun!"`
-        : `${name}: "Sayıca üstün olabilirsin ama onurumuzu çiğnetmeyiz! Ya kılıcını çekersin ya da buradan gidersin."`,
+      text: hostileText,
       options: rootOptions,
     };
+
+    let parleyOkText = '';
+    switch (warArchetype) {
+      case 'HONORABLE':
+        parleyOkText = `${name}: "Sözlerinde asalet ve samimiyet var ${playerName}. Bugünlük kılıç kınında kalsın, sancağına hürmet ederim."`;
+        break;
+      case 'CRUEL':
+        parleyOkText = `${name}: "Bugün şanslı günündesin. Ama bir dahaki sefere kılıcım boğazına kadar girecek, bugünlük kılıç kınında kalsın, kaybol gözümün önünden!"`;
+        break;
+      case 'CUNNING':
+        parleyOkText = `${name}: "Mantıklı bir uzlaşma. İki taraf için de kan dökmekten daha karlı bir karar. Bugünlük kılıç kınında kalsın, yoluna devam et."`;
+        break;
+      case 'DARING':
+        parleyOkText = `${name}: "Cesaretin ve sözlerin takdirimi kazandı. Bugünlük kılıç kınında kalsın ama bir daha karşıma çıkarsan affetmem!"`;
+        break;
+      case 'CALM':
+        parleyOkText = `${name}: "Akıl ve itidal galip geldi. Kalradya yeterince kana doydu; bugünlük kılıç kınında kalsın."`;
+        break;
+    }
 
     nodes['parley-ok'] = {
       id: 'parley-ok',
       speaker: 'NPC',
-      text: `${name}: "Sözlerinde samimiyet var. Bugünlük kılıç kınında kalsın."`,
+      text: parleyOkText,
       options: [
         {
           id: 'parley-end',
@@ -394,10 +544,30 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
       ],
       end: true,
     };
+
+    let parleyFailText = '';
+    switch (warArchetype) {
+      case 'HONORABLE':
+        parleyFailText = `${name}: "Onurumuz boş sözlerle lekelenemez. Kalradya'da meşruiyet çelikle yazılır!"`;
+        break;
+      case 'CRUEL':
+        parleyFailText = `${name}: "Yalvarmaların beni yumuşatmaz! Boş sözler. Kalradya'da barış, çelikle yazılır!"`;
+        break;
+      case 'CUNNING':
+        parleyFailText = `${name}: "Teklifin değersiz ve boş. Çıkarlarım seninle savaşmamı gerektiriyor; barış değil çelik konuşsun!"`;
+        break;
+      case 'DARING':
+        parleyFailText = `${name}: "Laf kalabalığını bırak! Çeliğin sesini dinleme vakti geldi!"`;
+        break;
+      case 'CALM':
+        parleyFailText = `${name}: "Uzlaşma zemini kalmadı. Maalesef bu meseleyi yalnızca meydan ve çelik çözecek."`;
+        break;
+    }
+
     nodes['parley-fail'] = {
       id: 'parley-fail',
       speaker: 'NPC',
-      text: `${name}: "Boş sözler. Kalradya'da barış, çelikle yazılır!"`,
+      text: parleyFailText,
       options: forced
         ? [
             {
@@ -425,7 +595,6 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
   const isLady = occupation === 'LADY';
   const factionId = ctx.lord?.faction ?? ctx.settlement?.faction ?? 'empire';
   const factionName = FACTION_INFO[factionId]?.name ?? 'Kalradya';
-  const playerName = ctx.campaign.playerName || 'Komutan';
   const lordIdx = ctx.lord
     ? Math.max(0, ctx.campaign.lords.findIndex((l) => l.id === ctx.lord!.id))
     : 0;
@@ -435,13 +604,76 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
     ? nearestSettlement(ctx.campaign.settlements, ctx.lord.x, ctx.lord.z)
     : ctx.settlement ?? ctx.campaign.settlements[0];
 
-  const greetingLine = isRuler
-    ? `${name}: "${factionName} tahtı ve sancağı adına seni dinliyorum, ${playerName}. Huzuruma ne getirdin?"\n${relationTone(relation)}`
-    : isLady
-      ? `${name}: "${clanInfo.clanName} adına sizi selamlıyorum, ${playerName}. Söyleyin, size nasıl yardımcı olabilirim?"\n${relationTone(relation)}`
-      : ctx.lord
-        ? `${name}: "Yolun açık olsun ${playerName}. ${factionName} sınırlarında sancağını görmek güzel. Ne konuşmak istiyorsun?"\n${relationTone(relation)}`
-        : `${name}: "Sancak senin, yol senin. Ne getirdin?"\n${relationTone(relation)}`;
+  const archetype = ctx.lord ? deriveLordArchetype(ctx.lord) : 'CALM';
+  const situational = ctx.lord ? detectLordSituationalState(ctx.lord) : 'NORMAL';
+
+  let greetingLine = '';
+  // 1. ÖNCELİK: Durumsal Kriz / Olaylar (Açlık, Yaralılar, Kuşatma, Esir Taşıma)
+  if (situational === 'STARVING') {
+    greetingLine = `${name}: "Yolun açık olsun ${playerName}... Fakat adamlarım günlerdir açlıktan kırılıyor. Varsa satılık erzak takas edelim, yoksa boş lafa takatim yok."`;
+  } else if (situational === 'WOUNDED_SURVIVORS') {
+    greetingLine = `${name}: "Zorlu bir cenkten yeni çıktık ${playerName}. Sargılarımız henüz kurumadı... Bize yardım mı getirdin yoksa yeni bir dert mi?"`;
+  } else if (situational === 'BESIEGING') {
+    greetingLine = `${name}: "Gözün surlarda olsun ${playerName}! Taşlar dövülüyor, surlar çatlıyor. Kuşatma hattındayken dikkatimizi dağıtma, ne söyleyeceksen çabuk söyle."`;
+  } else if (situational === 'CARRYING_PRISONERS') {
+    greetingLine = `${name}: "Gördüğün gibi zincirlerimiz dolu ${playerName}. Son zaferimizin ganimeti ve esirleri bunlar. Ne konuşmak istiyordun?"`;
+  } else if (isRuler) {
+    switch (archetype) {
+      case 'HONORABLE':
+        greetingLine = `${name}: "${factionName} tahtı ve kadim kanunlarımız adına seni dinliyorum, ${playerName}. Huzuruma ne getirdin?"`;
+        break;
+      case 'CRUEL':
+        greetingLine = `${name}: "${factionName} hükümdarının huzurundasın ${playerName}. Boş laflarla sabrımı sınama, ne istiyorsan açık söyle!"`;
+        break;
+      case 'CUNNING':
+        greetingLine = `${name}: "Hoş geldin ${playerName}. ${factionName} divanında her zaman akıllı stratejilere ve karlı tekliflere yer vardır. Dinliyorum."`;
+        break;
+      case 'DARING':
+        greetingLine = `${name}: "Gözü pek komutan ${playerName}! ${factionName} sancağı senin gibi cesur savaşçıları her daim takdir eder. Ne haberler getirdin?"`;
+        break;
+      case 'CALM':
+        greetingLine = `${name}: "${factionName} tahtı ve sancağı adına seni dinliyorum, ${playerName}. Huzuruma ne getirdin?"`;
+        break;
+    }
+  } else if (isLady) {
+    switch (archetype) {
+      case 'HONORABLE':
+        greetingLine = `${name}: "${clanInfo.clanName} adına sizi selamlıyorum, ${playerName}. Şerefli sancağınıza nasıl yardımcı olabilirim?"`;
+        break;
+      case 'CRUEL':
+        greetingLine = `${name}: "Vaktim değerlidir ${playerName}. Söyleyeceğini çabuk söyle de işime döneyim."`;
+        break;
+      case 'CUNNING':
+        greetingLine = `${name}: "Sizi yeniden görmek ne güzel ${playerName}. Saray koridorlarında fısıldanan haberlerden mi bahsedeceğiz?"`;
+        break;
+      case 'DARING':
+        greetingLine = `${name}: "Yine meydanlardan yeni dönmüş gibisin ${playerName}! Ne maceran var anlat bakalım."`;
+        break;
+      case 'CALM':
+        greetingLine = `${name}: "${clanInfo.clanName} hanesi adına esenlik dilerim ${playerName}. Söyleyin, size nasıl yardımcı olabilirim?"`;
+        break;
+    }
+  } else if (ctx.lord) {
+    switch (archetype) {
+      case 'HONORABLE':
+        greetingLine = `${name}: "Onurla selamlarım ${playerName}. ${factionName} sınırlarında dürüst bir sancağı görmek güzel. Ne konuşmak istiyorsun?"`;
+        break;
+      case 'CRUEL':
+        greetingLine = `${name}: "Yoluma çıkıp durma ${playerName}! Kılıcım kınında zor duruyor zaten, ne zırvalayacaksan çabuk de!"`;
+        break;
+      case 'CUNNING':
+        greetingLine = `${name}: "Selam ${playerName}. Kalradya'da her karşılaşma yeni bir fırsat doğurur. Ne teklif edeceksin?"`;
+        break;
+      case 'DARING':
+        greetingLine = `${name}: "Yolun açık olsun ${playerName}! ${factionName} sınırlarında kılıcını ve sancağını görmek güzel. Ne konuşmak istiyorsun?"`;
+        break;
+      case 'CALM':
+        greetingLine = `${name}: "Yolun açık olsun ${playerName}. ${factionName} sınırlarında sancağını görmek güzel. Ne konuşmak istiyorsun?"`;
+        break;
+    }
+  } else {
+    greetingLine = `${name}: "Sancak senin, yol senin. Ne getirdin?"`;
+  }
 
   nodes.root = {
     id: 'root',
@@ -455,11 +687,62 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
   /* 0. İlk Tanışma Akışı (Yalnızca daha önce tanışılmamış Lord/Kral/Leydi için) */
   const isFirstMeeting = Boolean(ctx.lord && ctx.hasMet === false);
   if (isFirstMeeting && ctx.lord) {
-    const introText = isRuler
-      ? `${name}: "Sancağını daha önce divanımda görmedim yabancı. Ben ${factionName} hükümdarı ${title} ${name}. Sen kimsin ve topraklarımda ne arıyorsun?"`
-      : isLady
-        ? `${name}: "Daha önce tanıştırıldığımızı sanmıyorum. Ben ${clanInfo.clanName} mensubu ${title} ${name}. Sizin adınız ve sancağınız nedir?"`
-        : `${name}: "Dur bakalım yolcu, simanı daha önce bu sınır boylarında görmedim. Ben ${clanInfo.clanName}'ndan ${title} ${name}. Sen kimsin?"`;
+    let introText = '';
+    if (isRuler) {
+      switch (archetype) {
+        case 'HONORABLE':
+          introText = `${name}: "Sancağını daha önce divanımda görmedim yolcu. Ben ${factionName} hükümdarı ${title} ${name}. Tahtımın adaleti ve sancağımın koruması altında ne arıyorsun?"`;
+          break;
+        case 'CRUEL':
+          introText = `${name}: "Gözlerini üzerime dikmişsin yabancı. Ben ${factionName} hükümdarı ${title} ${name}. Topraklarımda izinsiz nefes alanların sonu zindandır, cüretin nereden geliyor?"`;
+          break;
+        case 'CUNNING':
+          introText = `${name}: "Yeni bir sima... Ben ${factionName} hükümdarı ${title} ${name}. Bu topraklara krallığıma fayda mı getireceksin yoksa entrika mı? Seni dinliyorum."`;
+          break;
+        case 'DARING':
+          introText = `${name}: "Karşımda dimdik duran bir savaşçı görmek güzel! Ben ${factionName} hükümdarı ${title} ${name}. Adın ne, hangi cüretle sancağımın önüne çıktın?"`;
+          break;
+        case 'CALM':
+          introText = `${name}: "Selam sana yolcu. Ben ${factionName} hükümdarı ${title} ${name}. Barış ve hikmetle gelen her yolcu divanımızda yer bulur. Kimsin?"`;
+          break;
+      }
+    } else if (isLady) {
+      switch (archetype) {
+        case 'HONORABLE':
+          introText = `${name}: "Daha önce tanıştırıldığımızı sanmıyorum. Ben ${clanInfo.clanName} mensubu ${title} ${name}. Şerefli niyetlerle geldiğinizi umarım; adınız nedir?"`;
+          break;
+        case 'CRUEL':
+          introText = `${name}: "Korumalarım seni nasıl içeri aldı? Ben ${clanInfo.clanName}'ndan ${title} ${name}. Vaktimi çalmadan kim olduğunu söyle!"`;
+          break;
+        case 'CUNNING':
+          introText = `${name}: "Merak uyandırıcı bir yabancı... Ben ${clanInfo.clanName} mensubu ${title} ${name}. Kalradya'da adını duyurmak isteyenlerden misiniz? Kimsiniz?"`;
+          break;
+        case 'DARING':
+          introText = `${name}: "Sıradan bir yolcuya benzemiyorsun. Ben ${clanInfo.clanName}'ndan ${title} ${name}! Sancağını ve adını söyle bakalım."`;
+          break;
+        case 'CALM':
+          introText = `${name}: "Esenlikler olsun. Ben ${clanInfo.clanName} mensubu ${title} ${name}. Huzurlu bir günde yabancı bir konukla tanışmak hoş. Kendinizi tanıtır mısınız?"`;
+          break;
+      }
+    } else {
+      switch (archetype) {
+        case 'HONORABLE':
+          introText = `${name}: "Dur bakalım yolcu, simanı bu sınır boylarında görmedim. Ben ${clanInfo.clanName}'ndan ${title} ${name}. Şerefli bir dosta mı yoksa bir düşmana mı bakıyorum?"`;
+          break;
+        case 'CRUEL':
+          introText = `${name}: "Kılıcımın menziline fazla yaklaştın yabancı! Ben ${clanInfo.clanName}'ndan ${title} ${name}. Kim olduğunu çabuk söyle, yoksa adamlarım söyletir!"`;
+          break;
+        case 'CUNNING':
+          introText = `${name}: "Yollarımız kesişti yolcu. Ben ${clanInfo.clanName}'ndan ${title} ${name}. Kalradya'da akıllı adamlar dost edinir; sen kimsin?"`;
+          break;
+        case 'DARING':
+          introText = `${name}: "Atının üstünde dimdik duran bir savaşçı! Ben ${clanInfo.clanName}'ndan ${title} ${name}. Kimlerdensin, adını bahşet!"`;
+          break;
+        case 'CALM':
+          introText = `${name}: "Selam yolcu. Ben ${clanInfo.clanName}'ndan ${title} ${name}. Bu diyarlarda güven zor bulunur. Kim olduğunu lütfeder misin?"`;
+          break;
+      }
+    }
 
     nodes['intro-root'] = {
       id: 'intro-root',
@@ -694,10 +977,29 @@ export function buildDialogue(ctx: DialogueContext): DialogueGraph {
       },
     );
 
+    let discussMenuText = '';
+    switch (archetype) {
+      case 'HONORABLE':
+        discussMenuText = `${name}: "Devletin bekası ve şerefimiz adına ne müzakere etmek istersin ${playerName}?"`;
+        break;
+      case 'CRUEL':
+        discussMenuText = `${name}: "Lafı dolandırma ${playerName}. İki çift lafın varsa söyle, yoksa önümden çekil."`;
+        break;
+      case 'CUNNING':
+        discussMenuText = `${name}: "Aklında bir plan var gibi duruyor ${playerName}. İki tarafın da karlı çıkacağı teklifleri severim, anlat."`;
+        break;
+      case 'DARING':
+        discussMenuText = `${name}: "Kılıç çekmeden önce konuşalım bakalım ${playerName}. Masaya ne koyuyorsun?"`;
+        break;
+      case 'CALM':
+        discussMenuText = `${name}: "Seni dinliyorum ${playerName}. Aklındaki mesele nedir?"`;
+        break;
+    }
+
     nodes['discuss-menu'] = {
       id: 'discuss-menu',
       speaker: 'NPC',
-      text: `${name}: "Seni dinliyorum ${playerName}. Aklındaki mesele nedir?"`,
+      text: discussMenuText,
       options: discussOptions,
     };
 

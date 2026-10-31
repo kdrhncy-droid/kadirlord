@@ -98,7 +98,19 @@ export type BuildingProjectId =
 
 export type SettlementDailyDefault = 'FESTIVAL' | 'IRRIGATION' | 'MILITIA' | 'HOUSING';
 
-export type WorkshopTypeId = 'NONE' | 'BREWERY' | 'SMITHY' | 'OLIVE_PRESS' | 'WEAVERY';
+export type WorkshopTypeId =
+  | 'NONE'
+  | 'BREWERY'
+  | 'WINE_PRESS'
+  | 'OLIVE_PRESS'
+  | 'POTTERY_SHOP'
+  | 'WEAVERY'
+  | 'LINEN_WEAVERY'
+  | 'WOOL_WEAVERY'
+  | 'TANNERY'
+  | 'WOOD_WORKSHOP'
+  | 'SMITHY'
+  | 'SILVERSMITH';
 
 export type SiegeEngineType =
   | 'TREBUCHET'
@@ -290,6 +302,16 @@ export interface PrisonerStack {
   readinessProgress: number;
 }
 
+export interface TownWorkshop {
+  id: string;
+  type: WorkshopTypeId;
+  owner: 'player' | 'notable';
+  notableName?: string;
+  customName?: string;
+  initialCost?: number;
+  lastDailyProfit?: number;
+}
+
 export interface Settlement {
   id: string;
   name: string;
@@ -304,6 +326,11 @@ export interface Settlement {
   description: string;
   boundSettlementId?: string;
   boundSettlementName?: string;
+  /** Bannerlord Mülk Sahipliği: Yönetici klan ve mülk sahibi lord */
+  ownerClanId?: string;
+  ownerClanName?: string;
+  ownerHeroId?: string;
+  ownerHeroName?: string;
   militia?: number;
   loyalty?: number;
   security?: number;
@@ -316,6 +343,8 @@ export interface Settlement {
   workshopType?: WorkshopTypeId;
   /** Atölyenin sahibi. Oyuncu atölyesi her gün gelir getirir (Faz B0). */
   workshopOwner?: 'player';
+  /** Çoklu atölye yuvaları (Bannerlord kuralı: Şehir başına 3-4 atölye yuvası) */
+  workshops?: TownWorkshop[];
   siegeEngines?: SiegeEngineType[];
   reserveEngines?: SiegeEngineType[];
   siegeEngineHp?: number[];
@@ -486,6 +515,8 @@ export interface LordAgent {
   dungeonSettlementId?: string | null;
   /** Esarette geçen gün sayısı (günlük kaçış zarı için) */
   daysCaptive?: number;
+  /** Şehir veya kalede garnizonda / konaklamada ise yerleşim kimliği */
+  insideSettlementId?: string | null;
 }
 
 export interface ChronicleEvent {
@@ -1503,19 +1534,276 @@ export function forcePeasantsRecruits(
   };
 }
 
-const WORKSHOP_TYPE_BONUS: Record<string, number> = {
+export interface WorkshopCatalogItem {
+  id: WorkshopTypeId;
+  name: string;
+  inputDescription: string;
+  outputDescription: string;
+  rawMaterialKeywords: string[];
+  baseBonus: number;
+  icon: string;
+}
+
+export const WORKSHOP_CATALOG: Record<WorkshopTypeId, WorkshopCatalogItem> = {
+  NONE: {
+    id: 'NONE',
+    name: 'Boş Yuva',
+    inputDescription: 'Üretim yok',
+    outputDescription: 'Yok',
+    rawMaterialKeywords: [],
+    baseBonus: 0,
+    icon: '🏚️',
+  },
+  BREWERY: {
+    id: 'BREWERY',
+    name: 'Bira Fabrikası',
+    inputDescription: 'Tahıl işler',
+    outputDescription: 'Bira',
+    rawMaterialKeywords: ['Tahıl'],
+    baseBonus: 0,
+    icon: '🍺',
+  },
+  WINE_PRESS: {
+    id: 'WINE_PRESS',
+    name: 'Şarap Presi',
+    inputDescription: 'Üzüm işler',
+    outputDescription: 'Şarap',
+    rawMaterialKeywords: ['Üzüm'],
+    baseBonus: 10,
+    icon: '🍷',
+  },
+  OLIVE_PRESS: {
+    id: 'OLIVE_PRESS',
+    name: 'Zeytinyağı Presi',
+    inputDescription: 'Zeytin işler',
+    outputDescription: 'Zeytinyağı',
+    rawMaterialKeywords: ['Zeytin'],
+    baseBonus: 8,
+    icon: '🫒',
+  },
+  POTTERY_SHOP: {
+    id: 'POTTERY_SHOP',
+    name: 'Çömlek Atölyesi',
+    inputDescription: 'Kil işler',
+    outputDescription: 'Çömlek',
+    rawMaterialKeywords: ['Kil', 'Tuz & Kil'],
+    baseBonus: 12,
+    icon: '🏺',
+  },
+  WEAVERY: {
+    id: 'WEAVERY',
+    name: 'Kadife Dokuma',
+    inputDescription: 'Ham İpek işler',
+    outputDescription: 'Kadife Kumaş',
+    rawMaterialKeywords: ['İpek'],
+    baseBonus: 12,
+    icon: '🧵',
+  },
+  LINEN_WEAVERY: {
+    id: 'LINEN_WEAVERY',
+    name: 'Keten Dokuma',
+    inputDescription: 'Keten işler',
+    outputDescription: 'Keten Kumaş',
+    rawMaterialKeywords: ['Keten'],
+    baseBonus: 10,
+    icon: '🌿',
+  },
+  WOOL_WEAVERY: {
+    id: 'WOOL_WEAVERY',
+    name: 'Yün Dokuma',
+    inputDescription: 'Yün ve Koyun işler',
+    outputDescription: 'Yün Kumaş',
+    rawMaterialKeywords: ['Yün', 'Koyun'],
+    baseBonus: 10,
+    icon: '🐑',
+  },
+  TANNERY: {
+    id: 'TANNERY',
+    name: 'Tabakhane (Deri)',
+    inputDescription: 'Deri ve Post işler',
+    outputDescription: 'İşlenmiş Deri',
+    rawMaterialKeywords: ['Deri', 'Sığır', 'Kürk'],
+    baseBonus: 12,
+    icon: '👞',
+  },
+  WOOD_WORKSHOP: {
+    id: 'WOOD_WORKSHOP',
+    name: 'Ahşap Atölyesi',
+    inputDescription: 'Sert Kereste işler',
+    outputDescription: 'Yay ve Kalkan',
+    rawMaterialKeywords: ['Kereste'],
+    baseBonus: 10,
+    icon: '🪵',
+  },
+  SMITHY: {
+    id: 'SMITHY',
+    name: 'Demirci Atölyesi',
+    inputDescription: 'Demir ve Kereste işler',
+    outputDescription: 'Silah ve Zırh',
+    rawMaterialKeywords: ['Demir', 'Gümüş & Demir'],
+    baseBonus: 15,
+    icon: '⚒️',
+  },
+  SILVERSMITH: {
+    id: 'SILVERSMITH',
+    name: 'Gümüşçü / Kuyumcu',
+    inputDescription: 'Gümüş Cevheri işler',
+    outputDescription: 'Mücevherat',
+    rawMaterialKeywords: ['Gümüş'],
+    baseBonus: 16,
+    icon: '💍',
+  },
+};
+
+export const WORKSHOP_TYPE_BONUS: Record<string, number> = {
   BREWERY: 0,
   SMITHY: 15,
   OLIVE_PRESS: 8,
   WEAVERY: 12,
+  WINE_PRESS: 10,
+  POTTERY_SHOP: 12,
+  LINEN_WEAVERY: 10,
+  WOOL_WEAVERY: 10,
+  TANNERY: 12,
+  WOOD_WORKSHOP: 10,
+  SILVERSMITH: 16,
 };
 
+export function getSettlementWorkshops(
+  settlement: Settlement,
+  allSettlements?: Settlement[],
+): TownWorkshop[] {
+  if (settlement.type !== 'TOWN') return [];
+  if (settlement.workshops && settlement.workshops.length > 0) {
+    return settlement.workshops;
+  }
+
+  // Derive bound village productions to choose realistic default workshops
+  const boundVillages = (allSettlements ?? []).filter(
+    (s) => s.type === 'VILLAGE' && s.boundSettlementId === settlement.id,
+  );
+  const villageKeywords = boundVillages.map((v) => v.primaryProduction || '');
+
+  const defaultTypes: WorkshopTypeId[] = ['BREWERY', 'SMITHY', 'POTTERY_SHOP', 'WOOD_WORKSHOP'];
+  if (villageKeywords.some((k) => k.includes('Zeytin'))) defaultTypes[0] = 'OLIVE_PRESS';
+  if (villageKeywords.some((k) => k.includes('Üzüm'))) defaultTypes[1] = 'WINE_PRESS';
+  if (villageKeywords.some((k) => k.includes('Keten'))) defaultTypes[2] = 'LINEN_WEAVERY';
+  if (villageKeywords.some((k) => k.includes('Yün') || k.includes('Koyun'))) defaultTypes[3] = 'WOOL_WEAVERY';
+
+  const defaultMerchants = [
+    'Tüccar Evros',
+    'Tüccar Alary',
+    'Tüccar Vildur',
+    'Tüccar Kaelen',
+  ];
+
+  const slotCount = settlement.prosperity > 600 ? 4 : 3;
+  const hash = settlement.id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+
+  const slots: TownWorkshop[] = [];
+  for (let i = 0; i < slotCount; i++) {
+    const isPlayerSlot = i === 0 && settlement.workshopOwner === 'player';
+    const type =
+      isPlayerSlot && settlement.workshopType
+        ? settlement.workshopType
+        : defaultTypes[i % defaultTypes.length];
+    slots.push({
+      id: `${settlement.id}-ws-${i}`,
+      type: type !== 'NONE' ? type : 'BREWERY',
+      owner: isPlayerSlot ? 'player' : 'notable',
+      notableName: isPlayerSlot ? undefined : defaultMerchants[(hash + i) % defaultMerchants.length],
+    });
+  }
+
+  return slots;
+}
+
+export function calculateSingleWorkshopIncome(
+  ws: TownWorkshop,
+  settlement: Settlement,
+  allSettlements?: Settlement[],
+): number {
+  if (ws.type === 'NONE') return 0;
+  const def = WORKSHOP_CATALOG[ws.type] ?? WORKSHOP_CATALOG.BREWERY;
+  const base = 20 + Math.round(settlement.prosperity * 0.08);
+  let bonus = def.baseBonus;
+
+  if (allSettlements && allSettlements.length > 0) {
+    const boundVillages = allSettlements.filter(
+      (s) => s.type === 'VILLAGE' && s.boundSettlementId === settlement.id,
+    );
+    for (const v of boundVillages) {
+      if (v.isRaided) continue;
+      const prod = v.primaryProduction || '';
+      if (def.rawMaterialKeywords.some((kw) => prod.includes(kw))) {
+        bonus += 35;
+      }
+    }
+  }
+
+  const slots = settlement.workshops ?? [];
+  const sameTypeCount = slots.filter((slot) => slot.type === ws.type).length;
+  if (sameTypeCount > 1) {
+    bonus = Math.round(bonus * 0.75);
+  }
+
+  return Math.max(15, base + bonus);
+}
+
+export function countPlayerWorkshops(state: CampaignState): {
+  total: number;
+  bySettlement: Record<string, number>;
+} {
+  let total = 0;
+  const bySettlement: Record<string, number> = {};
+
+  for (const s of state.settlements) {
+    if (s.type !== 'TOWN') continue;
+    let countInTown = 0;
+    if (s.workshops && s.workshops.length > 0) {
+      countInTown = s.workshops.filter((w) => w.owner === 'player').length;
+    } else if (s.workshopOwner === 'player' && s.workshopType && s.workshopType !== 'NONE') {
+      countInTown = 1;
+    }
+    if (countInTown > 0) {
+      bySettlement[s.id] = countInTown;
+      total += countInTown;
+    }
+  }
+
+  return { total, bySettlement };
+}
+
 /**
- * Atölyenin günlük geliri (Faz B0).
- * Refah arttıkça kâr artar; atölye türü küçük bir çarpan ekler. Arayüz ve
- * günlük ekonomi **aynı** fonksiyonu kullanır ki ekranda yazan rakam yalan olmasın.
+ * Aynı şehirde K. atölyeyi açabilmek için gereken klan kademesi.
+ * 1. atölye: Seviye 0+ (serbest)
+ * 2. atölye: Seviye 2+
+ * 3. atölye: Seviye 3+
+ * 4. atölye: Seviye 4+
  */
-export function settlementWorkshopIncome(settlement: Settlement): number {
+export function getWorkshopSameTownRequiredTier(ownedInTownCount: number): number {
+  if (ownedInTownCount <= 0) return 0;
+  return ownedInTownCount + 1;
+}
+
+/**
+ * Atölyenin günlük geliri (Bannerlord Kuralı).
+ * Refah arttıkça kâr artar; bağlı köyler hammadde sağladıkça kâr sıçrar.
+ */
+export function settlementWorkshopIncome(
+  settlement: Settlement,
+  allSettlements?: Settlement[],
+): number {
+  if (settlement.workshops && settlement.workshops.length > 0) {
+    const playerSlots = settlement.workshops.filter((w) => w.owner === 'player');
+    if (playerSlots.length === 0) return 0;
+    return playerSlots.reduce(
+      (sum, ws) => sum + calculateSingleWorkshopIncome(ws, settlement, allSettlements),
+      0,
+    );
+  }
+
+  // Geriye dönük uyumluluk (eski kayıtlar / settlement.workshops olmayan durumlar)
   if (!settlement.workshopType || settlement.workshopType === 'NONE') return 0;
   const base = 20 + Math.round(settlement.prosperity * 0.08);
   return base + (WORKSHOP_TYPE_BONUS[settlement.workshopType] ?? 0);
@@ -1548,12 +1836,13 @@ export function advanceDailyEconomyAndWorld(state: CampaignState): CampaignState
           (s.type === 'TOWN' ? getPlayerCultureModifiers(state).townTaxMultiplier : 1),
       );
     }
-    // Faz B0: oyuncunun atölyesi refaha bağlı günlük gelir üretir.
-    if (s.workshopOwner === 'player') {
-      playerWorkshopIncome += settlementWorkshopIncome(s);
+    // Faz B0 / Bannerlord Atölyeleri: oyuncunun atölyeleri refah ve hammaddeye bağlı gelir üretir.
+    if (s.workshopOwner === 'player' || (s.workshops && s.workshops.some((w) => w.owner === 'player'))) {
+      playerWorkshopIncome += settlementWorkshopIncome(s, state.settlements);
     }
     return {
       ...s,
+
       garrison: s.type === 'VILLAGE' ? 0 : s.garrison,
       prosperity: Math.min(999, s.prosperity + 2),
       foodStock: besieged
@@ -4242,60 +4531,219 @@ export function buyOrChangeWorkshop(
   state: CampaignState,
   settlementId: string,
   workshopType: WorkshopTypeId,
+  slotIndex?: number,
 ): { success: boolean; reason?: string; nextState: CampaignState } {
   const idx = state.settlements.findIndex((s) => s.id === settlementId);
   if (idx === -1) return { success: false, reason: 'Şehir bulunamadı.', nextState: state };
   const s = state.settlements[idx];
   if (s.type !== 'TOWN') {
-    return { success: false, reason: 'Atölyeler (Workshops) yalnızca büyük şehirlerde kurulabilir.', nextState: state };
+    return {
+      success: false,
+      reason: 'Atölyeler (Workshops) yalnızca büyük şehirlerde kurulabilir.',
+      nextState: state,
+    };
   }
-  const isChangingExisting =
-    s.workshopOwner === 'player' && Boolean(s.workshopType && s.workshopType !== 'NONE');
-  if (!isChangingExisting) {
-    const ownedWorkshops = state.settlements.filter(
-      (item) => item.workshopOwner === 'player' && item.workshopType && item.workshopType !== 'NONE',
-    ).length;
-    const maxWorkshops = calculateClanTier(state.renown).tier + 1;
-    if (ownedWorkshops >= maxWorkshops) {
+
+  const workshops = [...getSettlementWorkshops(s, state.settlements).map((w) => ({ ...w }))];
+  const clanTier = calculateClanTier(state.renown).tier;
+  const maxWorkshops = clanTier + 1;
+  const { total: totalOwned } = countPlayerWorkshops(state);
+
+  // Target slot determination
+  let targetSlotIdx: number;
+  if (slotIndex !== undefined && slotIndex >= 0 && slotIndex < workshops.length) {
+    targetSlotIdx = slotIndex;
+  } else {
+    // If not specified, check if player already owns a slot here to change
+    const existingPlayerSlotIdx = workshops.findIndex((w) => w.owner === 'player');
+    if (existingPlayerSlotIdx !== -1 && workshopType !== workshops[existingPlayerSlotIdx]?.type) {
+      targetSlotIdx = existingPlayerSlotIdx;
+    } else {
+      // Find first available notable slot
+      const notableSlotIdx = workshops.findIndex((w) => w.owner === 'notable');
+      targetSlotIdx = notableSlotIdx !== -1 ? notableSlotIdx : 0;
+    }
+  }
+
+  const targetSlot = workshops[targetSlotIdx];
+  const isChangingExisting = targetSlot && targetSlot.owner === 'player';
+
+  if (isChangingExisting) {
+    const changeCost = 100;
+    if (state.gold < changeCost) {
       return {
         success: false,
-        reason: `Maksimum atölye sınırına ulaştınız (${ownedWorkshops}/${maxWorkshops} — Klan Kademesi + 1).`,
+        reason: `Üretim türünü değiştirmek için ${changeCost} Dinar gerekiyor.`,
         nextState: state,
       };
     }
+
+    workshops[targetSlotIdx] = {
+      ...targetSlot,
+      type: workshopType,
+    };
+
+    const nextSettlements = state.settlements.map((item, i) =>
+      i === idx
+        ? {
+            ...item,
+            workshopType,
+            workshopOwner: 'player' as const,
+            workshops,
+          }
+        : item,
+    );
+
+    const wsName = WORKSHOP_CATALOG[workshopType]?.name ?? workshopType;
+    return {
+      success: true,
+      nextState: {
+        ...state,
+        gold: state.gold - changeCost,
+        settlements: nextSettlements,
+        chronicle: [
+          {
+            id: `workshop-change-${state.day}-${settlementId}-${targetSlotIdx}`,
+            day: state.day,
+            category: 'ECONOMY',
+            text: `${s.name} şehrindeki atölyeniz ${wsName} üretimine geçti.`,
+          },
+          ...state.chronicle,
+        ].slice(0, 30),
+      },
+    };
   }
-  const cost = 220;
-  if (state.gold < cost) {
-    return { success: false, reason: `Atölye satın almak için ${cost} Dinar gerekiyor.`, nextState: state };
+
+  // Buying new workshop in this slot
+  // 1. Global clan limit check
+  if (totalOwned >= maxWorkshops) {
+    return {
+      success: false,
+      reason: `Maksimum atölye sınırına ulaştınız (${totalOwned}/${maxWorkshops} — Klan Kademesi + 1).`,
+      nextState: state,
+    };
   }
+
+  // 2. Same-town tier requirement check (User's Rule)
+  const ownedHere = workshops.filter((w) => w.owner === 'player').length;
+  const reqTier = getWorkshopSameTownRequiredTier(ownedHere);
+  if (clanTier < reqTier) {
+    return {
+      success: false,
+      reason: `Aynı şehirde ${ownedHere + 1}. bir atölye işletebilmek için Klan Kademesi ${reqTier} veya üzeri gereklidir (Şu anki klanınız: Seviye ${clanTier}). Farklı şehirlerde serbestçe atölye açabilirsiniz.`,
+      nextState: state,
+    };
+  }
+
+  const buyCost = 220;
+  if (state.gold < buyCost) {
+    return {
+      success: false,
+      reason: `Atölye satın almak için ${buyCost} Dinar gerekiyor.`,
+      nextState: state,
+    };
+  }
+
+  workshops[targetSlotIdx] = {
+    ...targetSlot,
+    owner: 'player',
+    type: workshopType,
+    notableName: undefined,
+  };
+
   const nextSettlements = state.settlements.map((item, i) =>
     i === idx
       ? {
           ...item,
           workshopType,
           workshopOwner: 'player' as const,
+          workshops,
           prosperity: item.prosperity + 25,
         }
       : item,
   );
+
+  const wsName = WORKSHOP_CATALOG[workshopType]?.name ?? workshopType;
   return {
     success: true,
     nextState: {
       ...state,
-      gold: state.gold - cost,
+      gold: state.gold - buyCost,
       settlements: nextSettlements,
       chronicle: [
         {
-          id: `workshop-${state.day}-${settlementId}`,
+          id: `workshop-buy-${state.day}-${settlementId}-${targetSlotIdx}`,
           day: state.day,
           category: 'ECONOMY',
-          text: `${s.name} şehrinde ${workshopType} atölyesi satın alındı; günlük kervan üretimi başladı.`,
+          text: `${s.name} şehrinde ${wsName} atölyesi satın alındı; günlük kervan üretimi başladı.`,
         },
         ...state.chronicle,
       ].slice(0, 30),
     },
   };
 }
+
+export function sellWorkshop(
+  state: CampaignState,
+  settlementId: string,
+  slotIndex: number,
+): { success: boolean; reason?: string; nextState: CampaignState } {
+  const idx = state.settlements.findIndex((s) => s.id === settlementId);
+  if (idx === -1) return { success: false, reason: 'Şehir bulunamadı.', nextState: state };
+  const s = state.settlements[idx];
+  if (s.type !== 'TOWN') {
+    return { success: false, reason: 'Yalnızca şehir atölyeleri satılabilir.', nextState: state };
+  }
+
+  const workshops = [...getSettlementWorkshops(s, state.settlements).map((w) => ({ ...w }))];
+  if (slotIndex < 0 || slotIndex >= workshops.length) {
+    return { success: false, reason: 'Geçersiz atölye yuvası.', nextState: state };
+  }
+
+  const targetSlot = workshops[slotIndex];
+  if (targetSlot.owner !== 'player') {
+    return { success: false, reason: 'Bu atölye size ait değil.', nextState: state };
+  }
+
+  const refundGold = 180;
+  workshops[slotIndex] = {
+    ...targetSlot,
+    owner: 'notable',
+    notableName: `Tüccar ${s.name}`,
+  };
+
+  const remainingPlayerWorkshops = workshops.filter((w) => w.owner === 'player');
+  const nextSettlements = state.settlements.map((item, i) =>
+    i === idx
+      ? {
+          ...item,
+          workshopType: remainingPlayerWorkshops[0]?.type,
+          workshopOwner: remainingPlayerWorkshops.length > 0 ? ('player' as const) : undefined,
+          workshops,
+        }
+      : item,
+  );
+
+  const wsName = WORKSHOP_CATALOG[targetSlot.type]?.name ?? targetSlot.type;
+  return {
+    success: true,
+    nextState: {
+      ...state,
+      gold: state.gold + refundGold,
+      settlements: nextSettlements,
+      chronicle: [
+        {
+          id: `workshop-sell-${state.day}-${settlementId}-${slotIndex}`,
+          day: state.day,
+          category: 'ECONOMY',
+          text: `${s.name} şehrindeki ${wsName} atölyesi ${refundGold} Dinara yerel tüccara satıldı.`,
+        },
+        ...state.chronicle,
+      ].slice(0, 30),
+    },
+  };
+}
+
 
 export function forgeCustomWeaponAtSmithy(
   state: CampaignState,
@@ -4764,9 +5212,15 @@ export function applyPlayerAllegianceChange(
       };
     }
     const leftFactionName = FACTION_INFO[currentFaction]?.name ?? currentFaction;
-    const nextLords = state.lords.map((l) =>
-      l.faction === currentFaction ? { ...l, isAlliedWithPlayer: false } : l,
-    );
+    const nextLords = state.lords.map((l) => {
+      if (l.faction === currentFaction) {
+        return { ...l, isAlliedWithPlayer: false };
+      }
+      if (l.faction !== 'bandits') {
+        return { ...l, isAtWarWithPlayer: false };
+      }
+      return l;
+    });
     return {
       success: true,
       nextState: {
@@ -4873,5 +5327,8 @@ export {
   sellMarketplaceItem,
   unequipEquipmentSlot,
 } from './marketRules.ts';
+
+export * from './settlementOwnership';
+
 
 

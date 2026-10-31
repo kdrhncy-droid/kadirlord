@@ -31,8 +31,13 @@ import {
   getPlayerPartyStrength,
   resolveCorneredBanditSurrender,
   simulateSendTroopsBattle,
+  isHostileToPlayer,
 } from '../src/game/encounter.ts';
-import { createInitialCampaignState, getTotalTroops } from '../src/game/rules.ts';
+import {
+  applyPlayerAllegianceChange,
+  createInitialCampaignState,
+  getTotalTroops,
+} from '../src/game/rules.ts';
 
 let fails = 0;
 const ok = (cond: boolean, label: string, detail = '') => {
@@ -358,6 +363,36 @@ const baseCampaign = createInitialCampaignState('Komutan Demirhan', 'noble');
     stripped === 'Kılıcını çek!' && !stripped.includes(targetLord.name),
     'konuşma metnindeki mükerrer lord adı öneki temizleniyor',
     stripped,
+  );
+}
+
+/* ── 7. Paralı Askerlik Krallık Savaş Düşmanlığı ve Bannerlord Temiz Diyalog ── */
+{
+  const vlandianMercCampaign = applyPlayerAllegianceChange(baseCampaign, 'vlandia', 'MERCENARY').nextState;
+  const battanianLord = baseCampaign.lords.find((l) => l.faction === 'battania')!;
+
+  const hostileBefore = isHostileToPlayer(battanianLord, baseCampaign);
+  const hostileAfter = isHostileToPlayer(battanianLord, vlandianMercCampaign);
+
+  ok(!hostileBefore, 'bağımsız oyuncuya Batanya lordu barışçıl');
+  ok(hostileAfter, 'Vlandiya paralı askeri olunca Batanya lordu otomatik düşman kabul ediliyor');
+
+  const vlandianLord = baseCampaign.lords.find((l) => l.faction === 'vlandia')!;
+  ok(!isHostileToPlayer(vlandianLord, vlandianMercCampaign), 'hizmet edilen krallık lordu dost kabul ediliyor');
+
+  // Diyalog metninde roman/anlatım ifadeleri ve relationTone olmamalı
+  const graph = buildDialogue({
+    lord: vlandianLord,
+    campaign: vlandianMercCampaign,
+    relation: vlandianLord.relation,
+    atWar: false,
+    hasMet: true,
+  });
+  const rootText = graph.nodes['root']?.text ?? '';
+  ok(
+    !rootText.includes('selam veriyor') && !rootText.includes('bakış fırlatıyor') && !rootText.includes('(Kuşatma'),
+    'diyalog metninde 3. şahıs tasvir ve roman cümleleri yer almıyor',
+    rootText,
   );
 }
 

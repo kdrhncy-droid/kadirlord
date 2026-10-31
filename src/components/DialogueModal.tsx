@@ -27,6 +27,7 @@ import {
   classifyEncounterScenario,
   getLordPartyStrength,
   getPlayerPartyStrength,
+  isHostileToPlayer,
 } from '../game/encounter';
 import { buildQuestLog } from '../game/quests';
 import {
@@ -125,7 +126,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   const startRelation = lord?.relation ?? 0;
   const [relation, setRelation] = useState(startRelation);
   const [gold, setGold] = useState(campaign.gold);
-  const isHostileLord = Boolean(lord && (lord.isAtWarWithPlayer || lord.faction === 'bandits'));
+  const isHostileLord = Boolean(lord && isHostileToPlayer(lord, campaign));
   const initialRootId =
     lord && !isHostileLord && !isForced && hasMet === false ? 'intro-root' : 'root';
   const [nodeId, setNodeId] = useState<string>(initialRootId);

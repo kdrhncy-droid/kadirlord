@@ -609,6 +609,11 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
       dom.removeEventListener('touchstart', onTouchStart);
       dom.removeEventListener('touchmove', onTouchMove);
       if (dom.parentNode) dom.parentNode.removeChild(dom);
+      try {
+        renderer.forceContextLoss();
+      } catch {
+        // yoksay
+      }
       renderer.dispose();
       sceneRef.current = null;
     };
