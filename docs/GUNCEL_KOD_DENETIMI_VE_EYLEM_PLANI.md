@@ -147,21 +147,20 @@ graph TD
 
 ---
 
-### 1. Aşama: K Tuşu (Krallık Menüsü) Temizliği & Özgün Bannerlord Düzeni
-* **Neden:** Oyuncunun doğrudan fark ettiği ve "bu oyun mu yoksa test paneli mi?" dediği en bariz yabancı cisimdir.
-* **Nasıl Yapılacak?**
-  - [`KingdomManagementModal.tsx`](../src/components/KingdomManagementModal.tsx) içindeki `architecture_matrix`, hava durumu butonları, `useImprovedArchitecture` toggle'ı ve "Yıkımı Test Et" butonu silinecek.
-  - Ekran 4 temiz Bannerlord sekmesine oturtulacak: **1-Diplomasi (Savaş/Barış Teklifi), 2-Tımar Konseyi Oylaması, 3-Krallık Politikaları, 4-Klanlar Listesi.**
+### 1. Aşama: K Tuşu (Krallık Menüsü) Temizliği & Özgün Bannerlord Düzeni — ✅ TAMAMLANDI
+* **Durum:** Tamamlandı & Chromium E2E ile Doğrulandı (`tools/e2e/kingdom-check.mjs`).
+* **Yapılanlar:**
+  - [`KingdomManagementModal.tsx`](../src/components/KingdomManagementModal.tsx) içindeki test artıkları (`architecture_matrix`, yapay hava butonları, test panelleri) tamamen temizlendi.
+  - 4 otantik Bannerlord sekmesi kuruldu: **1-Diplomasi (Savaş/Barış), 2-Tımarlar (Kale/Şehir/Köy Dağıtımı), 3-Politikalar (Feodal Kanunlar & Oy Verme), 4-Klanlar Listesi.**
 
-### 2. Aşama: Savaş Motorunu Tekilleştirme (Arenanın Dövüşünü Al, Meydanın Taktik Aklını Üzerine Giydir)
-* **Kullanıcı Tespiti ve Neden:** Meydan savaşındaki (`BattlefieldView.tsx`) karakter modelleri, animasyon döngüsü ve vuruş hissi optimizasyon amacıyla bozulmuştur; öte yandan Şehir Arenasındaki (`CharacterArenaView.tsx`) tam iskeletli rig, IK, akıcı animasyonlar ve vuruş mekaniği sağlamdır. Meydan savaşının motorunu kullanmak projeyi geriye götürür.
-* **Nasıl Yapılacak? (Doğru Yön):**
-  - **Görsel & Dövüş Omurgası:** `CharacterArenaView.tsx` içindeki sağlam çalışan karakter iskeleti (`characterRig.ts`), ters kinematik (`ik.ts`), akıcı animatör (`characterAnimator.ts`) ve yönlü kılıç/kalkan dövüşü ana temel olarak korunacak.
-  - **Taktik Katman Entegrasyonu:** `BattlefieldView.tsx` içinden yalnızca çalışan **taktiksel akıl** alınacak:
-    1. 1–4 Bölük Seçimi (Piyade, Okçu, Süvari, Atlı Okçu),
-    2. F1–F4 Komuta Çubuğu (F1 Konum, F2 Yön, F3 Kalkan Duvarı/Diziliş, F4 Ateş Serbest),
-    3. Takviye dalgaları (`reinforcements.ts`) ve arazi profili.
-  - Meydan savaşındaki o kırık, bacakları kayan ve bozuk animasyon kodları tamamen tasfiye edilecek; tek bir akıcı, Bannerlord kalitesinde hem ovada hem arenada çalışan savaş motoru elde edilecek.
+### 2. Aşama: Savaş Motorunu Tekilleştirme (Arena Dövüşü + Meydan Taktik Aklı) — ✅ TAMAMLANDI
+* **Durum:** Tamamlandı & Chromium E2E ile Doğrulandı (`tools/e2e/battle-check.mjs`).
+* **Kullanıcı Direktifi:** Bozuk `createWarriorModel` ve `animateWarriorRigPose` modelleri terk edildi. `CharacterArenaView.tsx` içindeki tam iskeletli rig, IK, animasyon, 4 yönlü vuruş/blok, zırh/miğfer/kalkan/at sistemleri ve 500v500 ordu havuzu tek omurga yapıldı.
+* **Yapılanlar:**
+  - `src/components/BattlefieldView.tsx` 3645 satırlık bozuk model kodlarından arındırılarak `CharacterArenaView` motorunu sarmalayan temiz ve yüksek sadakatli tekil savaş motoruna dönüştürüldü.
+  - Taktik Katman: 1–4 Bölük Seçimi (Piyade, Okçu, Süvari, Atlı Okçu), F1–F6 Taktiksel Emir Kartları (Konum Tut, Takip Et, Hücum, İlerle, Geri Çekil), F3 Dizilişleri (Çizgi, Kalkan Duvarı, Dağınık, Kare, Kama, Kolon) eklendi.
+  - Canlı Savaş HUD'ı: Üst güç dengesi oran çubuğu, anlık Bannerlord Kill Feed, emir haykırma bildirimleri ve Sefer Haritası zayiat/zafer paneli entegre edildi.
+  - Kuşatma Geliştirmesi: Sur üstü okçuları (y=5.4m parapet), koçbaşı kapı yıkımı, kuşatma kuleleri ve mancınıklar güçlendirildi.
 
 ### 3. Aşama: Diyalog Kopukluklarının Tamiri ve Lord Kişilikleri
 * **Neden:** Harita üzerinde oyuncunun en sık yaptığı eylem lordlarla konuşmaktır.
@@ -189,3 +188,16 @@ graph TD
 * **Neden:** Savaş ve barış döngüsünü mantıklı bir feodal diplomasiye bağlamak için.
 * **Nasıl Yapılacak?**
   - `Bannerlord.Diplomacy` modundan esinlenerek savaş yorgunluğu biriktirme (%0–%100) ve ulak gönderme mekaniği entegre edilecek.
+
+---
+
+## 8. Kalradya Tek ve Birleşik 3B Muharebe Motoru (Tamamlandı)
+- **Eski Durum**: Sefer haritası ile Arena arasında iki ayrı motor (eski `BattlefieldView` ve `CharacterArenaView`) vardı. Eski motorda prosedürel kutular (`createWarriorModel`), animasyonsuz eklemler ve bozuk kamera bulunuyordu.
+- **Birleştirme**: `BattlefieldView.tsx`, `CharacterArenaView` üzerinden tek merkez haline getirildi.
+- **Karakter İskeletleri & Zırhlar**: Tüm küpler kaldırıldı. Muharebedeki tüm piyade, okçu ve süvariler tam rig iskeletli (`CharacterRig`), zırhlı (`PLATE`, `CHAINMAIL`, `LEATHER`), miğferli (`SPANGENHELM`, `IMPERIAL_VISOR`, `KETTLE_HAT`) ve silahlı modellerle donatıldı.
+- **Gerçek Karşılaşma & Lord**: Sefer haritasındaki gerçek lord (örn. Lord Garios) kendi yüz morfolojisi (`getLordDNA`), özel zırhı, zırhlı savaş atı ve tepesinde yüzen 3B altın taç rozetiyle (`👑 Lord Garios`) ordusunun başında fiziksel olarak konuşlandırıldı.
+- **Gündüz Atmosferi**: Zifiri karanlık zindan sisi yerine Kalradya açık mavi gökyüzü, 260m berrak mesafe sisi ve geniş yeşil ova arazisi entegre edildi.
+- **Kamera & Kontrol**: 3. şahıs omuz üstü dinamik savaşçı kamerası ilk kareden itibaren oyuncunun arkasında aktif; fare hareketi anında yönü çevirir; tıklama zorunluluğu kaldırıldı.
+- **HUD & Test Panelleri**: Sefer haritası savaşlarında geliştirici test panelleri, 360 manken düğmeleri ve 500v500 ön yükleme modalları tamamen gizlendi; temiz Bannerlord taktik arayüzü sunuldu.
+- **Doğrulama**: `tools/e2e/battle-check.mjs` ve `npm run verify:fast` testleri %100 başarıyla geçti.
+

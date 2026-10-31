@@ -8,9 +8,9 @@
 
 import type { AttackDirection } from './characterAnimator.ts';
 
-export type DivisionId = 'ALL' | 'INFANTRY' | 'ARCHERS' | 'CAVALRY';
-export type FormationArrangement = 'LINE' | 'SHIELD_WALL' | 'LOOSE' | 'WEDGE';
-export type FormationOrder = 'CHARGE' | 'HOLD_POSITION' | 'FOLLOW_ME';
+export type DivisionId = 'ALL' | 'INFANTRY' | 'ARCHERS' | 'CAVALRY' | 'HORSE_ARCHERS';
+export type FormationArrangement = 'LINE' | 'SHIELD_WALL' | 'LOOSE' | 'WEDGE' | 'SQUARE' | 'COLUMN';
+export type FormationOrder = 'CHARGE' | 'HOLD_POSITION' | 'FOLLOW_ME' | 'ADVANCE' | 'RETREAT';
 export type FireOrder = 'FREE_FIRE' | 'HOLD_FIRE';
 
 export interface FormationSlot {
@@ -109,12 +109,40 @@ export const FORMATION_ARRANGEMENT_META: Record<
       spacingZ: 1.2,
     },
   },
+  SQUARE: {
+    label: 'Kare (Halka) Düzeni',
+    shortDesc: 'Dört yöne bakan süvari karşıtı savunma kutusu.',
+    modifier: {
+      moveSpeedMultiplier: 0.75,
+      rangedDamageTakenMultiplier: 0.45,
+      meleeDefenseBonus: 0.3,
+      chargeBonusMultiplier: 0.7,
+      forceShieldBlock: true,
+      spacingX: 1.1,
+      spacingZ: 1.1,
+    },
+  },
+  COLUMN: {
+    label: 'Kolon Düzeni',
+    shortDesc: 'Dar ve derin yürüyüş kolu. Hızlı intikal ve flank yarışı.',
+    modifier: {
+      moveSpeedMultiplier: 1.18,
+      rangedDamageTakenMultiplier: 1.1,
+      meleeDefenseBonus: -0.05,
+      chargeBonusMultiplier: 1.2,
+      forceShieldBlock: false,
+      spacingX: 1.15,
+      spacingZ: 1.6,
+    },
+  },
 };
 
 export const FORMATION_ORDER_LABELS: Record<FormationOrder, string> = {
-  CHARGE: 'Hücum Et (F1-F3)',
   HOLD_POSITION: 'Konumu Tut (F1-F1)',
   FOLLOW_ME: 'Beni Takip Et (F1-F2)',
+  CHARGE: 'Hücum Et (F1-F3)',
+  ADVANCE: 'İlerle (F1-F4)',
+  RETREAT: 'Ricat (F1-F5)',
 };
 
 /**
@@ -173,13 +201,17 @@ export function computeFormationSlots(
     return slots;
   }
 
-  // Standard rectangular ranks (LINE, SHIELD_WALL, LOOSE)
+  // Standard rectangular ranks (LINE, SHIELD_WALL, LOOSE, SQUARE, COLUMN)
   const derivedMaxCols =
-    arrangement === 'SHIELD_WALL'
-      ? Math.max(3, Math.ceil(Math.sqrt(count * 2.5)))
-      : arrangement === 'LOOSE'
-        ? Math.max(2, Math.ceil(Math.sqrt(count * 1.6)))
-        : Math.max(3, Math.ceil(Math.sqrt(count * 2.2)));
+    arrangement === 'COLUMN'
+      ? 2
+      : arrangement === 'SQUARE'
+        ? Math.max(2, Math.ceil(Math.sqrt(count)))
+        : arrangement === 'SHIELD_WALL'
+          ? Math.max(3, Math.ceil(Math.sqrt(count * 2.5)))
+          : arrangement === 'LOOSE'
+            ? Math.max(2, Math.ceil(Math.sqrt(count * 1.6)))
+            : Math.max(3, Math.ceil(Math.sqrt(count * 2.2)));
   const maxCols = Math.max(1, options?.maxCols ?? derivedMaxCols);
 
   for (let idx = 0; idx < count; idx++) {

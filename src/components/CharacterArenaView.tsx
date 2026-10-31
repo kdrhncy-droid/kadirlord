@@ -38,7 +38,15 @@ import {
   computeFormationSlots,
   evaluateDirectionalParry,
 } from '../game/tacticalFormation';
-import type { CampaignState } from '../game/rules';
+import {
+  type CampaignState,
+  type LordAgent,
+  type Settlement,
+  type TroopRoster,
+  FACTION_INFO,
+  getTotalTroops,
+} from '../game/rules';
+import type { BattleTelemetry } from '../game/types';
 import {
   BATTLE_SCALE_PRESETS,
   BattleMemoryPool,
@@ -51,10 +59,43 @@ import {
 } from '../game/instancedArmyRenderer';
 import { BattlePrewarmModal } from './BattlePrewarmModal';
 import { sound } from '../game/sound';
+import { getLordDNA } from '../game/characterMorph';
 
 /* ─── Interfaces ─── */
 
 export type ArenaBattleMode = 'TRAINING' | 'DUEL' | 'SKIRMISH' | 'MASS_BATTLE';
+
+function createLordBannerBadge(titleAndName: string, factionColor: string): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = 'rgba(18, 14, 10, 0.94)';
+    ctx.beginPath();
+    ctx.roundRect(10, 10, 492, 108, 20);
+    ctx.fill();
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 5;
+    ctx.stroke();
+
+    ctx.fillStyle = factionColor;
+    ctx.fillRect(24, 22, 18, 84);
+
+    ctx.font = 'bold 34px serif';
+    ctx.fillStyle = '#fde68a';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`👑 ${titleAndName}`, 268, 64);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const mat = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(4.2, 1.05, 1);
+  sprite.position.set(0, 3.45, 0);
+  return sprite;
+}
 
 interface FlyingArrow {
   mesh: THREE.Group;
@@ -97,12 +138,34 @@ interface SkirmishFighter {
   aiTimer: number;
   strafeSign: number;
   respawnTimer: number;
+  isLord?: boolean;
+  badge?: THREE.Sprite;
 }
 
-interface CharacterArenaViewProps {
+export interface KillFeedItem {
+  id: string;
+  killer: string;
+  victim: string;
+  killerTeam: 'ALLY' | 'ENEMY';
+  icon: string;
+  createdAt: number;
+}
+
+export interface CharacterArenaViewProps {
   campaign?: CampaignState;
   onReturnToMap: () => void;
   onOpenMarket?: () => void;
+  // Meydan & Kuşatma Birleşik Muharebe Modu
+  mode?: 'ARENA' | 'FIELD' | 'SIEGE';
+  targetLord?: LordAgent | null;
+  targetSettlement?: Settlement | null;
+  onBattleTelemetry?: (telemetry: BattleTelemetry) => void;
+  onBattleComplete?: (
+    victory: boolean,
+    losses: Partial<TroopRoster>,
+    enemiesDefeated: number,
+  ) => void;
+  paused?: boolean;
 }
 
 /* ─── Constants ─── */
@@ -127,7 +190,18 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
   campaign,
   onReturnToMap,
   onOpenMarket,
+  mode,
+  targetLord,
+  targetSettlement,
+  onBattleTelemetry,
+  onBattleComplete,
+  paused,
 }) => {
+  const effectiveMode = mode ?? (targetSettlement ? 'SIEGE' : targetLord ? 'FIELD' : 'ARENA');
+  const isFieldOrSiege = effectiveMode === 'FIELD' || effectiveMode === 'SIEGE';
+  const initialBattleMode: ArenaBattleMode = isFieldOrSiege ? 'SKIRMISH' : 'DUEL';
+  const initialSiegeEnabled: boolean = effectiveMode === 'SIEGE';
+
   const initialEquipmentVisuals = deriveRigVisualOptionsFromEquipment(
     campaign?.equipment,
     '#991b1b',
@@ -142,12 +216,12 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
   const [hasBeard, setHasBeard] = useState<boolean>(true);
 
   const [controlMode, setControlMode] = useState<'INSPECTOR' | 'PLAYABLE'>('PLAYABLE');
-  const [arenaBattleMode, setArenaBattleMode] = useState<ArenaBattleMode>('DUEL');
-  const [isMounted, setIsMounted] = useState<boolean>(false);
+  const [arenaBattleMode, setArenaBattleMode] = useState<ArenaBattleMode>(initialBattleMode);
+  const [isMounted, setIsMounted] = useState<boolean>(isFieldOrSiege && Boolean(campaign?.equipment?.MOUNT));
 
   // Faz 3 & Faz 4: Mass 500v500 Battle Pool, Scale Preset & 3D Siege Assault State
   const [battleScale, setBattleScale] = useState<BattleScaleId>('EPIC_500');
-  const [siegeEnabled, setSiegeEnabled] = useState<boolean>(true);
+  const [siegeEnabled, setSiegeEnabled] = useState<boolean>(initialSiegeEnabled);
   const [prewarmStages, setPrewarmStages] = useState<PrewarmStageReport[] | null>(null);
   const [pooledArrowsCount, setPooledArrowsCount] = useState<number>(0);
   const [pooledCorpsesCount, setPooledCorpsesCount] = useState<number>(0);
@@ -158,6 +232,14 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
   const [formationOrder, setFormationOrder] = useState<FormationOrder>('FOLLOW_ME');
   const [formationArrangement, setFormationArrangement] = useState<FormationArrangement>('LINE');
   const [fireOrder, setFireOrder] = useState<FireOrder>('FREE_FIRE');
+  const [activeTacticalMenu, setActiveTacticalMenu] = useState<'MOVEMENT' | 'FACING' | 'FORMATION' | null>(null);
+  const [killFeed, setKillFeed] = useState<KillFeedItem[]>([]);
+  const [orderShout, setOrderShout] = useState<string | null>(null);
+  const [battleOutcome, setBattleOutcome] = useState<{
+    victory: boolean;
+    enemiesDefeated: number;
+    losses: Partial<TroopRoster>;
+  } | null>(null);
 
   // Combat Telemetry HUD State
   const [playerHp, setPlayerHp] = useState<number>(100);
@@ -212,6 +294,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
   const playableCamDistRef = useRef(2.40);
   const playerSpeedRef = useRef(0);
   const playerHpRef = useRef(100);
+  const killsCountRef = useRef(0);
   const botHpRef = useRef(100);
   const botAttackDirRef = useRef<AttackDirection>('right');
   const botBlockDirRef = useRef<AttackDirection>('up');
@@ -222,14 +305,21 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
   const keysDownRef = useRef<Record<string, boolean>>({});
   const controlModeRef = useRef<'INSPECTOR' | 'PLAYABLE'>('PLAYABLE');
-  const arenaBattleModeRef = useRef<ArenaBattleMode>('DUEL');
+  const arenaBattleModeRef = useRef<ArenaBattleMode>(initialBattleMode);
   const battleScaleRef = useRef<BattleScaleId>('EPIC_500');
-  const siegeEnabledRef = useRef<boolean>(true);
+  const siegeEnabledRef = useRef<boolean>(initialSiegeEnabled);
   const isMountedRef = useRef<boolean>(false);
   const selectedDivisionRef = useRef<DivisionId>('ALL');
   const formationOrderRef = useRef<FormationOrder>('FOLLOW_ME');
   const formationArrangementRef = useRef<FormationArrangement>('LINE');
   const fireOrderRef = useRef<FireOrder>('FREE_FIRE');
+  const activeTacticalMenuRef = useRef<'MOVEMENT' | 'FACING' | 'FORMATION' | null>(null);
+  const targetLordRef = useRef<LordAgent | null>(targetLord ?? null);
+  const targetSettlementRef = useRef<Settlement | null>(targetSettlement ?? null);
+  const onBattleCompleteRef = useRef(onBattleComplete);
+  const onBattleTelemetryRef = useRef(onBattleTelemetry);
+  const pausedRef = useRef(paused ?? false);
+  const shoutTimeoutRef = useRef<number>(0);
   const holdAnchorRef = useRef<{ x: number; z: number; facing: number }>({
     x: 0,
     z: 1.5,
@@ -278,10 +368,64 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
   useEffect(() => { formationOrderRef.current = formationOrder; }, [formationOrder]);
   useEffect(() => { formationArrangementRef.current = formationArrangement; }, [formationArrangement]);
   useEffect(() => { fireOrderRef.current = fireOrder; }, [fireOrder]);
+  useEffect(() => { activeTacticalMenuRef.current = activeTacticalMenu; }, [activeTacticalMenu]);
+  useEffect(() => { targetLordRef.current = targetLord ?? null; }, [targetLord]);
+  useEffect(() => { targetSettlementRef.current = targetSettlement ?? null; }, [targetSettlement]);
+  useEffect(() => { onBattleCompleteRef.current = onBattleComplete; }, [onBattleComplete]);
+  useEffect(() => { onBattleTelemetryRef.current = onBattleTelemetry; }, [onBattleTelemetry]);
+  useEffect(() => { pausedRef.current = paused ?? false; }, [paused]);
   useEffect(() => { animSpeedRef.current = animSpeed; }, [animSpeed]);
   useEffect(() => { weaponTypeRef.current = weaponType; }, [weaponType]);
   useEffect(() => { shieldTypeRef.current = shieldType; }, [shieldType]);
   useEffect(() => { combatDirRef.current = combatDirection; }, [combatDirection]);
+  useEffect(() => { killsCountRef.current = killsCount; }, [killsCount]);
+
+  const showOrderShout = useCallback((text: string) => {
+    setOrderShout(text);
+    if (shoutTimeoutRef.current) window.clearTimeout(shoutTimeoutRef.current);
+    shoutTimeoutRef.current = window.setTimeout(() => setOrderShout(null), 3200);
+  }, []);
+
+  const pushKillFeedEntry = useCallback((killer: string, victim: string, killerTeam: 'ALLY' | 'ENEMY', icon: string) => {
+    const item: KillFeedItem = {
+      id: `kf-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      killer,
+      victim,
+      killerTeam,
+      icon,
+      createdAt: Date.now(),
+    };
+    setKillFeed((prev) => [item, ...prev].slice(0, 5));
+  }, []);
+
+  // E2E Test Harness API registration for battle and arena
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const testApi = (window as unknown as { __kadirlordTest?: Record<string, unknown> }).__kadirlordTest;
+    if (testApi) {
+      testApi.selectDivision = (div: string) => setSelectedDivision(div as DivisionId);
+      testApi.setFormationOrder = (ord: string) => setFormationOrder(ord as FormationOrder);
+      testApi.setFormationArrangement = (arr: string) => setFormationArrangement(arr as FormationArrangement);
+      testApi.triggerVictory = () => {
+        setBattleOutcome({
+          victory: true,
+          enemiesDefeated: 24,
+          losses: { infantry: 1 },
+        });
+      };
+      testApi.getBattleState = () => ({
+        mode: effectiveMode,
+        arenaBattleMode: arenaBattleModeRef.current,
+        selectedDivision: selectedDivisionRef.current,
+        formationOrder: formationOrderRef.current,
+        formationArrangement: formationArrangementRef.current,
+        playerHp: playerHpRef.current,
+        allyAliveCount,
+        enemyAliveCount,
+        gateHpPct: siegeGateHpPct,
+      });
+    }
+  });
   // NOT: `isAimingBow` yalnızca ARAYÜZ içindir. Ref'e geri yazılmaz; eskiden
   // buradaki senkron, hızlı bas-bırak sonrası ref'i "true"da bırakıp bir
   // sonraki tıklamada anında ok atılmasına yol açıyordu.
@@ -341,6 +485,422 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     }
     spawnDamageText('SANCAK DİKİLDİ: BU KONUMU TUT!', '#facc15', new THREE.Vector3(holdX, 0.5, holdZ));
   }, [spawnDamageText]);
+
+  // ── Spawn Authentic Campaign Armies (Full Rig Skeletons, Opposing Lord, Real Rosters) ──
+  const spawnCampaignForces = useCallback((resetAllies = true) => {
+    const group = skirmishGroupRef.current;
+    if (!group) return;
+    group.visible = true;
+
+    while (group.children.length > 0) {
+      group.remove(group.children[0]);
+    }
+    skirmishUnitsRef.current = [];
+
+    const pRoster: TroopRoster = campaign?.roster ?? { infantry: 14, archer: 8, cavalry: 4, horseArcher: 0 };
+    const eLord = targetLordRef.current;
+    const eSettlement = targetSettlementRef.current;
+    const eRoster: TroopRoster = eLord?.roster ?? {
+      infantry: Math.round((eSettlement?.garrison ?? 24) * 0.5),
+      archer: Math.round((eSettlement?.garrison ?? 24) * 0.35),
+      cavalry: Math.round((eSettlement?.garrison ?? 24) * 0.15),
+      horseArcher: 0,
+    };
+
+    // Faction colors
+    const playerCulture = (campaign?.heroes?.find((h) => h.id === 'player')?.culture ?? 'vlandia') as keyof typeof FACTION_INFO;
+    const playerFactionColor = FACTION_INFO[playerCulture]?.color ?? '#991b1b';
+    const enemyFaction = (eLord?.faction ?? eSettlement?.faction ?? 'empire') as keyof typeof FACTION_INFO;
+    const enemyFactionColor = FACTION_INFO[enemyFaction]?.color ?? '#581c87';
+
+    // Roster scaling (faithful 1:1 up to 16 models per troop category for solid 60fps)
+    const allyInfCount = Math.min(16, Math.max(3, pRoster.infantry ?? 10));
+    const allyArcCount = Math.min(10, Math.max(2, pRoster.archer ?? 6));
+    const allyCavCount = Math.min(6, Math.max(1, pRoster.cavalry ?? 3));
+
+    const enemyInfCount = Math.min(16, Math.max(3, eRoster.infantry ?? 10));
+    const enemyArcCount = Math.min(10, Math.max(2, eRoster.archer ?? 6));
+    const enemyCavCount = Math.min(6, Math.max(1, eRoster.cavalry ?? 3));
+
+    // 1. ALLIED FORCES (Player's Real Army)
+    // 1.1 Allied Infantry (Sword & Shield Ranks)
+    for (let i = 0; i < allyInfCount; i++) {
+      const col = (i % 7) - 3.0;
+      const row = Math.floor(i / 7);
+      const x = col * 2.0;
+      const z = 11.0 + row * 2.0;
+
+      const rig = createCharacterRig({
+        skinTone: '#d9a17c',
+        hairColor: '#2b1d12',
+        factionColor: playerFactionColor,
+        weaponType: 'ONE_HANDED_SWORD',
+        shieldType: i % 2 === 0 ? 'ROUND_SHIELD' : 'KITE_SHIELD',
+        helmetType: i % 3 === 0 ? 'SPANGENHELM' : 'KETTLE_HAT',
+        armorTier: i % 2 === 0 ? 'CHAINMAIL' : 'LEATHER',
+      });
+      rig.root.position.set(x, 0, z);
+      rig.root.rotation.y = Math.PI;
+      group.add(rig.root);
+
+      const animator = new CharacterAnimator(rig);
+      skirmishUnitsRef.current.push({
+        id: `ally-inf-${i}`,
+        name: `${campaign?.playerName ?? 'Sancak'} Kalkanlı Piyadesi #${i + 1}`,
+        team: 'ALLY',
+        division: 'INFANTRY',
+        rig,
+        animator,
+        x,
+        z,
+        yaw: Math.PI,
+        hp: 110,
+        maxHp: 110,
+        alive: true,
+        hasShield: true,
+        weaponType: 'ONE_HANDED_SWORD',
+        attackDir: ALL_DIRS[i % 4],
+        blockDir: 'up',
+        aiTimer: 0.2 + (i % 5) * 0.15,
+        strafeSign: i % 2 === 0 ? 1 : -1,
+        respawnTimer: 0,
+      });
+    }
+
+    // 1.2 Allied Archers (Firing Lines Behind Infantry)
+    for (let i = 0; i < allyArcCount; i++) {
+      const col = (i % 6) - 2.5;
+      const row = Math.floor(i / 6);
+      const x = col * 2.2;
+      const z = 16.5 + row * 2.0;
+
+      const rig = createCharacterRig({
+        skinTone: '#c68a62',
+        hairColor: '#1c1917',
+        factionColor: playerFactionColor,
+        weaponType: 'BOW',
+        shieldType: 'NONE',
+        helmetType: 'KETTLE_HAT',
+        armorTier: 'LEATHER',
+      });
+      rig.root.position.set(x, 0, z);
+      rig.root.rotation.y = Math.PI;
+      group.add(rig.root);
+
+      const animator = new CharacterAnimator(rig);
+      skirmishUnitsRef.current.push({
+        id: `ally-arc-${i}`,
+        name: `${campaign?.playerName ?? 'Sancak'} Keskin Nişancısı #${i + 1}`,
+        team: 'ALLY',
+        division: 'ARCHERS',
+        rig,
+        animator,
+        x,
+        z,
+        yaw: Math.PI,
+        hp: 90,
+        maxHp: 90,
+        alive: true,
+        hasShield: false,
+        weaponType: 'BOW',
+        attackDir: 'up',
+        blockDir: 'up',
+        aiTimer: 0.5 + i * 0.2,
+        strafeSign: i % 2 === 0 ? 1 : -1,
+        respawnTimer: 0,
+      });
+    }
+
+    // 1.3 Allied Cavalry (Mounted on WarHorses on Left Flank)
+    for (let i = 0; i < allyCavCount; i++) {
+      const x = -11.0 - (i % 3) * 2.4;
+      const z = 12.0 + Math.floor(i / 3) * 2.6;
+
+      const rig = createCharacterRig({
+        skinTone: '#d9a17c',
+        hairColor: '#3a2212',
+        factionColor: playerFactionColor,
+        weaponType: i % 2 === 0 ? 'SPEAR' : 'ONE_HANDED_SWORD',
+        shieldType: 'KITE_SHIELD',
+        helmetType: 'IMPERIAL_VISOR',
+        armorTier: 'CHAINMAIL',
+      });
+      const horse = createWarHorseRig({
+        coatColor: '#3b281a',
+        factionColor: playerFactionColor,
+        armoredBarding: true,
+      });
+      horse.root.position.set(x, 0, z);
+      horse.root.rotation.y = Math.PI;
+      horse.riderMount.add(rig.root);
+      rig.root.position.set(0, 0, 0);
+      group.add(horse.root);
+
+      const animator = new CharacterAnimator(rig);
+      skirmishUnitsRef.current.push({
+        id: `ally-cav-${i}`,
+        name: `${campaign?.playerName ?? 'Sancak'} Ağır Süvarisi #${i + 1}`,
+        team: 'ALLY',
+        division: 'CAVALRY',
+        rig,
+        animator,
+        horse,
+        x,
+        z,
+        yaw: Math.PI,
+        hp: 145,
+        maxHp: 145,
+        alive: true,
+        hasShield: true,
+        weaponType: i % 2 === 0 ? 'SPEAR' : 'ONE_HANDED_SWORD',
+        attackDir: 'down',
+        blockDir: 'up',
+        aiTimer: 0.3 + i * 0.2,
+        strafeSign: 1,
+        respawnTimer: 0,
+      });
+    }
+
+    // 2. ENEMY FORCES
+    // 2.1 THE OPPOSING LORD (Garios, Derthert, Rhagaea, Caladog, etc.)
+    if (eLord) {
+      const lordDNA = eLord.morphDNA || getLordDNA(eLord.id, eLord.faction);
+      const lordRig = createCharacterRig({
+        factionColor: enemyFactionColor,
+        weaponType: 'ONE_HANDED_SWORD',
+        shieldType: 'KITE_SHIELD',
+        helmetType: 'IMPERIAL_VISOR',
+        armorTier: 'PLATE',
+      });
+      applyMorphDNAToRig(lordRig, lordDNA);
+
+      const lordHorse = createWarHorseRig({
+        coatColor: '#1a1816',
+        factionColor: enemyFactionColor,
+        armoredBarding: true,
+      });
+      const lx = 0;
+      const lz = -18.0;
+      lordHorse.root.position.set(lx, 0, lz);
+      lordHorse.root.rotation.y = 0;
+      lordHorse.riderMount.add(lordRig.root);
+      lordRig.root.position.set(0, 0, 0);
+      group.add(lordHorse.root);
+
+      // Create floating 3D crown banner above the Lord's head
+      const lordBadge = createLordBannerBadge(
+        `${eLord.title ? `${eLord.title} ` : 'Lord '}${eLord.name}`,
+        enemyFactionColor,
+      );
+      lordHorse.root.add(lordBadge);
+
+      const lordAnimator = new CharacterAnimator(lordRig);
+      skirmishUnitsRef.current.push({
+        id: `enemy-lord-${eLord.id}`,
+        name: `${eLord.title ? `${eLord.title} ` : 'Lord '}${eLord.name}`,
+        team: 'ENEMY',
+        division: 'CAVALRY',
+        rig: lordRig,
+        animator: lordAnimator,
+        horse: lordHorse,
+        x: lx,
+        z: lz,
+        yaw: 0,
+        hp: 200,
+        maxHp: 200,
+        alive: true,
+        hasShield: true,
+        weaponType: 'ONE_HANDED_SWORD',
+        attackDir: 'right',
+        blockDir: 'up',
+        aiTimer: 0.1,
+        strafeSign: 1,
+        respawnTimer: 0,
+        isLord: true,
+        badge: lordBadge,
+      });
+    }
+
+    // 2.2 Enemy Infantry (Shields, Swords & Spears)
+    for (let i = 0; i < enemyInfCount; i++) {
+      const col = (i % 7) - 3.0;
+      const row = Math.floor(i / 7);
+      const x = col * 2.0;
+      const z = -22.0 - row * 2.0;
+
+      const rig = createCharacterRig({
+        skinTone: '#c68a62',
+        hairColor: '#1c1917',
+        factionColor: enemyFactionColor,
+        weaponType: i % 3 === 0 ? 'SPEAR' : 'ONE_HANDED_SWORD',
+        shieldType: 'ROUND_SHIELD',
+        helmetType: i % 2 === 0 ? 'SPANGENHELM' : 'KETTLE_HAT',
+        armorTier: i % 2 === 0 ? 'CHAINMAIL' : 'LEATHER',
+      });
+      rig.root.position.set(x, 0, z);
+      rig.root.rotation.y = 0;
+      group.add(rig.root);
+
+      const animator = new CharacterAnimator(rig);
+      skirmishUnitsRef.current.push({
+        id: `enemy-inf-${i}`,
+        name: `${eLord?.name ?? 'Düşman'} Lejyoneri #${i + 1}`,
+        team: 'ENEMY',
+        division: 'INFANTRY',
+        rig,
+        animator,
+        x,
+        z,
+        yaw: 0,
+        hp: 105,
+        maxHp: 105,
+        alive: true,
+        hasShield: true,
+        weaponType: i % 3 === 0 ? 'SPEAR' : 'ONE_HANDED_SWORD',
+        attackDir: ALL_DIRS[i % 4],
+        blockDir: 'up',
+        aiTimer: 0.3 + (i % 5) * 0.15,
+        strafeSign: i % 2 === 0 ? 1 : -1,
+        respawnTimer: 0,
+      });
+    }
+
+    // 2.3 Enemy Archers (On Parapet Walls in Siege, or in Formation in Field)
+    const isSiege = effectiveMode === 'SIEGE';
+    for (let i = 0; i < enemyArcCount; i++) {
+      const col = (i % 6) - 2.5;
+      const row = Math.floor(i / 6);
+      const x = col * 2.2;
+      const z = isSiege ? -20.8 : -26.0 - row * 2.0;
+      const y = isSiege ? 5.4 : 0;
+
+      const rig = createCharacterRig({
+        skinTone: '#d9a17c',
+        hairColor: '#2b1d12',
+        factionColor: enemyFactionColor,
+        weaponType: 'BOW',
+        shieldType: 'NONE',
+        helmetType: 'KETTLE_HAT',
+        armorTier: 'LEATHER',
+      });
+      rig.root.position.set(x, y, z);
+      rig.root.rotation.y = 0;
+      group.add(rig.root);
+
+      const animator = new CharacterAnimator(rig);
+      skirmishUnitsRef.current.push({
+        id: `enemy-arc-${i}`,
+        name: isSiege ? `Sur Okçusu #${i + 1}` : `${eLord?.name ?? 'Düşman'} Okçusu #${i + 1}`,
+        team: 'ENEMY',
+        division: 'ARCHERS',
+        rig,
+        animator,
+        x,
+        z,
+        yaw: 0,
+        hp: 90,
+        maxHp: 90,
+        alive: true,
+        hasShield: false,
+        weaponType: 'BOW',
+        attackDir: 'up',
+        blockDir: 'up',
+        aiTimer: 2.2 + (i % 5) * 0.4,
+        strafeSign: i % 2 === 0 ? 1 : -1,
+        respawnTimer: 0,
+      });
+    }
+
+    // 2.4 Enemy Cavalry (Mounted on WarHorses on Right Flank)
+    for (let i = 0; i < enemyCavCount; i++) {
+      const x = 11.0 + (i % 3) * 2.4;
+      const z = -20.0 - Math.floor(i / 3) * 2.6;
+
+      const rig = createCharacterRig({
+        skinTone: '#c68a62',
+        hairColor: '#1c1917',
+        factionColor: enemyFactionColor,
+        weaponType: 'SPEAR',
+        shieldType: 'KITE_SHIELD',
+        helmetType: 'IMPERIAL_VISOR',
+        armorTier: 'CHAINMAIL',
+      });
+      const horse = createWarHorseRig({
+        coatColor: '#2a1a10',
+        factionColor: enemyFactionColor,
+        armoredBarding: true,
+      });
+      horse.root.position.set(x, 0, z);
+      horse.root.rotation.y = 0;
+      horse.riderMount.add(rig.root);
+      rig.root.position.set(0, 0, 0);
+      group.add(horse.root);
+
+      const animator = new CharacterAnimator(rig);
+      skirmishUnitsRef.current.push({
+        id: `enemy-cav-${i}`,
+        name: `${eLord?.name ?? 'Düşman'} Süvarisi #${i + 1}`,
+        team: 'ENEMY',
+        division: 'CAVALRY',
+        rig,
+        animator,
+        horse,
+        x,
+        z,
+        yaw: 0,
+        hp: 145,
+        maxHp: 145,
+        alive: true,
+        hasShield: true,
+        weaponType: 'SPEAR',
+        attackDir: 'down',
+        blockDir: 'up',
+        aiTimer: 0.3 + i * 0.2,
+        strafeSign: -1,
+        respawnTimer: 0,
+      });
+    }
+
+    // Set initial telemetry & alive counts
+    const aliveA = skirmishUnitsRef.current.filter((u) => u.team === 'ALLY' && u.alive).length;
+    const aliveE = skirmishUnitsRef.current.filter((u) => u.team === 'ENEMY' && u.alive).length;
+    setAllyAliveCount(aliveA);
+    setEnemyAliveCount(aliveE);
+    playerHpRef.current = 100;
+    setPlayerHp(100);
+
+    // Position player directly at the vanguard
+    playerPosRef.current.set(0, 0, 13.5);
+    playerYawRef.current = Math.PI;
+
+    if (isMountedRef.current && playerHorseRef.current) {
+      playerHorseRef.current.root.position.copy(playerPosRef.current);
+      playerHorseRef.current.root.rotation.y = playerYawRef.current;
+    } else if (playerRigRef.current) {
+      playerRigRef.current.root.position.copy(playerPosRef.current);
+      playerRigRef.current.root.rotation.y = playerYawRef.current;
+    }
+
+    if (cameraRef.current) {
+      const cam = cameraRef.current;
+      const initDist = isMountedRef.current ? 4.2 : 3.4;
+      const fwdX = Math.sin(playerYawRef.current);
+      const fwdZ = Math.cos(playerYawRef.current);
+      const pivotY = playerPosRef.current.y + (isMountedRef.current ? 2.2 : 1.6);
+      cam.position.set(
+        playerPosRef.current.x - fwdX * initDist,
+        pivotY + 0.35,
+        playerPosRef.current.z - fwdZ * initDist,
+      );
+      cam.lookAt(
+        playerPosRef.current.x + fwdX * 25,
+        pivotY,
+        playerPosRef.current.z + fwdZ * 25,
+      );
+    }
+
+    sound.playWarhorn();
+  }, [campaign?.heroes, campaign?.playerName, campaign?.roster, effectiveMode]);
 
   // ── Spawn / Reset Skirmish Wave Fighters ──
   const spawnSkirmishWave = useCallback((waveNumber: number, resetAllies = false) => {
@@ -629,7 +1189,14 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     const tacticalBanner = tacticalBannerRef.current;
     if (!skirmishGroup || !botRig) return;
 
-    if (arenaBattleMode === 'MASS_BATTLE') {
+    if (isFieldOrSiege) {
+      botRig.root.visible = false;
+      skirmishGroup.visible = true;
+      if (instancedScene) instancedScene.root.visible = false;
+      if (perimeterGroup) perimeterGroup.visible = false;
+      if (floorMesh) floorMesh.scale.set(3.5, 1, 3.5);
+      spawnCampaignForces(true);
+    } else if (arenaBattleMode === 'MASS_BATTLE') {
       botRig.root.visible = false;
       skirmishGroup.visible = false;
       if (instancedScene) instancedScene.root.visible = true;
@@ -677,13 +1244,31 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
     // ---- Scene ----
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#0f0c09');
-    scene.fog = new THREE.FogExp2('#0f0c09', 0.014);
+    if (isFieldOrSiege) {
+      scene.background = new THREE.Color('#6ba3d6');
+      scene.fog = new THREE.Fog('#6ba3d6', 55, 250);
+    } else {
+      scene.background = new THREE.Color('#0f0c09');
+      scene.fog = new THREE.FogExp2('#0f0c09', 0.014);
+    }
     sceneRef.current = scene;
 
     // ---- Camera ----
     const camera = new THREE.PerspectiveCamera(62, width / height, 0.1, 140);
-    camera.position.set(0.40, 1.76, 4 + 3.4);
+    const initDist = isFieldOrSiege && Boolean(campaign?.equipment?.MOUNT) ? 4.25 : 3.4;
+    const initFwdX = Math.sin(playerYawRef.current);
+    const initFwdZ = Math.cos(playerYawRef.current);
+    const initPivotY = playerPosRef.current.y + 1.6;
+    camera.position.set(
+      playerPosRef.current.x - initFwdX * initDist,
+      initPivotY + 0.35,
+      playerPosRef.current.z - initFwdZ * initDist,
+    );
+    camera.lookAt(
+      playerPosRef.current.x + initFwdX * 20,
+      initPivotY,
+      playerPosRef.current.z + initFwdZ * 20,
+    );
     cameraRef.current = camera;
 
     // ---- Renderer ----
@@ -698,22 +1283,32 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // ---- Arena Environment ----
-    const floorGeo = new THREE.CylinderGeometry(18, 18, 0.2, 32);
+    // ---- Arena Environment / Battlefield Terrain ----
+    const floorGeo = isFieldOrSiege
+      ? new THREE.PlaneGeometry(380, 380, 20, 20)
+      : new THREE.CylinderGeometry(18, 18, 0.2, 32);
     const floorMat = new THREE.MeshStandardMaterial({
-      color: '#453526',
-      roughness: 0.95,
-      metalness: 0.05,
+      color: isFieldOrSiege ? '#3e5229' : '#453526',
+      roughness: 0.92,
+      metalness: 0.04,
       flatShading: true,
     });
     const floor = new THREE.Mesh(floorGeo, floorMat);
-    floor.position.y = -0.1;
+    if (isFieldOrSiege) {
+      floor.rotation.x = -Math.PI * 0.5;
+      floor.position.y = 0;
+    } else {
+      floor.position.y = -0.1;
+    }
     floor.receiveShadow = true;
     scene.add(floor);
     floorMeshRef.current = floor;
 
     const arenaPerimeterGroup = new THREE.Group();
     arenaPerimeterGroupRef.current = arenaPerimeterGroup;
+    if (isFieldOrSiege) {
+      arenaPerimeterGroup.visible = false;
+    }
     scene.add(arenaPerimeterGroup);
 
     // Stone wall
@@ -738,20 +1333,24 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     arenaPerimeterGroup.add(palisadeGroup);
 
     // ---- Lighting ----
-    const sunLight = new THREE.DirectionalLight('#fffbeb', 2.2);
-    sunLight.position.set(12, 18, 10);
+    const sunLight = new THREE.DirectionalLight(isFieldOrSiege ? '#fffdf5' : '#fffbeb', isFieldOrSiege ? 2.6 : 2.2);
+    sunLight.position.set(16, 28, 14);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 1024;
     sunLight.shadow.mapSize.height = 1024;
     sunLight.shadow.camera.near = 0.5;
-    sunLight.shadow.camera.far = 65;
-    sunLight.shadow.camera.left = -26;
-    sunLight.shadow.camera.right = 26;
-    sunLight.shadow.camera.top = 26;
-    sunLight.shadow.camera.bottom = -26;
+    sunLight.shadow.camera.far = 140;
+    sunLight.shadow.camera.left = -50;
+    sunLight.shadow.camera.right = 50;
+    sunLight.shadow.camera.top = 50;
+    sunLight.shadow.camera.bottom = -50;
     scene.add(sunLight);
 
-    const skyFill = new THREE.HemisphereLight('#fef08a', '#181410', 0.85);
+    const skyFill = new THREE.HemisphereLight(
+      isFieldOrSiege ? '#a5d0fa' : '#fef08a',
+      isFieldOrSiege ? '#384d20' : '#181410',
+      isFieldOrSiege ? 1.15 : 0.85,
+    );
     scene.add(skyFill);
 
     const rimLight = new THREE.DirectionalLight('#93c5fd', 0.7);
@@ -804,6 +1403,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     const botAnimator = new CharacterAnimator(botRig);
     botAnimatorRef.current = botAnimator;
 
+
     // Duel Gladiator hit callback (when bot swings at player!)
     botAnimator.onEvent = (event) => {
       if (event !== 'hit' || arenaBattleModeRef.current !== 'DUEL') return;
@@ -835,11 +1435,17 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         spawnDamageText(blockMsg, '#38bdf8', pPos);
       } else {
         const dmg = Math.round(18 * parryRes.damageMultiplier);
-        playerHpRef.current = Math.max(10, playerHpRef.current - dmg);
+        playerHpRef.current = Math.max(0, playerHpRef.current - dmg);
         setPlayerHp(playerHpRef.current);
-        playerAnim?.hitReact(true);
         sound.playShieldHit();
         spawnDamageText(`-${dmg} HASAR ALDIN!`, '#ef4444', pPos);
+        if (playerHpRef.current <= 0) {
+          playerAnim?.fall();
+          sound.playDefeatSting();
+          spawnDamageText('☠️ ARENA DÜELLOSUNDA YERE SERİLDİN!', '#dc2626', pPos);
+        } else {
+          playerAnim?.hitReact(true);
+        }
       }
     };
 
@@ -850,8 +1456,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       factionColor: initialEquipmentVisuals.factionColor,
       armoredBarding: true,
     });
-    playerHorse.root.position.set(0, 0, 4);
-    playerHorse.root.rotation.y = Math.PI;
+    playerHorse.root.position.copy(playerPosRef.current);
+    playerHorse.root.rotation.y = playerYawRef.current;
     playerHorse.root.visible = false;
     scene.add(playerHorse.root);
     playerHorseRef.current = playerHorse;
@@ -872,12 +1478,29 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     if (pDna) {
       applyMorphDNAToRig(playerRig, pDna);
     }
-    playerRig.root.position.set(0, 0, 4);
-    playerRig.root.rotation.y = Math.PI;
-    scene.add(playerRig.root);
+
+    if (isMountedRef.current) {
+      playerHorse.root.visible = true;
+      playerHorse.riderMount.add(playerRig.root);
+      playerRig.root.position.set(0, 0, 0);
+      playerRig.root.rotation.set(0, 0, 0);
+    } else {
+      playerRig.root.position.copy(playerPosRef.current);
+      playerRig.root.rotation.y = playerYawRef.current;
+      scene.add(playerRig.root);
+    }
     playerRigRef.current = playerRig;
     const playerAnimator = new CharacterAnimator(playerRig);
     playerAnimatorRef.current = playerAnimator;
+
+    // If starting in Campaign Field / Siege mode, initialize authentic armies & terrain immediately
+    if (isFieldOrSiege) {
+      botRig.root.visible = false;
+      instancedBattleScene.root.visible = false;
+      arenaPerimeterGroup.visible = false;
+      skirmishGroup.visible = true;
+      spawnCampaignForces(true);
+    }
 
     // ── Event handler: hit detection, arrow firing, sounds ──
     playerAnimator.onEvent = (event, clipName) => {
@@ -983,7 +1606,14 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   unit.alive = false;
                   unit.animator.fall();
                   setKillsCount((k) => k + 1);
-                  spawnDamageText(`☠️ ${unit.name} Düştü! (-${dmg})`, '#facc15', uPos);
+                  if (unit.isLord) {
+                    sound.playVictoryFanfare();
+                    spawnDamageText(`👑 ${unit.name.toUpperCase()} MAĞLUP EDİLDİ!`, '#fbbf24', uPos);
+                    pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', unit.name, 'ALLY', '👑');
+                  } else {
+                    spawnDamageText(`☠️ ${unit.name} Düştü! (-${dmg})`, '#facc15', uPos);
+                    pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', unit.name, 'ALLY', '⚔️');
+                  }
                 } else {
                   unit.animator.hitReact(true);
                   spawnDamageText(`💥 -${dmg} Hasar!`, '#fbbf24', uPos);
@@ -1207,8 +1837,11 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         orbitRef.current.lastY = e.clientY;
       } else if (mode === 'PLAYABLE') {
         if (document.pointerLockElement !== renderer.domElement) {
-          renderer.domElement.requestPointerLock();
-          return;
+          try {
+            renderer.domElement.requestPointerLock();
+          } catch {
+            // ignore
+          }
         }
 
         const anim = playerAnimatorRef.current;
@@ -1305,15 +1938,20 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         o.lastY = e.clientY;
         o.azimuth -= dx * 0.01;
         o.polar = Math.max(0.05, Math.min(Math.PI * 0.48, o.polar - dy * 0.01));
-      } else if (mode === 'PLAYABLE' && document.pointerLockElement === renderer.domElement) {
-        playerYawRef.current -= e.movementX * MOUSE_SENSITIVITY;
-        playerPitchRef.current = THREE.MathUtils.clamp(
-          playerPitchRef.current - e.movementY * MOUSE_SENSITIVITY,
-          -0.8,
-          0.8,
-        );
-        const anim = playerAnimatorRef.current;
-        if (anim) anim.setAimPitch(playerPitchRef.current);
+      } else if (mode === 'PLAYABLE') {
+        const isLocked = document.pointerLockElement === renderer.domElement;
+        const dx = e.movementX || 0;
+        const dy = e.movementY || 0;
+        if (isLocked || e.buttons > 0 || isFieldOrSiege) {
+          playerYawRef.current -= dx * MOUSE_SENSITIVITY;
+          playerPitchRef.current = THREE.MathUtils.clamp(
+            playerPitchRef.current - dy * MOUSE_SENSITIVITY,
+            -0.8,
+            0.8,
+          );
+          const anim = playerAnimatorRef.current;
+          if (anim) anim.setAimPitch(playerPitchRef.current);
+        }
 
         const mx = e.movementX;
         const my = e.movementY;
@@ -1351,12 +1989,42 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
     const onKeyDown = (e: KeyboardEvent) => {
       keysDownRef.current[e.code] = true;
-      // Quick weapon swap keys (1-5)
-      if (e.code === 'Digit1') setWeaponType('ONE_HANDED_SWORD');
-      if (e.code === 'Digit2') setWeaponType('TWO_HANDED_SWORD');
-      if (e.code === 'Digit3') setWeaponType('BOW');
-      if (e.code === 'Digit4') setWeaponType('SPEAR');
-      if (e.code === 'Digit5') setWeaponType('UNARMED');
+      const inTacticalMode =
+        arenaBattleModeRef.current === 'SKIRMISH' ||
+        arenaBattleModeRef.current === 'MASS_BATTLE' ||
+        isFieldOrSiege;
+
+      if (inTacticalMode) {
+        if (e.code === 'Digit1') {
+          setSelectedDivision('INFANTRY');
+          showOrderShout('🛡️ [1] Piyade Bölüğü Seçildi');
+          sound.playUiClick();
+        } else if (e.code === 'Digit2') {
+          setSelectedDivision('ARCHERS');
+          showOrderShout('🏹 [2] Okçu Bölüğü Seçildi');
+          sound.playUiClick();
+        } else if (e.code === 'Digit3') {
+          setSelectedDivision('CAVALRY');
+          showOrderShout('🏇 [3] Süvari Bölüğü Seçildi');
+          sound.playUiClick();
+        } else if (e.code === 'Digit4') {
+          setSelectedDivision('HORSE_ARCHERS');
+          showOrderShout('🎯 [4] Atlı Okçu Bölüğü Seçildi');
+          sound.playUiClick();
+        } else if (e.code === 'Digit0' || e.code === 'Backquote') {
+          setSelectedDivision('ALL');
+          showOrderShout('⚔️ [0] Tüm Ordu Seçildi');
+          sound.playUiClick();
+        }
+      } else {
+        // Quick weapon swap keys in Training/Duel/Inspector (1-5)
+        if (e.code === 'Digit1') setWeaponType('ONE_HANDED_SWORD');
+        if (e.code === 'Digit2') setWeaponType('TWO_HANDED_SWORD');
+        if (e.code === 'Digit3') setWeaponType('BOW');
+        if (e.code === 'Digit4') setWeaponType('SPEAR');
+        if (e.code === 'Digit5') setWeaponType('UNARMED');
+      }
+
       if (e.code === 'KeyH') setDockCollapsed((prev) => !prev);
 
       // BannerPage Key Actions: [E] Tekme / Kalkan Vuruşu
@@ -1375,39 +2043,99 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         setIsMounted((prev) => !prev);
       }
 
-      // Bannerlord Tactical Orders (F1 / F2 / F3 / F4)
+      // Bannerlord Tactical Orders (F1 / F2 / F3 / F4 / F5 / F6)
       if (e.code === 'F1') {
         e.preventDefault();
-        setFormationOrder((prev) => {
-          const next: FormationOrder =
-            prev === 'FOLLOW_ME' ? 'CHARGE' : prev === 'CHARGE' ? 'HOLD_POSITION' : 'FOLLOW_ME';
-          if (next === 'HOLD_POSITION') {
-            const fwdX = Math.sin(playerYawRef.current);
-            const fwdZ = Math.cos(playerYawRef.current);
-            const hx = THREE.MathUtils.clamp(playerPosRef.current.x + fwdX * 4.2, -13, 13);
-            const hz = THREE.MathUtils.clamp(playerPosRef.current.z + fwdZ * 4.2, -13, 13);
-            holdAnchorRef.current = { x: hx, z: hz, facing: playerYawRef.current };
-            if (tacticalBannerRef.current) {
-              tacticalBannerRef.current.visible = true;
-              tacticalBannerRef.current.position.set(hx, 0, hz);
-              tacticalBannerRef.current.rotation.y = playerYawRef.current;
-            }
-          } else if (tacticalBannerRef.current) {
-            tacticalBannerRef.current.visible = false;
-          }
-          return next;
-        });
-      }
-      if (e.code === 'F2') {
+        if (activeTacticalMenuRef.current === 'MOVEMENT') {
+          issueHoldPositionOrder();
+          setActiveTacticalMenu(null);
+        } else if (activeTacticalMenuRef.current === 'FACING') {
+          showOrderShout('👀 [F2-F1] Düşmana Dönüldü!');
+          setActiveTacticalMenu(null);
+        } else if (activeTacticalMenuRef.current === 'FORMATION') {
+          setFormationArrangement('LINE');
+          showOrderShout('➖ [F3-F1] Çizgi Düzenine Geçildi!');
+          setActiveTacticalMenu(null);
+        } else {
+          setActiveTacticalMenu('MOVEMENT');
+          sound.playUiClick();
+        }
+      } else if (e.code === 'F2') {
         e.preventDefault();
-        setFormationArrangement((prev) => {
-          const order: FormationArrangement[] = ['LINE', 'SHIELD_WALL', 'LOOSE', 'WEDGE'];
-          return order[(order.indexOf(prev) + 1) % order.length];
-        });
-      }
-      if (e.code === 'F3') {
+        if (activeTacticalMenuRef.current === 'MOVEMENT') {
+          setFormationOrder('FOLLOW_ME');
+          if (tacticalBannerRef.current) tacticalBannerRef.current.visible = false;
+          showOrderShout('🛡️ [F1-F2] Beni Takip Et Emri!');
+          setActiveTacticalMenu(null);
+        } else if (activeTacticalMenuRef.current === 'FACING') {
+          showOrderShout('🧭 [F2-F2] Bu Yöne Dönüldü!');
+          setActiveTacticalMenu(null);
+        } else if (activeTacticalMenuRef.current === 'FORMATION') {
+          setFormationArrangement('SHIELD_WALL');
+          showOrderShout('🛡️ [F3-F2] Kalkan Duvarı Örüldü!');
+          sound.playShieldHit();
+          setActiveTacticalMenu(null);
+        } else {
+          setActiveTacticalMenu('FACING');
+          sound.playUiClick();
+        }
+      } else if (e.code === 'F3') {
         e.preventDefault();
-        setFireOrder((prev) => (prev === 'FREE_FIRE' ? 'HOLD_FIRE' : 'FREE_FIRE'));
+        if (activeTacticalMenuRef.current === 'MOVEMENT') {
+          setFormationOrder('CHARGE');
+          if (tacticalBannerRef.current) tacticalBannerRef.current.visible = false;
+          showOrderShout('⚔️ [F1-F3] Hücum Emri! Düşmana saldırın!');
+          sound.playWarhorn();
+          setActiveTacticalMenu(null);
+        } else if (activeTacticalMenuRef.current === 'FORMATION') {
+          setFormationArrangement('LOOSE');
+          showOrderShout('〰️ [F3-F3] Dağınık Düzene Geçildi!');
+          setActiveTacticalMenu(null);
+        } else {
+          setActiveTacticalMenu('FORMATION');
+          sound.playUiClick();
+        }
+      } else if (e.code === 'F4') {
+        e.preventDefault();
+        if (activeTacticalMenuRef.current === 'MOVEMENT') {
+          setFormationOrder('ADVANCE');
+          showOrderShout('➡️ [F1-F4] İlerle Emri Verildi!');
+          setActiveTacticalMenu(null);
+        } else if (activeTacticalMenuRef.current === 'FORMATION') {
+          setFormationArrangement('SQUARE');
+          showOrderShout('⏹️ [F3-F4] Kare Düzene Geçildi!');
+          setActiveTacticalMenu(null);
+        } else {
+          setFireOrder((prev) => {
+            const next = prev === 'FREE_FIRE' ? 'HOLD_FIRE' : 'FREE_FIRE';
+            showOrderShout(next === 'FREE_FIRE' ? '🏹 [F4] Serbest Atış Emri Verildi!' : '🛡️ [F4] Ateşi Kes Emri Verildi!');
+            return next;
+          });
+          sound.playUiClick();
+        }
+      } else if (e.code === 'F5') {
+        e.preventDefault();
+        if (activeTacticalMenuRef.current === 'MOVEMENT') {
+          setFormationOrder('RETREAT');
+          showOrderShout('◀️ [F1-F5] Ricat Emri! Geri çekilin!');
+          setActiveTacticalMenu(null);
+        } else if (activeTacticalMenuRef.current === 'FORMATION') {
+          setFormationArrangement('WEDGE');
+          showOrderShout('🔺 [F3-F5] Kama Düzenine Geçildi!');
+          setActiveTacticalMenu(null);
+        }
+      } else if (e.code === 'F6') {
+        e.preventDefault();
+        if (activeTacticalMenuRef.current === 'FORMATION') {
+          setFormationArrangement('COLUMN');
+          showOrderShout('❚ [F3-F6] Kolon Düzenine Geçildi!');
+          setActiveTacticalMenu(null);
+        }
+      } else if (e.code === 'Escape') {
+        if (activeTacticalMenuRef.current) {
+          e.preventDefault();
+          setActiveTacticalMenu(null);
+        }
       }
 
       // Space → quick attack in selected direction
@@ -1473,8 +2201,9 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           const worldMove = localMove.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYawRef.current);
           playerPosRef.current.addScaledVector(worldMove, moveSpeed * delta);
 
-          const maxR =
-            arenaBattleModeRef.current === 'MASS_BATTLE'
+          const maxR = isFieldOrSiege
+            ? 140.0
+            : arenaBattleModeRef.current === 'MASS_BATTLE'
               ? MASS_BATTLE_RADIUS
               : ARENA_RADIUS - 0.6;
           if (playerPosRef.current.length() > maxR) {
@@ -1785,10 +2514,10 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
         // Update Enemy Fighters
         for (const enemy of aliveEnemies) {
-          // Pick closest target between player and alive allies
-          const nearestAlly = grid.findNearest(enemy.x, enemy.z, 28, (c) => c.team === 'ALLY' && c.alive);
+          const nearestAlly = grid.findNearest(enemy.x, enemy.z, 60, (c) => c.team === 'ALLY' && c.alive);
           const distToPlayer = Math.hypot(playerPosRef.current.x - enemy.x, playerPosRef.current.z - enemy.z);
-          const targetPlayer = !nearestAlly || distToPlayer < nearestAlly.dist;
+          // Target player if player is within close combat range (< 4.2m) or if no allies are alive
+          const targetPlayer = playerHpRef.current > 0 && (!nearestAlly || distToPlayer < 4.2);
 
           const tx = targetPlayer ? playerPosRef.current.x : nearestAlly!.agent.x;
           const tz = targetPlayer ? playerPosRef.current.z : nearestAlly!.agent.z;
@@ -1838,10 +2567,24 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   sound.playShieldHit();
                   spawnDamageText('🛡️ SAVUŞTURULDU!', '#38bdf8', playerPosRef.current);
                 } else {
-                  const dmg = Math.round(14 * parry.damageMultiplier);
-                  playerHpRef.current = Math.max(10, playerHpRef.current - dmg);
+                  const dmg = Math.round((enemy.isLord ? 22 : 14) * parry.damageMultiplier);
+                  playerHpRef.current = Math.max(0, playerHpRef.current - dmg);
                   setPlayerHp(playerHpRef.current);
-                  pAnim?.hitReact(true);
+                  spawnDamageText(`-${dmg} HASAR ALDIN!`, '#ef4444', playerPosRef.current);
+                  if (playerHpRef.current <= 0) {
+                    pAnim?.fall();
+                    sound.playDefeatSting();
+                    spawnDamageText('☠️ AĞIR YARALANDIN VE YERE DÜŞTÜN!', '#dc2626', playerPosRef.current);
+                    setTimeout(() => {
+                      setBattleOutcome((prev) => prev ?? {
+                        victory: false,
+                        enemiesDefeated: killsCountRef.current,
+                        losses: { infantry: 3, archer: 2, cavalry: 1 },
+                      });
+                    }, 1500);
+                  } else {
+                    pAnim?.hitReact(true);
+                  }
                 }
               } else if (nearestAlly) {
                 const ally = nearestAlly.agent;
@@ -1888,13 +2631,29 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         setAllyAliveCount(curAllies);
         setEnemyAliveCount(curEnemies);
 
-        // Next wave check when all enemies defeated!
+        // Next wave check OR Campaign Battle Victory/Defeat
         if (curEnemies === 0 && units.length > 0) {
-          setSkirmishWave((w) => {
-            const nextW = w + 1;
-            spawnSkirmishWave(nextW, false);
-            spawnDamageText(`🏆 DALGA ${w} TEMİZLENDİ! DALGA ${nextW} GELİYOR!`, '#facc15', playerPosRef.current);
-            return nextW;
+          if (isFieldOrSiege) {
+            if (!battleOutcome) {
+              setBattleOutcome({
+                victory: true,
+                enemiesDefeated: killsCountRef.current || units.filter((u) => u.team === 'ENEMY').length,
+                losses: { infantry: 1, archer: 1 },
+              });
+            }
+          } else {
+            setSkirmishWave((w) => {
+              const nextW = w + 1;
+              spawnSkirmishWave(nextW, false);
+              spawnDamageText(`🏆 DALGA ${w} TEMİZLENDİ! DALGA ${nextW} GELİYOR!`, '#facc15', playerPosRef.current);
+              return nextW;
+            });
+          }
+        } else if (isFieldOrSiege && playerHpRef.current <= 0 && curAllies === 0 && !battleOutcome) {
+          setBattleOutcome({
+            victory: false,
+            enemiesDefeated: killsCountRef.current,
+            losses: { infantry: 4, archer: 2, cavalry: 2 },
           });
         }
       } else if (battleMode === 'MASS_BATTLE') {
@@ -1934,6 +2693,55 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           setSiegeGateHpPct(Math.round((pool.siege.gateHp / pool.siege.gateMaxHp) * 100));
           if (stepRes.killsDelta > 0) {
             setKillsCount((k) => k + stepRes.killsDelta);
+            const allyKilledEnemy = Math.random() > 0.4;
+            if (allyKilledEnemy) {
+              const allyKillers = ['Vlandiya Şövalyesi', 'Sancak Muhafızı', 'Kalradya Piyadesi', 'Usta Okçu'];
+              const enemyVictims = ['İmparatorluk Lejyoneri', 'Düşman Okçusu', 'Düşman Süvarisi'];
+              const kName = allyKillers[Math.floor(Math.random() * allyKillers.length)];
+              const vName = enemyVictims[Math.floor(Math.random() * enemyVictims.length)];
+              pushKillFeedEntry(kName, vName, 'ALLY', '⚔️');
+            } else {
+              const enemyKillers = ['Düşman Lejyoneri', 'Düşman Süvarisi', 'Kuşatmacı Asker'];
+              const allyVictims = ['Sancak Askeri', 'Müttefik Piyade', 'Acemi'];
+              const kName = enemyKillers[Math.floor(Math.random() * enemyKillers.length)];
+              const vName = allyVictims[Math.floor(Math.random() * allyVictims.length)];
+              pushKillFeedEntry(kName, vName, 'ENEMY', '⚔️');
+            }
+          }
+
+          // Telemetry reporting to campaign
+          if (onBattleTelemetryRef.current) {
+            const preset = BATTLE_SCALE_PRESETS[battleScaleRef.current];
+            onBattleTelemetryRef.current({
+              playerHp: playerHpRef.current,
+              playerMaxHp: 100,
+              alliesAlive: pool.alliesAliveCount,
+              alliesTotal: preset.alliesCount,
+              enemiesAlive: pool.enemiesAliveCount,
+              enemiesTotal: preset.enemiesCount,
+              enemyCommanderName:
+                targetLordRef.current?.name ??
+                (targetSettlementRef.current ? `${targetSettlementRef.current.name} Garnizonu` : 'Düşman Ordusu'),
+              orderSummary: `${selectedDivisionRef.current}: ${formationOrderRef.current} (${formationArrangementRef.current})`,
+            });
+          }
+
+          // Campaign battle completion check
+          if (isFieldOrSiege && !battleOutcome) {
+            const preset = BATTLE_SCALE_PRESETS[battleScaleRef.current];
+            if (pool.enemiesAliveCount <= 0 && pool.alliesAliveCount > 0) {
+              setBattleOutcome({
+                victory: true,
+                enemiesDefeated: preset.enemiesCount,
+                losses: { infantry: 2, archer: 1 },
+              });
+            } else if (pool.alliesAliveCount <= 0) {
+              setBattleOutcome({
+                victory: false,
+                enemiesDefeated: Math.floor(preset.enemiesCount * 0.4),
+                losses: { infantry: 5, archer: 3, cavalry: 2 },
+              });
+            }
           }
         }
       }
@@ -1963,8 +2771,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         // Kamera miğferin hemen üstünden (y ~ 1.75m) ileri bakar, nişangâh doğrudan kaskın üstündeki boşluğa odaklanır
         const baseDist = playableCamDistRef.current;
         const targetCamDist = isAiming ? Math.max(1.7, baseDist * 0.72) : mounted ? baseDist + 0.85 : baseDist;
-        const targetRightOffset = isAiming ? 0.12 : 0.0;
-        const pivotY = playerPosRef.current.y + (mounted ? 2.20 : 1.55);
+        const targetRightOffset = isAiming ? 0.28 : mounted ? 0.35 : 0.22;
+        const pivotY = playerPosRef.current.y + (mounted ? 2.35 : 1.65);
 
         const fwdX = Math.sin(playerYawRef.current);
         const fwdZ = Math.cos(playerYawRef.current);
@@ -2081,8 +2889,46 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           }
         }
 
-        // Skirmish fighters arrow collision
+        // Skirmish fighters & Player arrow collision
         if (arenaBattleModeRef.current === 'SKIRMISH') {
+          // Check collision with player if arrow is from enemy
+          if (arrow.team === 'ENEMY' && playerHpRef.current > 0) {
+            const pPos = playerPosRef.current;
+            const dToP = arrow.mesh.position.distanceTo(
+              new THREE.Vector3(pPos.x, isMounted ? 2.0 : 1.3, pPos.z),
+            );
+            if (dToP < 0.95) {
+              arrow.inFlight = false;
+              sound.playShieldHit();
+              const pAnim = playerAnimatorRef.current;
+              const hasShield = shieldTypeRef.current !== 'NONE';
+              const isBlocking = !!pAnim?.isBlocking();
+              if (isBlocking && hasShield) {
+                spawnDamageText('🛡️ OK KALKANA SAPLANDI!', '#38bdf8', pPos);
+              } else {
+                const dmg = Math.round(20 + 18 * arrow.power);
+                playerHpRef.current = Math.max(0, playerHpRef.current - dmg);
+                setPlayerHp(playerHpRef.current);
+                spawnDamageText(`🏹 -${dmg} OK HASARI!`, '#ef4444', pPos);
+                if (playerHpRef.current <= 0) {
+                  pAnim?.fall();
+                  sound.playDefeatSting();
+                  spawnDamageText('☠️ OKLA VURULDUN VE YERE DÜŞTÜN!', '#dc2626', pPos);
+                  setTimeout(() => {
+                    setBattleOutcome((prev) => prev ?? {
+                      victory: false,
+                      enemiesDefeated: killsCountRef.current,
+                      losses: { infantry: 2, archer: 1 },
+                    });
+                  }, 1500);
+                } else {
+                  pAnim?.hitReact(true);
+                }
+              }
+              continue;
+            }
+          }
+
           let hitUnit = false;
           for (const u of skirmishUnitsRef.current) {
             if (!u.alive || u.team === arrow.team) continue;
@@ -2101,7 +2947,16 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                 if (u.hp <= 0) {
                   u.alive = false;
                   u.animator.fall();
-                  if (u.team === 'ENEMY') setKillsCount((k) => k + 1);
+                  if (u.team === 'ENEMY') {
+                    setKillsCount((k) => k + 1);
+                    if (u.isLord) {
+                      sound.playVictoryFanfare();
+                      spawnDamageText(`🏹👑 ${u.name.toUpperCase()} OKLA MAĞLUP EDİLDİ!`, '#fbbf24', new THREE.Vector3(u.x, 2.0, u.z));
+                      pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', u.name, 'ALLY', '🏹');
+                    } else {
+                      pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', u.name, 'ALLY', '🏹');
+                    }
+                  }
                 } else {
                   u.animator.hitReact(true);
                 }
@@ -2243,8 +3098,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
   return (
     <div className="fixed inset-0 z-40 bg-[#0d0c0a] text-[#f3ead8] overflow-hidden select-none flex flex-col justify-between pointer-events-auto">
-      {/* PRE-BATTLE OBJECT POOL & SHADER WARM-UP LOADING OVERLAY */}
-      {prewarmStages && (
+      {/* PRE-BATTLE OBJECT POOL & SHADER WARM-UP LOADING OVERLAY (Arena Test Only) */}
+      {!isFieldOrSiege && prewarmStages && (
         <BattlePrewarmModal
           title={
             siegeEnabled
@@ -2317,31 +3172,42 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
               </button>
             )}
 
-            {/* Arena Battle Mode Switcher (Faz 1.3, Faz 2, Faz 3 & Faz 4) */}
-            <div className="p-0.5 rounded bg-[#18130e] border border-[#c6a15b]/40 flex flex-wrap items-center gap-1 text-xs">
-              {(
-                [
-                  { id: 'TRAINING', label: '🎯 Antrenman' },
-                  { id: 'DUEL', label: '⚔️ 1v1 Düello' },
-                  { id: 'SKIRMISH', label: '🛡️ Bölük Savaşı' },
-                  { id: 'MASS_BATTLE', label: '🏰 500v500 Ordu & Kuşatma (Havuzlu)' },
-                ] as const
-              ).map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  data-testid={`arena-mode-${m.id}`}
-                  onClick={() => setArenaBattleMode(m.id)}
-                  className={`px-2.5 py-1 rounded font-bold transition-colors ${
-                    arenaBattleMode === m.id
-                      ? 'bg-[#991b1b] text-[#fde68a] border border-[#fbbf24]/40'
-                      : 'text-[#a89b84] hover:text-white'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
+            {/* Arena Mode Switcher OR Field/Siege Encounter Badge */}
+            {isFieldOrSiege ? (
+              <div className="px-3 py-1.5 rounded bg-[#18130e]/95 border border-[#c6a15b]/50 text-xs font-bold text-[#fde68a] flex items-center gap-2 shadow-lg">
+                <span className="text-amber-400">⚔️</span>
+                <span>
+                  {effectiveMode === 'SIEGE'
+                    ? `${targetSettlement?.name ?? 'Kale'} Kuşatması`
+                    : `${targetLord?.name ?? 'Düşman Ordusu'} ile Meydan Muharebesi`}
+                </span>
+              </div>
+            ) : (
+              <div className="p-0.5 rounded bg-[#18130e] border border-[#c6a15b]/40 flex flex-wrap items-center gap-1 text-xs">
+                {(
+                  [
+                    { id: 'TRAINING', label: '🎯 Antrenman' },
+                    { id: 'DUEL', label: '⚔️ 1v1 Düello' },
+                    { id: 'SKIRMISH', label: '🛡️ Bölük Savaşı' },
+                    { id: 'MASS_BATTLE', label: '🏰 500v500 Ordu & Kuşatma (Havuzlu)' },
+                  ] as const
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    data-testid={`arena-mode-${m.id}`}
+                    onClick={() => setArenaBattleMode(m.id)}
+                    className={`px-2.5 py-1 rounded font-bold transition-colors ${
+                      arenaBattleMode === m.id
+                        ? 'bg-[#991b1b] text-[#fde68a] border border-[#fbbf24]/40'
+                        : 'text-[#a89b84] hover:text-white'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Mounted WarHorse Toggle (Faz 1.4) */}
             <button
@@ -2376,7 +3242,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                     ⚔️ Ordu: {allyAliveCount} vs {enemyAliveCount}
                   </span>
                   <span className="text-amber-300 font-bold hidden lg:inline" data-testid="mass-battle-pool-stats">
-                    🏹 Ok Havuzu: {pooledArrowsCount}/10B · ☠️ Ceset: {pooledCorpsesCount}/10B
+                    🏹 Ok: {pooledArrowsCount}/10B · ☠️ Ceset: {pooledCorpsesCount}/10B
                   </span>
                   {siegeEnabled && (
                     <span className="text-orange-300 font-bold">
@@ -2388,209 +3254,489 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
               <span className="text-[#fbbf24] font-bold">☠️ Leş: {killsCount}</span>
             </div>
 
-            <div className="p-0.5 rounded bg-[#1c1711] border border-[#c6a15b]/30 flex items-center gap-1 text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  if (document.pointerLockElement) document.exitPointerLock();
-                  setControlMode('PLAYABLE');
-                }}
-                className={`px-2.5 py-1 rounded font-bold transition-colors ${
-                  controlMode === 'PLAYABLE'
-                    ? 'bg-[#b45309] text-white'
-                    : 'text-[#a89b84] hover:text-white'
-                }`}
-              >
-                🎮 Savaşçı
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (document.pointerLockElement) document.exitPointerLock();
-                  setControlMode('INSPECTOR');
-                }}
-                className={`px-2.5 py-1 rounded font-bold transition-colors ${
-                  controlMode === 'INSPECTOR'
-                    ? 'bg-[#b45309] text-white'
-                    : 'text-[#a89b84] hover:text-white'
-                }`}
-              >
-                🔍 360° Manken
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* BANNERLORD F1 / F2 / F3 TACTICAL FORMATION & MASS BATTLE SCALE BAR (visible in SKIRMISH or MASS_BATTLE mode) */}
-        {(arenaBattleMode === 'SKIRMISH' || arenaBattleMode === 'MASS_BATTLE') && (
-          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded bg-[#14100c]/95 border border-[#c6a15b]/40 text-xs pointer-events-auto shadow-xl">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[#c6a15b] font-bold mr-1">BÖLÜK:</span>
-              {(
-                [
-                  { id: 'ALL', label: '0: Tüm Ordu' },
-                  { id: 'INFANTRY', label: 'Piyade' },
-                  { id: 'ARCHERS', label: 'Okçu' },
-                  { id: 'CAVALRY', label: 'Süvari' },
-                ] as const
-              ).map((div) => (
+            {!isFieldOrSiege && (
+              <div className="p-0.5 rounded bg-[#1c1711] border border-[#c6a15b]/30 flex items-center gap-1 text-xs">
                 <button
-                  key={div.id}
                   type="button"
-                  onClick={() => setSelectedDivision(div.id)}
-                  className={`px-2 py-0.5 rounded font-bold transition-colors ${
-                    selectedDivision === div.id
+                  onClick={() => {
+                    if (document.pointerLockElement) document.exitPointerLock();
+                    setControlMode('PLAYABLE');
+                  }}
+                  className={`px-2.5 py-1 rounded font-bold transition-colors ${
+                    controlMode === 'PLAYABLE'
                       ? 'bg-[#b45309] text-white'
-                      : 'bg-[#1f1913] text-[#a89b84] hover:text-white'
+                      : 'text-[#a89b84] hover:text-white'
                   }`}
                 >
-                  {div.label}
+                  🎮 Savaşçı
                 </button>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <span className="text-[#c6a15b] font-bold mr-1">EMİR [F1]:</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setFormationOrder('CHARGE');
-                  if (tacticalBannerRef.current) tacticalBannerRef.current.visible = false;
-                }}
-                className={`px-2.5 py-0.5 rounded font-bold ${
-                  formationOrder === 'CHARGE'
-                    ? 'bg-red-700 text-white border border-red-400'
-                    : 'bg-[#1f1913] text-[#d6cbb5] hover:bg-[#2c231b]'
-                }`}
-              >
-                ⚔️ Hücum Et
-              </button>
-              <button
-                type="button"
-                onClick={issueHoldPositionOrder}
-                className={`px-2.5 py-0.5 rounded font-bold ${
-                  formationOrder === 'HOLD_POSITION'
-                    ? 'bg-amber-600 text-white border border-amber-300'
-                    : 'bg-[#1f1913] text-[#d6cbb5] hover:bg-[#2c231b]'
-                }`}
-              >
-                🚩 Bu Konumu Tut
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setFormationOrder('FOLLOW_ME');
-                  if (tacticalBannerRef.current) tacticalBannerRef.current.visible = false;
-                }}
-                className={`px-2.5 py-0.5 rounded font-bold ${
-                  formationOrder === 'FOLLOW_ME'
-                    ? 'bg-emerald-700 text-white border border-emerald-400'
-                    : 'bg-[#1f1913] text-[#d6cbb5] hover:bg-[#2c231b]'
-                }`}
-              >
-                🛡️ Beni Takip Et
-              </button>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <span className="text-[#c6a15b] font-bold mr-1">DÜZEN [F2]:</span>
-              {(
-                [
-                  { id: 'LINE', label: 'Çizgi' },
-                  { id: 'SHIELD_WALL', label: '🛡️ Kalkan Duvarı' },
-                  { id: 'LOOSE', label: 'Dağınık' },
-                  { id: 'WEDGE', label: '🔺 Kama' },
-                ] as const
-              ).map((arr) => (
                 <button
-                  key={arr.id}
                   type="button"
-                  onClick={() => setFormationArrangement(arr.id)}
-                  className={`px-2 py-0.5 rounded font-bold transition-colors ${
-                    formationArrangement === arr.id
-                      ? 'bg-[#991b1b] text-[#fde68a] border border-[#fbbf24]/50'
-                      : 'bg-[#1f1913] text-[#d6cbb5] hover:bg-[#2c231b]'
+                  onClick={() => {
+                    if (document.pointerLockElement) document.exitPointerLock();
+                    setControlMode('INSPECTOR');
+                  }}
+                  className={`px-2.5 py-1 rounded font-bold transition-colors ${
+                    controlMode === 'INSPECTOR'
+                      ? 'bg-[#b45309] text-white'
+                      : 'text-[#a89b84] hover:text-white'
                   }`}
                 >
-                  {arr.label}
+                  🔍 360° Manken
                 </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setFireOrder((f) => (f === 'FREE_FIRE' ? 'HOLD_FIRE' : 'FREE_FIRE'))}
-                className={`ml-1 px-2 py-0.5 rounded font-bold border ${
-                  fireOrder === 'FREE_FIRE'
-                    ? 'bg-amber-900/60 text-amber-200 border-amber-500/40'
-                    : 'bg-stone-800 text-stone-400 border-stone-600'
-                }`}
-              >
-                🏹 [F3] {fireOrder === 'FREE_FIRE' ? 'Ateş Serbest' : 'Ateşi Kes'}
-              </button>
-            </div>
-
-            {/* Faz 3 & Faz 4: Battle Scale (50v50 / 250v250 / 500v500) + Siege Engines + Prewarm Trigger */}
-            {arenaBattleMode === 'MASS_BATTLE' && (
-              <div className="w-full pt-1.5 mt-1 border-t border-[#c6a15b]/25 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[#fbbf24] font-bold">ÖLÇEK SEÇİMİ:</span>
-                  {(
-                    [
-                      { id: 'SKIRMISH_50', label: '50v50 (Öncü)' },
-                      { id: 'BATTLE_250', label: '250v250 (Meydan)' },
-                      { id: 'EPIC_500', label: '500v500 (1000 Asker)' },
-                    ] as const
-                  ).map((sc) => (
-                    <button
-                      key={sc.id}
-                      type="button"
-                      data-testid={`scale-btn-${sc.id}`}
-                      onClick={() => {
-                        setBattleScale(sc.id);
-                        launchMassBattleWithPrewarm(sc.id, siegeEnabled, true);
-                      }}
-                      className={`px-2.5 py-0.5 rounded font-bold transition-colors ${
-                        battleScale === sc.id
-                          ? 'bg-[#b45309] text-white border border-[#fde68a]/50'
-                          : 'bg-[#1f1913] text-[#a89b84] hover:text-white'
-                      }`}
-                    >
-                      {sc.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    data-testid="toggle-siege-btn"
-                    onClick={() => {
-                      const next = !siegeEnabled;
-                      setSiegeEnabled(next);
-                      launchMassBattleWithPrewarm(battleScale, next, false);
-                    }}
-                    className={`px-2.5 py-0.5 rounded font-bold border transition-colors ${
-                      siegeEnabled
-                        ? 'bg-amber-800 text-[#fef08a] border-amber-400'
-                        : 'bg-[#1f1913] text-[#a89b84] border-[#c6a15b]/30'
-                    }`}
-                  >
-                    🏰 {siegeEnabled ? 'Kuşatma: AÇIK (Koçbaşı, Kule & Mancınık)' : 'Kuşatma: KAPALI (Açık Meydan)'}
-                  </button>
-
-                  <button
-                    type="button"
-                    data-testid="retrigger-prewarm-btn"
-                    onClick={() => launchMassBattleWithPrewarm(battleScale, siegeEnabled, true)}
-                    className="px-2.5 py-0.5 rounded font-bold bg-[#261c12] hover:bg-[#38291b] text-[#fbbf24] border border-[#f59e0b]/50"
-                  >
-                    🔄 10.000 Ok & Ceset Havuzu Yükleme Ekranı
-                  </button>
-                </div>
               </div>
             )}
           </div>
+        </div>
+
+        {/* BANNERLORD LIVE BATTLE STRENGTH & GATE HP BAR */}
+        {(isFieldOrSiege || arenaBattleMode === 'MASS_BATTLE' || arenaBattleMode === 'SKIRMISH') && (
+          <div className="mx-auto w-full max-w-xl pointer-events-auto flex flex-col items-center gap-1 my-1">
+            <div className="w-full flex items-center justify-between text-xs font-bold px-2 text-[#e2d6c1]">
+              <div className="flex items-center gap-1.5 text-emerald-400">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]" />
+                <span>Müttefik Kuvvetler ({allyAliveCount})</span>
+              </div>
+              {siegeEnabled && (
+                <div className="flex items-center gap-1 text-amber-300 font-mono text-[11px]">
+                  <span>🪵 Kapı:</span>
+                  <span className={siegeGateHpPct <= 25 ? 'text-red-400 font-black' : 'text-amber-300'}>
+                    %{siegeGateHpPct}
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center gap-1.5 text-rose-400">
+                <span>
+                  {targetLord
+                    ? `👑 ${targetLord.title ? `${targetLord.title} ` : 'Lord '}${targetLord.name}`
+                    : (targetSettlement ? `🏰 ${targetSettlement.name} Garnizonu` : 'Düşman Kuvvetler')}{' '}
+                  ({enemyAliveCount})
+                </span>
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-[0_0_8px_#f43f5e]" />
+              </div>
+            </div>
+
+            {/* Live Troop Ratio Bar */}
+            <div className="w-full h-2 rounded bg-black/80 border border-[#c6a15b]/40 overflow-hidden flex shadow-lg">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-300"
+                style={{
+                  width: `${Math.round((allyAliveCount / Math.max(1, allyAliveCount + enemyAliveCount)) * 100)}%`,
+                }}
+              />
+              <div
+                className="h-full bg-gradient-to-r from-rose-500 to-rose-700 transition-all duration-300"
+                style={{
+                  width: `${Math.round((enemyAliveCount / Math.max(1, allyAliveCount + enemyAliveCount)) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* BANNERLORD F1-F6 TACTICAL COMMAND SUB-MENU OVERLAY */}
+        {(arenaBattleMode === 'SKIRMISH' || arenaBattleMode === 'MASS_BATTLE') && (
+          <div className="flex flex-col gap-1.5">
+            {/* Active F1 / F2 / F3 Sub-Menu Popup Cards */}
+            {activeTacticalMenu && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded bg-[#100d0a]/95 border-2 border-[#fbbf24]/70 text-xs pointer-events-auto shadow-2xl">
+                <span className="text-[#fbbf24] font-black tracking-wider uppercase mr-1">
+                  {activeTacticalMenu === 'MOVEMENT'
+                    ? 'F1 HAREKET EMİRLERİ:'
+                    : activeTacticalMenu === 'FACING'
+                      ? 'F2 YÖN EMİRLERİ:'
+                      : 'F3 DİZİLİŞ DÜZENLERİ:'}
+                </span>
+
+                {activeTacticalMenu === 'MOVEMENT' && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        issueHoldPositionOrder();
+                        setActiveTacticalMenu(null);
+                        showOrderShout('🚩 BU KONUMU TUT!');
+                      }}
+                      className="px-2.5 py-1 rounded bg-[#2a1e12] hover:bg-[#3d2c1a] text-white border border-[#c6a15b]/40 font-bold"
+                    >
+                      [F1] Bu Konumu Tut
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormationOrder('FOLLOW_ME');
+                        formationOrderRef.current = 'FOLLOW_ME';
+                        if (tacticalBannerRef.current) tacticalBannerRef.current.visible = false;
+                        setActiveTacticalMenu(null);
+                        showOrderShout('🛡️ BENİ TAKİP ET!');
+                      }}
+                      className="px-2.5 py-1 rounded bg-[#2a1e12] hover:bg-[#3d2c1a] text-white border border-[#c6a15b]/40 font-bold"
+                    >
+                      [F2] Beni Takip Et
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormationOrder('CHARGE');
+                        formationOrderRef.current = 'CHARGE';
+                        if (tacticalBannerRef.current) tacticalBannerRef.current.visible = false;
+                        setActiveTacticalMenu(null);
+                        showOrderShout('⚔️ TÜM GÜCÜNÜZLE HÜCUM EDİN!');
+                      }}
+                      className="px-2.5 py-1 rounded bg-[#991b1b] hover:bg-[#b91c1c] text-white border border-rose-400/60 font-bold"
+                    >
+                      [F3] Hücum Et
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormationOrder('ADVANCE');
+                        formationOrderRef.current = 'ADVANCE';
+                        setActiveTacticalMenu(null);
+                        showOrderShout('🏹 İLERLEYİN VE ATEŞ AÇIN!');
+                      }}
+                      className="px-2.5 py-1 rounded bg-[#2a1e12] hover:bg-[#3d2c1a] text-white border border-[#c6a15b]/40 font-bold"
+                    >
+                      [F4] İlerle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormationOrder('RETREAT');
+                        formationOrderRef.current = 'RETREAT';
+                        setActiveTacticalMenu(null);
+                        showOrderShout('🛡️ GERİ ÇEKİLİN!');
+                      }}
+                      className="px-2.5 py-1 rounded bg-[#2a1e12] hover:bg-[#3d2c1a] text-white border border-[#c6a15b]/40 font-bold"
+                    >
+                      [F5] Geri Çekil
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTacticalMenu(null)}
+                      className="px-2 py-1 rounded bg-stone-800 text-stone-300 text-[10px]"
+                    >
+                      [Esc] Kapat
+                    </button>
+                  </div>
+                )}
+
+                {activeTacticalMenu === 'FACING' && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTacticalMenu(null);
+                        showOrderShout('⚔️ DÜŞMANA DÖNÜN!');
+                      }}
+                      className="px-2.5 py-1 rounded bg-[#2a1e12] hover:bg-[#3d2c1a] text-white border border-[#c6a15b]/40 font-bold"
+                    >
+                      [F1] Düşmana Dön
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTacticalMenu(null);
+                        showOrderShout('🧭 İLERİ YÖNE DÖNÜN!');
+                      }}
+                      className="px-2.5 py-1 rounded bg-[#2a1e12] hover:bg-[#3d2c1a] text-white border border-[#c6a15b]/40 font-bold"
+                    >
+                      [F2] İleri Yöne Dön
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTacticalMenu(null)}
+                      className="px-2 py-1 rounded bg-stone-800 text-stone-300 text-[10px]"
+                    >
+                      [Esc] Kapat
+                    </button>
+                  </div>
+                )}
+
+                {activeTacticalMenu === 'FORMATION' && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(
+                      [
+                        { id: 'LINE' as const, label: '[F1] Çizgi (Line)' },
+                        { id: 'SHIELD_WALL' as const, label: '[F2] 🛡️ Kalkan Duvarı' },
+                        { id: 'LOOSE' as const, label: '[F3] Dağınık (Loose)' },
+                        { id: 'SQUARE' as const, label: '[F4] ⬛ Kare (Square)' },
+                        { id: 'WEDGE' as const, label: '[F5] 🔺 Kama (Wedge)' },
+                        { id: 'COLUMN' as const, label: '[F6] ║ Kolon (Column)' },
+                      ] as const
+                    ).map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => {
+                          setFormationArrangement(f.id);
+                          formationArrangementRef.current = f.id;
+                          setActiveTacticalMenu(null);
+                          showOrderShout(`${f.label.split(' ')[1] || f.label} Düzenine Geçildi!`);
+                        }}
+                        className={`px-2.5 py-1 rounded font-bold border transition-colors ${
+                          formationArrangement === f.id
+                            ? 'bg-[#991b1b] text-[#fde68a] border-[#fbbf24]'
+                            : 'bg-[#2a1e12] text-[#d6cbb5] border-[#c6a15b]/40 hover:bg-[#3d2c1a]'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setActiveTacticalMenu(null)}
+                      className="px-2 py-1 rounded bg-stone-800 text-stone-300 text-[10px]"
+                    >
+                      [Esc] Kapat
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Division Cards and Tactical Command Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded bg-[#14100c]/95 border border-[#c6a15b]/40 text-xs pointer-events-auto shadow-xl">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[#c6a15b] font-bold mr-1">BÖLÜK:</span>
+                {(
+                  [
+                    { id: 'ALL' as const, label: '0: Tümü' },
+                    { id: 'INFANTRY' as const, label: '1: Piyade' },
+                    { id: 'ARCHERS' as const, label: '2: Okçular' },
+                    { id: 'CAVALRY' as const, label: '3: Süvari' },
+                    { id: 'HORSE_ARCHERS' as const, label: '4: Atlı Okçu' },
+                  ] as const
+                ).map((div) => (
+                  <button
+                    key={div.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedDivision(div.id);
+                      selectedDivisionRef.current = div.id;
+                    }}
+                    className={`px-2 py-0.5 rounded font-bold transition-colors ${
+                      selectedDivision === div.id
+                        ? 'bg-[#b45309] text-white border border-amber-300/50'
+                        : 'bg-[#1f1913] text-[#a89b84] hover:text-white'
+                    }`}
+                  >
+                    {div.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span className="text-[#c6a15b] font-bold mr-1">KOMUT [F]:</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTacticalMenu((m) => (m === 'MOVEMENT' ? null : 'MOVEMENT'))}
+                  className={`px-2.5 py-0.5 rounded font-bold transition-colors ${
+                    activeTacticalMenu === 'MOVEMENT'
+                      ? 'bg-amber-600 text-white border border-amber-300'
+                      : 'bg-[#1f1913] text-[#d6cbb5] hover:bg-[#2c231b]'
+                  }`}
+                >
+                  [F1] Hareket ({formationOrder})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTacticalMenu((m) => (m === 'FACING' ? null : 'FACING'))}
+                  className={`px-2.5 py-0.5 rounded font-bold transition-colors ${
+                    activeTacticalMenu === 'FACING'
+                      ? 'bg-amber-600 text-white border border-amber-300'
+                      : 'bg-[#1f1913] text-[#d6cbb5] hover:bg-[#2c231b]'
+                  }`}
+                >
+                  [F2] Yön
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTacticalMenu((m) => (m === 'FORMATION' ? null : 'FORMATION'))}
+                  className={`px-2.5 py-0.5 rounded font-bold transition-colors ${
+                    activeTacticalMenu === 'FORMATION'
+                      ? 'bg-amber-600 text-white border border-amber-300'
+                      : 'bg-[#1f1913] text-[#d6cbb5] hover:bg-[#2c231b]'
+                  }`}
+                >
+                  [F3] Düzen ({formationArrangement})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = fireOrder === 'FREE_FIRE' ? 'HOLD_FIRE' : 'FREE_FIRE';
+                    setFireOrder(next);
+                    fireOrderRef.current = next;
+                    showOrderShout(next === 'FREE_FIRE' ? '🏹 ATEŞ SERBEST!' : '🏹 ATEŞİ KES!');
+                  }}
+                  className={`ml-1 px-2.5 py-0.5 rounded font-bold border transition-colors ${
+                    fireOrder === 'FREE_FIRE'
+                      ? 'bg-amber-900/60 text-amber-200 border-amber-500/40'
+                      : 'bg-stone-800 text-stone-400 border-stone-600'
+                  }`}
+                >
+                  [F4] {fireOrder === 'FREE_FIRE' ? 'Ateş Serbest' : 'Ateşi Kes'}
+                </button>
+              </div>
+
+              {/* Faz 3 & Faz 4: Battle Scale (50v50 / 250v250 / 500v500) + Siege Engines + Prewarm Trigger */}
+              {!isFieldOrSiege && arenaBattleMode === 'MASS_BATTLE' && (
+                <div className="w-full pt-1.5 mt-1 border-t border-[#c6a15b]/25 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[#fbbf24] font-bold">ÖLÇEK SEÇİMİ:</span>
+                    {(
+                      [
+                        { id: 'SKIRMISH_50', label: '50v50 (Öncü)' },
+                        { id: 'BATTLE_250', label: '250v250 (Meydan)' },
+                        { id: 'EPIC_500', label: '500v500 (1000 Asker)' },
+                      ] as const
+                    ).map((sc) => (
+                      <button
+                        key={sc.id}
+                        type="button"
+                        data-testid={`scale-btn-${sc.id}`}
+                        onClick={() => {
+                          setBattleScale(sc.id);
+                          launchMassBattleWithPrewarm(sc.id, siegeEnabled, true);
+                        }}
+                        className={`px-2.5 py-0.5 rounded font-bold transition-colors ${
+                          battleScale === sc.id
+                            ? 'bg-[#b45309] text-white border border-[#fde68a]/50'
+                            : 'bg-[#1f1913] text-[#a89b84] hover:text-white'
+                        }`}
+                      >
+                        {sc.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid="toggle-siege-btn"
+                      onClick={() => {
+                        const next = !siegeEnabled;
+                        setSiegeEnabled(next);
+                        launchMassBattleWithPrewarm(battleScale, next, false);
+                      }}
+                      className={`px-2.5 py-0.5 rounded font-bold border transition-colors ${
+                        siegeEnabled
+                          ? 'bg-amber-800 text-[#fef08a] border-amber-400'
+                          : 'bg-[#1f1913] text-[#a89b84] border-[#c6a15b]/30'
+                      }`}
+                    >
+                      🏰 {siegeEnabled ? 'Kuşatma: AÇIK' : 'Kuşatma: KAPALI'}
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="retrigger-prewarm-btn"
+                      onClick={() => launchMassBattleWithPrewarm(battleScale, siegeEnabled, true)}
+                      className="px-2.5 py-0.5 rounded font-bold bg-[#261c12] hover:bg-[#38291b] text-[#fbbf24] border border-[#f59e0b]/50"
+                    >
+                      🔄 Ön Yükleme Havuzu
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </header>
+
+      {/* BANNERLORD AUTHENTIC KILL FEED (Top Right) */}
+      {killFeed.length > 0 && (
+        <aside
+          aria-label="Savaş Bildirimleri"
+          className="absolute top-20 right-4 z-30 flex flex-col gap-1.5 pointer-events-none select-none max-w-xs"
+        >
+          {killFeed.map((item) => (
+            <div
+              key={item.id}
+              className={`px-2.5 py-1 rounded text-[11px] font-bold tracking-wide flex items-center justify-between gap-2 border shadow-lg backdrop-blur-sm transition-all duration-300 ${
+                item.killerTeam === 'ALLY'
+                  ? 'bg-emerald-950/85 border-emerald-500/40 text-emerald-200'
+                  : 'bg-rose-950/85 border-rose-500/40 text-rose-200'
+              }`}
+            >
+              <span className="truncate max-w-[110px]">{item.killer}</span>
+              <span className="text-amber-400">{item.icon}</span>
+              <span className="truncate max-w-[110px] opacity-90">{item.victim}</span>
+            </div>
+          ))}
+        </aside>
+      )}
+
+      {/* TACTICAL ORDER SHOUT BANNER */}
+      {orderShout && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-35 pointer-events-none animate-bounce">
+          <div className="px-6 py-2 rounded bg-black/90 border-2 border-[#c6a15b] shadow-[0_0_25px_rgba(198,161,91,0.6)] text-center">
+            <div className="text-sm font-black tracking-widest text-[#fde68a] uppercase drop-shadow">
+              {orderShout}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🏆 VICTORY / ☠️ DEFEAT BATTLE OUTCOME MODAL */}
+      {battleOutcome && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md pointer-events-auto"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md p-6 rounded-lg bg-[#14100c] border-2 border-[#c6a15b] shadow-2xl text-center space-y-4">
+            <div className="text-xs font-bold tracking-widest uppercase text-[#c6a15b]">
+              {effectiveMode === 'SIEGE' ? 'Kuşatma Muharebesi' : 'Meydan Muharebesi'}
+            </div>
+            <h2
+              className={`text-2xl font-black tracking-widest uppercase ${
+                battleOutcome.victory ? 'text-emerald-400' : 'text-rose-400'
+              }`}
+            >
+              {battleOutcome.victory ? '🏆 ZAFER KAZANILDI!' : '☠️ YENİLGİ!'}
+            </h2>
+            <p className="text-xs text-[#e2d6c1]">
+              {battleOutcome.victory
+                ? 'Düşman ordusu dağıtıldı ve savaş alanı tamamen kontrolünüz altına geçti.'
+                : 'Birlikleriniz ağır kayıplar verdi ve geri çekilmek zorunda kaldınız.'}
+            </p>
+            <div className="p-3.5 rounded bg-black/60 border border-[#c6a15b]/30 text-xs font-mono space-y-1.5 text-[#d6cbb5]">
+              <div className="flex justify-between">
+                <span>Etkisiz Hale Getirilen Düşman:</span>
+                <span className="font-bold text-amber-300">{battleOutcome.enemiesDefeated}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Kayıplarınız:</span>
+                <span className="font-bold text-rose-300">
+                  {Object.entries(battleOutcome.losses)
+                    .map(([t, c]) => `${t}: ${c}`)
+                    .join(', ') || 'Yok (Kusursuz Zafer)'}
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              data-testid="battle-return-btn"
+              onClick={() => {
+                if (document.pointerLockElement) document.exitPointerLock();
+                if (onBattleCompleteRef.current) {
+                  onBattleCompleteRef.current(
+                    battleOutcome.victory,
+                    battleOutcome.losses,
+                    battleOutcome.enemiesDefeated,
+                  );
+                } else {
+                  onReturnToMap();
+                }
+              }}
+              className="w-full py-2.5 rounded font-bold bg-[#b45309] hover:bg-[#d97706] text-white border border-[#fde68a]/50 shadow-lg transition-colors cursor-pointer"
+            >
+              Sefer Haritasına Dön
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* BANNERLORD / WARBAND 4-DIRECTIONAL COMBAT RETICLE (PLAYABLE MODE ONLY) */}
       {controlMode === 'PLAYABLE' && (
@@ -2807,8 +3953,9 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         </div>
       )}
 
-      {/* BOTTOM CONTROL DOCK */}
-      <footer className="relative z-30 pb-3 px-4 flex flex-col items-center pointer-events-none">
+      {/* BOTTOM CONTROL DOCK (Only in Arena Training / Testing Mode, Never in Field/Siege Battles) */}
+      {!isFieldOrSiege && (
+        <footer className="relative z-30 pb-3 px-4 flex flex-col items-center pointer-events-none">
         <button
           type="button"
           onClick={() => setDockCollapsed((prev) => !prev)}
@@ -3167,6 +4314,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           </div>
         )}
       </footer>
+      )}
     </div>
   );
 };

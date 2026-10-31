@@ -195,6 +195,15 @@ export interface KadirlordTestApi {
   closeCharacter: () => void;
   openKingdom?: () => void;
   closeKingdom?: () => void;
+  openArena?: () => void;
+  closeArena?: () => void;
+  openBattle?: (lordId?: string) => boolean;
+  closeBattle?: () => void;
+  selectDivision?: (division: string) => void;
+  setFormationOrder?: (order: string) => void;
+  setFormationArrangement?: (arrangement: string) => void;
+  triggerVictory?: () => void;
+  getBattleState?: () => Record<string, unknown>;
   openMarket: (settlementId?: string) => boolean;
   closeMarket: () => void;
   openInventory: () => void;

@@ -373,7 +373,8 @@ export function createInstancedBattleScene(): InstancedBattleSceneHandles {
       const phase = pool.soldierAnimPhase[i];
       const swing = pool.soldierAttackSwing[i];
 
-      const bobY = Math.abs(Math.sin(phase)) * 0.08 + (isMounted ? 0.55 : 0);
+      const yBase = pool.soldierY ? pool.soldierY[i] : 0;
+      const bobY = yBase + Math.abs(Math.sin(phase)) * 0.08 + (isMounted ? 0.55 : 0);
       _pos.set(x, bobY, z);
       _euler.set(0, yaw, 0);
       _quat.setFromEuler(_euler);

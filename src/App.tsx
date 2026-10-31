@@ -594,6 +594,28 @@ export default function App() {
       closeCharacter: () => setIsCharacterModalOpen(false),
       openKingdom: () => setIsKingdomModalOpen(true),
       closeKingdom: () => setIsKingdomModalOpen(false),
+      openArena: () => {
+        setViewMode('character_arena');
+        return true;
+      },
+      closeArena: () => {
+        setViewMode('campaign');
+      },
+      openBattle: (lordId) => {
+        const current = testStateRef.current.campaign;
+        const lord = lordId
+          ? current.lords.find((l) => l.id === lordId)
+          : current.lords.find((l) => l.isAtWarWithPlayer) ?? current.lords[0];
+        setBattleTargetLordId(lord?.id ?? null);
+        setBattleTargetSettlementId(null);
+        setSubMode('battle');
+        return true;
+      },
+      closeBattle: () => {
+        setSubMode('overworld');
+        setBattleTargetLordId(null);
+        setBattleTargetSettlementId(null);
+      },
       openMarket: (settlementId) => {
         const current = testStateRef.current.campaign;
         const settlement = settlementId

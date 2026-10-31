@@ -116,6 +116,7 @@ export class BattleMemoryPool {
   readonly soldierTeam = new Uint8Array(MAX_SOLDIER_POOL); // 1 = ALLY, 2 = ENEMY
   readonly soldierDivision = new Uint8Array(MAX_SOLDIER_POOL); // 0 = INFANTRY, 1 = ARCHERS, 2 = CAVALRY
   readonly soldierX = new Float32Array(MAX_SOLDIER_POOL);
+  readonly soldierY = new Float32Array(MAX_SOLDIER_POOL);
   readonly soldierZ = new Float32Array(MAX_SOLDIER_POOL);
   readonly soldierVx = new Float32Array(MAX_SOLDIER_POOL);
   readonly soldierVz = new Float32Array(MAX_SOLDIER_POOL);
@@ -374,6 +375,7 @@ export class BattleMemoryPool {
     this.projState.fill(0);
     this.corpseActive.fill(0);
 
+    this.soldierY.fill(0);
     this.resetSiegeState(siegeEnabled);
 
     const allyCols = Math.max(10, Math.round(Math.sqrt(allies * 2.4)));
@@ -390,6 +392,7 @@ export class BattleMemoryPool {
       this.soldierTeam[i] = 1;
       this.soldierDivision[i] = div;
       this.soldierX[i] = col * spacingX + (div === 2 ? (col >= 0 ? 6 : -6) : 0);
+      this.soldierY[i] = 0;
       this.soldierZ[i] = 16.5 + row * spacingZ + (div === 1 ? 3.5 : 0);
       this.soldierVx[i] = 0;
       this.soldierVz[i] = 0;
@@ -413,9 +416,19 @@ export class BattleMemoryPool {
       this.soldierAlive[idx] = 1;
       this.soldierTeam[idx] = 2;
       this.soldierDivision[idx] = div;
-      this.soldierX[idx] = col * spacingX;
-      // If siege is enabled, enemy army holds behind / on the castle gate line (z <= -22.5)
-      this.soldierZ[idx] = (siegeEnabled ? -23.5 : -16.5) - row * spacingZ;
+
+      // When siege is enabled, place first 24 archers along the castle wall parapets (height 5.4m)
+      if (siegeEnabled && div === 1 && e < 24) {
+        this.soldierY[idx] = 5.4;
+        this.soldierZ[idx] = -21.4;
+        this.soldierX[idx] = -18 + (e % 24) * 1.55;
+      } else {
+        this.soldierY[idx] = 0;
+        this.soldierX[idx] = col * spacingX;
+        // If siege is enabled, enemy ground troops hold behind the castle gate (z <= -23.5)
+        this.soldierZ[idx] = (siegeEnabled ? -23.5 : -16.5) - row * spacingZ;
+      }
+
       this.soldierVx[idx] = 0;
       this.soldierVz[idx] = 0;
       this.soldierYaw[idx] = 0;
@@ -741,7 +754,8 @@ export class BattleMemoryPool {
           const vx = (targetProxy.x + spreadX - x) / flightTime;
           const vz = (targetProxy.z + spreadZ - z) / flightTime;
           const vy = 4.9 * flightTime + 1.2;
-          this.spawnPooledProjectile(x, 1.45, z, vx, vy, vz, team, 0);
+          const spawnY = this.soldierY[i] > 0 ? this.soldierY[i] + 1.45 : 1.45;
+          this.spawnPooledProjectile(x, spawnY, z, vx, vy, vz, team, 0);
           this.soldierAttackSwing[i] = 1.0;
           this.soldierCooldown[i] = 2.1 + Math.random() * 1.1;
         } else if (distToEnemy <= 2.35 && this.soldierAlive[targetIdx] === 1) {
