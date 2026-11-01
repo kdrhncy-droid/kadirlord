@@ -1188,7 +1188,7 @@ export function applyMorphDNAToRig(rig: CharacterRig, dna: CharacterMorphDNA): v
   rig.torso.scale.set(bScale, 1.0, (bScale + wScale) * 0.5);
 
   // Omuz açıklığı: taban ölçü ✕ yalnız cinsiyet faktörü.
-  const shoulderX = RIG_DIMENSIONS.shoulderX * (dna.gender === 'female' ? 0.92 : 1.0);
+  const shoulderX = RIG_DIMENSIONS.shoulderX * (dna.gender === 'female' ? 0.95 : 1.0);
   rig.leftShoulder.position.x = shoulderX;
   rig.rightShoulder.position.x = -shoulderX;
 

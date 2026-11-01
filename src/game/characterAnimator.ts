@@ -381,20 +381,25 @@ interface StanceDef {
 }
 
 const SHIELD_CARRY: HandTarget = {
-  p: [0.22, 1.2, 0.3],
-  z: [0.3, 0.0, 1],
+  p: [0.22, 1.22, 0.25],
+  z: [0.32, 0.04, 0.94],
   hint: [0, -1, 0],
   axis: 'x',
-  pole: [0.9, -0.4, -0.3],
+  pole: [0.65, -0.75, -0.25],
+};
+
+const SPEAR_SHIELD_R: HandTarget = {
+  p: [-0.28, 1.18, 0.14],
+  z: [-0.02, 0.18, 0.98],
 };
 
 const STANCES: Record<WeaponClass, StanceDef> = {
   '1H': {
-    r: { p: [-0.24, 1.17, 0.26], z: [0.08, 0.8, 0.6] },
+    r: { p: [-0.26, 1.18, 0.24], z: [-0.06, 0.8, 0.58] },
     body: { lShoulder: [-0.25, 0, 0.18], lForearm: [-0.9, 0, 0] },
   },
   '1H_SHIELD': {
-    r: { p: [-0.25, 1.17, 0.24], z: [0.08, 0.8, 0.6] },
+    r: { p: [-0.28, 1.18, 0.22], z: [-0.1, 0.82, 0.56] },
     l: SHIELD_CARRY,
   },
   '2H': {
@@ -1172,6 +1177,18 @@ export function listClips(cls: WeaponClass): { name: string; label: string; dura
   }));
 }
 
+/**
+ * Registers a custom ClipDef into the compiled clip library for the specified
+ * weapon classes (or all weapon classes when omitted).
+ */
+export function registerCustomClip(def: ClipDef, classes?: WeaponClass[]): void {
+  const compiled = compileClip(def);
+  const targets = classes ?? (Object.keys(COMPILED) as WeaponClass[]);
+  for (const cls of targets) {
+    COMPILED[cls].set(def.name, compiled);
+  }
+}
+
 export function weaponClassOf(rig: CharacterRig): WeaponClass {
   switch (rig.currentOptions.weaponType) {
     case 'TWO_HANDED_SWORD':
@@ -1659,25 +1676,28 @@ export class CharacterAnimator {
     const stanceW = this.combatBlend * idleW;
 
     const b = f.body;
-    b.lThigh.set(-thighA * s - 0.04 * idleW - 0.2 * stanceW, 0, 0.05 * idleW + 0.04 * stanceW);
-    b.rThigh.set(thighA * s - 0.04 * idleW + 0.12 * stanceW, 0, -0.05 * idleW - 0.04 * stanceW);
-    b.lShin.set(kneeBase + kneeA * Math.max(0, c) + 0.06 * idleW + 0.28 * stanceW, 0, 0);
-    b.rShin.set(kneeBase + kneeA * Math.max(0, -c) + 0.06 * idleW + 0.2 * stanceW, 0, 0);
-    b.lFoot.set(-(b.lThigh.x + b.lShin.x) * 0.7, 0, 0);
-    b.rFoot.set(-(b.rThigh.x + b.rShin.x) * 0.7, 0, 0);
+    // Dengeli atletik diz bükümü: her iki ayak bileği aynı yükseklikte kalır ve
+    // duruşta (walkW = 0) ayak tabanları yere %100 paralel (0° eğim) basar.
+    b.lThigh.set(-thighA * s - 0.04 * idleW - 0.10 * stanceW, 0, 0.04 * idleW + 0.03 * stanceW);
+    b.rThigh.set(thighA * s - 0.04 * idleW - 0.02 * stanceW, 0, -0.04 * idleW - 0.03 * stanceW);
+    b.lShin.set(kneeBase + kneeA * Math.max(0, c) + 0.04 * idleW + 0.14 * stanceW, 0, 0);
+    b.rShin.set(kneeBase + kneeA * Math.max(0, -c) + 0.04 * idleW + 0.12 * stanceW, 0, 0);
+    const footComp = 1.0 - 0.3 * walkW;
+    b.lFoot.set(-(b.lThigh.x + b.lShin.x) * footComp, 0, 0);
+    b.rFoot.set(-(b.rThigh.x + b.rShin.x) * footComp, 0, 0);
 
     const bobAmp = walkW * (0.025 + 0.045 * runW);
-    f.pelvisPos.set(0, -bobAmp * Math.abs(s) + bobAmp * 0.5 - 0.06 * runW - 0.05 * stanceW + breath * 0.5, 0);
+    f.pelvisPos.set(0, -bobAmp * Math.abs(s) + bobAmp * 0.5 - 0.04 * runW - 0.015 * stanceW + breath * 0.5, 0);
 
     // Strafe: turn hips toward the travel direction, keep the chest forward.
     const strafeYaw = speed > 0.3 ? THREE.MathUtils.clamp(Math.atan2(vx * dirSign, Math.abs(vz) + 0.001), -1.1, 1.1) * 0.6 : 0;
-    b.pelvis.set(0.04 * runW, -0.1 * s * walkW + strafeYaw + 0.18 * stanceW, 0);
+    b.pelvis.set(0.04 * runW, -0.1 * s * walkW + strafeYaw + 0.14 * stanceW, 0);
     b.torso.set(
       0.04 * walkW + 0.16 * runW * (dirSign > 0 ? 1 : -0.4) + breath,
       0.14 * s * walkW - strafeYaw,
       0,
     );
-    b.torso.y -= 0.18 * stanceW; // chest stays square while the hips open up
+    b.torso.y -= 0.14 * stanceW; // chest stays square while the hips open up
     b.head.set(-breath * 0.5, 0, 0);
 
     // Relaxed (FK) arm swing — used when no IK target owns the arm.
@@ -1693,8 +1713,11 @@ export class CharacterAnimator {
     const w = this.combatBlend;
     if (w <= 0.001) return;
 
+    const hasShield = this.rig.offHandItem?.name === 'Shield';
+
     if (st.body) {
       for (const j of Object.keys(st.body) as BodyJoint[]) {
+        if (hasShield && (j === 'lShoulder' || j === 'lForearm')) continue;
         const v = st.body[j]!;
         _v1.set(v[0], v[1], v[2]);
         f.body[j].lerp(_v1, w);
@@ -1707,7 +1730,8 @@ export class CharacterAnimator {
     const bobY = Math.abs(Math.cos(this.phase)) * 0.02 * walkW;
 
     if (st.r) {
-      f.r.setTarget(st.r, w, DEFAULT_POLE_R);
+      const rTarget = cls === 'SPEAR' && hasShield ? SPEAR_SHIELD_R : st.r;
+      f.r.setTarget(rTarget, w, DEFAULT_POLE_R);
       f.r.p.z -= bob;
       f.r.p.y += bobY;
     }
@@ -1715,8 +1739,12 @@ export class CharacterAnimator {
       f.l.setTarget(st.l, w, DEFAULT_POLE_L);
       f.l.p.z += bob;
       f.l.p.y += bobY;
+    } else if (hasShield && cls !== 'BOW') {
+      f.l.setTarget(SHIELD_CARRY, w, DEFAULT_POLE_L);
+      f.l.p.z += bob;
+      f.l.p.y += bobY;
     }
-    if (st.lGrip !== undefined) {
+    if (st.lGrip !== undefined && !hasShield) {
       f.l.w = w;
       f.l.grip = st.lGrip;
       f.l.pole.copy(DEFAULT_POLE_L);
@@ -1814,6 +1842,24 @@ export class CharacterAnimator {
     rig.rightUpperArm.rotation.set(0, 0, 0);
     rig.pelvis.position.set(c.pelvisPos.x, 0.98 + c.pelvisPos.y, c.pelvisPos.z);
 
+    // Ayak tabanı zemin kilidi (Grounding): karakter ayaktayken en alttaki çizme
+    // tabanı (y = -0.080) zeminin (y = 0) altına gömülmez, tam zemine basar.
+    if (!this.isDown()) {
+      rig.root.updateMatrixWorld(true);
+      let minFootY = Infinity;
+      for (const foot of [rig.leftFoot, rig.rightFoot]) {
+        for (const zOff of [-0.03, 0.14]) {
+          _vb1.set(0, -0.08, zOff);
+          foot.localToWorld(_vb1);
+          rig.root.worldToLocal(_vb1);
+          if (_vb1.y < minFootY) minFootY = _vb1.y;
+        }
+      }
+      if (Number.isFinite(minFootY)) {
+        rig.pelvis.position.y -= minFootY;
+      }
+    }
+
     rig.root.updateMatrixWorld(true);
     const rootQ = rig.root.getWorldQuaternion(_q1);
 
@@ -1829,7 +1875,47 @@ export class CharacterAnimator {
       this.solveHand('l', rootQ, 0);
     }
 
+    this.alignShieldOnArm(rootQ);
+
     if (bow) this.updateBowString(bow, aim);
+  }
+
+  /**
+   * Sol elde kalkan varken (`rig.offHandItem?.name === 'Shield'`), kalkanın
+   * el/önkoldan 20 cm uzakta havada asılı kalmasını ve yatay önkol dönüşüyle
+   * 90° yan yatmasını önler: kalkanı doğrudan sol yumruk + önkol kayışına
+   * (`z = 0.052m`) sıfır boşlukla oturtur ve üst eksenini (+Y) dik tutar.
+   */
+  private alignShieldOnArm(rootQ: THREE.Quaternion) {
+    const rig = this.rig;
+    const holder = rig.offHandItem;
+    if (!holder || holder.name !== 'Shield' || rig.sheathed) return;
+    if (this.current.l.w <= 0.01) return;
+
+    rig.leftHand.updateWorldMatrix(true, false);
+    rig.leftShieldSocket.updateWorldMatrix(true, false);
+
+    // Kalkan dış normali (+Z) sol elin +Z yönünü takip eder:
+    const shieldZ = _vb1.set(0, 0, 1).transformDirection(rig.leftHand.matrixWorld).normalize();
+    // Kalkan üst ekseni (+Y) karakterin yukarı (+Y) ekseniyle hizalı kalır (hafif doğal siper eğimiyle):
+    const charUp = _vb2.set(-0.06, 1, 0).applyQuaternion(rootQ).normalize();
+    const shieldY = _vb3.copy(charUp).addScaledVector(shieldZ, -charUp.dot(shieldZ));
+    if (shieldY.lengthSq() < 1e-6) {
+      shieldY.set(0, 1, 0);
+    } else {
+      shieldY.normalize();
+    }
+    const shieldX = _vb4.crossVectors(shieldY, shieldZ).normalize();
+    shieldY.crossVectors(shieldZ, shieldX).normalize();
+
+    _shieldBasisMat.makeBasis(shieldX, shieldY, shieldZ);
+    _shieldWorldQ.setFromRotationMatrix(_shieldBasisMat);
+    rig.leftShieldSocket.getWorldQuaternion(_shieldParentInvQ).invert();
+    holder.quaternion.copy(_shieldParentInvQ).multiply(_shieldWorldQ);
+
+    // Avuç (y = -0.04) ve önkol (y = +0.08) ortasında, önkol/el yüzeyine tam temas:
+    holder.position.set(0.0, 0.02, 0.052);
+    holder.updateMatrixWorld(true);
   }
 
   /** Solves one arm from the smoothed frame. `drawOverride` is only used by the bow draw hand. */
@@ -1983,3 +2069,7 @@ const _vb4 = new THREE.Vector3();
 const _vb5 = new THREE.Vector3();
 const _vb6 = new THREE.Vector3();
 const _vb7 = new THREE.Vector3();
+const _shieldBasisMat = new THREE.Matrix4();
+const _shieldWorldQ = new THREE.Quaternion();
+const _shieldParentInvQ = new THREE.Quaternion();
+

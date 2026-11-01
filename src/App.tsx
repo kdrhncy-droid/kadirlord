@@ -88,6 +88,7 @@ import { CharacterArenaView } from './components/CharacterArenaView';
 import { CharacterCreatorModal } from './components/CharacterCreatorModal';
 import { BannerlordPauseModal } from './components/BannerlordPauseModal';
 import { WarbandOptionsModal } from './components/WarbandOptionsModal';
+import { FactionArmoryStudioModal } from './components/FactionArmoryStudioModal';
 import { music } from './game/music';
 import { BattlePrewarmModal } from './components/BattlePrewarmModal';
 import { EncyclopediaModal } from './components/encyclopedia/EncyclopediaModal';
@@ -218,6 +219,9 @@ export default function App() {
     string | null
   >(null);
   const [isCharacterCreatorOpen, setIsCharacterCreatorOpen] = useState(false);
+  const [isArmoryStudioOpen, setIsArmoryStudioOpen] = useState(
+    () => new URLSearchParams(search).get('armory') === '1',
+  );
   const [viewMode, setViewMode] = useState<'campaign' | 'character_arena'>('campaign');
   // Faz 1: Bannerlord Ansiklopedisi (N)
   const [isEncyclopediaOpen, setIsEncyclopediaOpen] = useState(
@@ -1819,6 +1823,7 @@ export default function App() {
           isCharacterModalOpen ||
           isEncyclopediaOpen ||
           isKingdomModalOpen ||
+          isArmoryStudioOpen ||
           gameState === 'paused'
         }
         onSetTimeScale={setMapTimeScale}
@@ -2036,6 +2041,21 @@ export default function App() {
                   KALRADYA ANSİKLOPEDİSİ (ENCYCLOPEDIA)
                 </span>
                 <span className="text-[10px] font-mono text-[#9c8e78]">6 Krallık · 211 Yerleşim</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="title-armory-studio-btn"
+                onClick={() => {
+                  sound.playUiClick();
+                  setIsArmoryStudioOpen(true);
+                }}
+                className="group w-full px-5 py-3 rounded-xs text-left bg-[#1f170f]/95 hover:bg-[#2f2316] border border-[#fbbf24]/55 hover:border-[#fde68a] transition-colors flex items-center justify-between shadow-lg"
+              >
+                <span className="font-display font-bold text-sm tracking-wider text-[#fde68a] group-hover:text-white">
+                  CEPHANELİK &amp; BİRLİK VİTRİNİ (6 KRALLIK ARMORY)
+                </span>
+                <span className="text-[10px] font-mono text-[#fbbf24]">Kılıç · Zırh · At · Terfi</span>
               </button>
             </nav>
           </div>
@@ -3113,6 +3133,50 @@ export default function App() {
       <WarbandOptionsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
+      />
+
+      {/* 11B. 6 KRALLIK CEPHANELİK, SİLAH, ZIRH, AT VE ASKER TERFİ VİTRİNİ */}
+      <FactionArmoryStudioModal
+        isOpen={isArmoryStudioOpen}
+        onClose={() => setIsArmoryStudioOpen(false)}
+        onGrantItemToPlayer={(itemSummary) => {
+          setCampaign((prev) => ({
+            ...prev,
+            inventoryItems: [
+              ...(prev.inventoryItems ?? []),
+              {
+                id: `${itemSummary.id}_${Date.now()}`,
+                definitionId: itemSummary.id,
+                name: itemSummary.name,
+                slot:
+                  itemSummary.category === 'SHIELD'
+                    ? 'WEAPON2'
+                    : itemSummary.category === 'ARMOR'
+                      ? 'BODY'
+                      : itemSummary.category === 'HORSE'
+                        ? 'MOUNT'
+                        : 'WEAPON1',
+                category: itemSummary.category,
+                quantity: 1,
+                locked: false,
+                value: itemSummary.value,
+                weight: itemSummary.weight,
+                statBonus: itemSummary.statBonus,
+                civilianLegal: true,
+                icon:
+                  itemSummary.category === 'SHIELD'
+                    ? 'shield'
+                    : itemSummary.category === 'ARMOR'
+                      ? 'armor'
+                      : itemSummary.category === 'HORSE'
+                        ? 'horse'
+                        : 'sword',
+                tier: itemSummary.tier,
+              },
+            ],
+          }));
+          showToast(`"${itemSummary.name}" oyuncu envanterine eklendi!`);
+        }}
       />
 
       {/* 12. BANNERLORD LOADING SCREEN OVERLAY */}

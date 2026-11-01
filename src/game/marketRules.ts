@@ -1,5 +1,6 @@
 import type { CampaignState, EquipmentSlotId, InventoryItem } from './rules.ts';
 import type { ItemIconKey } from './itemIcons.ts';
+import { buildFactionArsenalMarketCatalog } from './factionTroopLoadouts.ts';
 
 export type MarketCategory = 'ALL' | 'WEAPON' | 'SHIELD' | 'ARMOR' | 'FOOD' | 'HORSE';
 
@@ -862,6 +863,8 @@ export const CALRADIA_MARKETPLACE_ITEMS: MarketplaceItem[] = [
     tier: 1,
     description: 'Ordugâhta fıçısı açılan bira; tayın çeşitliliğine içecek de girer.',
   },
+  // 6 Krallık Özel Cephanelik Kataloğu (Kılıçlar, Gönderliler, Kalkanlar, Zırhlar, Savaş Atları)
+  ...buildFactionArsenalMarketCatalog(),
 ];
 
 export function buyMarketplaceItem(

@@ -59,7 +59,7 @@ export const RIG_DIMENSIONS = {
   pelvisHeight: 0.98,
   upperArm: 0.28,
   forearm: 0.26,
-  shoulderX: 0.32,
+  shoulderX: 0.294,
 };
 
 /** Head ellipsoid (head-local). Hair and helmets are authored against this. */
@@ -206,12 +206,21 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   pelvis.name = 'pelvis';
   pelvis.position.y = RIG_DIMENSIONS.pelvisHeight;
   root.add(pelvis);
-  pelvis.add(mesh(new THREE.BoxGeometry(0.34, 0.22, 0.24), mats.leather));
 
-  // Tunic skirt (gives the silhouette a medieval look and hides the hip joints)
-  const skirt = mesh(new THREE.CylinderGeometry(0.2, 0.27, 0.3, 6, 1, true), mats.cloth);
-  skirt.position.y = -0.14;
-  (skirt.material as THREE.Material).side = THREE.FrontSide;
+  // Alt karın ve kalça çekirdeği: pelvis.y = -0.15'ten +0.22'ye kadar uzanır
+  // (torso pivotu pelvis.y = +0.16 olduğu için 6 cm gövde içine girer; gövde
+  // öne/arkaya/yana eğildiğinde mide ile kalça arasında asla boşluk açılmaz).
+  const pelvisCore = mesh(new THREE.CylinderGeometry(0.182, 0.204, 0.37, 10), mats.leather);
+  pelvisCore.position.y = 0.035;
+  pelvisCore.scale.z = TORSO_DEPTH_SCALE + 0.02;
+  pelvis.add(pelvisCore);
+
+  // Tunik/kaftan eteği: tam bel kemeri hizasından (pelvis.y = +0.17) başlar ve
+  // kalça/üst uyluk eklemlerini (-0.29'a kadar) kapalı silindir olarak örter.
+  const skirt = mesh(new THREE.CylinderGeometry(0.198, 0.258, 0.46, 10, 1, false), mats.cloth);
+  skirt.name = 'tunicSkirt';
+  skirt.position.y = -0.06;
+  skirt.scale.z = TORSO_DEPTH_SCALE + 0.05;
   pelvis.add(skirt);
 
   // Hip socket (character's left hip, +X) for sheathed one-handed weapons
@@ -231,13 +240,13 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   torsoMesh.scale.z = TORSO_DEPTH_SCALE; // flatter chest -> arms don't sink into the body
   torso.add(torsoMesh);
 
-  const beltMesh = mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.08, 6), mats.leather, false);
-  beltMesh.position.y = 0.04;
-  beltMesh.scale.z = TORSO_DEPTH_SCALE + 0.04;
+  const beltMesh = mesh(new THREE.CylinderGeometry(0.214, 0.218, 0.068, 10), mats.leather, false);
+  beltMesh.position.y = 0.015;
+  beltMesh.scale.z = TORSO_DEPTH_SCALE + 0.05;
   torso.add(beltMesh);
 
-  const buckleMesh = mesh(new THREE.BoxGeometry(0.08, 0.07, 0.04), mats.gold, false);
-  buckleMesh.position.set(0, 0.04, 0.2 * (TORSO_DEPTH_SCALE + 0.04));
+  const buckleMesh = mesh(new THREE.BoxGeometry(0.078, 0.068, 0.038), mats.gold, false);
+  buckleMesh.position.set(0, 0.015, 0.218 * (TORSO_DEPTH_SCALE + 0.05));
   torso.add(buckleMesh);
 
   const chestArmorSocket = new THREE.Group();
@@ -253,8 +262,9 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   const neck = new THREE.Group();
   neck.position.y = 0.48;
   torso.add(neck);
-  const neckMesh = mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.14, 6), mats.skin, false);
-  neckMesh.position.y = 0.06;
+  const neckMesh = mesh(new THREE.CylinderGeometry(0.064, 0.078, 0.15, 8), mats.skin, false);
+  neckMesh.position.set(0, 0.055, -0.012);
+  neckMesh.scale.z = 0.86;
   neck.add(neckMesh);
 
   const head = new THREE.Group();
@@ -325,12 +335,18 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   const palmGeo = new THREE.BoxGeometry(0.062, 0.062, 0.034);
   const fingerGeo = new THREE.BoxGeometry(0.058, 0.05, 0.03);
   const thumbGeo = new THREE.BoxGeometry(0.019, 0.036, 0.022);
-  const wristGeo = new THREE.CylinderGeometry(0.045, 0.041, 0.022, 6);
+  const wristGeo = new THREE.CylinderGeometry(0.047, 0.042, 0.028, 6);
 
   const buildArm = (side: 1 | -1) => {
     const shoulder = new THREE.Group();
     shoulder.position.set(side * RIG_DIMENSIONS.shoulderX, 0.42, 0);
     torso.add(shoulder);
+
+    // Omuz–gövde küresel eklem yastığı (düz silindir kapağı görünmemesi için elipsoid küre):
+    const shoulderBridge = mesh(new THREE.SphereGeometry(0.086, 8, 6), mats.leather, false);
+    shoulderBridge.scale.set(1.22, 0.92, 0.96);
+    shoulderBridge.position.set(-side * 0.034, -0.014, 0);
+    shoulder.add(shoulderBridge);
 
     const pauldron = new THREE.Group();
     shoulder.add(pauldron);
@@ -341,6 +357,16 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
     ua.position.y = -RIG_DIMENSIONS.upperArm / 2;
     upperArm.add(ua);
 
+    // Omuz ve dirsek küresel eklem başları (probe-armor-chest ilk mesh olan ua'yı
+    // ölçtüğü için ua'dan SONRA eklenir).
+    const shoulderJointBall = mesh(new THREE.SphereGeometry(0.072, 8, 6), mats.leather, false);
+    shoulderJointBall.position.y = 0.0;
+    upperArm.add(shoulderJointBall);
+
+    const elbowJointBall = mesh(new THREE.SphereGeometry(0.064, 8, 6), mats.leather, false);
+    elbowJointBall.position.y = -RIG_DIMENSIONS.upperArm;
+    upperArm.add(elbowJointBall);
+
     const forearm = new THREE.Group();
     forearm.position.y = -RIG_DIMENSIONS.upperArm;
     upperArm.add(forearm);
@@ -348,13 +374,18 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
     fa.position.y = -RIG_DIMENSIONS.forearm / 2;
     forearm.add(fa);
 
+    // Bilek küresel eklem başı: el bilekten döndüğünde önkol ile el arasında kopukluk oluşmaz.
+    const wristJointBall = mesh(new THREE.SphereGeometry(0.047, 8, 6), mats.leather, false);
+    wristJointBall.position.y = -RIG_DIMENSIONS.forearm;
+    forearm.add(wristJointBall);
+
     const hand = new THREE.Group();
     hand.position.y = -RIG_DIMENSIONS.forearm;
     forearm.add(hand);
 
     // Bilek: kolun bittiği yeri örter (ten ile deri arası geçiş).
     const wrist = mesh(wristGeo, mats.leather, false);
-    wrist.position.y = -0.004;
+    wrist.position.y = -0.002;
     hand.add(wrist);
 
     // Avuç: bileğin hemen altında, hafif daralan.
@@ -393,32 +424,89 @@ export function createCharacterRig(initialOptions?: Partial<CharacterVisualOptio
   const L = buildArm(1); // character's left  (+X)
   const R = buildArm(-1); // character's right (-X)
 
-  // --- Legs ---
+  // --- Legs & Sculpted Medieval Boots ---
   const thighGeo = new THREE.CylinderGeometry(0.09, 0.07, 0.42, 6);
   const shinGeo = new THREE.CylinderGeometry(0.07, 0.06, 0.42, 6);
-  const footGeo = new THREE.BoxGeometry(0.1, 0.08, 0.22);
+  const footGeo = new THREE.BoxGeometry(0.096, 0.08, 0.20);
 
   const buildLeg = (side: 1 | -1) => {
     const thigh = new THREE.Group();
     thigh.position.set(side * 0.12, -0.1, 0);
     pelvis.add(thigh);
+    // İlk mesh `tm` olmalı (probe-armor-legs bodyIn(thigh) sözleşmesi)
     const tm = mesh(thighGeo, mats.cloth);
     tm.position.y = -0.21;
     thigh.add(tm);
 
+    // Diz eklem küresi: bacak büküldüğünde uyluk-baldır birleşiminde boşluk/kırılma bırakmaz
+    const kneeBridge = mesh(new THREE.SphereGeometry(0.068, 8, 6), mats.cloth, false);
+    kneeBridge.position.set(0, -0.415, 0.004);
+    thigh.add(kneeBridge);
+
     const shin = new THREE.Group();
     shin.position.y = -0.42;
     thigh.add(shin);
+    // İlk mesh `sm` olmalı (probe-armor-legs bodyIn(shin) sözleşmesi)
     const sm = mesh(shinGeo, mats.leather);
     sm.position.y = -0.21;
     shin.add(sm);
 
+    // Ortaçağ çizme koncu (baldırın alt yarısını saran yüksek deri çizme gövdesi ve katlı ağzı)
+    const bootShaft = mesh(new THREE.CylinderGeometry(0.067, 0.061, 0.21, 8), mats.leather, false);
+    bootShaft.position.set(0, -0.31, 0);
+    shin.add(bootShaft);
+
+    const bootCuff = mesh(new THREE.CylinderGeometry(0.070, 0.068, 0.032, 8), mats.padded, false);
+    bootCuff.position.set(0, -0.205, 0);
+    shin.add(bootCuff);
+
+    // Ayak bileği küresel eklem başı: ayak yukarı/aşağı büküldüğünde bilek boşluğunu kapatır
+    const ankleBridge = mesh(new THREE.SphereGeometry(0.058, 8, 6), mats.leather, false);
+    ankleBridge.position.set(0, -0.415, 0);
+    shin.add(ankleBridge);
+
     const foot = new THREE.Group();
     foot.position.set(0, -0.42, 0.0);
     shin.add(foot);
+    // İlk mesh `fm` olmalı (probe-armor-legs bodyIn(foot) sözleşmesi: y = -0.08..0.00)
     const fm = mesh(footGeo, mats.leather);
-    fm.position.set(0, -0.04, 0.05);
+    fm.position.set(0, -0.04, 0.045);
     foot.add(fm);
+
+    // Anatomik çizme detayları (tümü y = [-0.080, 0.000] aralığında, taban düzlemini aşmaz):
+    // 1. Bilek boğazı (baldır koncundan ayağa kesintisiz geçiş)
+    const ankleCollar = mesh(new THREE.CylinderGeometry(0.056, 0.061, 0.048, 8), mats.leather, false);
+    ankleCollar.position.set(0, -0.024, -0.012);
+    foot.add(ankleCollar);
+
+    // 2. Eğimli ayak üstü (tarak / instep vamp — dikdörtgen tuğla görünümünü kırar)
+    const instepVamp = mesh(new THREE.BoxGeometry(0.086, 0.032, 0.125), mats.leather, false);
+    instepVamp.rotation.x = 0.28;
+    instepVamp.position.set(0, -0.028, 0.046);
+    foot.add(instepVamp);
+
+    // 3. Yuvarlatılmış ortaçağ çizme burnu (toe cap)
+    const toeBox = mesh(new THREE.SphereGeometry(0.046, 8, 6), mats.leather, false);
+    toeBox.scale.set(1.02, 0.52, 1.28);
+    toeBox.position.set(0, -0.052, 0.128);
+    foot.add(toeBox);
+
+    // 4. Koyu kösele taban (sole welt) ve topuk (heel lug)
+    const soleWelt = mesh(new THREE.BoxGeometry(0.102, 0.016, 0.224), mats.wood, false);
+    soleWelt.position.set(0, -0.072, 0.048);
+    foot.add(soleWelt);
+
+    const heelLug = mesh(new THREE.BoxGeometry(0.098, 0.024, 0.066), mats.wood, false);
+    heelLug.position.set(0, -0.068, -0.030);
+    foot.add(heelLug);
+
+    // 5. Bilek tokalı deri kayışı
+    const ankleStrap = mesh(new THREE.TorusGeometry(0.058, 0.0065, 5, 8), mats.padded, false);
+    ankleStrap.rotation.x = Math.PI / 2;
+    ankleStrap.scale.set(0.92, 1.08, 1);
+    ankleStrap.position.set(0, -0.016, -0.008);
+    foot.add(ankleStrap);
+
     return { thigh, shin, foot };
   };
 
@@ -564,14 +652,18 @@ function buildHelmet(type: HelmetType, m: CharacterRig['materials']): THREE.Grou
     band.scale.set(1, 1, HEAD.sz);
     band.position.y = 0.01;
 
-    // Nasal bar guarding the face
-    const nasal = mesh(new THREE.BoxGeometry(0.028, 0.1, 0.02), metal, false);
-    nasal.position.set(0, -0.015, (HEAD.r + 0.022) * HEAD.sz + 0.005);
+    // Nasal bar guarding the nose bridge (stops at nose tip, never hangs over lips)
+    const nasal = mesh(new THREE.BoxGeometry(0.022, 0.064, 0.014), metal, false);
+    nasal.position.set(0, 0.002, (HEAD.r + 0.015) * HEAD.sz);
+    nasal.rotation.x = -0.06;
 
-    // Mail aventail / coif covering nape and neck
-    const mailCoif = mesh(new THREE.CylinderGeometry(0.146, 0.17, 0.17, 8, 1, true), metal);
+    // Mail aventail / coif covering rear nape without flaring wide around the neck
+    const mailCoif = mesh(
+      new THREE.CylinderGeometry(0.126, 0.118, 0.1, 8, 1, true, Math.PI * 0.58, Math.PI * 0.84),
+      metal,
+    );
     mailCoif.scale.set(1, 1, HEAD.sz);
-    mailCoif.position.set(0, -0.075, -0.012);
+    mailCoif.position.set(0, -0.045, -0.01);
 
     g.add(cone, band, nasal, mailCoif);
     return g;
@@ -623,10 +715,10 @@ function buildHelmet(type: HelmetType, m: CharacterRig['materials']): THREE.Grou
     const nasal = mesh(new THREE.BoxGeometry(0.022, 0.088, 0.014), gold, false);
     nasal.position.set(0, 0.002, 0.139);
 
-    // 6) Boyun zırhı (aventail) — çene altından omuzlara, hafif daralan.
-    const aventail = mesh(new THREE.CylinderGeometry(0.11, 0.148, 0.13, 12, 1, true), metal);
-    aventail.scale.z = 1.04;
-    aventail.position.set(0, -0.172, -0.008);
+    // 6) Boyun zırhı (aventail) — çene altından boyun köküne, dışa taşmadan sarar.
+    const aventail = mesh(new THREE.CylinderGeometry(0.104, 0.116, 0.085, 12, 1, true), metal);
+    aventail.scale.z = 1.02;
+    aventail.position.set(0, -0.145, -0.01);
 
     // 7) Tepelik: ince metal sırt + kısa kızıl at kılı yelesi (arkada).
     const ridge = mesh(new THREE.BoxGeometry(0.018, 0.03, 0.16), metal, false);
@@ -680,11 +772,11 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     [-0.24, 0.176],
     [-0.16, 0.183],
     [-0.06, 0.192],
-    [0.04, 0.2],
-    [0.12, 0.207],
-    [0.18, 0.212],
-    [0.21, 0.214],
-    [0.225, 0.185],
+    [0.04, 0.198],
+    [0.12, 0.201],
+    [0.18, 0.203],
+    [0.21, 0.204],
+    [0.225, 0.182],
   ];
   const radiusAt = (y: number) => {
     if (y <= PROFILE[0][0]) return PROFILE[0][1];
@@ -720,18 +812,18 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     return m;
   };
 
-  const COLLAR = { bottom: 0.19, height: 0.17 };
+  const COLLAR = { bottom: 0.205, height: 0.052 };
   const makeCollar = (mat: THREE.Material) => {
     const g = new THREE.Group();
     g.name = 'armorCollar';
-    g.position.y = COLLAR.bottom; // dünya ≈1.52 — köprücük kemiği
+    g.position.y = COLLAR.bottom; // köprücük kemiği / boyun kökü
     const ring = mesh(
-      new THREE.CylinderGeometry(0.105, 0.216, COLLAR.height, 10, 1, true),
+      new THREE.CylinderGeometry(0.084, 0.138, COLLAR.height, 10, 1, false),
       mat,
       false,
     );
-    // Halka grubun TABANINDAN yukarı büyür → ölçek tabanı sabit bırakır.
-    ring.position.y = COLLAR.height / 2;
+    // Halka grubun TABANINDAN yukarı büyür → boyun kökünü sarar, huni gibi çıkıntı yapmaz.
+    ring.position.set(0, COLLAR.height / 2, -0.008);
     ring.scale.z = DEPTH;
     ring.userData.chestArmor = true;
     g.add(ring);
@@ -837,6 +929,56 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     }
   }
 
+  /* ── Mide / Bel / Kalça Geçiş Zırhı (Fauld / Hauberk Eteği / Gambeson Eteği) ──
+     Torso (pelvis.y = +0.16) ile Pelvis/Bacak başlangıcı arasında animasyonlarda
+     eğilirken dahi hiçbir boşluk veya kesinti kalmaması için pelvis düğümüne
+     zırh kademesiyle uyumlu bel-kalça zırh eteği eklenir. */
+  const pelvisArmorGroup = new THREE.Group();
+  pelvisArmorGroup.name = 'armorPelvisFauld';
+  pelvisArmorGroup.userData.pelvisArmor = true;
+  const waistPad = tier === 'PLATE' ? 0.026 : tier === 'CHAINMAIL' ? 0.019 : 0.015;
+  const waistMat = tier === 'LEATHER' ? padded : metal;
+
+  // 1) Alt karın küresel/silindirik köprü: pelvis.y = +0.02..+0.23 (torso içine 7 cm girer)
+  const waistBridge = mesh(
+    new THREE.CylinderGeometry(0.175 + waistPad, 0.194 + waistPad, 0.21, 10, 1, false),
+    waistMat,
+    false,
+  );
+  waistBridge.position.y = 0.125;
+  waistBridge.scale.z = DEPTH;
+  pelvisArmorGroup.add(waistBridge);
+
+  // 2) Kalça zırh eteği (Hauberk / Fauld / Gambeson skirt): pelvis.y = -0.14..+0.16
+  const fauldSkirt = mesh(
+    new THREE.CylinderGeometry(0.196 + waistPad * 0.5, 0.232 + waistPad * 0.5, 0.3, 10, 1, false),
+    waistMat,
+  );
+  fauldSkirt.position.y = 0.01;
+  fauldSkirt.scale.z = DEPTH + 0.03;
+  pelvisArmorGroup.add(fauldSkirt);
+
+  // 3) Zırh etek ucu şeridi ve levha tasset plakaları
+  const fauldHem = mesh(
+    new THREE.CylinderGeometry(0.235 + waistPad * 0.5, 0.238 + waistPad * 0.5, 0.026, 10, 1, true),
+    tier === 'PLATE' ? gold : leather,
+    false,
+  );
+  fauldHem.position.y = -0.135;
+  fauldHem.scale.z = DEPTH + 0.035;
+  pelvisArmorGroup.add(fauldHem);
+
+  if (tier === 'PLATE') {
+    for (const side of [-1, 1]) {
+      const tasset = mesh(new THREE.BoxGeometry(0.13, 0.15, 0.022), metal, false);
+      tasset.position.set(side * 0.115, -0.15, 0.165);
+      tasset.rotation.y = -side * 0.28;
+      tasset.rotation.x = -0.08;
+      pelvisArmorGroup.add(tasset);
+    }
+  }
+  rig.pelvis.add(pelvisArmorGroup);
+
   /* ── Kol zırhları (üst kol + ön kol) ──
      Bunlar da BannerForge'dan alınmıyor: onun kol parçaları bizim kollarımıza
      göre 1 cm kadar küçük kalıyor ve 6 kenarlı kol silindirinin köşeleri zırhın
@@ -849,8 +991,14 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     [rig.leftUpperArm, rig.leftForearm, 1],
     [rig.rightUpperArm, rig.rightForearm, -1],
   ] as const) {
+    // Üst kol omuz başı kubbesi: kol döndüğünde omuz ekleminde boşluk açılmasını önler.
+    const deltoidArmor = mesh(new THREE.SphereGeometry(upperR[0] + 0.004, 8, 6), armMat, false);
+    deltoidArmor.position.y = 0.004;
+    deltoidArmor.userData.limbArmor = true;
+    upper.add(deltoidArmor);
+
     const sleeve = mesh(
-      new THREE.CylinderGeometry(upperR[0], upperR[1], RIG_DIMENSIONS.upperArm - 0.012, 8, 1, true),
+      new THREE.CylinderGeometry(upperR[0], upperR[1], RIG_DIMENSIONS.upperArm + 0.016, 8, 1, false),
       armMat,
       false,
     );
@@ -859,8 +1007,18 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     sleeve.userData.limbArmor = true;
     upper.add(sleeve);
 
+    // Ön kol başlangıç kubbesi: dirsek büküldüğünde ön kol tepesini kapatır.
+    const forearmCap = mesh(
+      new THREE.SphereGeometry(foreR[0] + 0.002, 8, 5),
+      tier === 'LEATHER' ? leather : metal,
+      false,
+    );
+    forearmCap.position.y = 0.0;
+    forearmCap.userData.limbArmor = true;
+    fore.add(forearmCap);
+
     const bracer = mesh(
-      new THREE.CylinderGeometry(foreR[0], foreR[1], RIG_DIMENSIONS.forearm - 0.01, 8, 1, true),
+      new THREE.CylinderGeometry(foreR[0], foreR[1], RIG_DIMENSIONS.forearm + 0.014, 8, 1, false),
       tier === 'LEATHER' ? leather : metal,
       false,
     );
@@ -869,21 +1027,34 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     bracer.userData.limbArmor = true;
     fore.add(bracer);
 
-    // Dirsek kapağı (postacı/levha).
-    if (tier !== 'LEATHER') {
-      const cop = mesh(new THREE.SphereGeometry(0.078, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.62), metal, false);
-      cop.scale.set(1, 0.8, 1);
-      cop.position.y = 0.005;
-      upper.add(cop);
-    } else {
-      // Deri bileklik.
-      const cuff = mesh(new THREE.CylinderGeometry(foreR[1] + 0.008, foreR[1] + 0.006, 0.05, 8, 1, true), leather, false);
-      cuff.position.y = -RIG_DIMENSIONS.forearm + 0.03;
-      fore.add(cuff);
-    }
+    // Dirsek kapağı (couter/cop) — tüm kademelerde tam dirsek pivotunda (y = -upperArm) boşluğu kapatır.
+    const cop = mesh(
+      new THREE.SphereGeometry(0.08, 8, 6),
+      tier === 'LEATHER' ? leather : metal,
+      false,
+    );
+    cop.scale.set(1.02, 1.02, 1.05);
+    cop.position.y = -RIG_DIMENSIONS.upperArm;
+    cop.userData.armArmor = true;
+    cop.userData.limbArmor = true;
+    upper.add(cop);
+
+    // Bileklik zırh halkası — ön kol ile el/bilek birleşimini örter.
+    const cuff = mesh(
+      new THREE.CylinderGeometry(foreR[1] + 0.008, foreR[1] + 0.006, 0.045, 8, 1, false),
+      tier === 'PLATE' ? metal : leather,
+      false,
+    );
+    cuff.position.y = -RIG_DIMENSIONS.forearm + 0.022;
+    cuff.userData.armArmor = true;
+    cuff.userData.limbArmor = true;
+    fore.add(cuff);
+
     if (tier === 'PLATE') {
       const trim = mesh(new THREE.CylinderGeometry(upperR[1] + 0.01, upperR[1] + 0.01, 0.026, 8, 1, true), gold, false);
       trim.position.y = -RIG_DIMENSIONS.upperArm + 0.028;
+      trim.userData.armArmor = true;
+      trim.userData.limbArmor = true;
       upper.add(trim);
       void side;
     }
@@ -902,90 +1073,153 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
     const thighMat = tier === 'LEATHER' ? padded : tier === 'CHAINMAIL' ? metal : metal;
     const thighPad = tier === 'PLATE' ? 0.013 : 0.008;
 
-    // Uyluk: 8 kenarlı, gövde silindirinin üstünde.
-    const thighArmor = mesh(
-      new THREE.CylinderGeometry(legBody.thighR + thighPad, legBody.thighRb + thighPad, 0.4, 8, 1, true),
+    // Kalça-uyluk başlangıç kubbesi: bacak açıldığında/büküldüğünde kalça ile
+    // uyluk başlangıcı arasında boşluk kalmasını engeller.
+    const hipCap = mesh(
+      new THREE.SphereGeometry(legBody.thighR + thighPad, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.55),
       thighMat,
       false,
     );
-    thighArmor.position.y = -0.21;
+    hipCap.position.y = 0.0;
+    hipCap.scale.z = 1.06;
+    hipCap.userData.limbArmor = true;
+    thigh.add(hipCap);
+
+    // Uyluk: 8 kenarlı, gövde silindirinin üstünde (y = +0.015..-0.425 tüm uyluğu örter).
+    const thighArmor = mesh(
+      new THREE.CylinderGeometry(legBody.thighR + thighPad, legBody.thighRb + thighPad, 0.44, 8, 1, false),
+      thighMat,
+      false,
+    );
+    thighArmor.position.y = -0.205;
     thighArmor.scale.z = 1.06;
     thighArmor.userData.limbArmor = true;
     thigh.add(thighArmor);
 
-    // Baldır: tozluk / greave.
+    // Baldır: tozluk / greave (y = +0.01..-0.42 tüm baldırı örter).
     const shinPad = tier === 'PLATE' ? 0.011 : 0.007;
+    const shinMat = tier === 'LEATHER' ? leather : metal;
     const shinArmor = mesh(
-      new THREE.CylinderGeometry(legBody.shinR + shinPad, legBody.shinRb + shinPad, 0.4, 8, 1, true),
-      tier === 'LEATHER' ? leather : metal,
+      new THREE.CylinderGeometry(legBody.shinR + shinPad, legBody.shinRb + shinPad, 0.43, 8, 1, false),
+      shinMat,
       false,
     );
-    shinArmor.position.y = -0.21;
+    shinArmor.position.y = -0.205;
     shinArmor.scale.z = 1.06;
     shinArmor.userData.limbArmor = true;
     shin.add(shinArmor);
 
-    // Diz kapağı (levha/postacı).
-    if (tier !== 'LEATHER') {
-      const knee = mesh(new THREE.SphereGeometry(0.082, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.55), metal, false);
-      knee.scale.set(1, 0.85, 1.05);
-      knee.position.y = -0.01;
-      knee.userData.limbArmor = true;
-      thigh.add(knee);
-    }
+    // Zırhlı ayak bileği küresi (greave ile çizme/sabaton arasındaki eklemi kapatır)
+    const ankleArmor = mesh(
+      new THREE.SphereGeometry(legBody.shinRb + shinPad * 0.9, 8, 6),
+      shinMat,
+      false,
+    );
+    ankleArmor.position.set(0, -0.405, 0);
+    ankleArmor.scale.y = 0.35;
+    ankleArmor.userData.limbArmor = true;
+    shin.add(ankleArmor);
 
-    // Ayaklık: ayakkabının üstüne oturur, yere gömülmez.
+    // Diz kapağı (poleyn — deri/zincir/levha tüm sınıflarda diz eklemini korur):
+    const knee = mesh(
+      new THREE.SphereGeometry(tier === 'LEATHER' ? 0.076 : 0.082, 8, 5),
+      tier === 'LEATHER' ? leather : metal,
+      false,
+    );
+    knee.scale.set(0.95, 0.85, 1.08);
+    knee.position.set(0, -0.4, 0.008);
+    knee.userData.limbArmor = true;
+    thigh.add(knee);
+
+    // Ayaklık (Sabaton & Zırhlı Çizme): y = [-0.083, -0.001] aralığında çok parçalı anatomik form.
     if (tier === 'PLATE') {
-      const sabaton = mesh(new THREE.BoxGeometry(0.108, 0.082, 0.228), metal, false);
-      sabaton.position.set(0, -0.042, 0.05);
+      const sabaton = mesh(new THREE.BoxGeometry(0.106, 0.082, 0.21), metal, false);
+      sabaton.position.set(0, -0.042, 0.045);
       sabaton.userData.limbArmor = true;
       foot.add(sabaton);
-      const toe = mesh(new THREE.BoxGeometry(0.092, 0.03, 0.05), gold, false);
-      toe.position.set(0, -0.062, 0.145);
+
+      const instepLame = mesh(new THREE.BoxGeometry(0.092, 0.032, 0.125), metal, false);
+      instepLame.rotation.x = 0.28;
+      instepLame.position.set(0, -0.028, 0.048);
+      instepLame.userData.limbArmor = true;
+      foot.add(instepLame);
+
+      const toeCap = mesh(new THREE.SphereGeometry(0.049, 8, 6), metal, false);
+      toeCap.scale.set(1.04, 0.52, 1.32);
+      toeCap.position.set(0, -0.052, 0.132);
+      toeCap.userData.limbArmor = true;
+      foot.add(toeCap);
+
+      const toe = mesh(new THREE.BoxGeometry(0.094, 0.024, 0.046), gold, false);
+      toe.position.set(0, -0.062, 0.148);
       toe.userData.limbArmor = true;
       foot.add(toe);
     } else if (tier === 'CHAINMAIL') {
-      // Postacı çizmesi: ayağın üstüne oturan kalın deri kap.
-      const boot = mesh(new THREE.BoxGeometry(0.104, 0.08, 0.222), leather, false);
-      boot.position.set(0, -0.042, 0.05);
+      // Postacı / zırhlı süvari çizmesi: eğimli tarak + çelik burun takviyeli
+      const boot = mesh(new THREE.BoxGeometry(0.103, 0.08, 0.206), leather, false);
+      boot.position.set(0, -0.042, 0.045);
       boot.userData.limbArmor = true;
       foot.add(boot);
+
+      const bootVamp = mesh(new THREE.BoxGeometry(0.090, 0.032, 0.122), leather, false);
+      bootVamp.rotation.x = 0.28;
+      bootVamp.position.set(0, -0.028, 0.046);
+      bootVamp.userData.limbArmor = true;
+      foot.add(bootVamp);
+
+      const bootToe = mesh(new THREE.SphereGeometry(0.047, 8, 6), metal, false);
+      bootToe.scale.set(1.02, 0.52, 1.28);
+      bootToe.position.set(0, -0.052, 0.128);
+      bootToe.userData.limbArmor = true;
+      foot.add(bootToe);
     }
   }
 
-  /* ── Omuz zırhları (pauldron) ── */
+  /* ── Omuz zırhları (pauldron & omuz–gövde elipsoid kubbesi) ── */
   const pauldronMat = tier === 'LEATHER' ? padded : metal;
   for (const [sock, side] of [
     [rig.leftPauldronSocket, 1],
     [rig.rightPauldronSocket, -1],
   ] as const) {
+    // Göğüs zırhı ile omuz başı arasını örten pürüzsüz elipsoid omuz kubbesi
+    const yokeDome = mesh(new THREE.SphereGeometry(0.092, 8, 6), pauldronMat, false);
+    yokeDome.scale.set(1.24, 0.94, 1.02);
+    yokeDome.position.set(-side * 0.032, -0.012, 0);
+    sock.add(yokeDome);
+
     if (tier === 'PLATE') {
       for (const [r, dy] of [
-        [0.108, 0.012],
-        [0.094, 0.052],
+        [0.112, 0.006],
+        [0.098, 0.038],
+        [0.096, -0.024],
       ] as const) {
         const cap = mesh(
-          new THREE.SphereGeometry(r, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.52),
+          new THREE.SphereGeometry(r, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.62),
           metal,
           false,
         );
-        cap.scale.set(1, 0.82, 1.02);
-        cap.position.set(side * 0.018, dy, 0);
+        cap.scale.set(1.12, 0.88, 1.05);
+        cap.position.set(-side * 0.012, dy, 0);
         sock.add(cap);
       }
-      const trim = mesh(new THREE.TorusGeometry(0.1, 0.008, 4, 10), gold, false);
+      const trim = mesh(new THREE.TorusGeometry(0.104, 0.008, 4, 10), gold, false);
       trim.rotation.x = Math.PI / 2;
-      trim.position.set(side * 0.018, 0.028, 0);
+      trim.position.set(-side * 0.012, 0.018, 0);
       sock.add(trim);
     } else if (tier === 'CHAINMAIL') {
-      const cap = mesh(new THREE.SphereGeometry(0.1, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.6), metal, false);
-      cap.scale.set(1, 0.9, 1.05);
-      cap.position.set(side * 0.015, 0.01, 0);
-      sock.add(cap);
+      for (const [r, dy] of [
+        [0.108, 0.006],
+        [0.094, -0.022],
+      ] as const) {
+        const cap = mesh(new THREE.SphereGeometry(r, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.65), metal, false);
+        cap.scale.set(1.12, 0.92, 1.05);
+        cap.position.set(-side * 0.012, dy, 0);
+        sock.add(cap);
+      }
     } else {
-      const pad = mesh(new THREE.SphereGeometry(0.095, 8, 3, 0, Math.PI * 2, 0, Math.PI * 0.45), pauldronMat, false);
-      pad.scale.set(1, 0.7, 1.05);
-      pad.position.set(side * 0.012, 0.008, 0);
+      const pad = mesh(new THREE.SphereGeometry(0.104, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.62), pauldronMat, false);
+      pad.scale.set(1.12, 0.88, 1.05);
+      pad.position.set(-side * 0.012, 0.002, 0);
       sock.add(pad);
     }
   }
@@ -996,7 +1230,8 @@ function buildArmor(rig: CharacterRig, tier: ArmorTier) {
  *
  * DNA kafayı 1.16×'e kadar büyütünce çene alçalıyor (en kısa kahramanda 1.611 m);
  * sabit yükseklikteki yaka o zaman çeneyi/ağzı örtüyordu. `applyMorphDNAToRig`
- * sonunda çağrılır; yakayı çenenin 3 cm altında kalacak şekilde kısaltır.
+ * sonunda çağrılır; yakayı çenenin en az 3.5 cm altında kalacak şekilde kısaltır
+ * (ancak kısa yakayı yukarı doğru sündürmez).
  */
 export function refitArmorToHead(rig: CharacterRig): void {
   const group = rig.chestArmorSocket.getObjectByName('armorChest');
@@ -1006,14 +1241,15 @@ export function refitArmorToHead(rig: CharacterRig): void {
   rig.root.updateMatrixWorld(true);
   const chin = new THREE.Box3().setFromObject(skull).min.y;
 
-  // 1) Yaka: çenenin 3 cm altına kadar uzar/kısalır. DNA kafayı büyütünce
-  //    çene alçalıyor (1.61'e kadar) → sabit yaka ağzı örtüyordu.
+  // 1) Yaka: yalnızca çeneye yaklaşıyorsa kısaltılır (yukarı doğru huni gibi sündürülmez).
   const collar = group.getObjectByName('armorCollar');
   if (collar) {
     const box = new THREE.Box3().setFromObject(collar);
-    const height = Math.max(box.max.y - box.min.y, 1e-4);
-    const s = Math.min(1.7, Math.max(0.3, (chin - 0.03 - box.min.y) / height));
-    collar.scale.y *= s;
+    if (box.max.y > chin - 0.035) {
+      const height = Math.max(box.max.y - box.min.y, 1e-4);
+      const s = Math.max(0.25, (chin - 0.035 - box.min.y) / height);
+      collar.scale.y *= s;
+    }
   }
 
   // 2) Emniyet kemeri: gövde kabuğu (yaka dışında) hâlâ çeneye dayanıyorsa
@@ -1085,6 +1321,14 @@ function buildShield(type: ShieldType, m: CharacterRig['materials']): THREE.Grou
    * dışa ve öne kaydırılıp ölçeklendi (aksi halde 1.24 m'lik uçurtma kalkan
    * neredeyse yere değiyordu).
    */
+  // Kalkan arka yüz (-Z) tutamak demiri (handle) ve önkol deri kayışı (enarme):
+  const gripBar = mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.16, 6), wood, false);
+  gripBar.position.set(-0.04, 0, -0.024);
+  const enarme = mesh(new THREE.TorusGeometry(0.058, 0.011, 5, 8, Math.PI * 1.15), m.leather, false);
+  enarme.rotation.y = Math.PI / 2;
+  enarme.position.set(0.06, 0, -0.018);
+  body.add(gripBar, enarme);
+
   body.scale.setScalar(SHIELD_SCALE[type]);
   const holder = new THREE.Group();
   holder.name = 'Shield';
@@ -1237,6 +1481,36 @@ export function applyEquipmentToRig(rig: CharacterRig, options: CharacterVisualO
       const c = s.children[0];
       s.remove(c);
       disposeEquipment(c, rig);
+    }
+  }
+
+  // Önceki çağrılardan kalan kol/bacak/kalça zırh parçalarını temizle ve gizlenen tunik mesh'ini geri aç
+  for (const c of rig.torso.children) {
+    if (c.userData?.hiddenByArmor) {
+      c.visible = true;
+      delete c.userData.hiddenByArmor;
+    }
+  }
+  const limbAndPelvisNodes = [
+    rig.pelvis,
+    rig.leftUpperArm,
+    rig.rightUpperArm,
+    rig.leftForearm,
+    rig.rightForearm,
+    rig.leftThigh,
+    rig.rightThigh,
+    rig.leftShin,
+    rig.rightShin,
+    rig.leftFoot,
+    rig.rightFoot,
+  ];
+  for (const node of limbAndPelvisNodes) {
+    for (let i = node.children.length - 1; i >= 0; i--) {
+      const child = node.children[i];
+      if (child.userData?.limbArmor || child.userData?.armArmor || child.userData?.pelvisArmor) {
+        node.remove(child);
+        disposeEquipment(child, rig);
+      }
     }
   }
   rig.mainHandItem = null;
@@ -1937,16 +2211,16 @@ export function updateWarHorseAnimation(horse: WarHorseRig, speed: number, time:
  */
 export function applyRiderMountedPosture(rider: CharacterRig, horseSpeed: number, time: number): void {
   const rhythm = Math.sin(time * 9.0) * THREE.MathUtils.clamp(horseSpeed / 8.0, 0, 1) * 0.03;
-  rider.pelvis.position.set(0, 0.14 + rhythm, 0);
-  rider.pelvis.rotation.set(0.06, 0, 0);
+  rider.pelvis.position.set(0, 0.28 + rhythm, -0.04);
+  rider.pelvis.rotation.set(0.05, 0, 0);
 
-  // Spread thighs wide around barrel, bend knees into stirrups
-  rider.leftThigh.rotation.set(-0.62, 0.25, 0.44);
-  rider.rightThigh.rotation.set(-0.62, -0.25, -0.44);
-  rider.leftShin.rotation.set(0.88, 0, 0);
-  rider.rightShin.rotation.set(0.88, 0, 0);
-  rider.leftFoot.rotation.set(-0.22, 0, 0);
-  rider.rightFoot.rotation.set(-0.22, 0, 0);
+  // Spread thighs wide outside the horse barrel (|x| > 0.35m), bend knees into stirrups
+  rider.leftThigh.rotation.set(-0.54, -0.36, 0.58);
+  rider.rightThigh.rotation.set(-0.54, 0.36, -0.58);
+  rider.leftShin.rotation.set(0.72, 0, -0.24);
+  rider.rightShin.rotation.set(0.72, 0, 0.24);
+  rider.leftFoot.rotation.set(-0.18, 0, 0);
+  rider.rightFoot.rotation.set(-0.18, 0, 0);
 }
 
 /**

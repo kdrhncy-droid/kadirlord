@@ -229,14 +229,14 @@ export function createFace(
   nose.rotation.x = 0.06;
 
   // Burun ucu: kamanın önüne oturan küçük çıkıntı (yuvarlak uç).
-  const noseTip = add(new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.013, 0.016), mats.skin), 'noseTip');
-  noseTip.position.set(0, SKULL_Y - 0.034, surfaceZ(0, SKULL_Y - 0.034, 0.012));
-  noseTip.rotation.x = 0.42;
+  const noseTip = add(new THREE.Mesh(new THREE.BoxGeometry(0.019, 0.013, 0.014), mats.skin), 'noseTip');
+  noseTip.position.set(0, SKULL_Y - 0.025, surfaceZ(0, SKULL_Y - 0.025, 0.008));
+  noseTip.rotation.x = 0.35;
 
   // Burun delikleri: tek geniş çizgi yerine iki ayrı gölge (daha okunur).
   for (const side of [-1, 1] as const) {
     const n = add(new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.0055, 0.007), pal.skinShadow), `nostril${side < 0 ? 'R' : 'L'}`);
-    n.position.set(side * 0.0085, SKULL_Y - 0.0415, surfaceZ(0, SKULL_Y - 0.0415, 0.0105));
+    n.position.set(side * 0.0085, SKULL_Y - 0.036, surfaceZ(0, SKULL_Y - 0.036, 0.006));
     n.rotation.y = side * 0.28;
   }
   // Eski tek parça 'nostril' adı geriye dönük uyumluluk için (görünmez).
@@ -251,9 +251,9 @@ export function createFace(
     [0, 0, 0],
     [0.014, 0.0012, -0.1],
   ] as const) {
-    const seg = new THREE.Mesh(new THREE.BoxGeometry(0.017, 0.0042, 0.006), pal.skinShadow);
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(0.017, 0.0042, 0.005), pal.skinShadow);
     seg.name = 'mouthSeg';
-    seg.position.set(dx, SKULL_Y - 0.074 + dy, surfaceZ(dx, SKULL_Y - 0.074 + dy, 0.0018));
+    seg.position.set(dx, SKULL_Y - 0.074 + dy, surfaceZ(dx, SKULL_Y - 0.074 + dy, 0.0012));
     seg.rotation.z = rot;
     mouth.add(seg);
   }
@@ -262,25 +262,25 @@ export function createFace(
   // Üst dudak: iki kanat (cupid bow) + hafif gölge.
   const upperLip = add(new THREE.Group() as unknown as THREE.Mesh, 'upperLip');
   for (const side of [-1, 1] as const) {
-    const half = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.0095, 0.0085), pal.lips);
+    const half = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.0095, 0.0065), pal.lips);
     half.name = 'upperLipHalf';
     half.position.set(
       side * 0.0105,
       SKULL_Y - 0.0672,
-      surfaceZ(side * 0.0105, SKULL_Y - 0.0672, 0.0016),
+      surfaceZ(side * 0.0105, SKULL_Y - 0.0672, 0.001),
     );
     half.rotation.z = side * -0.12;
     upperLip.add(half);
   }
 
   // Alt dudak: dolgun, ortası hafif öne çıkan tek parça.
-  const lowerLip = add(new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.0125, 0.0095), pal.lips), 'lowerLip');
-  lowerLip.position.set(0, SKULL_Y - 0.0815, surfaceZ(0, SKULL_Y - 0.0815, 0.0022));
+  const lowerLip = add(new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.0125, 0.0075), pal.lips), 'lowerLip');
+  lowerLip.position.set(0, SKULL_Y - 0.0815, surfaceZ(0, SKULL_Y - 0.0815, 0.0014));
   lowerLip.rotation.x = 0.12;
 
   // Dudak altı gölgesi (çene ile dudak arası derinlik).
-  const lipShadow = add(new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.005, 0.006), pal.skinShadow), 'lipShadow');
-  lipShadow.position.set(0, SKULL_Y - 0.0895, surfaceZ(0, SKULL_Y - 0.0895, 0.0008));
+  const lipShadow = add(new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.005, 0.005), pal.skinShadow), 'lipShadow');
+  lipShadow.position.set(0, SKULL_Y - 0.0895, surfaceZ(0, SKULL_Y - 0.0895, 0.0006));
 
   // Çene için ayrı parça yok: kafatası elipsoidi + `chinLength` ölçeği yeterli.
   const chin = add(new THREE.Mesh(new THREE.BufferGeometry(), mats.skin), 'chin');
@@ -325,11 +325,11 @@ export function applyFaceDNA(group: THREE.Object3D | null, dna?: Partial<Charact
   }
   const noseTip = group.getObjectByName('noseTip');
   if (noseTip) {
-    noseTip.scale.set(0.9 + noseBridge * 0.2, 1 + (noseLen - 1) * 0.6, 0.9 + noseBridge * 0.3);
-    noseTip.position.y = SKULL_Y - 0.036 - (noseLen - 1) * 0.03;
+    noseTip.scale.set(0.9 + noseBridge * 0.2, 1 + (noseLen - 1) * 0.45, 0.9 + noseBridge * 0.25);
+    noseTip.position.y = SKULL_Y - 0.025 - (noseLen - 1) * 0.022;
   }
   const nostril = group.getObjectByName('nostril');
-  if (nostril) nostril.position.y = SKULL_Y - 0.05 - (noseLen - 1) * 0.032;
+  if (nostril) nostril.position.y = SKULL_Y - 0.038 - (noseLen - 1) * 0.024;
 
   for (const tag of ['L', 'R'] as const) {
     const browMesh = group.getObjectByName(`brow${tag}`);
@@ -369,17 +369,30 @@ export function applyFaceDNA(group: THREE.Object3D | null, dna?: Partial<Charact
   const mouth = group.getObjectByName('mouth');
   const upperLip = group.getObjectByName('upperLip');
   const lowerLip = group.getObjectByName('lowerLip');
+  const lipShadow = group.getObjectByName('lipShadow');
   const drop = (chinLen - 1) * 0.01;
-  for (const m of [mouth, upperLip, lowerLip]) {
-    if (m) {
-      m.scale.x = (0.92 + jaw * 0.16 * shape.x) * (feminine ? 1.06 : 1);
-      if (feminine) m.scale.y *= 1.35;
-      m.position.y -= drop;
-    }
+  const lipScaleX = (0.92 + jaw * 0.16 * shape.x) * (feminine ? 1.06 : 1);
+  const lipScaleY = feminine ? 1.35 : 1;
+
+  if (mouth) {
+    mouth.scale.set(lipScaleX, lipScaleY, 1);
+    // mouthSeg parçaları zaten surfaceZ üzerinde tanımlı; grup z'si 0 olmalı (yüzün önüne fırlamamalı)
+    mouth.position.set(0, -drop, 0);
+  }
+  if (upperLip) {
+    upperLip.scale.set(lipScaleX, lipScaleY, 1);
+    upperLip.position.set(0, -drop, 0);
+  }
+  if (lowerLip) {
+    lowerLip.scale.set(lipScaleX, lipScaleY, 1);
+    lowerLip.position.set(0, SKULL_Y - 0.0815 - drop, surfaceZ(0, SKULL_Y - 0.0815, 0.0014));
+  }
+  if (lipShadow) {
+    lipShadow.position.set(0, SKULL_Y - 0.0895 - drop, surfaceZ(0, SKULL_Y - 0.0895, 0.0006));
   }
   if (feminine && mats) {
     // Kadınlarda dudak daha sıcak bir ton (aynı materyal paylaşılıyorsa klonla).
-    const lipMat = (upperLip as THREE.Mesh | undefined)?.material as
+    const lipMat = (lowerLip as THREE.Mesh | undefined)?.material as
       | THREE.MeshStandardMaterial
       | undefined;
     if (lipMat && !lipMat.userData?.feminineTint) {
@@ -387,7 +400,6 @@ export function applyFaceDNA(group: THREE.Object3D | null, dna?: Partial<Charact
       lipMat.userData = { ...(lipMat.userData ?? {}), feminineTint: true };
     }
   }
-  if (mouth) mouth.position.z = 0.1125 + (shape.z - 1) * 0.3;
 
   // Göz rengi canlı güncellenebilsin
   const irisMat = (group.getObjectByName('irisL') as THREE.Mesh | undefined)?.material as
