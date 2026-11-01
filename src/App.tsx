@@ -64,6 +64,8 @@ import { InventoryModal } from './components/InventoryModal';
 import { BattleLootModal } from './components/BattleLootModal';
 import { PartyModal } from './components/PartyModal';
 import { CharacterModal } from './components/CharacterModal';
+import { MapBattleInterventionModal } from './components/MapBattleInterventionModal';
+import type { MapBattleEvent } from './game/mapBattle';
 import {
   commitBattleLoot,
   prepareBattleLoot,
@@ -71,11 +73,13 @@ import {
 } from './game/lootTransaction';
 import { rollBattleLoot } from './game/loot';
 import {
+  calculateBattleCombatXp,
   inventoryItemQuantity,
   getTroopDefinition,
   troopStackTotals,
 } from './game/bannerlordFoundation';
 import { KingdomManagementModal } from './components/KingdomManagementModal';
+import { ClanModal } from './components/ClanModal';
 import { ArmyCohesionHudWidget, ArmyModal } from './components/ArmyModal';
 import {
   boostArmyCohesion,
@@ -214,7 +218,10 @@ export default function App() {
   const [isCharacterModalOpen, setIsCharacterModalOpen] = useState(false);
   const [pendingBattleLoot, setPendingBattleLoot] = useState<PendingBattleLoot | null>(null);
   const [isKingdomModalOpen, setIsKingdomModalOpen] = useState(false);
+  const [isClanModalOpen, setIsClanModalOpen] = useState(false);
   const [isArmyModalOpen, setIsArmyModalOpen] = useState(false);
+  const [activeInterventionBattle, setActiveInterventionBattle] = useState<MapBattleEvent | null>(null);
+  const assistedLordIdRef = useRef<string | null>(null);
   const [battleSiegeSettlementContextId, setBattleSiegeSettlementContextId] = useState<
     string | null
   >(null);
@@ -651,14 +658,16 @@ export default function App() {
                 siege: false,
                 seedKey: 'test-open-loot',
               });
+        const defCount = options?.enemiesDefeated ?? 20;
         setPendingBattleLoot({
           enemyLordId: null,
           conqueredSettlementId: null,
-          enemiesDefeatedCount: options?.enemiesDefeated ?? 20,
+          enemiesDefeatedCount: defCount,
           playerTroopLosses: {},
           goldLoot: options?.goldLoot ?? 180,
           renownGain: 15,
           prisonersGain: 4,
+          combatXpEarned: calculateBattleCombatXp(defCount, 1.8),
           lootItems: items,
           isSiegeVictory: false,
           defeatedFaction: 'bandits',
@@ -758,6 +767,7 @@ export default function App() {
       setIsPartyModalOpen(false);
       setIsCharacterModalOpen(false);
       setIsKingdomModalOpen(false);
+      setIsClanModalOpen(false);
       setIsEncyclopediaOpen(false);
       setOutcomeSnapshot(null);
       setMetHeroIds([]);
@@ -779,6 +789,7 @@ export default function App() {
     inventory: isInventoryModalOpen,
     party: isPartyModalOpen,
     market: isMarketModalOpen,
+    clan: isClanModalOpen,
     kingdom: isKingdomModalOpen || isArmyModalOpen,
     dialogue: !!(dialogueLord || dialogueSettlement),
     settlement: !isWaitingInSettlement && (!!activeSettlementModal || !!activeSiegeSettlementId),
@@ -802,6 +813,9 @@ export default function App() {
         break;
       case 'market':
         setIsMarketModalOpen(false);
+        break;
+      case 'clan':
+        setIsClanModalOpen(false);
         break;
       case 'kingdom':
         setIsKingdomModalOpen(false);
@@ -1026,6 +1040,7 @@ export default function App() {
     setIsPartyModalOpen(false);
     setIsCharacterModalOpen(false);
     setIsKingdomModalOpen(false);
+    setIsClanModalOpen(false);
     setIsEncyclopediaOpen(false);
     setOutcomeSnapshot(null);
     setGameState('playing');
@@ -1145,6 +1160,20 @@ export default function App() {
         if (uiPausesWorld && !isPartyModalOpen) return;
         e.preventDefault();
         setIsPartyModalOpen((prev) => !prev);
+        return;
+      }
+
+      if (e.code === 'KeyL' && gameState === 'playing' && subMode === 'overworld') {
+        if (uiPausesWorld && !isClanModalOpen) return;
+        e.preventDefault();
+        setIsClanModalOpen((prev) => !prev);
+        return;
+      }
+
+      if (e.code === 'KeyK' && gameState === 'playing' && subMode === 'overworld') {
+        if (uiPausesWorld && !isKingdomModalOpen) return;
+        e.preventDefault();
+        setIsKingdomModalOpen((prev) => !prev);
         return;
       }
 
@@ -1740,6 +1769,27 @@ export default function App() {
     setSubMode('battle');
   }, []);
 
+  const handleJoinMapBattle = useCallback(
+    (battle: MapBattleEvent, sideToSupport: 'ATTACKER' | 'DEFENDER') => {
+      const enemyLordId = sideToSupport === 'ATTACKER' ? battle.defenderId : battle.attackerId;
+      const alliedLordId = sideToSupport === 'ATTACKER' ? battle.attackerId : battle.defenderId;
+      const enemyLord = campaign.lords.find((l) => l.id === enemyLordId);
+      const alliedLord = campaign.lords.find((l) => l.id === alliedLordId);
+
+      if (!enemyLord) {
+        showToast('Düşman ordusu bulunamadı.');
+        setActiveInterventionBattle(null);
+        return;
+      }
+
+      assistedLordIdRef.current = alliedLord?.id ?? null;
+      setActiveInterventionBattle(null);
+      showToast(`⚔️ ${alliedLord?.name ?? 'Müttefikiniz'} safında savaşa giriyorsunuz!`);
+      handleStartFieldBattle(enemyLord);
+    },
+    [campaign.lords, handleStartFieldBattle, showToast],
+  );
+
   const handleBattleComplete = useCallback(
     (
       victory: boolean,
@@ -1748,6 +1798,39 @@ export default function App() {
     ) => {
       if (victory) {
         music.play('VICTORY');
+
+        // Müttefike yardım edildiyse ilişki ve şan ödülü
+        if (assistedLordIdRef.current) {
+          const alliedId = assistedLordIdRef.current;
+          assistedLordIdRef.current = null;
+          setCampaign((prev) => {
+            const updatedLords = prev.lords.map((l) => {
+              if (l.id !== alliedId) return l;
+              return {
+                ...l,
+                relation: Math.min(100, l.relation + 15),
+              };
+            });
+            const alliedLord = updatedLords.find((l) => l.id === alliedId);
+            return {
+              ...prev,
+              renown: prev.renown + 15,
+              honor: (prev.honor ?? 0) + 15,
+              lords: updatedLords,
+              chronicle: [
+                {
+                  id: `assist-${Date.now()}`,
+                  day: prev.day,
+                  category: 'BATTLE' as const,
+                  text: `${alliedLord?.name ?? 'Müttefik'} kuvvetlerine zamanında yetişerek zafer kazandınız! İlişkiniz güçlendi (+15).`,
+                },
+                ...prev.chronicle,
+              ].slice(0, 30),
+            };
+          });
+          showToast('Müttefikiniz yardımınız için minnettarlığını bildirdi! (İlişki +15, Şan +15)');
+        }
+
         const pending = prepareBattleLoot(campaign, {
           enemyLordId: battleTargetLordId,
           enemiesDefeated,
@@ -1845,6 +1928,10 @@ export default function App() {
               ? `${l.name} yolunuzu kesti!`
               : `${l.title} ${l.name} sancağınızı kıstırdı!`,
           );
+        }}
+        onInterveneMapBattle={(battle) => {
+          setActiveInterventionBattle(battle);
+          setMapTimeScale(0);
         }}
         onCampaignUpdate={(next) => setCampaign(next)}
         onToast={showToast}
@@ -2137,6 +2224,7 @@ export default function App() {
           canTrade={!!activeSettlementModal}
           onOpenCharacterArena={() => setViewMode('character_arena')}
           onOpenKingdomModal={() => setIsKingdomModalOpen(true)}
+          onOpenClanModal={() => setIsClanModalOpen(true)}
           onOpenCharacterCreator={() => setIsCharacterCreatorOpen(true)}
           onOpenArmyModal={() => setIsArmyModalOpen(true)}
         />
@@ -2393,6 +2481,7 @@ export default function App() {
             setGameState('title');
           }}
           onShowToast={showToast}
+          onOpenArmoryStudio={() => setIsArmoryStudioOpen(true)}
         />
       )}
 
@@ -2789,6 +2878,9 @@ export default function App() {
                 lordPositionCommandsRef.current.set(defeatedLord.id, { x: defeatedLord.x, z: defeatedLord.z });
               }
             }
+            if (result.combatXpAwarded > 0) {
+              showToast(`⚔️ Muharebe tecrübesi: Birliklerine +${result.combatXpAwarded} XP dağıtıldı!`);
+            }
             setCampaign(nextState);
             setPendingBattleLoot(null);
             setBattleSiegeSettlementContextId(null);
@@ -2866,6 +2958,29 @@ export default function App() {
           onUpdateMacroState={(next) => setMacroState(next)}
           onUpdateCampaign={(next) => setCampaign(next)}
           onClose={() => setIsKingdomModalOpen(false)}
+        />
+      )}
+
+      {/* 7C. BANNERLORD CLAN MODAL (L Kısayolu) — Üyeler, Roller, Birlikler, Tımarlar ve Finans */}
+      {isClanModalOpen && (
+        <ClanModal
+          campaign={campaign}
+          onUpdateCampaign={(next) => setCampaign(next)}
+          onClose={() => setIsClanModalOpen(false)}
+          onOpenArmyModal={() => setIsArmyModalOpen(true)}
+        />
+      )}
+
+      {/* 7D. BANNERLORD MEYDAN MUHAREBESİ MÜDAHALE MODALI (AI-AI MapBattle) */}
+      {activeInterventionBattle && (
+        <MapBattleInterventionModal
+          battle={activeInterventionBattle}
+          campaign={campaign}
+          onJoinBattle={handleJoinMapBattle}
+          onLeaveBattle={() => {
+            setActiveInterventionBattle(null);
+            setMapTimeScale(1);
+          }}
         />
       )}
 

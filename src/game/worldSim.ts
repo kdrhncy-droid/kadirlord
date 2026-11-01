@@ -24,6 +24,7 @@ import {
   LordAgent,
   LordOrder,
   Settlement,
+  TroopRoster,
   WorldStats,
   WorldState,
   advanceDailyEconomyAndWorld,
@@ -39,6 +40,8 @@ import {
 } from './encounter';
 import { type FeudalClanRecord, calculateWarDesireAndTribute } from './kingdomSystem';
 import { hashString, mulberry32 } from './rng';
+import { CULTURE_TROOP_DOCTRINE } from './heroGen';
+import { cultureHasClass } from './troops';
 
 // Geriye dönük uyumluluk: eski çağıranlar bu yardımcıları worldSim'den de alabilir.
 export { hashString, mulberry32 } from './rng';
@@ -625,13 +628,17 @@ export function advanceSieges(
       }
     }
 
-    // Saldıran ordu(lar) yıpranır.
+    // Saldıran ordu(lar) yıpranır ve hayatta kalanlar muharebe tecrübesiyle terfi eder.
     for (const coLord of coBesiegers) {
       const coArmy = armyOf(coLord);
       const losses = Math.max(2, Math.round(coArmy * 0.18 + rand() * 2));
       const remaining = Math.max(5, coArmy - losses);
       coLord.armySize = remaining;
       coLord.roster = scaleRoster(coLord.roster, remaining / Math.max(1, coArmy));
+      if (coLord.roster) {
+        coLord.roster = trainAndUpgradeLordRoster(coLord.roster, coLord.faction, rand, 2);
+        coLord.armySize = getTotalTroops(coLord.roster);
+      }
       coLord.foodDays = Math.max(2, (coLord.foodDays ?? 6) - 3);
       coLord.order = { kind: 'DEFEND', targetSettlementId: target.id, sinceDay: state.day };
     }
@@ -670,7 +677,7 @@ export function advanceSieges(
   return { settlements, lords, wars, events, siegesWon, fiefsChangedHands, siegeCooldowns };
 }
 
-function scaleRoster(
+export function scaleRoster(
   roster: LordAgent['roster'],
   factor: number,
 ): LordAgent['roster'] {
@@ -716,8 +723,10 @@ export function advanceUpkeep(
       state.playerSiege?.settlementId === settlement.id && !state.playerSiege.inside;
     const besieged = besiegedByLord || besiegedByPlayer;
     if (!besieged) {
-      const cap = settlement.type === 'TOWN' ? 70 : settlement.type === 'CASTLE' ? 50 : 12;
-      settlement.garrison = Math.min(cap, settlement.garrison + 1);
+      const cap = settlement.type === 'TOWN' ? 300 : settlement.type === 'CASTLE' ? 165 : 0;
+      if (settlement.type !== 'VILLAGE') {
+        settlement.garrison = Math.min(cap, settlement.garrison + 1);
+      }
     } else if (settlement.type !== 'VILLAGE' && settlement.foodStock <= 0 && settlement.garrison > 0) {
       const loss = Math.max(1, Math.round(settlement.garrison * 0.1));
       settlement.garrison = Math.max(0, settlement.garrison - loss);
@@ -764,8 +773,8 @@ export function advanceUpkeep(
     // Kendi yerleşiminde takviye ve gönüllü toplama (topladığı yerleşimde 1 gün asker kalmaz).
     if (home && (l.order?.kind === 'REINFORCE' || l.order?.kind === 'DEFEND' || l.order?.kind === 'PATROL')) {
       const army = getTotalTroops(l.roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 });
-      const cap = Math.max(24, Math.min(60, home.garrison + 22));
-      l.foodDays = Math.max(l.foodDays ?? 0, Math.min(14, 6 + Math.round(home.foodStock * 0.1)));
+      const cap = calculateLordPartyCap(l);
+      l.foodDays = Math.max(l.foodDays ?? 0, Math.min(18, 8 + Math.round(home.foodStock * 0.1)));
       l.morale = Math.min(100, (l.morale ?? 70) + 2);
       l.wounded = Math.max(0, (l.wounded ?? 0) - 1);
 
@@ -776,8 +785,8 @@ export function advanceUpkeep(
         const needed = cap - army;
         const rawGain =
           poolAvailable > 0
-            ? Math.min(needed, Math.max(2, Math.min(6, poolAvailable)))
-            : Math.max(1, Math.min(4, Math.round(home.garrison * 0.08) + 1));
+            ? Math.min(needed, Math.max(3, Math.min(10, poolAvailable)))
+            : Math.max(1, Math.min(6, Math.round(home.garrison * 0.05) + 1));
         const gain = Math.min(needed, rawGain);
         l.roster = growRoster(l.roster, gain, l.faction, rand);
         l.armySize = getTotalTroops(l.roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 });
@@ -821,6 +830,13 @@ export function advanceUpkeep(
           sinceDay: state.day,
         };
       }
+    }
+
+    // Günlük Asker Talimi & Terfi (Bannerlord "Raise the Meek" & Liderlik Sistemi)
+    // Aç olmayan ve esir olmayan lordlar, acemi erlerini devriye gezdikçe ve talim yaptıkça rütbe atlatır.
+    if ((l.foodDays ?? 0) > 0 && l.roster) {
+      l.roster = trainAndUpgradeLordRoster(l.roster, l.faction, rand, 1);
+      l.armySize = getTotalTroops(l.roster);
     }
 
     return l;
@@ -925,6 +941,40 @@ export function stepLiveLordSettlementRecruitment(
   };
 }
 
+export function calculateLordPartyCap(lord: LordAgent): number {
+  if (lord.faction === 'bandits') {
+    return 42;
+  }
+  const title = (lord.title || '').toLowerCase();
+  const name = (lord.name || '').toLowerCase();
+  if (
+    title.includes('kral') ||
+    title.includes('imparatoriçe') ||
+    title.includes('imparator') ||
+    title.includes('kağan') ||
+    title.includes('sultan') ||
+    title.includes('büyük prens') ||
+    name === 'rhagaea' ||
+    name === 'derthert' ||
+    name === 'monchug' ||
+    name === 'caladog' ||
+    name === 'raganvad' ||
+    name === 'unqid'
+  ) {
+    return 230;
+  }
+  if (
+    title.includes('general') ||
+    title.includes('arkon') ||
+    title.includes('voyvoda') ||
+    name === 'garios' ||
+    name === 'lucon'
+  ) {
+    return 180;
+  }
+  return 120;
+}
+
 function growRoster(
   roster: LordAgent['roster'],
   gain: number,
@@ -933,15 +983,58 @@ function growRoster(
 ): LordAgent['roster'] {
   const base = roster ?? { infantry: 0, archer: 0, cavalry: 0, horseArcher: 0 };
   const out = { ...base };
-  // Kültüre göre eğilim (Khuzait/Aserai süvari, Battania okçu…).
-  const cavalryBias = faction === 'khuzait' || faction === 'aserai' ? 0.4 : 0.22;
-  const rangedBias = faction === 'battania' ? 0.4 : 0.28;
-  for (let i = 0; i < gain; i++) {
-    const roll = rand();
-    if (roll < cavalryBias) out.cavalry += 1;
-    else if (roll < cavalryBias + rangedBias) out.archer += 1;
-    else out.infantry += 1;
+  let cavRecruits = 0;
+  if (faction === 'khuzait') {
+    for (let i = 0; i < gain; i++) {
+      if (rand() < 0.25) cavRecruits++;
+    }
   }
+  out.infantry += (gain - cavRecruits);
+  out.cavalry += cavRecruits;
+  return out;
+}
+
+export function trainAndUpgradeLordRoster(
+  roster: TroopRoster,
+  faction: FactionId,
+  rand: () => number,
+  intensity = 1,
+): TroopRoster {
+  const out = { ...roster };
+  if (out.infantry <= 6) return out;
+
+  const total = getTotalTroops(out);
+  const maxUpgrades = Math.max(1, Math.min(out.infantry - 5, Math.round((1 + rand() * 2) * intensity)));
+  const doc = CULTURE_TROOP_DOCTRINE[faction] ?? CULTURE_TROOP_DOCTRINE.empire;
+  const [, targetArcRatio, targetCavRatio, targetHARatio] = doc.ratios;
+  const hasHA = cultureHasClass(faction, 'horseArcher');
+
+  for (let i = 0; i < maxUpgrades; i++) {
+    if (out.infantry <= 6) break;
+
+    const curArcRatio = out.archer / Math.max(1, total);
+    const curCavRatio = out.cavalry / Math.max(1, total);
+    const curHARatio = out.horseArcher / Math.max(1, total);
+
+    const needHA = hasHA && curHARatio < targetHARatio;
+    const needCav = curCavRatio < targetCavRatio;
+    const needArc = curArcRatio < targetArcRatio;
+
+    out.infantry--;
+
+    const roll = rand();
+    if (needHA && roll < 0.35) {
+      out.horseArcher++;
+    } else if (needCav && roll < 0.70) {
+      out.cavalry++;
+    } else if (needArc) {
+      out.archer++;
+    } else {
+      out.infantry++;
+      break;
+    }
+  }
+
   return out;
 }
 

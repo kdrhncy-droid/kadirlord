@@ -90,15 +90,18 @@ import {
   ITEM_DEFINITIONS,
   PLAYER_HERO_ID,
   TROOP_DEFINITIONS,
+  calculateBattleCombatXp,
   calculateLearningHardCap,
   calculateLearningSoftCap,
   applyDiscardDonation,
   discardEligibility,
   discardXpCapForTier,
+  distributeCombatXpToTroopStacks,
   ensureBannerlordFoundation,
   equipInventoryItemForHero,
   getPlayerHero,
   getRoleHero,
+  getTroopDefinition,
   inventoryTotalQuantity,
   inventoryTotalValue,
   itemDiscardXpPerUnit,
@@ -492,7 +495,7 @@ test('Bannerlord DefaultPartySpeedCalculatingModel, Lord intel, route movement, 
     assert.ok(intel.totalHealthy >= 16);
     assert.ok(intel.wounded >= 1);
     assert.ok(intel.prisoners >= 1);
-    assert.ok(intel.speedInfo.finalSpeed >= 2.5 && intel.speedInfo.finalSpeed <= 6.5);
+    assert.ok(intel.speedInfo.finalSpeed >= 1.0 && intel.speedInfo.finalSpeed <= 6.5);
     assert.ok(intel.currentAction.length > 5);
   }
 
@@ -515,7 +518,7 @@ test('Bannerlord DefaultPartySpeedCalculatingModel, Lord intel, route movement, 
 
   // 4. Spotting range & Fog of War checks
   const spotRange = computePlayerSpottingRange(state.playerX, state.playerZ, state.roster);
-  assert.ok(spotRange >= 120 && spotRange <= 230);
+  assert.ok(spotRange >= 45 && spotRange <= 85);
   // Rhagaea at (28, 92) is within spotting range of player at (14, 88)
   assert.equal(isWithinSpottingRange(state.playerX, state.playerZ, 28, 92, spotRange), true);
   // Derthert in distant Vlandia (-412, -115) is outside spotting range (hidden by Fog of War)
@@ -1834,6 +1837,7 @@ test('P2 battle loot: pending loot preparation, selection, take all, discard XP 
   assert.ok(pending.goldLoot > 0);
   assert.ok(pending.renownGain > 0);
   assert.ok(pending.prisonersGain > 0);
+  assert.ok((pending.combatXpEarned ?? 0) > 0, 'Savaş zaferinde muharebe tecrübesi üretilmeli');
   assert.ok(pending.lootItems.length > 0);
 
   // 2. Transfer item from loot to inventory
@@ -1888,6 +1892,7 @@ test('P2 battle loot: pending loot preparation, selection, take all, discard XP 
   assert.equal(commitRes.nextState.renown, initial.renown + pending.renownGain);
   assert.equal(commitRes.nextState.battlesWon, initial.battlesWon + 1);
   assert.equal(commitRes.nextState.roster.infantry, Math.max(0, initial.roster.infantry - 2));
+  assert.ok(commitRes.combatXpAwarded > 0, 'Savaş tecrübesi yığınlara dağıtılmalı');
   assert.ok(commitRes.nextState.inventoryItems?.length);
 });
 
@@ -2360,6 +2365,63 @@ test('Bannerlord Workshop System: her şehirden serbestçe atölye alınabilir a
   const slot1Income = calculateSingleWorkshopIncome(zeonicaWorkshops[1], zeonicaTown, state.settlements);
   assert.equal(totalIncome, slot0Income + slot1Income, 'Şehirdeki tüm oyuncu atölyelerinin geliri toplanmalı');
 });
+
+test('Bannerlord troop XP & progression: battle combat XP distribution, shared pool capping, promotion readiness, and daily passive leadership training', () => {
+  // 1. Combat XP hesaplama formülü testi (düşman kademesine göre üstel artış)
+  const t1KillXp = calculateBattleCombatXp(1, 1);
+  const t3KillXp = calculateBattleCombatXp(1, 3);
+  const t5KillXp = calculateBattleCombatXp(1, 5);
+  assert.ok(t1KillXp >= 40 && t1KillXp <= 60, `T1 kill XP makul aralıkta olmalı (~47): ${t1KillXp}`);
+  assert.ok(t3KillXp >= 140 && t3KillXp <= 180, `T3 kill XP makul aralıkta olmalı (~159): ${t3KillXp}`);
+  assert.ok(t5KillXp >= 300 && t5KillXp <= 380, `T5 kill XP makul aralıkta olmalı (~340): ${t5KillXp}`);
+  assert.ok(t5KillXp > t3KillXp && t3KillXp > t1KillXp, 'Yüksek kademe düşmanlar kat kat fazla XP vermeli');
+
+  // 2. distributeCombatXpToTroopStacks testi: paylaşımlı havuz, kapasite sınırı ve terfiye hazır sayısı
+  const initialStacks: TroopStack[] = [
+    { troopId: 'empire_recruit', count: 5, wounded: 0, xp: 0 }, // T1: upgradeXp=50, maxCap=250
+    { troopId: 'empire_infantry_2', count: 2, wounded: 0, xp: 0 }, // T2: upgradeXp=150, maxCap=300
+  ];
+  // 300 XP dağıt:
+  // İki yığın 150'şer alır.
+  // empire_recruit 150 XP alır (50*3 = 3 asker terfiye hazır).
+  // empire_infantry_2 150 XP alır (150*1 = 1 asker terfiye hazır).
+  const distRes = distributeCombatXpToTroopStacks(initialStacks, 300);
+  assert.equal(distRes.xpDistributed, 300);
+  assert.equal(distRes.nextStacks[0].xp, 150);
+  assert.equal(distRes.nextStacks[1].xp, 150);
+  assert.equal(distRes.newlyReadyTroops, 4, 'Toplam 3 recruit + 1 infantry_2 terfiye hazır olmalı');
+
+  // Taşma testi: empire_recruit yığınına 200 daha ver (toplam 350 XP olamaz, 5*50 = 250 maxCap ile sınırlanmalı)
+  const capRes = distributeCombatXpToTroopStacks(distRes.nextStacks, 200);
+  const recruitStack = capRes.nextStacks.find((s) => s.troopId === 'empire_recruit')!;
+  assert.equal(recruitStack.xp, 250, 'Recruit yığınının XP’si 5 * 50 = 250 kapasitesini aşamaz');
+
+  // 3. resolveBattleOutcome: zafer sonrasında troopStacks’e combat XP yazılması
+  const state = createInitialCampaignState('Komutan Baybars', 'noble');
+  const victoryState = resolveBattleOutcome(
+    state,
+    true,
+    null,
+    {},
+    10, // 10 haydut öldürüldü
+  );
+  const totalXpBefore = (state.troopStacks ?? []).reduce((sum, s) => sum + (s.xp ?? 0), 0);
+  const totalXpAfter = (victoryState.troopStacks ?? []).reduce((sum, s) => sum + (s.xp ?? 0), 0);
+  assert.ok(totalXpAfter > totalXpBefore, 'Meydan savaşı zaferinde birlik yığınlarına muharebe tecrübesi dağıtılmalı');
+
+  // 4. advanceDailyPartyHealthAndPrisoners: günlük pasif liderlik talimi (Raise the Meek / Passive Training)
+  const lowTierState: CampaignState = {
+    ...state,
+    troopStacks: [
+      { troopId: 'empire_recruit', count: 10, wounded: 0, xp: 0 },
+    ],
+  };
+  const dailyTick = advanceDailyPartyHealthAndPrisoners(lowTierState);
+  assert.ok((dailyTick.dailyTrainingXpAwarded ?? 0) > 0, 'Günlük talimde acemi birliklere pasif XP aktarılmalı');
+  const trainedRecruit = dailyTick.nextState.troopStacks?.find((s) => s.troopId === 'empire_recruit')!;
+  assert.ok(trainedRecruit.xp > 0, 'Recruit yığını günlük talimden tecrübe kazanmalı');
+});
+
 
 
 

@@ -4,7 +4,7 @@ import {
   groundHeightAt,
   registerSettlementTerrace,
 } from './mapGen.ts';
-import { snapToNearestLand } from './navigation.ts';
+import { isNavigableLandAt, snapToNearestLand } from './navigation.ts';
 import { ensureNotables, type SettlementNotable } from './notables';
 import { battleGoldReward, describeLoot, rollBattleLoot } from './loot';
 import {
@@ -16,10 +16,13 @@ import {
 import { generateLordParties } from './heroGen.ts';
 import {
   addItemDefinitionToInventory,
+  calculateBattleCombatXp,
+  distributeCombatXpToTroopStacks,
   ensureBannerlordFoundation,
   equipInventoryItemForHero,
   PLAYER_HERO_ID,
   getTroopDefinition,
+  reconcileTroopStacks,
 } from './bannerlordFoundation';
 import {
   advanceDailyPartyFood,
@@ -2088,9 +2091,12 @@ export function resolveBattleOutcome(
       return s;
     });
 
+    const nextTroopStacks = reconcileTroopStacks(state.troopStacks, nextRoster);
+
     return ensureBannerlordFoundation({
       ...state,
       roster: nextRoster,
+      troopStacks: nextTroopStacks,
       lords: nextLords,
       settlements: nextSettlementsOnDefeat,
       morale: Math.max(20, state.morale - 15),
@@ -2152,6 +2158,20 @@ export function resolveBattleOutcome(
       : `${state.playerName}, meydan savaşında düşman ordusunu bozguna uğrattı (+${renownGain} Nam, +${goldLoot} Dinar, ${describeLoot(loot)}).`,
   };
 
+  // Muharebe Tecrübesi (Combat XP) dağıtımı
+  let avgEnemyTier = 2.0;
+  if (enemyLord) {
+    avgEnemyTier = Math.max(2.5, Math.min(4.5, 2.0 + Math.min(2.5, enemyLord.armySize / 40)));
+  } else if (conqueredSettlementId) {
+    avgEnemyTier = 3.0;
+  } else {
+    avgEnemyTier = 1.8;
+  }
+  const combatXp = calculateBattleCombatXp(enemiesDefeatedCount, avgEnemyTier);
+  const survivingStacks = reconcileTroopStacks(state.troopStacks, nextRoster);
+  const combatDist = distributeCombatXpToTroopStacks(survivingStacks, combatXp);
+  const nextTroopStacks = combatDist.nextStacks;
+
   return ensureBannerlordFoundation({
     ...state,
     gold: state.gold + goldLoot,
@@ -2161,6 +2181,7 @@ export function resolveBattleOutcome(
     battlesWon: state.battlesWon + 1,
     inventoryItems: [...(state.inventoryItems ?? []), ...loot],
     roster: nextRoster,
+    troopStacks: nextTroopStacks,
     lords: nextLords,
     settlements: nextSettlements,
     chronicle: [newChronicle, ...state.chronicle].slice(0, 20),
@@ -2206,7 +2227,7 @@ const FACTION_VILLAGE_NAMES: Record<FactionId, string[]> = {
 
 let cachedCanonicalSettlements: Settlement[] | null = null;
 
-function buildCanonicalCalradiaSettlements(): Settlement[] {
+export function buildCanonicalCalradiaSettlements(): Settlement[] {
   if (cachedCanonicalSettlements) {
     return cachedCanonicalSettlements.map((s) => ({
       ...s,
@@ -3248,8 +3269,8 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       name: 'Ulaan',
       type: 'VILLAGE',
       faction: 'khuzait',
-      x: 275,
-      z: -18,
+      x: 258,
+      z: -30,
       prosperity: 290,
       garrison: 20,
       recruitPool: { infantry: 5, archer: 7, cavalry: 6, horseArcher: 1 },
@@ -3423,39 +3444,55 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
   const usedNames = new Set(allSettlements.map((s) => s.name));
 
   function findDryVillageSpot(parentX: number, parentZ: number, seedIdx: number): { x: number; z: number } {
-    const radii = [11.5, 14.5, 17.5, 20.5, 24.0, 28.0];
+    const radii = [18.0, 22.0, 26.0, 30.0, 35.0, 40.0, 46.0, 52.0];
+    let bestFallback = { x: parentX, z: parentZ, minDist: 0 };
+
     for (let rIdx = 0; rIdx < radii.length; rIdx++) {
       const rad = radii[rIdx];
-      for (let step = 0; step < 16; step++) {
-        const angle = ((seedIdx * 5 + step * 3) % 16) * ((Math.PI * 2) / 16) + rIdx * 0.22;
+      for (let step = 0; step < 36; step++) {
+        const angle = ((seedIdx * 7 + step * 5) % 36) * ((Math.PI * 2) / 36) + rIdx * 0.18;
         const cx = Math.max(-476, Math.min(336, Math.round(parentX + Math.cos(angle) * rad)));
         const cz = Math.max(-288, Math.min(278, Math.round(parentZ + Math.sin(angle) * rad)));
 
         const h = groundHeightAt(cx, cz);
         if (h < 0.65 || h > 9.5) continue;
+        if (!isNavigableLandAt(cx, cz)) continue;
 
         const { dist: rDist, width: rWidth } = distanceToRiverNetwork(cx, cz);
-        if (rDist < rWidth * 1.65) continue;
+        if (rDist < rWidth * 1.5) continue;
 
+        let closestDist = Infinity;
         let tooClose = false;
         for (let i = 0; i < allSettlements.length; i++) {
           const other = allSettlements[i];
-          const minSep = other.type === 'VILLAGE' ? 6.8 : 8.4;
-          if (Math.hypot(cx - other.x, cz - other.z) < minSep) {
+          const d = Math.hypot(cx - other.x, cz - other.z);
+          if (d < closestDist) closestDist = d;
+          const minSep = other.type === 'VILLAGE' ? 22.0 : 26.0;
+          if (d < minSep) {
             tooClose = true;
             break;
           }
         }
+
         if (!tooClose) {
           return { x: cx, z: cz };
         }
+
+        if (closestDist > bestFallback.minDist) {
+          bestFallback = { x: cx, z: cz, minDist: closestDist };
+        }
       }
     }
-    const fallback = snapToNearestLand(
-      Math.max(-475, Math.min(335, parentX + (seedIdx % 2 === 0 ? 11 : -11))),
-      Math.max(-285, Math.min(275, parentZ + (seedIdx % 3 === 0 ? 11 : -11))),
+
+    if (bestFallback.minDist >= 20.0) {
+      return { x: bestFallback.x, z: bestFallback.z };
+    }
+
+    const fallbackLand = snapToNearestLand(
+      Math.max(-475, Math.min(335, parentX + (seedIdx % 2 === 0 ? 32 : -32))),
+      Math.max(-285, Math.min(275, parentZ + (seedIdx % 3 === 0 ? 32 : -32))),
     );
-    return { x: Math.round(fallback.x), z: Math.round(fallback.z) };
+    return { x: Math.round(fallbackLand.x), z: Math.round(fallbackLand.z) };
   }
 
   const townsAndCastles = baseSettlements.filter((s) => s.type === 'TOWN' || s.type === 'CASTLE');
@@ -3543,6 +3580,12 @@ function buildCanonicalCalradiaSettlements(): Settlement[] {
       if (s.hearths === undefined) {
         s.hearths = Math.round(s.prosperity * 1.15);
       }
+    } else if (s.type === 'TOWN') {
+      // Bannerlord otantik şehir garnizonu: 220–320 arası (refahla orantılı)
+      s.garrison = Math.round(210 + (s.prosperity / 700) * 90);
+    } else if (s.type === 'CASTLE') {
+      // Bannerlord otantik kale garnizonu: 120–175 arası
+      s.garrison = Math.round(115 + (s.prosperity / 450) * 50);
     }
   }
 
@@ -3803,12 +3846,12 @@ export function createInitialCampaignState(
       z: 92,
       targetX: 24,
       targetZ: 78,
-      armySize: 28,
-      roster: { infantry: 10, archer: 8, cavalry: 5, horseArcher: 5 },
-      wounded: 2,
-      prisoners: 4,
-      morale: 86,
-      foodDays: 14,
+      armySize: 195,
+      roster: { infantry: 80, archer: 50, cavalry: 40, horseArcher: 25 },
+      wounded: 4,
+      prisoners: 8,
+      morale: 88,
+      foodDays: 18,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Lycaron vadisini koruyor',
@@ -3825,12 +3868,12 @@ export function createInitialCampaignState(
       z: 104,
       targetX: -38,
       targetZ: 112,
-      armySize: 16,
-      roster: { infantry: 7, archer: 4, cavalry: 4, horseArcher: 1 },
-      wounded: 1,
+      armySize: 38,
+      roster: { infantry: 20, archer: 10, cavalry: 6, horseArcher: 2 },
+      wounded: 2,
       prisoners: 5,
       morale: 74,
-      foodDays: 9,
+      foodDays: 10,
       isAtWarWithPlayer: true,
       isAlliedWithPlayer: false,
       currentAction: 'Karageçit geçidinde pusu kuruyor',
@@ -3847,12 +3890,12 @@ export function createInitialCampaignState(
       z: 112,
       targetX: -105,
       targetZ: 138,
-      armySize: 36,
-      roster: { infantry: 14, archer: 10, cavalry: 6, horseArcher: 6 },
-      wounded: 3,
-      prisoners: 6,
-      morale: 84,
-      foodDays: 15,
+      armySize: 185,
+      roster: { infantry: 85, archer: 50, cavalry: 30, horseArcher: 20 },
+      wounded: 5,
+      prisoners: 10,
+      morale: 86,
+      foodDays: 16,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Zeonica ve Amitatys hattını denetliyor',
@@ -3869,12 +3912,12 @@ export function createInitialCampaignState(
       z: -55,
       targetX: 18,
       targetZ: -58,
-      armySize: 34,
-      roster: { infantry: 12, archer: 10, cavalry: 6, horseArcher: 6 },
-      wounded: 2,
-      prisoners: 3,
-      morale: 82,
-      foodDays: 13,
+      armySize: 175,
+      roster: { infantry: 75, archer: 50, cavalry: 30, horseArcher: 20 },
+      wounded: 3,
+      prisoners: 7,
+      morale: 84,
+      foodDays: 15,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Saneopa ve Myzea sınırını koruyor',
@@ -3891,12 +3934,12 @@ export function createInitialCampaignState(
       z: -115,
       targetX: -438,
       targetZ: -122,
-      armySize: 40,
-      roster: { infantry: 14, archer: 10, cavalry: 10, horseArcher: 6 },
-      wounded: 4,
-      prisoners: 7,
-      morale: 88,
-      foodDays: 16,
+      armySize: 220,
+      roster: { infantry: 75, archer: 65, cavalry: 80, horseArcher: 0 },
+      wounded: 6,
+      prisoners: 12,
+      morale: 90,
+      foodDays: 20,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Pravend - Galend kraliyet yolunu denetliyor',
@@ -3913,12 +3956,12 @@ export function createInitialCampaignState(
       z: -82,
       targetX: -258,
       targetZ: -68,
-      armySize: 34,
-      roster: { infantry: 10, archer: 16, cavalry: 3, horseArcher: 5 },
-      wounded: 2,
-      prisoners: 4,
-      morale: 85,
-      foodDays: 12,
+      armySize: 185,
+      roster: { infantry: 70, archer: 85, cavalry: 30, horseArcher: 0 },
+      wounded: 4,
+      prisoners: 9,
+      morale: 88,
+      foodDays: 16,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Battaniya dağ gölü koruluklarını kolaçan ediyor',
@@ -3935,12 +3978,12 @@ export function createInitialCampaignState(
       z: -255,
       targetX: 68,
       targetZ: -285,
-      armySize: 36,
-      roster: { infantry: 16, archer: 8, cavalry: 4, horseArcher: 8 },
-      wounded: 3,
-      prisoners: 5,
-      morale: 80,
-      foodDays: 14,
+      armySize: 195,
+      roster: { infantry: 105, archer: 40, cavalry: 50, horseArcher: 0 },
+      wounded: 5,
+      prisoners: 8,
+      morale: 84,
+      foodDays: 18,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Sibir ve Varnovapol karlı geçidini bekliyor',
@@ -3957,12 +4000,12 @@ export function createInitialCampaignState(
       z: -62,
       targetX: 252,
       targetZ: -48,
-      armySize: 42,
-      roster: { infantry: 10, archer: 12, cavalry: 15, horseArcher: 5 },
-      wounded: 3,
-      prisoners: 8,
-      morale: 89,
-      foodDays: 15,
+      armySize: 230,
+      roster: { infantry: 45, archer: 60, cavalry: 85, horseArcher: 40 },
+      wounded: 5,
+      prisoners: 14,
+      morale: 92,
+      foodDays: 20,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Chaikand ve Makeb iç göl kıyısını tutuyor',
@@ -3979,12 +4022,12 @@ export function createInitialCampaignState(
       z: 258,
       targetX: -108,
       targetZ: 248,
-      armySize: 38,
-      roster: { infantry: 12, archer: 10, cavalry: 10, horseArcher: 6 },
-      wounded: 2,
-      prisoners: 5,
-      morale: 87,
-      foodDays: 16,
+      armySize: 190,
+      roster: { infantry: 65, archer: 55, cavalry: 50, horseArcher: 20 },
+      wounded: 4,
+      prisoners: 11,
+      morale: 89,
+      foodDays: 18,
       isAtWarWithPlayer: false,
       isAlliedWithPlayer: false,
       currentAction: 'Sanala ve Qasira vaha hattını koruyor',

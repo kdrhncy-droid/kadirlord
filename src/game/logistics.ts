@@ -86,6 +86,8 @@ export interface PartyLogisticsParams {
   state?: Pick<CampaignState, 'customItemDefinitions'>;
   /** Parti liderinin kültürü; kültürel arazi feat'leri uygulanır (10.8). */
   culture?: string | null;
+  /** Bireysel çete/parti tipi hız farkı (haydut arketipi, yağma yükü vb.) */
+  speedBonus?: number;
   /** Geriye dönük uyumluluk için eski alanlar (envanter verilmemişse kullanılır). */
   legacyFoodUnits?: number;
   legacyHerdAnimals?: number;
@@ -256,8 +258,12 @@ export function calculatePartyLogistics(params: PartyLogisticsParams): PartyLogi
         totalHorses: legacyHerdAnimals,
       };
 
-  // 2. Ordu Büyüklüğü Koordinasyon Cezası
-  const sizePenalty = -(totalPeople * 0.018 + Math.max(0, totalPeople - 20) * 0.015);
+  // 2. Ordu Büyüklüğü Koordinasyon Cezası (Bannerlord logaritmik sönümleme modeli)
+  // Dev ordular dahi kilitlenmez, ~3.6 - 4.2 hızla kuşatmalara zamanında yetişir.
+  const sizePenalty = -Math.min(
+    1.35,
+    Number((Math.log10(Math.max(1, totalPeople / 12)) * 0.58).toFixed(2)),
+  );
 
   // 3. Süvari Bonusu: 3.0 * (C / (I + C)) * D
   const effectiveCavalry = Math.min(totalHealthy, Math.max(0, cavalryCount));
@@ -349,13 +355,15 @@ export function calculatePartyLogistics(params: PartyLogisticsParams): PartyLogi
     overburdenPenalty +
     woundedPenalty +
     prisonerPenalty +
-    moraleModifier;
+    moraleModifier +
+    (params.speedBonus ?? 0);
 
   const finalSpeed = Number(
-    Math.max(1.2, Math.min(6.8, rawPreTerrain * terrainMultiplier)).toFixed(1),
+    Math.max(2.5, Math.min(7.2, rawPreTerrain * terrainMultiplier)).toFixed(1),
   );
 
-  const worldUnitsPerSecAt1x = Number((finalSpeed * 1.28).toFixed(2));
+  // Bannerlord seyahat hızı: ordular ve lordlar haritada amaçlı ve seri ilerler, kuşatmalara rahatça yetişir
+  const worldUnitsPerSecAt1x = Number((finalSpeed * 1.05).toFixed(2));
 
   return {
     capacity,

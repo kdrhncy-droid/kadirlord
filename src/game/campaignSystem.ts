@@ -67,6 +67,7 @@ export function calculateBannerlordPartySpeed(params: {
   perks?: string[];
   state?: Pick<CampaignState, 'customItemDefinitions'>;
   culture?: string | null;
+  speedBonus?: number;
 }): BannerlordSpeedBreakdown {
   const result = calculatePartyLogistics({
     x: params.x,
@@ -80,6 +81,7 @@ export function calculateBannerlordPartySpeed(params: {
     perks: params.perks,
     state: params.state,
     culture: params.culture,
+    speedBonus: params.speedBonus,
     legacyFoodUnits: params.foodUnits,
     legacyHerdAnimals: params.herdAnimals,
   });
@@ -145,6 +147,23 @@ export function getLordDetailedIntel(
     currentAction = `${nearestName} çevresinde devriye geziyor`;
   }
 
+  // Haydut hız çeşitliliği: her haydut çetesi tipi ve birliği farklı hızda hareket eder
+  // (Çapulcular 4.2-4.5, Dağ/Deniz yağmacıları 4.5-4.8, Orman 4.9-5.3, Bozkır/Süvari çeteleri 5.5-6.0)
+  let banditSpeedOffset = 0;
+  if (lord.faction === 'bandits') {
+    const cavRatio = roster.cavalry / Math.max(1, totalHealthy);
+    const speedArchetypeVariance = ((seed % 7) - 3) * 0.12; // -0.36 ile +0.36 arası bireysel çete farkı
+    if (cavRatio > 0.3) {
+      banditSpeedOffset = 0.55 + speedArchetypeVariance; // Hızlı atlı haydutlar
+    } else if (roster.archer >= roster.infantry) {
+      banditSpeedOffset = 0.25 + speedArchetypeVariance; // Çevik orman okçuları
+    } else if (totalHealthy <= 12) {
+      banditSpeedOffset = 0.10 + speedArchetypeVariance; // Küçük çapulcu çetesi
+    } else {
+      banditSpeedOffset = -0.30 + speedArchetypeVariance; // Ağır ganimetli yağmacı birliği
+    }
+  }
+
   const speedInfo = calculateBannerlordPartySpeed({
     x: liveX,
     z: liveZ,
@@ -154,6 +173,7 @@ export function getLordDetailedIntel(
     prisonerCount: prisoners,
     foodUnits: foodDays * 2,
     morale,
+    speedBonus: banditSpeedOffset,
   });
 
   return {
@@ -180,10 +200,11 @@ export function computePlayerSpottingRange(
 ): number {
   const elev = Math.max(0, groundHeightAt(playerX, playerZ));
   const forest = getForestMaskAt(playerX, playerZ);
-  const baseRange = 135;
-  const elevationBonus = Math.min(65, Math.max(0, elev - 1.8) * 7.5);
-  const scoutingBonus = Math.min(28, roster.cavalry * 2.4 + roster.archer * 0.8);
-  const forestCoverPenalty = forest * 16;
+  // Bannerlord gerçekçi görüş menzili: haritanın tamamını açmaz, yakın çevreyi ve keşif menzilini kapsar
+  const baseRange = 52;
+  const elevationBonus = Math.min(18, Math.max(0, elev - 1.8) * 2.5);
+  const scoutingBonus = Math.min(14, roster.cavalry * 1.2 + roster.archer * 0.4);
+  const forestCoverPenalty = forest * 10;
 
   return Math.round(baseRange + elevationBonus + scoutingBonus - forestCoverPenalty);
 }
@@ -214,6 +235,8 @@ export interface LordLiveRouteState {
   orderKey?: string;
   /** Gerçek zamanlı kovalama / kaçma durumu (harita rozetleri ve animasyon hızı için). */
   tacticalState?: 'PURSUE' | 'FLEE' | null;
+  /** Taktiksel durum kilit sonu (saniye) — osilasyonu önlemek için minimum taahhüt süresi */
+  tacticalLockUntilSec?: number;
   /** Sıkışma bekçisi */
   stuckWatch?: { x: number; z: number; elapsed: number };
   /** Hedef varlık kimliği (kovalanan haydut / kaçılan lord ID'si) */
@@ -614,6 +637,8 @@ export function applyTacticalPlayerReactionToRoute(params: {
     return 'FLEE_FROM_PLAYER';
   }
 
+  const isStateLocked = nowSec > 0 && (route.tacticalLockUntilSec ?? 0) > nowSec;
+
   const reaction = evaluateHostileReaction({
     lord,
     lordX: route.x,
@@ -624,7 +649,14 @@ export function applyTacticalPlayerReactionToRoute(params: {
     nearbyHostileStrength,
     siegeDefenderStrength,
     totalBesiegerStrength,
+    previousState: route.tacticalState,
   });
+
+  // Durum geçişi olduğunda en az 3 saniyelik kilit uygula (git-gel titremesini engeller)
+  const incomingKind = reaction.kind === 'PURSUE_PLAYER' ? 'PURSUE' : reaction.kind === 'FLEE_FROM_PLAYER' ? 'FLEE' : null;
+  if (incomingKind && incomingKind !== route.tacticalState) {
+    route.tacticalLockUntilSec = nowSec + 3.0;
+  }
 
   if (reaction.kind === 'PURSUE_PLAYER' && reaction.targetPos) {
     route.tacticalState = 'PURSUE';
@@ -659,6 +691,19 @@ export function applyTacticalPlayerReactionToRoute(params: {
       if (route.waypoints.length === 0) {
         route.waypoints = [{ x: reaction.targetPos.x, z: reaction.targetPos.z }];
       }
+    }
+    return 'FLEE_FROM_PLAYER';
+  }
+
+  // Kilit altındayken oyuncu sınır mesafesinden azıcık uzaklaşsa bile hemen geri dönme
+  if (isStateLocked && route.tacticalState === 'FLEE') {
+    const dx = route.x - playerX;
+    const dz = route.z - playerZ;
+    const len = Math.hypot(dx, dz) || 1;
+    const tx = route.x + (dx / len) * 28;
+    const tz = route.z + (dz / len) * 28;
+    if (route.waypoints.length === 0) {
+      route.waypoints = [{ x: tx, z: tz }];
     }
     return 'FLEE_FROM_PLAYER';
   }

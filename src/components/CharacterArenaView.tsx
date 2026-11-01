@@ -23,6 +23,23 @@ import {
   updateWarHorseAnimation,
 } from '../game/characterRig';
 import {
+  getTroopLoadoutForRole,
+  getLordLoadout,
+  normalizeArsenalFactionId,
+} from '../game/factionTroopLoadouts';
+import {
+  applyFactionArmorToRig,
+  mountFactionWeaponToRig,
+  mountFactionShieldToRig,
+  buildFactionWarHorseRig,
+  getArsenalArmorById,
+  getArsenalWeaponById,
+  getArsenalHorseById,
+} from '../armory/FactionArsenal';
+import {
+  ensureFactionIKClipsRegistered,
+} from '../armory/FactionAnimations';
+import {
   BOW_MIN_RELEASE_DRAW,
   CharacterAnimator,
   CharacterAnimState,
@@ -133,6 +150,8 @@ interface SkirmishFighter {
   name: string;
   team: 'ALLY' | 'ENEMY';
   division: 'INFANTRY' | 'ARCHERS' | 'CAVALRY' | 'HORSE_ARCHERS';
+  /** Bannerlord Asker Rütbesi (Tier 1-6): 1=Acemi, 3=Eğitimli, 5=Elit Şövalye, 6=Lord */
+  tier: number;
   rig: CharacterRig;
   animator: CharacterAnimator;
   horse?: WarHorseRig;
@@ -163,6 +182,14 @@ interface SkirmishFighter {
   fallVy?: number;
   fallRoll?: number;
   fallRollSpeed?: number;
+  /** Süvari Vur-Kaç Durum Makinesi (Bannerlord Cycle-Charge) */
+  cavalryChargeState?: 'CHARGE' | 'PASS_THROUGH' | 'PULL_AWAY';
+  cavalryTimer?: number;
+  cavalryHeadingX?: number;
+  cavalryHeadingZ?: number;
+  /** Piyade Taktik Duruşu (Geri adım kalkanla nefes alma, kalkan yanı dolanma) */
+  tacticalStance?: 'ATTACK' | 'BACKPEDAL' | 'FLANK';
+  tacticalTimer?: number;
   /** LOD & Performans İyileştiricileri (50v50 ve 500v500 için) */
   animTickCounter?: number;
   currentShadowState?: boolean;
@@ -263,7 +290,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
   // Bannerlord Tactical Command State (Faz 2)
   const [selectedDivision, setSelectedDivision] = useState<DivisionId>('ALL');
-  const [formationOrder, setFormationOrder] = useState<FormationOrder>('FOLLOW_ME');
+  const [formationOrder, setFormationOrder] = useState<FormationOrder>('HOLD_POSITION');
   const [formationArrangement, setFormationArrangement] = useState<FormationArrangement>('LINE');
   const [fireOrder, setFireOrder] = useState<FireOrder>('FREE_FIRE');
   const [activeTacticalMenu, setActiveTacticalMenu] = useState<'MOVEMENT' | 'FACING' | 'FORMATION' | null>(null);
@@ -356,7 +383,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
   const dummyRef = useRef<ReturnType<typeof createPracticeDummy> | null>(null);
   const flyingArrowsRef = useRef<FlyingArrow[]>([]);
   const animIdRef = useRef<number>(0);
-  const clockRef = useRef(new THREE.Clock());
+  const lastFrameTimeRef = useRef<number>(performance.now());
+  const elapsedTimeRef = useRef<number>(0);
 
   // ---- Player movement/input refs ----
   const playerPosRef = useRef(new THREE.Vector3(0, 0, 4));
@@ -382,7 +410,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
   const siegeEnabledRef = useRef<boolean>(initialSiegeEnabled);
   const isMountedRef = useRef<boolean>(false);
   const selectedDivisionRef = useRef<DivisionId>('ALL');
-  const formationOrderRef = useRef<FormationOrder>('FOLLOW_ME');
+  const formationOrderRef = useRef<FormationOrder>('HOLD_POSITION');
   const formationArrangementRef = useRef<FormationArrangement>('LINE');
   const fireOrderRef = useRef<FireOrder>('FREE_FIRE');
   const activeTacticalMenuRef = useRef<'MOVEMENT' | 'FACING' | 'FORMATION' | null>(null);
@@ -394,8 +422,20 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
   const shoutTimeoutRef = useRef<number>(0);
   const holdAnchorRef = useRef<{ x: number; z: number; facing: number }>({
     x: 0,
-    z: 1.5,
+    z: 22.0,
     facing: Math.PI,
+  });
+  const divisionOrdersRef = useRef<Record<'INFANTRY' | 'ARCHERS' | 'CAVALRY' | 'HORSE_ARCHERS', FormationOrder>>({
+    INFANTRY: 'HOLD_POSITION',
+    ARCHERS: 'HOLD_POSITION',
+    CAVALRY: 'HOLD_POSITION',
+    HORSE_ARCHERS: 'HOLD_POSITION',
+  });
+  const divisionAnchorsRef = useRef<Record<'INFANTRY' | 'ARCHERS' | 'CAVALRY' | 'HORSE_ARCHERS', { x: number; z: number; facing: number }>>({
+    INFANTRY: { x: 0, z: 22.0, facing: Math.PI },
+    ARCHERS: { x: 0, z: 26.5, facing: Math.PI },
+    CAVALRY: { x: -14.0, z: 24.0, facing: Math.PI },
+    HORSE_ARCHERS: { x: 14.0, z: 24.0, facing: Math.PI },
   });
 
   const showScoreboardRef = useRef(false);
@@ -688,22 +728,66 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     ]);
   }, []);
 
-  // ── Issue Hold Position Banner at player's forward ground spot ──
+  // ── Issue Hold Position Banner at player's exact ground spot (Bannerlord F1-F1) ──
   const issueHoldPositionOrder = useCallback(() => {
-    const fwdX = Math.sin(playerYawRef.current);
-    const fwdZ = Math.cos(playerYawRef.current);
-    const holdX = THREE.MathUtils.clamp(playerPosRef.current.x + fwdX * 4.2, -13, 13);
-    const holdZ = THREE.MathUtils.clamp(playerPosRef.current.z + fwdZ * 4.2, -13, 13);
-    holdAnchorRef.current = { x: holdX, z: holdZ, facing: playerYawRef.current };
-    setFormationOrder('HOLD_POSITION');
-    formationOrderRef.current = 'HOLD_POSITION';
+    const pX = playerPosRef.current.x;
+    const pZ = playerPosRef.current.z;
+    const selDiv = selectedDivisionRef.current;
+
+    // Face towards enemy lines (Three.js -Z is Math.PI) or enemy centroid
+    let toEnemyFacing = Math.PI;
+    const enemies = skirmishUnitsRef.current.filter((u) => u.team === 'ENEMY' && u.alive && !u.routed);
+    if (enemies.length > 0) {
+      let sumEx = 0;
+      let sumEz = 0;
+      for (const e of enemies) {
+        sumEx += e.x;
+        sumEz += e.z;
+      }
+      toEnemyFacing = Math.atan2(sumEx / enemies.length - pX, sumEz / enemies.length - pZ);
+    }
+
+    const boundX = 75;
+    const boundZ = fieldSpawnZRef.current + 35;
+    const holdX = THREE.MathUtils.clamp(pX, -boundX, boundX);
+    const holdZ = THREE.MathUtils.clamp(pZ, -boundZ, boundZ);
+
+    if (selDiv === 'ALL') {
+      holdAnchorRef.current = { x: holdX, z: holdZ, facing: toEnemyFacing };
+      setFormationOrder('HOLD_POSITION');
+      formationOrderRef.current = 'HOLD_POSITION';
+      divisionOrdersRef.current.INFANTRY = 'HOLD_POSITION';
+      divisionOrdersRef.current.ARCHERS = 'HOLD_POSITION';
+      divisionOrdersRef.current.CAVALRY = 'HOLD_POSITION';
+      divisionOrdersRef.current.HORSE_ARCHERS = 'HOLD_POSITION';
+      divisionAnchorsRef.current.INFANTRY = { x: holdX, z: holdZ, facing: toEnemyFacing };
+      divisionAnchorsRef.current.ARCHERS = { x: holdX, z: holdZ + 4.5, facing: toEnemyFacing };
+      divisionAnchorsRef.current.CAVALRY = { x: holdX - 14.0, z: holdZ + 2.0, facing: toEnemyFacing };
+      divisionAnchorsRef.current.HORSE_ARCHERS = { x: holdX + 14.0, z: holdZ + 2.0, facing: toEnemyFacing };
+      showOrderShout('⚔️ [F1-F1] Tüm Ordu: Bu Konumu Tutun!');
+    } else {
+      const selKey = selDiv as 'INFANTRY' | 'ARCHERS' | 'CAVALRY' | 'HORSE_ARCHERS';
+      divisionOrdersRef.current[selKey] = 'HOLD_POSITION';
+      divisionAnchorsRef.current[selKey] = { x: holdX, z: holdZ, facing: toEnemyFacing };
+      const divLabel =
+        selKey === 'ARCHERS'
+          ? '🏹 Okçular'
+          : selKey === 'INFANTRY'
+            ? '🛡️ Piyadeler'
+            : selKey === 'CAVALRY'
+              ? '🏇 Süvariler'
+              : '🎯 Atlı Okçular';
+      showOrderShout(`${divLabel}: Bulunduğunuz Konumda Kalın!`);
+    }
+
     if (tacticalBannerRef.current) {
       tacticalBannerRef.current.visible = true;
       tacticalBannerRef.current.position.set(holdX, 0, holdZ);
-      tacticalBannerRef.current.rotation.y = playerYawRef.current;
+      tacticalBannerRef.current.rotation.y = toEnemyFacing;
     }
+    sound.playShieldHit();
     spawnDamageText('SANCAK DİKİLDİ: BU KONUMU TUT!', '#facc15', new THREE.Vector3(holdX, 0.5, holdZ));
-  }, [spawnDamageText]);
+  }, [showOrderShout, sound, spawnDamageText]);
 
   // ── Spawn Authentic Campaign Armies (Full Rig Skeletons, Opposing Lord, Real Rosters) ──
   const spawnCampaignForces = useCallback((resetAllies = true) => {
@@ -731,6 +815,19 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     const playerFactionColor = FACTION_INFO[playerCulture]?.color ?? '#991b1b';
     const enemyFaction = (eLord?.faction ?? eSettlement?.faction ?? 'empire') as keyof typeof FACTION_INFO;
     const enemyFactionColor = FACTION_INFO[enemyFaction]?.color ?? '#581c87';
+
+    // ── 6 Krallık Birlik ve Donanım Ağacı Entegrasyonu ──
+    const allyArsenalFaction = normalizeArsenalFactionId(playerCulture);
+    const allyInfLoadout = getTroopLoadoutForRole(allyArsenalFaction, 'INFANTRY', 3);
+    const allyArcLoadout = getTroopLoadoutForRole(allyArsenalFaction, 'ARCHERS', 3);
+    const allyCavLoadout = getTroopLoadoutForRole(allyArsenalFaction, 'CAVALRY', 5);
+
+    const enemyArsenalFaction = normalizeArsenalFactionId(
+      eLord?.faction ?? eSettlement?.faction ?? 'empire',
+    );
+    const enemyInfLoadout = getTroopLoadoutForRole(enemyArsenalFaction, 'INFANTRY', 3);
+    const enemyArcLoadout = getTroopLoadoutForRole(enemyArsenalFaction, 'ARCHERS', 3);
+    const enemyCavLoadout = getTroopLoadoutForRole(enemyArsenalFaction, 'CAVALRY', 5);
 
     // Roster scaling (faithful 1:1 up to 16 models per troop category for solid 60fps)
     const allyInfCount = Math.min(16, Math.max(3, pRoster.infantry ?? 10));
@@ -767,6 +864,21 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         playerHorseRef.current.root.position.copy(playerPosRef.current);
         playerHorseRef.current.root.rotation.y = playerYawRef.current;
       }
+      holdAnchorRef.current = { x: 0, z: isSiege ? 11.0 : baseSpawnZ + 2.0, facing: Math.PI };
+      divisionAnchorsRef.current = {
+        INFANTRY: { x: 0, z: isSiege ? 11.0 : baseSpawnZ + 2.0, facing: Math.PI },
+        ARCHERS: { x: 0, z: isSiege ? 15.0 : baseSpawnZ + 6.0, facing: Math.PI },
+        CAVALRY: { x: -14.0, z: isSiege ? 13.0 : baseSpawnZ + 4.0, facing: Math.PI },
+        HORSE_ARCHERS: { x: 14.0, z: isSiege ? 13.0 : baseSpawnZ + 4.0, facing: Math.PI },
+      };
+      divisionOrdersRef.current = {
+        INFANTRY: 'HOLD_POSITION',
+        ARCHERS: 'HOLD_POSITION',
+        CAVALRY: 'HOLD_POSITION',
+        HORSE_ARCHERS: 'HOLD_POSITION',
+      };
+      formationOrderRef.current = 'HOLD_POSITION';
+      setFormationOrder('HOLD_POSITION');
     }
 
     // 1. ALLIED FORCES (Player's Real Army)
@@ -782,11 +894,17 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         skinTone: '#d9a17c',
         hairColor: '#2b1d12',
         factionColor: playerFactionColor,
+        factionId: allyArsenalFaction,
         weaponType: 'ONE_HANDED_SWORD',
-        shieldType: i % 2 === 0 ? 'ROUND_SHIELD' : 'KITE_SHIELD',
+        shieldType: allyInfLoadout.shieldId ? (i % 2 === 0 ? 'ROUND_SHIELD' : 'KITE_SHIELD') : 'NONE',
         helmetType: i % 3 === 0 ? 'SPANGENHELM' : 'KETTLE_HAT',
         armorTier: i % 2 === 0 ? 'CHAINMAIL' : 'LEATHER',
+        factionArmorId: allyInfLoadout.armorId,
+        factionWeaponId: allyInfLoadout.primaryWeaponId,
+        factionShieldId: allyInfLoadout.shieldId || undefined,
+        factionQuality: allyInfLoadout.defaultQuality,
       });
+      applyEquipmentToRig(rig, rig.currentOptions);
       rig.root.position.set(x, y, z);
       rig.root.rotation.y = Math.PI;
       group.add(rig.root);
@@ -794,9 +912,10 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       const animator = new CharacterAnimator(rig);
       skirmishUnitsRef.current.push({
         id: `ally-inf-${i}`,
-        name: `${campaign?.playerName ?? 'Sancak'} Kalkanlı Piyadesi #${i + 1}`,
+        name: `${allyInfLoadout.unitNameTr} #${i + 1}`,
         team: 'ALLY',
         division: 'INFANTRY',
+        tier: allyInfLoadout.tierNumber,
         rig,
         animator,
         x,
@@ -805,13 +924,15 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         hp: 110,
         maxHp: 110,
         alive: true,
-        hasShield: true,
+        hasShield: Boolean(allyInfLoadout.shieldId),
         weaponType: 'ONE_HANDED_SWORD',
         attackDir: ALL_DIRS[i % 4],
         blockDir: 'up',
         aiTimer: 0.2 + (i % 5) * 0.15,
         strafeSign: i % 2 === 0 ? 1 : -1,
         respawnTimer: 0,
+        tacticalStance: 'ATTACK',
+        tacticalTimer: 0,
       });
     }
 
@@ -827,11 +948,16 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         skinTone: '#c68a62',
         hairColor: '#1c1917',
         factionColor: playerFactionColor,
+        factionId: allyArsenalFaction,
         weaponType: 'BOW',
         shieldType: 'NONE',
         helmetType: 'KETTLE_HAT',
         armorTier: 'LEATHER',
+        factionArmorId: allyArcLoadout.armorId,
+        factionWeaponId: allyArcLoadout.primaryWeaponId,
+        factionQuality: allyArcLoadout.defaultQuality,
       });
+      applyEquipmentToRig(rig, rig.currentOptions);
       rig.root.position.set(x, y, z);
       rig.root.rotation.y = Math.PI;
       group.add(rig.root);
@@ -839,9 +965,10 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       const animator = new CharacterAnimator(rig);
       skirmishUnitsRef.current.push({
         id: `ally-arc-${i}`,
-        name: `${campaign?.playerName ?? 'Sancak'} Keskin Nişancısı #${i + 1}`,
+        name: `${allyArcLoadout.unitNameTr} #${i + 1}`,
         team: 'ALLY',
         division: 'ARCHERS',
+        tier: allyArcLoadout.tierNumber,
         rig,
         animator,
         x,
@@ -857,6 +984,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         aiTimer: 0.5 + i * 0.2,
         strafeSign: i % 2 === 0 ? 1 : -1,
         respawnTimer: 0,
+        tacticalStance: 'ATTACK',
+        tacticalTimer: 0,
       });
     }
 
@@ -870,16 +999,26 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         skinTone: '#d9a17c',
         hairColor: '#3a2212',
         factionColor: playerFactionColor,
+        factionId: allyArsenalFaction,
         weaponType: i % 2 === 0 ? 'SPEAR' : 'ONE_HANDED_SWORD',
-        shieldType: 'KITE_SHIELD',
+        shieldType: allyCavLoadout.shieldId ? 'KITE_SHIELD' : 'NONE',
         helmetType: 'IMPERIAL_VISOR',
         armorTier: 'CHAINMAIL',
+        factionArmorId: allyCavLoadout.armorId,
+        factionWeaponId: allyCavLoadout.primaryWeaponId,
+        factionShieldId: allyCavLoadout.shieldId || undefined,
+        factionQuality: allyCavLoadout.defaultQuality,
       });
-      const horse = createWarHorseRig({
-        coatColor: '#3b281a',
-        factionColor: playerFactionColor,
-        armoredBarding: true,
-      });
+      applyEquipmentToRig(rig, rig.currentOptions);
+
+      const horseDef = allyCavLoadout.horseId ? getArsenalHorseById(allyCavLoadout.horseId) : undefined;
+      const horse = horseDef
+        ? buildFactionWarHorseRig(horseDef, allyCavLoadout.defaultQuality)
+        : createWarHorseRig({
+            coatColor: '#3b281a',
+            factionColor: playerFactionColor,
+            armoredBarding: true,
+          });
       horse.root.position.set(x, y, z);
       horse.root.rotation.y = Math.PI;
       horse.riderMount.add(rig.root);
@@ -889,9 +1028,12 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       const animator = new CharacterAnimator(rig);
       skirmishUnitsRef.current.push({
         id: `ally-cav-${i}`,
-        name: `${campaign?.playerName ?? 'Sancak'} Ağır Süvarisi #${i + 1}`,
+        name: `${allyCavLoadout.unitNameTr} #${i + 1}`,
         team: 'ALLY',
         division: 'CAVALRY',
+        tier: allyCavLoadout.tierNumber,
+        cavalryChargeState: 'CHARGE',
+        cavalryTimer: 0,
         rig,
         animator,
         horse,
@@ -901,7 +1043,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         hp: 145,
         maxHp: 145,
         alive: true,
-        hasShield: true,
+        hasShield: Boolean(allyCavLoadout.shieldId),
         weaponType: i % 2 === 0 ? 'SPEAR' : 'ONE_HANDED_SWORD',
         attackDir: 'down',
         blockDir: 'up',
@@ -915,20 +1057,31 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     // 2.1 THE OPPOSING LORD (Garios, Derthert, Rhagaea, Caladog, etc.)
     if (eLord) {
       const lordDNA = eLord.morphDNA || getLordDNA(eLord.id, eLord.faction);
+      const isRuler = Boolean((eLord as unknown as { ruler?: boolean }).ruler || (eLord.clanTier ?? 0) >= 5);
+      const lordLoadout = getLordLoadout(enemyArsenalFaction, isRuler);
       const lordRig = createCharacterRig({
         factionColor: enemyFactionColor,
+        factionId: enemyArsenalFaction,
         weaponType: 'ONE_HANDED_SWORD',
-        shieldType: 'KITE_SHIELD',
+        shieldType: lordLoadout.shieldId ? 'KITE_SHIELD' : 'NONE',
         helmetType: 'IMPERIAL_VISOR',
         armorTier: 'PLATE',
+        factionArmorId: lordLoadout.armorId,
+        factionWeaponId: lordLoadout.primaryWeaponId,
+        factionShieldId: lordLoadout.shieldId || undefined,
+        factionQuality: 'MASTERWORK',
       });
+      applyEquipmentToRig(lordRig, lordRig.currentOptions);
       applyMorphDNAToRig(lordRig, lordDNA);
 
-      const lordHorse = createWarHorseRig({
-        coatColor: '#1a1816',
-        factionColor: enemyFactionColor,
-        armoredBarding: true,
-      });
+      const lordHorseDef = lordLoadout.horseId ? getArsenalHorseById(lordLoadout.horseId) : undefined;
+      const lordHorse = lordHorseDef
+        ? buildFactionWarHorseRig(lordHorseDef, 'MASTERWORK')
+        : createWarHorseRig({
+            coatColor: '#1a1816',
+            factionColor: enemyFactionColor,
+            armoredBarding: true,
+          });
       const lx = 0;
       const lz = isSiege ? -18.0 : -(baseSpawnZ + 10.0);
       const ly = isSiege ? 0 : getFieldElevation(lx, lz);
@@ -951,6 +1104,11 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         name: `${eLord.title ? `${eLord.title} ` : 'Lord '}${eLord.name}`,
         team: 'ENEMY',
         division: 'CAVALRY',
+        tier: 6,
+        cavalryChargeState: 'CHARGE',
+        cavalryTimer: 0,
+        tacticalStance: 'ATTACK',
+        tacticalTimer: 0,
         rig: lordRig,
         animator: lordAnimator,
         horse: lordHorse,
@@ -960,7 +1118,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         hp: 200,
         maxHp: 200,
         alive: true,
-        hasShield: true,
+        hasShield: Boolean(lordLoadout.shieldId),
         weaponType: 'ONE_HANDED_SWORD',
         attackDir: 'right',
         blockDir: 'up',
@@ -984,11 +1142,17 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         skinTone: '#c68a62',
         hairColor: '#1c1917',
         factionColor: enemyFactionColor,
+        factionId: enemyArsenalFaction,
         weaponType: i % 3 === 0 ? 'SPEAR' : 'ONE_HANDED_SWORD',
-        shieldType: 'ROUND_SHIELD',
+        shieldType: enemyInfLoadout.shieldId ? 'ROUND_SHIELD' : 'NONE',
         helmetType: i % 2 === 0 ? 'SPANGENHELM' : 'KETTLE_HAT',
         armorTier: i % 2 === 0 ? 'CHAINMAIL' : 'LEATHER',
+        factionArmorId: enemyInfLoadout.armorId,
+        factionWeaponId: enemyInfLoadout.primaryWeaponId,
+        factionShieldId: enemyInfLoadout.shieldId || undefined,
+        factionQuality: enemyInfLoadout.defaultQuality,
       });
+      applyEquipmentToRig(rig, rig.currentOptions);
       rig.root.position.set(x, y, z);
       rig.root.rotation.y = 0;
       group.add(rig.root);
@@ -996,9 +1160,10 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       const animator = new CharacterAnimator(rig);
       skirmishUnitsRef.current.push({
         id: `enemy-inf-${i}`,
-        name: `${eLord?.name ?? 'Düşman'} Lejyoneri #${i + 1}`,
+        name: `${enemyInfLoadout.unitNameTr} #${i + 1}`,
         team: 'ENEMY',
         division: 'INFANTRY',
+        tier: enemyInfLoadout.tierNumber,
         rig,
         animator,
         x,
@@ -1007,13 +1172,15 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         hp: 105,
         maxHp: 105,
         alive: true,
-        hasShield: true,
+        hasShield: Boolean(enemyInfLoadout.shieldId),
         weaponType: i % 3 === 0 ? 'SPEAR' : 'ONE_HANDED_SWORD',
         attackDir: ALL_DIRS[i % 4],
         blockDir: 'up',
         aiTimer: 0.3 + (i % 5) * 0.15,
         strafeSign: i % 2 === 0 ? 1 : -1,
         respawnTimer: 0,
+        tacticalStance: 'ATTACK',
+        tacticalTimer: 0,
       });
     }
 
@@ -1029,11 +1196,16 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         skinTone: '#d9a17c',
         hairColor: '#2b1d12',
         factionColor: enemyFactionColor,
+        factionId: enemyArsenalFaction,
         weaponType: 'BOW',
         shieldType: 'NONE',
         helmetType: 'KETTLE_HAT',
         armorTier: 'LEATHER',
+        factionArmorId: enemyArcLoadout.armorId,
+        factionWeaponId: enemyArcLoadout.primaryWeaponId,
+        factionQuality: enemyArcLoadout.defaultQuality,
       });
+      applyEquipmentToRig(rig, rig.currentOptions);
       rig.root.position.set(x, y, z);
       rig.root.rotation.y = 0;
       group.add(rig.root);
@@ -1041,9 +1213,10 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       const animator = new CharacterAnimator(rig);
       skirmishUnitsRef.current.push({
         id: `enemy-arc-${i}`,
-        name: isSiege ? `Sur Okçusu #${i + 1}` : `${eLord?.name ?? 'Düşman'} Okçusu #${i + 1}`,
+        name: isSiege ? `Sur Okçusu #${i + 1}` : `${enemyArcLoadout.unitNameTr} #${i + 1}`,
         team: 'ENEMY',
         division: 'ARCHERS',
+        tier: enemyArcLoadout.tierNumber,
         rig,
         animator,
         x,
@@ -1059,6 +1232,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         aiTimer: 2.2 + (i % 5) * 0.4,
         strafeSign: i % 2 === 0 ? 1 : -1,
         respawnTimer: 0,
+        tacticalStance: 'ATTACK',
+        tacticalTimer: 0,
       });
     }
 
@@ -1072,16 +1247,26 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         skinTone: '#c68a62',
         hairColor: '#1c1917',
         factionColor: enemyFactionColor,
+        factionId: enemyArsenalFaction,
         weaponType: 'SPEAR',
-        shieldType: 'KITE_SHIELD',
+        shieldType: enemyCavLoadout.shieldId ? 'KITE_SHIELD' : 'NONE',
         helmetType: 'IMPERIAL_VISOR',
         armorTier: 'CHAINMAIL',
+        factionArmorId: enemyCavLoadout.armorId,
+        factionWeaponId: enemyCavLoadout.primaryWeaponId,
+        factionShieldId: enemyCavLoadout.shieldId || undefined,
+        factionQuality: enemyCavLoadout.defaultQuality,
       });
-      const horse = createWarHorseRig({
-        coatColor: '#2a1a10',
-        factionColor: enemyFactionColor,
-        armoredBarding: true,
-      });
+      applyEquipmentToRig(rig, rig.currentOptions);
+
+      const horseDef = enemyCavLoadout.horseId ? getArsenalHorseById(enemyCavLoadout.horseId) : undefined;
+      const horse = horseDef
+        ? buildFactionWarHorseRig(horseDef, enemyCavLoadout.defaultQuality)
+        : createWarHorseRig({
+            coatColor: '#2a1a10',
+            factionColor: enemyFactionColor,
+            armoredBarding: true,
+          });
       horse.root.position.set(x, y, z);
       horse.root.rotation.y = 0;
       horse.riderMount.add(rig.root);
@@ -1091,9 +1276,12 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
       const animator = new CharacterAnimator(rig);
       skirmishUnitsRef.current.push({
         id: `enemy-cav-${i}`,
-        name: `${eLord?.name ?? 'Düşman'} Süvarisi #${i + 1}`,
+        name: `${enemyCavLoadout.unitNameTr} #${i + 1}`,
         team: 'ENEMY',
         division: 'CAVALRY',
+        tier: enemyCavLoadout.tierNumber,
+        cavalryChargeState: 'CHARGE',
+        cavalryTimer: 0,
         rig,
         animator,
         horse,
@@ -1262,6 +1450,11 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           name: def.name,
           team: 'ALLY',
           division: def.division,
+          tier: def.mounted ? 5 : 3,
+          cavalryChargeState: def.mounted ? 'CHARGE' : undefined,
+          cavalryTimer: 0,
+          tacticalStance: 'ATTACK',
+          tacticalTimer: 0,
           rig,
           animator,
           horse,
@@ -1377,11 +1570,17 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
       const animator = new CharacterAnimator(rig);
       const maxHp = 85 + waveNumber * 15;
+      const enemyTier = idx === 1 ? 5 : (idx === 3 ? 3 : (waveNumber >= 2 ? 3 : 2));
       skirmishUnitsRef.current.push({
         id: `enemy-w${waveNumber}-${idx}`,
         name: cfg.name,
         team: 'ENEMY',
         division: cfg.division,
+        tier: enemyTier,
+        cavalryChargeState: cfg.division === 'CAVALRY' ? 'CHARGE' : undefined,
+        cavalryTimer: 0,
+        tacticalStance: 'ATTACK',
+        tacticalTimer: 0,
         rig,
         animator,
         x: cfg.x,
@@ -1536,6 +1735,9 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
+    // ---- 2-Bone IK Faction Animations Registration ----
+    ensureFactionIKClipsRegistered();
+
     // ---- Scene ----
     const scene = new THREE.Scene();
     if (isFieldOrSiege) {
@@ -1573,7 +1775,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.2;
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -1829,12 +2031,13 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         const dmg = Math.round(18 * parryRes.damageMultiplier);
         playerHpRef.current = Math.max(0, playerHpRef.current - dmg);
         setPlayerHp(playerHpRef.current);
-        sound.playShieldHit();
+        sound.playHit();
+        sound.playPainReaction();
         spawnDamageText(`-${dmg} HASAR ALDIN!`, '#ef4444', pPos);
         if (playerHpRef.current <= 0) {
           playerAnim?.fall();
-          sound.playDefeatSting();
-          spawnDamageText('☠️ ARENA DÜELLOSUNDA YERE SERİLDİN!', '#dc2626', pPos);
+          sound.playDeathScream();
+          spawnDamageText('ARENA DÜELLOSUNDA YERE SERİLDİN!', '#dc2626', pPos);
         } else {
           playerAnim?.hitReact(true);
         }
@@ -2004,9 +2207,9 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   setKillsCount((k) => k + 1);
                   recordUnitCasualty(unit, isMountedRef.current);
                   if (unit.isLord) {
-                    sound.playVictoryFanfare();
-                    spawnDamageText(`👑 ${unit.name.toUpperCase()} MAĞLUP EDİLDİ!`, '#fbbf24', uPos);
-                    pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', unit.name, 'ALLY', '👑');
+                    sound.playDeathScream();
+                    spawnDamageText(`${unit.name.toUpperCase()} MAĞLUP EDİLDİ!`, '#fbbf24', uPos);
+                    pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', unit.name, 'ALLY', '⚔️');
                   } else {
                     spawnDamageText(`☠️ ${unit.name} Düştü! (-${dmg})`, '#facc15', uPos);
                     pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', unit.name, 'ALLY', '⚔️');
@@ -2609,10 +2812,13 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
     const loop = () => {
       animIdRef.current = requestAnimationFrame(loop);
-      const rawDelta = clockRef.current.getDelta();
+      const frameNow = performance.now();
+      const rawDelta = Math.min(0.1, Math.max(0.001, (frameNow - lastFrameTimeRef.current) / 1000));
+      lastFrameTimeRef.current = frameNow;
       const speed = animSpeedRef.current;
       const delta = Math.min(0.1, rawDelta * speed);
-      const elapsed = clockRef.current.elapsedTime;
+      elapsedTimeRef.current += delta;
+      const elapsed = elapsedTimeRef.current;
       const mode = controlModeRef.current;
 
       // ─ 1. Player movement & Mounted WarHorse Physics ─
@@ -2847,16 +3053,33 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
 
         battleElapsedSecRef.current += delta;
 
-        // 11.4: Bölük Morali & Bozgun Kontrolü (Bannerlord)
-        const curAlliesAlive = units.filter((u) => u.team === 'ALLY' && u.alive && !u.routed).length;
-        const curEnemiesAlive = units.filter((u) => u.team === 'ENEMY' && u.alive && !u.routed).length;
+        // 11.4: Bölük Morali & Bozgun Kontrolü (Tek Geçişli 0-GC Sayaç)
+        const aliveAllies: SkirmishFighter[] = [];
+        const aliveEnemies: SkirmishFighter[] = [];
+        const allyCountsByDiv: Record<string, number> = { INFANTRY: 0, ARCHERS: 0, CAVALRY: 0, HORSE_ARCHERS: 0 };
+        const enemyCountsByDiv: Record<string, number> = { INFANTRY: 0, ARCHERS: 0, CAVALRY: 0, HORSE_ARCHERS: 0 };
+
+        for (let ui = 0; ui < units.length; ui++) {
+          const u = units[ui];
+          if (!u.alive || u.routed) continue;
+          if (u.team === 'ALLY') {
+            aliveAllies.push(u);
+            allyCountsByDiv[u.division] = (allyCountsByDiv[u.division] || 0) + 1;
+          } else {
+            aliveEnemies.push(u);
+            enemyCountsByDiv[u.division] = (enemyCountsByDiv[u.division] || 0) + 1;
+          }
+        }
+
+        const curAlliesAlive = aliveAllies.length;
+        const curEnemiesAlive = aliveEnemies.length;
         const totalAlive = Math.max(1, curAlliesAlive + curEnemiesAlive);
         const allyRatio = curAlliesAlive / totalAlive;
         const enemyRatio = curEnemiesAlive / totalAlive;
 
         for (const [cls, st] of allyMoraleStatesRef.current.entries()) {
           const divName = unitTierIdToDivision(cls);
-          const aliveInDiv = units.filter((u) => u.team === 'ALLY' && u.alive && !u.routed && u.division === divName).length;
+          const aliveInDiv = allyCountsByDiv[divName] || 0;
           const wasRouting = st.isRouting;
           stepDivisionMorale(st, delta, {
             aliveInDivision: aliveInDiv,
@@ -2866,15 +3089,15 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             allyStrengthRatio: allyRatio,
           });
           if (st.isRouting && !wasRouting) {
-            spawnDamageText(`🚩 ${DIVISION_LABEL[cls].toUpperCase()} BOZGUNA UĞRADI!`, '#ef4444', playerPosRef.current);
-            sound.playDefeatSting();
-            pushKillFeedEntry('Sancak Ordusu', `${DIVISION_LABEL[cls]} Kaçıyor!`, 'ALLY', '🏳️');
+            spawnDamageText(`${DIVISION_LABEL[cls].toUpperCase()} BOZGUNA UĞRADI!`, '#ef4444', playerPosRef.current);
+            sound.playBattleYell();
+            pushKillFeedEntry('Sancak Ordusu', `${DIVISION_LABEL[cls]} Kaçıyor!`, 'ALLY', 'Kaçış');
           }
         }
 
         for (const [cls, st] of enemyMoraleStatesRef.current.entries()) {
           const divName = unitTierIdToDivision(cls);
-          const aliveInDiv = units.filter((u) => u.team === 'ENEMY' && u.alive && !u.routed && u.division === divName).length;
+          const aliveInDiv = enemyCountsByDiv[divName] || 0;
           const wasRouting = st.isRouting;
           stepDivisionMorale(st, delta, {
             aliveInDivision: aliveInDiv,
@@ -2889,10 +3112,6 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           }
         }
 
-        // Compute tactical formation slots for alive ALLY units
-        const aliveAllies = units.filter((u) => u.team === 'ALLY' && u.alive && !u.routed);
-        const aliveEnemies = units.filter((u) => u.team === 'ENEMY' && u.alive && !u.routed);
-
         // Komutan düştüğünde Çavuş yapay zekası devreye girer: ordu hücum moduna geçer!
         if (playerHpRef.current <= 0 && formationOrderRef.current !== 'CHARGE') {
           formationOrderRef.current = 'CHARGE';
@@ -2905,16 +3124,40 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
         const arrangement = formationArrangementRef.current;
         const arrMeta = FORMATION_ARRANGEMENT_META[arrangement].modifier;
 
-        const anchor =
-          order === 'HOLD_POSITION'
-            ? holdAnchorRef.current
-            : {
-                x: playerPosRef.current.x - Math.sin(playerYawRef.current) * 2.2,
-                z: playerPosRef.current.z - Math.cos(playerYawRef.current) * 2.2,
-                facing: playerYawRef.current,
-              };
+        // Bölüklere göre canlı asker listeleri
+        const aliveInfantry: SkirmishFighter[] = [];
+        const aliveArchers: SkirmishFighter[] = [];
+        const aliveCavalry: SkirmishFighter[] = [];
+        const aliveHorseArchers: SkirmishFighter[] = [];
+        for (let i = 0; i < aliveAllies.length; i++) {
+          const a = aliveAllies[i];
+          if (a.division === 'ARCHERS') aliveArchers.push(a);
+          else if (a.division === 'CAVALRY') aliveCavalry.push(a);
+          else if (a.division === 'HORSE_ARCHERS') aliveHorseArchers.push(a);
+          else aliveInfantry.push(a);
+        }
 
-        const allySlots = computeFormationSlots(aliveAllies.length, anchor, arrangement);
+        const getDivisionAnchor = (div: 'INFANTRY' | 'ARCHERS' | 'CAVALRY' | 'HORSE_ARCHERS') => {
+          const ord = divisionOrdersRef.current[div] ?? formationOrderRef.current;
+          if (ord === 'HOLD_POSITION') {
+            return divisionAnchorsRef.current[div] ?? holdAnchorRef.current;
+          }
+          // FOLLOW_ME: Oyuncunun arkasında yürür fakat yüzü DAİMA düşman hattına bakar (Math.PI)
+          const pX = playerPosRef.current.x;
+          const pZ = playerPosRef.current.z;
+          const pYaw = playerYawRef.current;
+          const offsetZ = div === 'ARCHERS' ? 6.5 : div === 'CAVALRY' ? 4.5 : 2.5;
+          return {
+            x: pX - Math.sin(pYaw) * offsetZ,
+            z: pZ - Math.cos(pYaw) * offsetZ,
+            facing: Math.PI, // Düşman hattına (-Z) bakar, oyuncu kamerasıyla ASLA dönmez
+          };
+        };
+
+        const infSlots = computeFormationSlots(aliveInfantry.length, getDivisionAnchor('INFANTRY'), arrangement);
+        const arcSlots = computeFormationSlots(aliveArchers.length, getDivisionAnchor('ARCHERS'), 'LOOSE');
+        const cavSlots = computeFormationSlots(aliveCavalry.length, getDivisionAnchor('CAVALRY'), 'WEDGE');
+        const haSlots = computeFormationSlots(aliveHorseArchers.length, getDivisionAnchor('HORSE_ARCHERS'), 'LOOSE');
 
         // 11.5: Düşman Lordu Taktik Yapay Zekası ve Ordu Düzeni (Bannerlord AI)
         const enemyCommander = aliveEnemies.find((u) => u.isLord) ?? aliveEnemies[0];
@@ -2986,58 +3229,270 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             return;
           }
 
-          const slot = allySlots[idx];
+          const divKey = (ally.division as 'INFANTRY' | 'ARCHERS' | 'CAVALRY' | 'HORSE_ARCHERS') || 'INFANTRY';
+          const unitOrder = divisionOrdersRef.current[divKey] ?? order;
+          const unitAnchor = divisionAnchorsRef.current[divKey] ?? holdAnchorRef.current;
+
+          let slot: { x: number; z: number; facing: number } | undefined;
+          if (divKey === 'INFANTRY') {
+            const idxInDiv = aliveInfantry.indexOf(ally);
+            slot = infSlots[idxInDiv];
+          } else if (divKey === 'ARCHERS') {
+            const idxInDiv = aliveArchers.indexOf(ally);
+            slot = arcSlots[idxInDiv];
+          } else if (divKey === 'CAVALRY') {
+            const idxInDiv = aliveCavalry.indexOf(ally);
+            slot = cavSlots[idxInDiv];
+          } else {
+            const idxInDiv = aliveHorseArchers.indexOf(ally);
+            slot = haSlots[idxInDiv];
+          }
+
           const nearestEnemy = grid.findNearest(ally.x, ally.z, isFieldOrSiege ? 280 : 28, (c) => c.team === 'ENEMY' && c.alive && !c.routed);
           const targetEnemy = nearestEnemy?.agent;
           const distToEnemy = nearestEnemy?.dist ?? 999;
 
           let goalX = slot ? slot.x : ally.x;
           let goalZ = slot ? slot.z : ally.z;
-          let desiredFacing = slot ? slot.facing : ally.yaw;
+          // Askerlerin yüzü daima düşman hattına veya hedefe bakar, oyuncu arkasını dönünce ASLA dönmez
+          let desiredFacing = targetEnemy && distToEnemy < 35
+            ? Math.atan2(targetEnemy.x - ally.x, targetEnemy.z - ally.z)
+            : (slot ? slot.facing : unitAnchor.facing);
+          let moveSpd = 0;
 
-          if (
-            (order === 'CHARGE' || distToEnemy < 3.4 || ally.division === 'ARCHERS') &&
-            targetEnemy
-          ) {
-            desiredFacing = Math.atan2(targetEnemy.x - ally.x, targetEnemy.z - ally.z);
-            if (ally.division === 'ARCHERS') {
-              if (distToEnemy > 11.5 && order === 'CHARGE') {
+          // ─── 1. SÜVARİ VUR-KAÇ DÖNGÜSÜ (Bannerlord Cavalry Cycle-Charge) ───
+          if (ally.horse || ally.division === 'CAVALRY') {
+            const chargeState = ally.cavalryChargeState || 'CHARGE';
+            const baseCavSpd = HORSE_GALLOP_SPEED * arrMeta.moveSpeedMultiplier;
+
+            if (unitOrder === 'HOLD_POSITION') {
+              // Süvari bekleme hattında düzenli durur
+              const toSx = (slot ? slot.x : goalX) - ally.x;
+              const toSz = (slot ? slot.z : goalZ) - ally.z;
+              const dS = Math.hypot(toSx, toSz);
+              if (dS > 0.5) {
+                moveSpd = 4.2;
+                ally.x += (toSx / dS) * moveSpd * delta;
+                ally.z += (toSz / dS) * moveSpd * delta;
+                desiredFacing = Math.atan2(toSx, toSz);
+              } else {
+                moveSpd = 0;
+                desiredFacing = targetEnemy && distToEnemy < 28 ? Math.atan2(targetEnemy.x - ally.x, targetEnemy.z - ally.z) : (slot ? slot.facing : unitAnchor.facing);
+              }
+            } else if (chargeState === 'CHARGE') {
+              if (targetEnemy) {
+                const toTx = targetEnemy.x - ally.x;
+                const toTz = targetEnemy.z - ally.z;
+                const distT = Math.hypot(toTx, toTz) || 0.01;
+                desiredFacing = Math.atan2(toTx, toTz);
+                moveSpd = baseCavSpd;
+                ally.x += (toTx / distT) * moveSpd * delta;
+                ally.z += (toTz / distT) * moveSpd * delta;
+
+                // Süvari Darbesi / Hücum Teması: Düşmana çarpıp içinden geçer
+                if (distT < 2.5) {
+                  ally.cavalryHeadingX = toTx / distT;
+                  ally.cavalryHeadingZ = toTz / distT;
+                  ally.cavalryChargeState = 'PASS_THROUGH';
+                  ally.cavalryTimer = 1.25 + Math.random() * 0.4;
+
+                  sound.playShieldHit();
+                  const trampleDmg = Math.round(36 + (ally.tier >= 5 ? 14 : 0));
+                  targetEnemy.hp = Math.max(0, targetEnemy.hp - trampleDmg);
+                  targetEnemy.animator.hitReact(true);
+                  spawnDamageText(`🏇 SÜVARİ ÇARPMASI! (-${trampleDmg})`, '#facc15', new THREE.Vector3(targetEnemy.x, 0, targetEnemy.z));
+                  if (targetEnemy.hp <= 0) {
+                    targetEnemy.alive = false;
+                    if (targetEnemy.horse) dismountFallenRider(targetEnemy);
+                    else targetEnemy.animator.fall();
+                    setKillsCount((k) => k + 1);
+                    recordUnitCasualty(targetEnemy, true);
+                    pushKillFeedEntry(ally.name, targetEnemy.name, 'ALLY', '🏇');
+                  }
+                }
+              } else {
+                moveSpd = 3.5;
+                if (slot) {
+                  const toSx = slot.x - ally.x;
+                  const toSz = slot.z - ally.z;
+                  const dS = Math.hypot(toSx, toSz) || 0.01;
+                  if (dS > 0.4) {
+                    ally.x += (toSx / dS) * moveSpd * delta;
+                    ally.z += (toSz / dS) * moveSpd * delta;
+                    desiredFacing = slot.facing;
+                  }
+                }
+              }
+            } else if (chargeState === 'PASS_THROUGH') {
+              // Yarma Aşaması: Hız kesmeden piyade hattının içinden delip geçer
+              moveSpd = baseCavSpd * 1.05;
+              const hx = ally.cavalryHeadingX ?? Math.sin(ally.yaw);
+              const hz = ally.cavalryHeadingZ ?? Math.cos(ally.yaw);
+              desiredFacing = Math.atan2(hx, hz);
+              ally.x += hx * moveSpd * delta;
+              ally.z += hz * moveSpd * delta;
+
+              ally.cavalryTimer = (ally.cavalryTimer ?? 0) - delta;
+              if (ally.cavalryTimer <= 0) {
+                ally.cavalryChargeState = 'PULL_AWAY';
+                ally.cavalryTimer = 2.0 + Math.random() * 0.5;
+              }
+            } else if (chargeState === 'PULL_AWAY') {
+              // Açılma Aşaması: 20-25m güvenli mesafeye çıkana kadar koşturur
+              moveSpd = baseCavSpd;
+              const hx = ally.cavalryHeadingX ?? Math.sin(ally.yaw);
+              const hz = ally.cavalryHeadingZ ?? Math.cos(ally.yaw);
+              desiredFacing = Math.atan2(hx, hz);
+              ally.x += hx * moveSpd * delta;
+              ally.z += hz * moveSpd * delta;
+
+              ally.cavalryTimer = (ally.cavalryTimer ?? 0) - delta;
+              if (ally.cavalryTimer <= 0 || distToEnemy > 22) {
+                ally.cavalryChargeState = 'CHARGE';
+                ally.cavalryTimer = 0;
+              }
+            }
+          }
+          // ─── 2. OKÇU (Bannerlord Ranged Skirmish & Konum Tutma) ───
+          else if (ally.division === 'ARCHERS') {
+            const isDangerClose = distToEnemy < 3.2 && distToEnemy > 1.2 && targetEnemy;
+            if (isDangerClose) {
+              const awayX = (ally.x - targetEnemy.x) / distToEnemy;
+              const awayZ = (ally.z - targetEnemy.z) / distToEnemy;
+              const kiteSpd = 2.4 * arrMeta.moveSpeedMultiplier;
+              moveSpd = kiteSpd;
+              ally.x += awayX * kiteSpd * delta;
+              ally.z += awayZ * kiteSpd * delta;
+              desiredFacing = Math.atan2(targetEnemy.x - ally.x, targetEnemy.z - ally.z);
+            } else if (unitOrder === 'CHARGE') {
+              if (targetEnemy && distToEnemy > 18) {
                 goalX = targetEnemy.x;
                 goalZ = targetEnemy.z;
+                desiredFacing = Math.atan2(targetEnemy.x - ally.x, targetEnemy.z - ally.z);
               }
-            } else if (order === 'CHARGE' || distToEnemy < 3.2) {
-              goalX = targetEnemy.x;
-              goalZ = targetEnemy.z;
+              const toGoalX = goalX - ally.x;
+              const toGoalZ = goalZ - ally.z;
+              const distToGoal = Math.hypot(toGoalX, toGoalZ);
+              if (distToGoal > 1.2) {
+                moveSpd = 3.2 * arrMeta.moveSpeedMultiplier;
+                ally.x += (toGoalX / distToGoal) * moveSpd * delta;
+                ally.z += (toGoalZ / distToGoal) * moveSpd * delta;
+              }
+            } else {
+              // HOLD_POSITION veya FOLLOW_ME: tam tahsis edilen forma slotuna dizilip orada kal!
+              const toGoalX = goalX - ally.x;
+              const toGoalZ = goalZ - ally.z;
+              const distToGoal = Math.hypot(toGoalX, toGoalZ);
+              if (distToGoal > 0.4) {
+                moveSpd = 3.2 * arrMeta.moveSpeedMultiplier;
+                ally.x += (toGoalX / distToGoal) * moveSpd * delta;
+                ally.z += (toGoalZ / distToGoal) * moveSpd * delta;
+              } else {
+                moveSpd = 0;
+              }
+              if (targetEnemy) {
+                desiredFacing = Math.atan2(targetEnemy.x - ally.x, targetEnemy.z - ally.z);
+              } else if (slot) {
+                desiredFacing = slot.facing;
+              }
+            }
+          }
+          // ─── 3. PİYADE (Tier Bazlı Taktik, Kuşatılma Algısı ve Flank Adımı) ───
+          else {
+            const isElite = (ally.tier ?? 3) >= 4;
+
+            // Kuşatılma Kontrolü (Tier 4+ elit askerler 2+ kişiye karşı kalkanla geri adım atar)
+            if (isElite && (ally.tacticalTimer ?? 0) <= 0 && distToEnemy < 3.2) {
+              const nearby = grid.queryRadius(ally.x, ally.z, 2.7);
+              let hostileCount = 0;
+              let friendlyCount = 0;
+              for (const n of nearby) {
+                if (!n.alive) continue;
+                if (n.team === 'ENEMY') hostileCount++;
+                else if (n.team === 'ALLY' && n.id !== ally.id) friendlyCount++;
+              }
+              if (hostileCount >= 2 && friendlyCount === 0) {
+                ally.tacticalStance = 'BACKPEDAL';
+                ally.tacticalTimer = 1.35;
+              } else {
+                ally.tacticalStance = 'ATTACK';
+              }
+            }
+
+            if (ally.tacticalStance === 'BACKPEDAL' && targetEnemy) {
+              if (ally.hasShield) ally.animator.block('up');
+              const toX = targetEnemy.x - ally.x;
+              const toZ = targetEnemy.z - ally.z;
+              const d = Math.hypot(toX, toZ) || 0.01;
+              desiredFacing = Math.atan2(toX, toZ);
+              moveSpd = 2.1;
+              ally.x -= (toX / d) * moveSpd * delta;
+              ally.z -= (toZ / d) * moveSpd * delta;
+
+              ally.tacticalTimer = (ally.tacticalTimer ?? 0) - delta;
+              if (ally.tacticalTimer <= 0) ally.tacticalStance = 'ATTACK';
+            } else {
+              if ((unitOrder === 'CHARGE' || distToEnemy < 3.5) && targetEnemy) {
+                goalX = targetEnemy.x;
+                goalZ = targetEnemy.z;
+                desiredFacing = Math.atan2(targetEnemy.x - ally.x, targetEnemy.z - ally.z);
+
+                // Flank Adımı (Elit askerler kalkanlı hedefin yan açısına kavis çizer)
+                if (isElite && targetEnemy.hasShield && distToEnemy < 2.5) {
+                  const strafe = ally.strafeSign || 1;
+                  const perpX = -Math.cos(desiredFacing) * strafe;
+                  const perpZ = Math.sin(desiredFacing) * strafe;
+                  goalX += perpX * 1.6;
+                  goalZ += perpZ * 1.6;
+                }
+              }
+
+              const toGoalX = goalX - ally.x;
+              const toGoalZ = goalZ - ally.z;
+              const distToGoal = Math.hypot(toGoalX, toGoalZ);
+              const stopDist = unitOrder === 'CHARGE' && targetEnemy ? 1.85 : 0.35;
+
+              if (distToGoal > stopDist) {
+                moveSpd = 3.3 * arrMeta.moveSpeedMultiplier;
+                ally.x += (toGoalX / distToGoal) * moveSpd * delta;
+                ally.z += (toGoalZ / distToGoal) * moveSpd * delta;
+              } else {
+                moveSpd = 0;
+                if (targetEnemy && distToEnemy < 18) {
+                  desiredFacing = Math.atan2(targetEnemy.x - ally.x, targetEnemy.z - ally.z);
+                } else if (slot) {
+                  desiredFacing = slot.facing;
+                }
+              }
             }
           }
 
-          const toGoalX = goalX - ally.x;
-          const toGoalZ = goalZ - ally.z;
-          const distToGoal = Math.hypot(toGoalX, toGoalZ);
-          const stopDist = order === 'CHARGE' && targetEnemy ? 1.85 : 0.35;
-
-          let moveSpd = 0;
-          if (distToGoal > stopDist) {
-            const baseSpd = ally.horse ? 5.6 : 3.3;
-            moveSpd = baseSpd * arrMeta.moveSpeedMultiplier;
-            ally.x += (toGoalX / distToGoal) * moveSpd * delta;
-            ally.z += (toGoalZ / distToGoal) * moveSpd * delta;
-          }
-
-          // Elastik İtme / Yumuşak Gövde Çarpışması (Askerlerin İç İçe Girmesini Önler)
-          const neighbors = grid.queryRadius(ally.x, ally.z, ally.horse ? 1.6 : 1.15);
-          for (const nb of neighbors) {
-            if (nb.id === ally.id || !nb.alive) continue;
-            const sx = ally.x - nb.x;
-            const sz = ally.z - nb.z;
-            const sd = Math.hypot(sx, sz) || 0.01;
-            const minDist = (ally.horse || nb.horse) ? 1.55 : (ally.team === nb.team ? 1.05 : 0.88);
-            if (sd < minDist) {
-              const pushForce = ((minDist - sd) / minDist) * (ally.horse ? 3.4 : 2.5);
-              ally.x += (sx / sd) * pushForce * delta;
-              ally.z += (sz / sd) * pushForce * delta;
+          // Elastik İtme / Yumuşak Gövde Çarpışması: yalnızca birim hareket halindeyken veya düşman yakınken (FPS kazancı!)
+          if (moveSpd > 0.1 || distToEnemy < 3.5) {
+            const neighbors = grid.queryRadius(ally.x, ally.z, ally.horse ? 1.6 : 1.15);
+            for (let ni = 0; ni < neighbors.length; ni++) {
+              const nb = neighbors[ni];
+              if (nb.id === ally.id || !nb.alive) continue;
+              const sx = ally.x - nb.x;
+              const sz = ally.z - nb.z;
+              const sdSq = sx * sx + sz * sz;
+              const minDist = (ally.horse || nb.horse) ? 1.55 : (ally.team === nb.team ? 1.05 : 0.88);
+              const minDSq = minDist * minDist;
+              if (sdSq < minDSq && sdSq > 0.0001) {
+                const sd = Math.sqrt(sdSq);
+                const pushForce = ((minDist - sd) / minDist) * (ally.horse ? 3.4 : 2.5);
+                const invSd = 1 / sd;
+                ally.x += sx * invSd * pushForce * delta;
+                ally.z += sz * invSd * pushForce * delta;
+              }
             }
           }
+
+          // Arena Sınır Koruması
+          const boundX = isFieldOrSiege ? 78 : (ARENA_RADIUS - 0.7);
+          const boundZ = isFieldOrSiege ? (fieldSpawnZRef.current + 38) : (ARENA_RADIUS - 0.7);
+          ally.x = THREE.MathUtils.clamp(ally.x, -boundX, boundX);
+          ally.z = THREE.MathUtils.clamp(ally.z, -boundZ, boundZ);
 
           ally.yaw = desiredFacing;
           ally.animator.setMove(0, ally.horse ? 0 : moveSpd);
@@ -3046,7 +3501,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           if (arrMeta.forceShieldBlock && ally.hasShield && distToEnemy > 2.2) {
             ally.animator.block('up');
           } else if (ally.division === 'ARCHERS' && targetEnemy && fireOrderRef.current === 'FREE_FIRE') {
-            if (ally.aiTimer <= 0 && distToEnemy < 22) {
+            if (ally.aiTimer <= 0 && distToEnemy < 22 && distToEnemy > 2.2) {
               ally.animator.play('bow_release', { force: true });
               const origin = new THREE.Vector3(ally.x, 1.45, ally.z);
               const dir = new THREE.Vector3(
@@ -3062,7 +3517,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
             const dir = ALL_DIRS[Math.floor(Math.random() * ALL_DIRS.length)];
             ally.attackDir = dir;
             ally.animator.attack(dir, false);
-            ally.aiTimer = 1.15 + Math.random() * 0.4;
+            ally.aiTimer = (ally.tier >= 5 ? 0.95 : 1.2) + Math.random() * 0.35;
 
             const enemyParry = evaluateDirectionalParry({
               attackDir: dir,
@@ -3072,7 +3527,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
               isFacingAttacker: true,
             });
             if (!enemyParry.blocked) {
-              const dmg = Math.round((ally.horse ? 32 : 24) * enemyParry.damageMultiplier);
+              const baseDamage = ally.horse ? 34 : (ally.tier >= 4 ? 26 : 18);
+              const dmg = Math.round(baseDamage * enemyParry.damageMultiplier);
               targetEnemy.hp = Math.max(0, targetEnemy.hp - dmg);
               if (targetEnemy.hp <= 0) {
                 targetEnemy.alive = false;
@@ -3137,43 +3593,205 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           let goalX = tx;
           let goalZ = tz;
           let desiredFacing = Math.atan2(tx - enemy.x, tz - enemy.z);
-
-          if (enemyTacticalMode !== 'CHARGE' && dist > 5.5 && enemy.division !== 'CAVALRY') {
-            if (slot) {
-              goalX = slot.x;
-              goalZ = slot.z;
-              desiredFacing = slot.facing;
-            }
-          }
-
-          const toGoalX = goalX - enemy.x;
-          const toGoalZ = goalZ - enemy.z;
-          const distToGoal = Math.hypot(toGoalX, toGoalZ);
-          const standOff = enemy.division === 'ARCHERS' ? 10.5 : (enemyTacticalMode === 'CHARGE' ? 1.85 : 0.45);
-
           let moveSpd = 0;
-          if (distToGoal > standOff) {
-            const baseSpd = enemy.horse ? 5.2 : 3.1;
-            const tacticSpeedMod = enemyTacticalMode === 'HOLD' ? 0.65 : 1.0;
-            moveSpd = baseSpd * tacticSpeedMod;
-            enemy.x += (toGoalX / distToGoal) * moveSpd * delta;
-            enemy.z += (toGoalZ / distToGoal) * moveSpd * delta;
-          }
 
-          // Düşmanlar İçin Elastik İtme Fiziği (İç İçe Geçmeyi Engeller)
-          const neighbors = grid.queryRadius(enemy.x, enemy.z, enemy.horse ? 1.6 : 1.15);
-          for (const nb of neighbors) {
-            if (nb.id === enemy.id || !nb.alive) continue;
-            const sx = enemy.x - nb.x;
-            const sz = enemy.z - nb.z;
-            const sd = Math.hypot(sx, sz) || 0.01;
-            const minDist = (enemy.horse || nb.horse) ? 1.55 : (enemy.team === nb.team ? 1.05 : 0.88);
-            if (sd < minDist) {
-              const pushForce = ((minDist - sd) / minDist) * (enemy.horse ? 3.4 : 2.5);
-              enemy.x += (sx / sd) * pushForce * delta;
-              enemy.z += (sz / sd) * pushForce * delta;
+          // ─── 1. DÜŞMAN SÜVARİSİ & LORD VUR-KAÇ DÖNGÜSÜ (Bannerlord Cavalry Cycle-Charge) ───
+          if (enemy.horse || enemy.division === 'CAVALRY') {
+            const chargeState = enemy.cavalryChargeState || 'CHARGE';
+            const baseCavSpd = HORSE_GALLOP_SPEED;
+
+            if (chargeState === 'CHARGE') {
+              const toTx = tx - enemy.x;
+              const toTz = tz - enemy.z;
+              const distT = Math.hypot(toTx, toTz) || 0.01;
+              desiredFacing = Math.atan2(toTx, toTz);
+              moveSpd = baseCavSpd;
+              enemy.x += (toTx / distT) * moveSpd * delta;
+              enemy.z += (toTz / distT) * moveSpd * delta;
+
+              // Süvari Darbesi / Hücum Teması: Oyuncuya veya müttefike çarpıp delip geçer
+              if (distT < 2.5) {
+                enemy.cavalryHeadingX = toTx / distT;
+                enemy.cavalryHeadingZ = toTz / distT;
+                enemy.cavalryChargeState = 'PASS_THROUGH';
+                enemy.cavalryTimer = 1.35 + Math.random() * 0.35;
+
+                sound.playShieldHit();
+                const trampleDmg = Math.round((enemy.isLord ? 38 : 28) + (enemy.tier >= 5 ? 10 : 0));
+
+                if (targetPlayer) {
+                  playerHpRef.current = Math.max(0, playerHpRef.current - trampleDmg);
+                  setPlayerHp(playerHpRef.current);
+                  playerAnimatorRef.current?.hitReact(true);
+                  spawnDamageText(`🏇 SÜVARİ ÇARPMASI! (-${trampleDmg})`, '#ef4444', playerPosRef.current);
+                  sound.playHit();
+                  sound.playPainReaction();
+                } else if (nearestAlly) {
+                  const ally = nearestAlly.agent;
+                  ally.hp = Math.max(0, ally.hp - trampleDmg);
+                  ally.animator.hitReact(true);
+                  spawnDamageText(`🏇 SÜVARİ EZDİ! (-${trampleDmg})`, '#f87171', new THREE.Vector3(ally.x, 0, ally.z));
+                  if (ally.hp <= 0) {
+                    ally.alive = false;
+                    if (ally.horse) dismountFallenRider(ally);
+                    else ally.animator.fall();
+                    recordUnitCasualty(ally, false);
+                    pushKillFeedEntry(enemy.name, ally.name, 'ENEMY', '🏇');
+                  }
+                }
+              }
+            } else if (chargeState === 'PASS_THROUGH') {
+              // Yarma Aşaması: Hız kesmeden ileri sürer
+              moveSpd = baseCavSpd * 1.05;
+              const hx = enemy.cavalryHeadingX ?? Math.sin(enemy.yaw);
+              const hz = enemy.cavalryHeadingZ ?? Math.cos(enemy.yaw);
+              desiredFacing = Math.atan2(hx, hz);
+              enemy.x += hx * moveSpd * delta;
+              enemy.z += hz * moveSpd * delta;
+
+              enemy.cavalryTimer = (enemy.cavalryTimer ?? 0) - delta;
+              if (enemy.cavalryTimer <= 0) {
+                enemy.cavalryChargeState = 'PULL_AWAY';
+                enemy.cavalryTimer = 2.1 + Math.random() * 0.5;
+              }
+            } else if (chargeState === 'PULL_AWAY') {
+              // Açılma Aşaması: Güvenli mesafeye kadar uzaklaşır
+              moveSpd = baseCavSpd;
+              const hx = enemy.cavalryHeadingX ?? Math.sin(enemy.yaw);
+              const hz = enemy.cavalryHeadingZ ?? Math.cos(enemy.yaw);
+              desiredFacing = Math.atan2(hx, hz);
+              enemy.x += hx * moveSpd * delta;
+              enemy.z += hz * moveSpd * delta;
+
+              enemy.cavalryTimer = (enemy.cavalryTimer ?? 0) - delta;
+              if (enemy.cavalryTimer <= 0 || dist > 22) {
+                enemy.cavalryChargeState = 'CHARGE';
+                enemy.cavalryTimer = 0;
+              }
             }
           }
+          // ─── 2. DÜŞMAN OKÇUSU GERİ ADIM / KITING (Bannerlord Ranged Skirmish) ───
+          else if (enemy.division === 'ARCHERS') {
+            const isDangerClose = dist < 8.0 && dist > 1.6;
+            if (isDangerClose) {
+              const awayX = (enemy.x - tx) / dist;
+              const awayZ = (enemy.z - tz) / dist;
+              const kiteSpd = 2.75;
+              moveSpd = kiteSpd;
+              enemy.x += awayX * kiteSpd * delta;
+              enemy.z += awayZ * kiteSpd * delta;
+              desiredFacing = Math.atan2(tx - enemy.x, tz - enemy.z);
+            } else {
+              if (enemyTacticalMode !== 'CHARGE' && dist > 6.0 && slot) {
+                goalX = slot.x;
+                goalZ = slot.z;
+                desiredFacing = slot.facing;
+              }
+              const toGoalX = goalX - enemy.x;
+              const toGoalZ = goalZ - enemy.z;
+              const distToGoal = Math.hypot(toGoalX, toGoalZ);
+              if (distToGoal > 10.5) {
+                moveSpd = 3.1;
+                enemy.x += (toGoalX / distToGoal) * moveSpd * delta;
+                enemy.z += (toGoalZ / distToGoal) * moveSpd * delta;
+              }
+            }
+          }
+          // ─── 3. DÜŞMAN PİYADESİ (Tier Bazlı Taktik, Kuşatılma Algısı ve Flank Adımı) ───
+          else {
+            const isElite = (enemy.tier ?? 3) >= 4 || enemy.isLord;
+
+            // Kuşatılma Algısı (Tier 4+ lejyonerler 2+ kişiye karşı kalkanla geri adım atar)
+            if (isElite && (enemy.tacticalTimer ?? 0) <= 0 && dist < 3.2) {
+              const nearby = grid.queryRadius(enemy.x, enemy.z, 2.7);
+              let hostileCount = 0;
+              let friendlyCount = 0;
+              for (const n of nearby) {
+                if (!n.alive) continue;
+                if (n.team === 'ALLY') hostileCount++;
+                else if (n.team === 'ENEMY' && n.id !== enemy.id) friendlyCount++;
+              }
+              if (hostileCount >= 2 && friendlyCount === 0) {
+                enemy.tacticalStance = 'BACKPEDAL';
+                enemy.tacticalTimer = 1.35;
+              } else {
+                enemy.tacticalStance = 'ATTACK';
+              }
+            }
+
+            if (enemy.tacticalStance === 'BACKPEDAL') {
+              if (enemy.hasShield) enemy.animator.block('up');
+              const toX = tx - enemy.x;
+              const toZ = tz - enemy.z;
+              const d = Math.hypot(toX, toZ) || 0.01;
+              desiredFacing = Math.atan2(toX, toZ);
+              moveSpd = 2.1;
+              enemy.x -= (toX / d) * moveSpd * delta;
+              enemy.z -= (toZ / d) * moveSpd * delta;
+
+              enemy.tacticalTimer = (enemy.tacticalTimer ?? 0) - delta;
+              if (enemy.tacticalTimer <= 0) enemy.tacticalStance = 'ATTACK';
+            } else {
+              if (enemyTacticalMode !== 'CHARGE' && dist > 5.5 && slot) {
+                goalX = slot.x;
+                goalZ = slot.z;
+                desiredFacing = slot.facing;
+              } else if (dist < 3.5) {
+                goalX = tx;
+                goalZ = tz;
+                desiredFacing = Math.atan2(tx - enemy.x, tz - enemy.z);
+
+                // Flank Adımı (Elit düşman kalkanlı hedefin etrafından dolanır)
+                if (isElite && dist < 2.5) {
+                  const strafe = enemy.strafeSign || -1;
+                  const perpX = -Math.cos(desiredFacing) * strafe;
+                  const perpZ = Math.sin(desiredFacing) * strafe;
+                  goalX += perpX * 1.5;
+                  goalZ += perpZ * 1.5;
+                }
+              }
+
+              const toGoalX = goalX - enemy.x;
+              const toGoalZ = goalZ - enemy.z;
+              const distToGoal = Math.hypot(toGoalX, toGoalZ);
+              const standOff = enemyTacticalMode === 'CHARGE' ? 1.85 : 0.45;
+
+              if (distToGoal > standOff) {
+                const baseSpd = 3.1;
+                const tacticSpeedMod = enemyTacticalMode === 'HOLD' ? 0.65 : 1.0;
+                moveSpd = baseSpd * tacticSpeedMod;
+                enemy.x += (toGoalX / distToGoal) * moveSpd * delta;
+                enemy.z += (toGoalZ / distToGoal) * moveSpd * delta;
+              }
+            }
+          }
+
+          // Düşmanlar İçin Elastik İtme Fiziği (Yalnızca hareket ederken veya yakın temasta)
+          if (moveSpd > 0.1 || dist < 3.5) {
+            const neighbors = grid.queryRadius(enemy.x, enemy.z, enemy.horse ? 1.6 : 1.15);
+            for (let ni = 0; ni < neighbors.length; ni++) {
+              const nb = neighbors[ni];
+              if (nb.id === enemy.id || !nb.alive) continue;
+              const sx = enemy.x - nb.x;
+              const sz = enemy.z - nb.z;
+              const sdSq = sx * sx + sz * sz;
+              const minDist = (enemy.horse || nb.horse) ? 1.55 : (enemy.team === nb.team ? 1.05 : 0.88);
+              const minDSq = minDist * minDist;
+              if (sdSq < minDSq && sdSq > 0.0001) {
+                const sd = Math.sqrt(sdSq);
+                const pushForce = ((minDist - sd) / minDist) * (enemy.horse ? 3.4 : 2.5);
+                const invSd = 1 / sd;
+                enemy.x += sx * invSd * pushForce * delta;
+                enemy.z += sz * invSd * pushForce * delta;
+              }
+            }
+          }
+
+          // Arena Sınır Koruması
+          const boundX = isFieldOrSiege ? 78 : (ARENA_RADIUS - 0.7);
+          const boundZ = isFieldOrSiege ? (fieldSpawnZRef.current + 38) : (ARENA_RADIUS - 0.7);
+          enemy.x = THREE.MathUtils.clamp(enemy.x, -boundX, boundX);
+          enemy.z = THREE.MathUtils.clamp(enemy.z, -boundZ, boundZ);
 
           enemy.yaw = desiredFacing;
           enemy.animator.setMove(0, enemy.horse ? 0 : moveSpd);
@@ -3181,14 +3799,15 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           enemy.aiTimer -= delta;
           if (enemyTacticalMode === 'HOLD' && enemy.hasShield && dist > 3.5) {
             enemy.animator.block('up');
-          } else if (enemy.division === 'ARCHERS' && enemy.aiTimer <= 0 && dist < 22) {
+          } else if (enemy.division === 'ARCHERS' && enemy.aiTimer <= 0 && dist < 22 && dist > 2.2) {
             enemy.animator.play('bow_release', { force: true });
             const origin = new THREE.Vector3(enemy.x, 1.45, enemy.z);
             const dir = new THREE.Vector3(tx - enemy.x, 0.55 + dist * 0.04, tz - enemy.z).normalize();
             fireArrowProjectile('ENEMY', origin, dir);
             enemy.aiTimer = 2.8 + Math.random() * 0.9;
           } else if (dist < 2.35 && enemy.aiTimer <= 0) {
-            if (Math.random() < 0.35 && enemy.hasShield) {
+            const blockChance = (enemy.tier ?? 3) >= 5 ? 0.75 : ((enemy.tier ?? 3) >= 4 ? 0.50 : 0.22);
+            if (Math.random() < blockChance && enemy.hasShield) {
               enemy.blockDir = ALL_DIRS[Math.floor(Math.random() * 4)];
               enemy.animator.block(enemy.blockDir);
               enemy.aiTimer = 0.65;
@@ -3197,7 +3816,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
               const dir = ALL_DIRS[Math.floor(Math.random() * 4)];
               enemy.attackDir = dir;
               enemy.animator.attack(dir, false);
-              enemy.aiTimer = 1.25 + Math.random() * 0.45;
+              enemy.aiTimer = (enemy.tier >= 5 ? 0.95 : 1.25) + Math.random() * 0.45;
 
               if (targetPlayer) {
                 const pAnim = playerAnimatorRef.current;
@@ -3240,14 +3859,16 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                     pAnim?.fall();
                     if (!playerFallenNoticeRef.current) {
                       playerFallenNoticeRef.current = true;
-                      sound.playDefeatSting();
-                      spawnDamageText('☠️ AĞIR YARALANDIN VE YERE DÜŞTÜN!', '#dc2626', playerPosRef.current);
+                      sound.playDeathScream();
+                      spawnDamageText('AĞIR YARALANDIN VE YERE DÜŞTÜN!', '#dc2626', playerPosRef.current);
                       // Komutan düştü: müttefiklere -22 moral şoku
                       for (const st of allyMoraleStatesRef.current.values()) {
                         st.commanderDown = true;
                       }
                     }
                   } else {
+                    sound.playHit();
+                    sound.playPainReaction();
                     pAnim?.hitReact(true);
                   }
                 }
@@ -3392,9 +4013,16 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           }
         }
 
-        // Update live counts
-        const curAllies = units.filter((u) => u.team === 'ALLY' && u.alive && !u.routed).length;
-        const curEnemies = units.filter((u) => u.team === 'ENEMY' && u.alive && !u.routed).length;
+        // Update live counts without allocating new arrays every frame
+        let curAllies = 0;
+        let curEnemies = 0;
+        for (let i = 0; i < units.length; i++) {
+          const u = units[i];
+          if (u.alive && !u.routed) {
+            if (u.team === 'ALLY') curAllies++;
+            else curEnemies++;
+          }
+        }
         setAllyAliveCount(curAllies);
         setEnemyAliveCount(curEnemies);
 
@@ -3827,8 +4455,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   pAnim?.fall();
                   if (!playerFallenNoticeRef.current) {
                     playerFallenNoticeRef.current = true;
-                    sound.playDefeatSting();
-                    spawnDamageText('☠️ OKLA VURULDUN VE YERE DÜŞTÜN!', '#dc2626', pPos);
+                    sound.playDeathScream();
+                    spawnDamageText('OKLA VURULDUN VE YERE DÜŞTÜN!', '#dc2626', pPos);
                     for (const st of allyMoraleStatesRef.current.values()) {
                       st.commanderDown = true;
                     }
@@ -3871,8 +4499,8 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
                   if (u.team === 'ENEMY') {
                     setKillsCount((k) => k + 1);
                     if (u.isLord) {
-                      sound.playVictoryFanfare();
-                      spawnDamageText(`🏹👑 ${u.name.toUpperCase()} OKLA MAĞLUP EDİLDİ!`, '#fbbf24', new THREE.Vector3(u.x, 2.0, u.z));
+                      sound.playDeathScream();
+                      spawnDamageText(`${u.name.toUpperCase()} OKLA MAĞLUP EDİLDİ!`, '#fbbf24', new THREE.Vector3(u.x, 2.0, u.z));
                       pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', u.name, 'ALLY', '🏹');
                     } else {
                       pushKillFeedEntry(campaign?.playerName ?? 'Oyuncu', u.name, 'ALLY', '🏹');

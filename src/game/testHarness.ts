@@ -474,7 +474,15 @@ export function buildE2EScenario(
 
     case 'party':
       return {
-        campaign: base,
+        campaign: {
+          ...base,
+          gold: 50000,
+          troopStacks: [
+            { troopId: 'vlandia_recruit', count: 12, wounded: 0, xp: 2400 },
+            { troopId: 'vlandia_footman_2', count: 8, wounded: 0, xp: 1600 },
+            { troopId: 'battania_volunteer', count: 10, wounded: 0, xp: 2000 },
+          ],
+        },
         dialogueLord: null,
         forcedEncounter: false,
         encounterScenario: undefined,

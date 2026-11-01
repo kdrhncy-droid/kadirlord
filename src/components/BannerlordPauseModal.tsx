@@ -24,6 +24,7 @@ interface BannerlordPauseModalProps {
   onExitToTitle: () => void;
   onShowToast: (msg: string) => void;
   initialView?: PauseView;
+  onOpenArmoryStudio?: () => void;
 }
 
 type PauseView = 'menu' | 'load' | 'save_as' | 'options';
@@ -36,6 +37,7 @@ export const BannerlordPauseModal: React.FC<BannerlordPauseModalProps> = ({
   onExitToTitle,
   onShowToast,
   initialView = 'menu',
+  onOpenArmoryStudio,
 }) => {
   const [view, setView] = useState<PauseView>(initialView);
   const [masterVolume, setMasterVolume] = useState<number>(80);
@@ -166,6 +168,21 @@ export const BannerlordPauseModal: React.FC<BannerlordPauseModalProps> = ({
               >
                 Ayarlar (Options)
               </button>
+
+              {onOpenArmoryStudio && (
+                <button
+                  type="button"
+                  data-testid="pause-open-armory-studio-btn"
+                  onClick={() => {
+                    sound.playUiClick();
+                    onOpenArmoryStudio();
+                  }}
+                  className="w-full py-2 px-4 rounded text-xs font-bold bg-[#1e1710] hover:bg-[#2e2216] text-[#fde68a] border border-[#fbbf24]/50 shadow transition flex items-center justify-center gap-1.5 uppercase tracking-wider"
+                >
+                  <Shield className="w-3.5 h-3.5 text-[#fbbf24]" />
+                  <span>Cephanelik & Asker Vitrini (3B)</span>
+                </button>
+              )}
 
               <div className="pt-2 border-t border-[#c6a15b]/20 space-y-2">
                 <button

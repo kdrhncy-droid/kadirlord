@@ -3,6 +3,7 @@
  * ve Zorunlu Karşılaşma Motoru
  */
 import { isNavigableLandAt, snapToNearestLand } from './navigation.ts';
+import { groundHeightAt, getForestMaskAt } from './mapGen.ts';
 import {
   type CampaignState,
   type LordAgent,
@@ -16,6 +17,26 @@ export const ENCOUNTER_COOLDOWN_SEC = 6.5;
 
 export const SIEGE_RELIEF_DETECTION_RADIUS = 55;
 export const SIEGE_INTERCEPT_RADIUS = 28;
+
+/**
+ * Birliğin (oyuncu, lord veya haydut) harita üzerindeki dinamik görüş menzilini (Spotting Range) hesaplar.
+ * Arazi yüksekliği, orman örtüsü ve gözcü/süvari oranına bağlı olarak ölçeklenir.
+ */
+export function computePartySpottingRange(
+  x: number,
+  z: number,
+  roster?: TroopRoster,
+  isBandit = false,
+): number {
+  const elev = Math.max(0, groundHeightAt(x, z));
+  const forest = getForestMaskAt(x, z);
+  const r = roster ?? { infantry: 5, archer: 2, cavalry: 1, horseArcher: 0 };
+  const baseRange = isBandit ? 42 : 48;
+  const elevationBonus = Math.min(16, Math.max(0, elev - 1.8) * 2.5);
+  const scoutingBonus = Math.min(14, (r.cavalry ?? 0) * 1.2 + (r.archer ?? 0) * 0.4);
+  const forestCoverPenalty = forest * 10;
+  return Math.round(baseRange + elevationBonus + scoutingBonus - forestCoverPenalty);
+}
 
 export type HostileReactionKind = 'PURSUE_PLAYER' | 'FLEE_FROM_PLAYER' | 'PATROL';
 
@@ -220,6 +241,7 @@ export function evaluateHostileReaction(params: {
   nearbyHostileStrength?: number;
   siegeDefenderStrength?: number;
   totalBesiegerStrength?: number;
+  previousState?: 'PURSUE' | 'FLEE' | null;
 }): HostileReaction {
   const {
     lord,
@@ -231,6 +253,7 @@ export function evaluateHostileReaction(params: {
     nearbyHostileStrength = 0,
     siegeDefenderStrength = 0,
     totalBesiegerStrength,
+    previousState,
   } = params;
 
   const distance = Math.hypot(lordX - playerX, lordZ - playerZ);
@@ -303,43 +326,46 @@ export function evaluateHostileReaction(params: {
   }
 
   const isBandit = lord.faction === 'bandits';
-  const pursueRange = isBandit ? 48 : 66;
-  const fleeRange = isBandit ? 38 : 42;
-  const pursueThreshold = isBandit ? 1.06 : 1.0;
-  const fleeThreshold = 0.88;
+  const isCurrentlyFleeing = previousState === 'FLEE';
+  const isCurrentlyPursuing = previousState === 'PURSUE';
 
-  // 1. KOVALAMA: Düşman oyuncudan güçlü ve görüş menzilinde
-  if (distance <= pursueRange && strengthRatio >= pursueThreshold) {
-    const goal = snapToNearestLand(playerX, playerZ);
-    return {
-      kind: 'PURSUE_PLAYER',
-      strengthRatio,
-      enemyStrength,
-      playerStrength: safePlayerStrength,
-      distance,
-      targetPos: { x: goal.x, z: goal.z },
-      actionLabel: isBandit
-        ? 'Seni gözüne kestirdi, kovalıyor!'
-        : 'Sancağını senin üzerine sürüyor!',
-    };
-  }
+  // Düşman tespit ve kovalama menzilleri (oyuncunun 52 birimlik görüş menziliyle dengeli):
+  // Haydutlar 36 birim, krallık lordları 46 birimden oyuncuyu fark edip kovalar.
+  // Haritanın diğer ucundan radar gibi oyuncuyu kovalama engellenir.
+  const enterPursueRange = isBandit ? 36 : 46;
+  const exitPursueRange = enterPursueRange + 18; // Histerezis tamponu (54 / 64 birim)
 
-  // 2. KAÇMA: Oyuncu düşmandan güçlü ve tehlike menzilinde
-  if (distance <= fleeRange && strengthRatio <= fleeThreshold) {
+  const enterFleeRange = isBandit ? 30 : 34;
+  const exitFleeRange = enterFleeRange + 22; // Histerezis tamponu (52 / 56 birim)
+
+  const effectiveFleeRange = isCurrentlyFleeing ? exitFleeRange : enterFleeRange;
+  const effectivePursueRange = isCurrentlyPursuing ? exitPursueRange : enterPursueRange;
+
+  const enterPursueThreshold = isBandit ? 1.06 : 1.0;
+  const exitPursueThreshold = 0.88;
+  const effectivePursueThreshold = isCurrentlyPursuing ? exitPursueThreshold : enterPursueThreshold;
+
+  const enterFleeThreshold = 0.88;
+  const exitFleeThreshold = 1.18; // Kaçan birlik oyuncudan açık ara üstün olmadan kovalamaya geçmez
+  const effectiveFleeThreshold = isCurrentlyFleeing ? exitFleeThreshold : enterFleeThreshold;
+
+  // 1. KAÇMA KONTROLÜ (Güvenlik önceliği):
+  // Düşman oyuncudan zayıfsa ve menzildeyse (veya zaten kaçıyorsa ve güvenli mesafeye ulaşmadıysa)
+  if (distance <= effectiveFleeRange && strengthRatio <= effectiveFleeThreshold) {
     const dx = lordX - playerX;
     const dz = lordZ - playerZ;
     const len = Math.hypot(dx, dz) || 1;
     const nx = dx / len;
     const nz = dz / len;
 
-    let fleeTarget = { x: lordX + nx * 28, z: lordZ + nz * 28 };
+    let fleeTarget = { x: lordX + nx * 32, z: lordZ + nz * 32 };
     if (!isNavigableLandAt(fleeTarget.x, fleeTarget.z)) {
       const angles = [0.45, -0.45, 0.9, -0.9, 1.35, -1.35];
       for (const ang of angles) {
         const rx = nx * Math.cos(ang) - nz * Math.sin(ang);
         const rz = nx * Math.sin(ang) + nz * Math.cos(ang);
-        const candX = lordX + rx * 26;
-        const candZ = lordZ + rz * 26;
+        const candX = lordX + rx * 28;
+        const candZ = lordZ + rz * 28;
         if (isNavigableLandAt(candX, candZ)) {
           fleeTarget = { x: candX, z: candZ };
           break;
@@ -358,6 +384,28 @@ export function evaluateHostileReaction(params: {
       actionLabel: isBandit
         ? 'Sancağından korkup kaçıyor!'
         : 'Üstün ordunun önünden çekiliyor!',
+    };
+  }
+
+  // 2. KOVALAMA KONTROLÜ:
+  // Düşman oyuncudan güçlü ve kovalama menzilinde (zayıf düşman ASLA oyuncuyu kovalamaz)
+  if (
+    distance <= effectivePursueRange &&
+    strengthRatio >= effectivePursueThreshold &&
+    !isCurrentlyFleeing &&
+    strengthRatio >= 0.98
+  ) {
+    const goal = snapToNearestLand(playerX, playerZ);
+    return {
+      kind: 'PURSUE_PLAYER',
+      strengthRatio,
+      enemyStrength,
+      playerStrength: safePlayerStrength,
+      distance,
+      targetPos: { x: goal.x, z: goal.z },
+      actionLabel: isBandit
+        ? 'Seni gözüne kestirdi, kovalıyor!'
+        : 'Sancağını senin üzerine sürüyor!',
     };
   }
 

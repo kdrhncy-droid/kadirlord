@@ -2042,7 +2042,7 @@ function sortTroopStacks(stacks: TroopStack[]): TroopStack[] {
     });
 }
 
-function reconcileTroopStacks(rawStacks: TroopStack[] | undefined, desired: TroopRoster): TroopStack[] {
+export function reconcileTroopStacks(rawStacks: TroopStack[] | undefined, desired: TroopRoster): TroopStack[] {
   const stacks = sanitizeTroopStacks(rawStacks);
   if (stacks.length === 0) {
     (Object.keys(desired) as UnitTierId[]).forEach((battleClass) => {
@@ -2440,6 +2440,96 @@ export function applyDiscardDonation(
     preview,
     distribution,
     removedSelections: [...aggregated].map(([stackId, quantity]) => ({ stackId, quantity })),
+  };
+}
+
+/**
+ * Bannerlord muharebe tecrübesi hesabı:
+ * Öldürülen her düşmanın kademesine (tier) göre kazanılan XP:
+ * T1: ~47 XP, T2: ~94 XP, T3: ~159 XP, T4: ~242 XP, T5: ~340 XP, T6: ~454 XP.
+ */
+export function calculateBattleCombatXp(
+  enemiesDefeated: number,
+  enemyTierEstimate: number = 2,
+): number {
+  if (enemiesDefeated <= 0) return 0;
+  const safeTier = Math.max(1, Math.min(6, enemyTierEstimate));
+  const killXp = Math.round(25 + Math.pow(safeTier, 1.65) * 22);
+  return Math.round(enemiesDefeated * killXp);
+}
+
+export interface CombatXpDistributionResult {
+  nextStacks: TroopStack[];
+  xpDistributed: number;
+  newlyReadyTroops: number;
+}
+
+/**
+ * Muharebede kazanılan tecrübe puanını (Combat XP) terfi alabilecek birlik yığınlarına
+ * (upgrades.length > 0 ve xp < count * upgradeXp) adil ve kademeli olarak paylaştırır.
+ * Bannerlord'da olduğu gibi kapasitesi dolan birlikten sonra kalan tecrübe diğer birliklere akar.
+ */
+export function distributeCombatXpToTroopStacks(
+  rawStacks: readonly TroopStack[] | undefined,
+  totalXp: number,
+): CombatXpDistributionResult {
+  if (!rawStacks || rawStacks.length === 0 || totalXp <= 0) {
+    return {
+      nextStacks: sanitizeTroopStacks(rawStacks as TroopStack[]),
+      xpDistributed: 0,
+      newlyReadyTroops: 0,
+    };
+  }
+
+  const stacks = sanitizeTroopStacks(rawStacks as TroopStack[]).map((s) => ({ ...s }));
+  let remainingXp = Math.round(totalXp);
+  let totalDistributed = 0;
+
+  const getReadyCount = (s: TroopStack) => {
+    const def = getTroopDefinition(s.troopId);
+    if (!def || def.upgrades.length === 0) return 0;
+    return Math.min(s.count, Math.floor(s.xp / def.upgradeXp));
+  };
+  const readyBefore = stacks.reduce((sum, s) => sum + getReadyCount(s), 0);
+
+  let loopCount = 0;
+  while (remainingXp > 0 && loopCount < 10) {
+    loopCount++;
+    const eligible = stacks.filter((s) => {
+      const def = getTroopDefinition(s.troopId);
+      if (!def || def.upgrades.length === 0) return false;
+      const maxCap = s.count * def.upgradeXp;
+      return s.xp < maxCap;
+    });
+
+    if (eligible.length === 0) break;
+
+    const slicePerStack = Math.max(1, Math.floor(remainingXp / eligible.length));
+    let distributedInPass = 0;
+
+    for (const stack of eligible) {
+      if (remainingXp <= 0) break;
+      const def = getTroopDefinition(stack.troopId)!;
+      const maxCap = stack.count * def.upgradeXp;
+      const needed = maxCap - stack.xp;
+      const toGive = Math.min(remainingXp, Math.min(slicePerStack, needed));
+
+      stack.xp += toGive;
+      remainingXp -= toGive;
+      distributedInPass += toGive;
+      totalDistributed += toGive;
+    }
+
+    if (distributedInPass === 0) break;
+  }
+
+  const readyAfter = stacks.reduce((sum, s) => sum + getReadyCount(s), 0);
+  const newlyReadyTroops = Math.max(0, readyAfter - readyBefore);
+
+  return {
+    nextStacks: stacks.map(capTroopStackXp),
+    xpDistributed: totalDistributed,
+    newlyReadyTroops,
   };
 }
 

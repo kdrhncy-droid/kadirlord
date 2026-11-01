@@ -18,6 +18,19 @@ import {
   SHIELD_REST_ROTATION,
   SHIELD_SCALE,
 } from './equipmentPose.ts';
+import {
+  applyFactionArmorToRig,
+  mountFactionWeaponToRig,
+  mountFactionShieldToRig,
+  getArsenalWeaponById,
+  getArsenalArmorById,
+  getArsenalHorseById,
+} from '../armory/FactionArsenal.ts';
+import {
+  findArsenalWeaponByTextOrId,
+  findArsenalArmorByTextOrId,
+  findArsenalHorseByTextOrId,
+} from './factionTroopLoadouts.ts';
 
 export type { CharacterAnimState } from './characterAnimator.ts';
 
@@ -79,6 +92,13 @@ export interface CharacterVisualOptions {
   shieldType: ShieldType;
   helmetType: HelmetType;
   armorTier: ArmorTier;
+  // ── 6 Krallık Özel Cephanelik Köprüsü ──
+  factionWeaponId?: string;
+  factionSecondaryWeaponId?: string;
+  factionShieldId?: string;
+  factionArmorId?: string;
+  factionHorseId?: string;
+  factionQuality?: 'RUSTY' | 'WORN' | 'STANDARD' | 'FINE' | 'MASTERWORK' | 'LEGENDARY';
 }
 
 export interface BowParts {
@@ -1547,42 +1567,67 @@ export function applyEquipmentToRig(rig: CharacterRig, options: CharacterVisualO
     rig.beardMesh.visible = false;
   }
 
-  // ── BannerForge (armory-studio) görsel katmanı ──
-  // Oynanış kodu (IK, dövüş, animasyon) hiç değişmez; yalnızca takılan
-  // geometriler BannerForge üreticilerinden gelir. Kapatılırsa eski modeller.
+  // ── 6 Krallık Özel Cephanelik & Zırh Katmanı ──
+  const factionArmorDef = options.factionArmorId
+    ? (getArsenalArmorById(options.factionArmorId) || findArsenalArmorByTextOrId(options.factionArmorId))
+    : undefined;
+
+  if (factionArmorDef) {
+    try {
+      applyFactionArmorToRig(rig, factionArmorDef, options.factionQuality ?? 'STANDARD');
+    } catch (err) {
+      console.warn('[characterRig] Faction zırhı uygulanamadı, standart donanıma dönülüyor:', err);
+      buildArmor(rig, options.armorTier);
+    }
+  } else {
+    // ── BannerForge (armory-studio) görsel katmanı ──
+    const armoryCtx = { factionId: options.factionId, factionColor: options.factionColor };
+    const useArmory = armoryVisualsEnabled();
+
+    const helmet = useArmory
+      ? createArmoryHelmet(options.helmetType, armoryCtx) ?? buildHelmet(options.helmetType, m)
+      : buildHelmet(options.helmetType, m);
+
+    // Kapalı (tam yüz) miğferde yüz parçaları miğferin içinden taşar → gizle.
+    const faceGroup = rig.head.getObjectByName('Face');
+    if (faceGroup) faceGroup.visible = !(options.helmetType === 'IMPERIAL_VISOR' && useArmory);
+    if (helmet) {
+      helmet.userData.helmetType = options.helmetType;
+      rig.helmetSocket.add(helmet);
+    }
+
+    if (useArmory) {
+      try {
+        applyArmoryArmor(rig, options.armorTier, armoryCtx);
+      } catch (error) {
+        console.warn('[characterRig] BannerForge zırhı uygulanamadı, eski zırha dönülüyor:', error);
+        clearArmoryArmor(rig);
+        buildArmor(rig, options.armorTier);
+      }
+    }
+    /*
+     * Gövde zırhı + omuzluklar HER İKİ katmanda da bizim üreticimizden gelir.
+     * BannerForge'un gövde/omuz parçaları başka bir iskelet için yazılmış
+     * (göğsü kapatmıyor, kolların içine giriyor) → `applyArmoryArmor` bu
+     * bölgeleri atlıyor, yerlerini `buildArmor` dolduruyor.
+     */
+    buildArmor(rig, options.armorTier);
+  }
+
+  // ── 6 Krallık Özel Silah ve Kalkan Montajı ──
   const armoryCtx = { factionId: options.factionId, factionColor: options.factionColor };
   const useArmory = armoryVisualsEnabled();
 
-  const helmet = useArmory
-    ? createArmoryHelmet(options.helmetType, armoryCtx) ?? buildHelmet(options.helmetType, m)
-    : buildHelmet(options.helmetType, m);
+  const factionWeaponDef = options.factionWeaponId
+    ? (getArsenalWeaponById(options.factionWeaponId) || findArsenalWeaponByTextOrId(options.factionWeaponId))
+    : undefined;
+  const factionShieldDef = options.factionShieldId
+    ? (getArsenalWeaponById(options.factionShieldId) || findArsenalWeaponByTextOrId(options.factionShieldId))
+    : undefined;
 
-  // Kapalı (tam yüz) miğferde yüz parçaları miğferin içinden taşar → gizle.
-  const faceGroup = rig.head.getObjectByName('Face');
-  if (faceGroup) faceGroup.visible = !(options.helmetType === 'IMPERIAL_VISOR' && useArmory);
-  if (helmet) {
-    helmet.userData.helmetType = options.helmetType;
-    rig.helmetSocket.add(helmet);
-  }
-
-  if (useArmory) {
-    try {
-      applyArmoryArmor(rig, options.armorTier, armoryCtx);
-    } catch (error) {
-      console.warn('[characterRig] BannerForge zırhı uygulanamadı, eski zırha dönülüyor:', error);
-      clearArmoryArmor(rig);
-      buildArmor(rig, options.armorTier);
-    }
-  }
-  /*
-   * Gövde zırhı + omuzluklar HER İKİ katmanda da bizim üreticimizden gelir.
-   * BannerForge'un gövde/omuz parçaları başka bir iskelet için yazılmış
-   * (göğsü kapatmıyor, kolların içine giriyor) → `applyArmoryArmor` bu
-   * bölgeleri atlıyor, yerlerini `buildArmor` dolduruyor.
-   */
-  buildArmor(rig, options.armorTier);
-
-  if (options.weaponType === 'BOW') {
+  if (factionWeaponDef) {
+    mountFactionWeaponToRig(rig, factionWeaponDef, options.factionQuality ?? 'STANDARD');
+  } else if (options.weaponType === 'BOW') {
     const bow = buildBow(m);
     rig.bow = bow;
     rig.offHandItem = bow.group;
@@ -1598,8 +1643,16 @@ export function applyEquipmentToRig(rig: CharacterRig, options: CharacterVisualO
       rig.mainHandItem = weapon;
       rig.rightWeaponSocket.add(weapon);
     }
+  }
+
+  if (factionShieldDef) {
+    mountFactionShieldToRig(rig, factionShieldDef, options.factionQuality ?? 'STANDARD');
+  } else {
     // Two-handed weapons and spears need the left hand -> no shield.
-    const twoHanded = options.weaponType === 'TWO_HANDED_SWORD' || options.weaponType === 'SPEAR';
+    const twoHanded =
+      options.weaponType === 'TWO_HANDED_SWORD' ||
+      options.weaponType === 'SPEAR' ||
+      Boolean(factionWeaponDef?.twoHanded);
     if (!twoHanded) {
       const shield = (useArmory ? createArmoryShield(options.shieldType, armoryCtx) : null)
         ?? buildShield(options.shieldType, m);
@@ -1870,6 +1923,11 @@ export function deriveRigVisualOptionsFromEquipment(
   helmetType: HelmetType;
   armorTier: ArmorTier;
   factionColor: string;
+  factionWeaponId?: string;
+  factionShieldId?: string;
+  factionArmorId?: string;
+  factionHorseId?: string;
+  factionQuality?: 'RUSTY' | 'WORN' | 'STANDARD' | 'FINE' | 'MASTERWORK' | 'LEGENDARY';
 } {
   const eq = equipment || {};
   const headStr = eq.HEAD || '';
@@ -1878,6 +1936,13 @@ export function deriveRigVisualOptionsFromEquipment(
   const w2Str = eq.WEAPON2 || '';
   const w3Str = eq.WEAPON3 || '';
   const w4Str = eq.WEAPON4 || '';
+  const mountStr = eq.MOUNT || '';
+
+  // 1. 6 Krallık Cephanelik Eşleşmeleri
+  const matchedWeapon = findArsenalWeaponByTextOrId(w1Str);
+  const matchedShield = findArsenalWeaponByTextOrId(w2Str) || findArsenalWeaponByTextOrId(w3Str);
+  const matchedArmor = findArsenalArmorByTextOrId(bodyStr) || findArsenalArmorByTextOrId(headStr);
+  const matchedHorse = findArsenalHorseByTextOrId(mountStr);
 
   let helmetType: HelmetType = 'SPANGENHELM';
   if (headStr.includes('Başlıksız') || headStr.includes('Yok')) {
@@ -1890,10 +1955,19 @@ export function deriveRigVisualOptionsFromEquipment(
     }
   } else if (headStr.includes('Çanak') || headStr.includes('Kettle')) {
     helmetType = 'KETTLE_HAT';
+  } else if (matchedArmor && matchedArmor.helmStyle !== 'none') {
+    helmetType =
+      matchedArmor.helmStyle === 'greatHelm'
+        ? 'IMPERIAL_VISOR'
+        : matchedArmor.helmStyle === 'kettle'
+          ? 'KETTLE_HAT'
+          : 'SPANGENHELM';
   }
 
   let armorTier: ArmorTier = 'CHAINMAIL';
-  if (bodyStr.includes('Sivil') || bodyStr.includes('Tunik') || bodyStr.includes('Kaftan')) {
+  if (matchedArmor) {
+    armorTier = matchedArmor.tier >= 5 ? 'PLATE' : (matchedArmor.tier >= 3 ? 'CHAINMAIL' : 'LEATHER');
+  } else if (bodyStr.includes('Sivil') || bodyStr.includes('Tunik') || bodyStr.includes('Kaftan')) {
     armorTier = 'CIVILIAN';
   } else if (bodyStr.includes('Deri') || bodyStr.includes('Gambeson')) {
     armorTier = 'LEATHER';
@@ -1903,7 +1977,11 @@ export function deriveRigVisualOptionsFromEquipment(
 
   const shieldCandidate = `${w2Str} ${w3Str}`;
   let shieldType: ShieldType = 'ROUND_SHIELD';
-  if (shieldCandidate.includes('Damla') || shieldCandidate.includes('Kite') || shieldCandidate.includes('Süvari Kalkan')) {
+  if (matchedShield && matchedShield.kind === 'shield') {
+    shieldType = matchedShield.nameTr.includes('Damla') || matchedShield.nameTr.includes('Kite')
+      ? 'KITE_SHIELD'
+      : (matchedShield.nameTr.includes('Pavise') ? 'PAVISE' : 'ROUND_SHIELD');
+  } else if (shieldCandidate.includes('Damla') || shieldCandidate.includes('Kite') || shieldCandidate.includes('Süvari Kalkan')) {
     shieldType = 'KITE_SHIELD';
   } else if (shieldCandidate.includes('Pavise') || shieldCandidate.includes('Kule Kalkan')) {
     shieldType = 'PAVISE';
@@ -1912,7 +1990,22 @@ export function deriveRigVisualOptionsFromEquipment(
   }
 
   let weaponType: WeaponType = 'ONE_HANDED_SWORD';
-  if (
+  if (matchedWeapon) {
+    if (matchedWeapon.kind === 'bow' || matchedWeapon.kind === 'crossbow') {
+      weaponType = 'BOW';
+    } else if (
+      matchedWeapon.twoHanded ||
+      matchedWeapon.kind === 'two_handed_sword' ||
+      matchedWeapon.kind === 'two_handed_axe' ||
+      matchedWeapon.kind === 'falx_blade'
+    ) {
+      weaponType = 'TWO_HANDED_SWORD';
+    } else if (matchedWeapon.kind === 'polearm_cleave' || matchedWeapon.kind === 'cavalry_lance') {
+      weaponType = 'SPEAR';
+    } else {
+      weaponType = 'ONE_HANDED_SWORD';
+    }
+  } else if (
     w1Str.includes('Falx') ||
     w1Str.includes('İki Elli') ||
     w1Str.includes('Çift Elli') ||
@@ -1933,6 +2026,10 @@ export function deriveRigVisualOptionsFromEquipment(
     helmetType,
     armorTier,
     factionColor,
+    factionWeaponId: matchedWeapon?.id,
+    factionShieldId: matchedShield?.kind === 'shield' ? matchedShield.id : undefined,
+    factionArmorId: matchedArmor?.id,
+    factionHorseId: matchedHorse?.id,
   };
 }
 

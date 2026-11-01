@@ -451,11 +451,12 @@ Ancak bir "Mount & Blade / Bannerlord" oyunu olarak oynandığında oyuncunun hi
 
 ---
 
-### 1.3. Asker Gelişimi ve Terfi Zincirinin Savaş Alanıyla Bağlantısı
-* **Kod Kanıtı:** [`src/game/bannerlordFoundation.ts`](../src/game/bannerlordFoundation.ts) (`TROOP_TREES`), [`src/components/BattleLootModal.tsx`](../src/components/BattleLootModal.tsx) ve [`src/game/lootTransaction.ts`](../src/game/lootTransaction.ts)
-* **Bulgu:**
-  - Mount & Blade serisinin en büyük zevki; köylerden toplanan acemi çapulcuların meydan savaşlarında hayatta kaldıkça tecrübe kazanıp adım adım rütbe atlamasıdır (`Tier 1 Köylü -> Tier 2 -> Tier 3 -> Tier 5 Elit Süvari`).
-  - Kod tabanında kültür birlik ağaçları (`TROOP_TREES`) tanımlanmış olsa da, meydan savaşında öldürülen düşmanlardan kazanılan asker XP'sinin hayatta kalan asker yığınlarına (`troopStacks[].xp`) işlenmesi ve savaş sonu ganimet ekranında terfiye hazır birimlerin parlaması tam entegre bir akışta değildir (ağırlıklı olarak envanterden eşya atma / Discard XP üzerinden beslenmektedir).
+### 1.3. Asker Gelişimi ve Terfi Zincirinin Savaş Alanıyla Bağlantısı *(✅ ÇÖZÜLDÜ - 2026-11-01)*
+* **Kod Kanıtı:** [`src/game/bannerlordFoundation.ts`](../src/game/bannerlordFoundation.ts) (`calculateBattleCombatXp`, `distributeCombatXpToTroopStacks`), [`src/game/lootTransaction.ts`](../src/game/lootTransaction.ts) (`combatXpEarned`, `commitBattleLoot`), [`src/game/rules.ts`](../src/game/rules.ts) (`resolveBattleOutcome`), [`src/game/partySystem.ts`](../src/game/partySystem.ts) (`advanceDailyPartyHealthAndPrisoners` günlük talim) ve [`src/components/BattleLootModal.tsx`](../src/components/BattleLootModal.tsx).
+* **Uygulanan Çözüm:**
+  - **Savaş Alanı Muharebe XP'si:** Meydan savaşlarında ve kuşatmalarda öldürülen düşmanların kademesine (T1: ~47 XP, T2: ~94 XP, T3: ~159 XP, T4: ~242 XP, T5: ~340 XP, T6: ~454 XP) göre hesaplanan toplam savaş tecrübesi (`combatXpEarned`), savaş sonu ganimet ekranında (`BattleLootModal`) `+{XP} Savaş Tecrübesi` rozetiyle gösterilir ve atomik onayda (`commitBattleLoot`) hayatta kalan terfiye uygun birlik yığınlarına Bannerlord usulü paylaştırılır.
+  - **Paylaşımlı Tecrübe Havuzu & Kapasite Sınırı:** Kapasitesi (`count * upgradeXp`) dolan birlikten sonra kalan XP diğer terfi bekleyen birliklere akar. Birimler eşiği aştığında terfiye hazır hale gelir (`readyCount`).
+  - **Günlük Pasif Liderlik Talimi:** Sefer günlerinde (`advanceDailyPartyHealthAndPrisoners`) parti liderinin Liderlik seviyesine göre T1-T3 acemi birliklere günlük pasif talim XP'si verilir (*Raise the Meek / Combat Tips*).
 
 ---
 

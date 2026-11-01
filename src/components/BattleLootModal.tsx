@@ -416,6 +416,14 @@ export const BattleLootModal: React.FC<BattleLootModalProps> = ({
             <div className="px-3 py-1.5 rounded bg-[#1f1a13] border border-[#c6a15b]/30 text-[#60a5fa]">
               Tutsaklar: <span className="font-bold">+{pendingLoot.prisonersGain} Esir</span>
             </div>
+            {(pendingLoot.combatXpEarned ?? 0) > 0 && (
+              <div
+                data-testid="loot-combat-xp-badge"
+                className="px-3 py-1.5 rounded bg-[#1f1a13] border border-[#a855f7]/40 text-[#c084fc]"
+              >
+                Savaş Tecrübesi: <span className="font-bold">+{pendingLoot.combatXpEarned} XP</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -982,6 +990,11 @@ export const BattleLootModal: React.FC<BattleLootModalProps> = ({
             <span className="text-[#fbbf24] font-semibold">
               Kazanılan Altın: +{pendingLoot.goldLoot} Dinar
             </span>
+            {(pendingLoot.combatXpEarned ?? 0) > 0 && (
+              <span className="text-[#c084fc] font-semibold">
+                Savaş Tecrübesi: +{pendingLoot.combatXpEarned} XP
+              </span>
+            )}
             {discardPreview.acceptedXp > 0 && (
               <span className="text-[#34d399] font-semibold">
                 Birlik XP Bağışı: +{discardPreview.acceptedXp} XP

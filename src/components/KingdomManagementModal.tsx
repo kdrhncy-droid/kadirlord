@@ -574,7 +574,9 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
             <div className="space-y-5">
               <div className="p-4 rounded bg-[#18130e] border border-[#c6a15b]/30 space-y-2">
                 <h3 className="text-base font-bold text-[#fef08a] flex items-center gap-2">
-                  <span>🛡️</span>
+                  <svg className="w-4 h-4 text-[#fbbf24] shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" />
+                  </svg>
                   <span>Bağımsız Klan Statüsü</span>
                 </h3>
                 <p className="text-xs text-[#d1c5b0] leading-relaxed">
@@ -644,7 +646,7 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
                             : 'bg-[#221c15] text-[#a89b84]'
                         }`}
                       >
-                        {canFoundKingdom ? '👑 Hazır!' : '⏳ Bekliyor'}
+                        {canFoundKingdom ? 'Hazır' : 'Bekliyor'}
                       </span>
                     </div>
                     <p className="text-xs text-[#d1c5b0] leading-relaxed">
@@ -655,24 +657,24 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
                     <div className="flex justify-between">
                       <span className="text-[#a89b84]">Klan Seviyesi 3+:</span>
                       <strong className={playerClanTier >= 3 ? 'text-[#4ade80]' : 'text-[#f87171]'}>
-                        {playerClanTier >= 3 ? `✅ Sv.${playerClanTier}` : `❌ Sv.${playerClanTier} / 3`}
+                        {playerClanTier >= 3 ? `[✓] Sv.${playerClanTier}` : `[—] Sv.${playerClanTier} / 3`}
                       </strong>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[#a89b84]">1+ Şehir veya Kale:</span>
                       <strong className={playerOwnedFortified.length >= 1 ? 'text-[#4ade80]' : 'text-[#f87171]'}>
-                        {playerOwnedFortified.length >= 1 ? `✅ ${playerOwnedFortified.length} Mülk` : '❌ 0 Mülk'}
+                        {playerOwnedFortified.length >= 1 ? `[✓] ${playerOwnedFortified.length} Mülk` : '[—] 0 Mülk'}
                       </strong>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[#a89b84]">100+ Kişilik Ordu:</span>
                       <strong className={playerTotalTroops >= 100 ? 'text-[#4ade80]' : 'text-[#f87171]'}>
-                        {playerTotalTroops >= 100 ? `✅ ${playerTotalTroops} Asker` : `❌ ${playerTotalTroops} / 100`}
+                        {playerTotalTroops >= 100 ? `[✓] ${playerTotalTroops} Asker` : `[—] ${playerTotalTroops} / 100`}
                       </strong>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[#a89b84]">Bağımsız Statü:</span>
-                      <strong className="text-[#4ade80]">✅ Bağımsız</strong>
+                      <strong className="text-[#4ade80]">[✓] Bağımsız</strong>
                     </div>
                   </div>
                 </div>
@@ -695,18 +697,20 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
                           playerFaction: 'player',
                         });
                         setFeedbackBanner(
-                          '👑 Tebrikler! Kalradya üzerinde kendi egemen krallığınızı ilan ettiniz. Sancak Divanı ve Devlet Meclisi açıldı!',
+                          'Tebrikler! Kalradya üzerinde kendi egemen krallığınızı ilan ettiniz. Sancak Divanı ve Devlet Meclisi açıldı!',
                         );
                       }}
                       className="px-6 py-3 rounded bg-gradient-to-r from-[#b45309] via-[#d97706] to-[#b45309] hover:brightness-110 text-white font-display font-bold text-sm border-2 border-[#fde68a] shadow-xl inline-flex items-center gap-2 transition-all cursor-pointer"
                     >
-                      <span>👑</span>
+                      <svg className="w-4 h-4 text-[#fde68a] shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M5 19h14a1 1 0 0 0 1-1v-1a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1zm14.5-9.5-3 4.5-4.5-6-4.5 6-3-4.5L3 17h18l-1.5-7.5z" />
+                      </svg>
                       <span>Kendi Bağımsız Krallığını İlan Et</span>
                     </button>
                   </div>
                 ) : (
                   <div className="text-xs text-[#a89b84] py-2">
-                    ⚠️ Krallık ilan edebilmek için klan seviyenizi 3'e çıkarmalı, bağımsız olarak en az 1 kale veya şehir fethetmeli ve ordunuzda 100 asker bulundurmalısınız.
+                    Bilgi: Krallık ilan edebilmek için klan seviyenizi 3'e çıkarmalı, bağımsız olarak en az 1 kale veya şehir fethetmeli ve ordunuzda 100 asker bulundurmalısınız.
                   </div>
                 )}
               </div>
@@ -780,7 +784,7 @@ export const KingdomManagementModal: React.FC<KingdomManagementModalProps> = ({
                             className="w-8 h-10 border border-[#fde68a] shadow flex items-center justify-center font-bold text-white text-xs"
                             style={{ backgroundColor: facInfo.color }}
                           >
-                            🛡️
+                            {facInfo.glyph}
                           </div>
                           <div>
                             <h3 className="text-lg font-bold text-[#fef08a]">{facInfo.name}</h3>

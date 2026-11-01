@@ -1,9 +1,8 @@
 # Kadirlord — Birleştirilmiş Tüm Görevler, Tamamlananlar (`[x]`) ve Açık İşler (`[ ]`)
 
-> **Son Konsolidasyon:** 2026-10-27 (`c3799f4` — Savaş Meydanı v1 Adım 1, Sancak Birliği Kahraman Sayımı, Klan Menüsü ve Harita Savaşları Yol Haritası)
-> **Kapsam:** Bu dosya; eski `YAPILACAKLAR_LISTESI.md`, `docs/CURSOR_ZOR_GOREVLER.md`, `docs/EKSIKLER_VE_HATALAR.md`, **Steam Bannerlord Türkçe Detaylı Tam Rehberi (`id=2046201799` — 17 Bölüm + SSS)** ve **6 Ana Ekranın (Şehir/Köy/Kale, Harita HUD, Envanter, Pazar, Diyalog/Lord, Parti/Karakter/Krallık) Görsel/Mekanik Denetimi** içindeki **TÜM görevlerin birleştirilmiş tek kaynağıdır**.
-> **Doğrulama Prensibi:** Her madde gerçek kod tabanında (`src/game/` ve `src/components/`) kontrol edilerek gerçekten tamamlanmış olanlar `[x]`, eksik/yarım/görsel olarak hatalı olanlar `[ ]` olarak işaretlenmiştir.
-> **⚠️ 2026-10-24 denetimi:** Bazı `[x]` maddelerin sayı/formül ve doğrulama bakımından Bannerlord'a uymadığı (ve `verify:fast`in kırmızı olduğu) kod kanıtıyla tespit edildi; düzeltmeler **Bölüm 6 (10.1–10.11)** altında takip edilir. Ayrıntı: [`docs/DENETIM_2026-10-24_YAPILANLAR_VE_SAVAS_MEYDANI.md`](docs/DENETIM_2026-10-24_YAPILANLAR_VE_SAVAS_MEYDANI.md).
+> **🛡️ KONSOLİDASYON VE DOĞRULAMA PROTOKOLÜ (2026-11-02):**
+> Eski MD ve denetim belgeleri (`kiro.md`, `docs/GUNCEL_KOD_DENETIMI_VE_EYLEM_PLANI.md`, `docs/SORUNLAR_VE_ADIM_ADIM_COZUMLER.md`, `docs/CURSOR_ZOR_GOREVLER.md`, `docs/EKSIKLER_VE_HATALAR.md`) temizlenmeden veya silinmeden önce **KESİNLİKLE ve KESİNLİKLE** tüm görevlerin yapılıp yapılmadığı tek tek kod tabanında (`src/game/`, `src/components/`, `scripts/`) kontrol edilmiş; yapılmayan/açık olan tüm görevler eksiksiz şekilde bu tek kanonik listeye (`YAPILACAKLAR_LISTESI.md`) birleştirilmiştir.
+> **Tek Görev Kaynağı:** Bu dosya projedeki tüm açık işlerin bağlayıcı tek referansıdır. Her yeni iş buraya eklenir, kapatma yalnız buradan yapılır.
 
 ---
 
@@ -358,18 +357,22 @@
   - Ağır kayıp veren tarafın moralinin kırılıp harita sınırına doğru kaçması (`ROUTING`).
   - `Tab` tuşuyla canlı muharebe özeti (*Sağlam / Yaralı / Ölü / Kaçan*) ve kurallı geri çekilme.
   - Savaş bittiğinde gerçek yaralı/ölü ayrımı, esir alma ve ganimet ekranına (`BattleLootModal`) geçiş.
-- [ ] **11.5. Bannerlord Klan Menüsü (`L` Kısayolu — ` src/components/ClanModal.tsx`, Görsel ve Metin Araştırmalı):**
+- [x] **11.5. Bannerlord Klan Menüsü (`L` Kısayolu — `src/components/ClanModal.tsx`, Görsel ve Metin Araştırmalı):** *(2026-11-01 yapıldı)*
   - Krallık (`K`) ekranından bağımsız, oyun başından itibaren her zaman açılabilen gerçek Bannerlord **Klan Ekranı (`L`)**.
-  - **Üst Başlık:** Klan Sancağı, Klan Adı değiştirme, Klan Kademesi (`Tier 0..6`) ve Nam (`Renown`) ilerleme çubuğu, Günlük Gelir/Gider özeti.
+  - **Üst Başlık:** Klan Sancağı, Klan Adı değiştirme (`changeClanName`), Klan Kademesi (`Tier 0..6`) ve Nam (`Renown`) ilerleme çubuğu, Günlük Gelir/Gider özeti.
   - **4 Ana Sekme:**
-    1. **Üyeler (`Members`):** Oyuncu, Ağabey/Aile üyeleri ve Yoldaşlar; konumları, sağlık durumları ve **4 Klan Rolü Ataması** (*İaşeci, İzci, Cerrah, Mühendis*) + Vali / Parti Lideri atama.
-    2. **Birlikler (`Parties`):** Oyuncunun ana birliği, klan üyelerinin yönettiği ek klan partileri (asker mevcudu, maaş sınırı, tutumu: *Saldırgan / Savunmacı / Dengeli*) ve kervanlar.
-    3. **Tımarlar (`Fiefs`):** Klana ait şehirler, kaleler ve bağlı köyler; refah, sadakat, güvenlik, garnizon, vergi geliri ve vali ataması.
-    4. **Diğer (`Other`):** Klana ait **Atölyeler (`Workshops`)**, **Kervanlar (`Caravans`)** ve detaylı **Finans (Gelir / Gider) Dökümü**.
-- [ ] **11.6. Harita Üzeri AI-AI Lord Savaşları (`MapEvent`), Kuşatma Asker Düşüşü ve Yardıma Gitme (`src/game/worldSim.ts`, `src/components/WorldCanvas.tsx`, `src/components/SiegeEncounterModal.tsx`):**
-  - Düşman lord partileri haritada çarpıştığında veya kuşatma yapan bir lordun (ör. Rhagaea) üzerine savunma/destek orduları geldiğinde iç içe geçip beklemek veya anında el değiştirmek yerine **aktif harita muharebesi (`MapEvent`)** başlaması.
-  - Savaşan lordların ve kuşatılan yerleşimlerin üzerinde çapraz kılıç / kuşatma göstergesi, bilgi kartında **"Savaşıyor: [Karşı Taraf]"** / **"Kuşatma Altında"** yazması ve her iki tarafın asker sayısının zaman aktıkça **kademeli olarak düşmesi** (canlı erime / attrition).
-  - Oyuncunun haritada süren bir AI-AI meydan savaşına veya kuşatma muharebesine tıklayarak müttefik/dost tarafa **destek olarak savaşa katılabilmesi** (veya düşmana saldırabilmesi).
+    1. **Üyeler (`Members`):** Oyuncu, Ağabey/Aile üyeleri ve Yoldaşlar; konumları, sağlık durumları ve **4 Klan Rolü Ataması** (*İaşeci, İzci, Cerrah, Mühendis*).
+    2. **Birlikler (`Parties`):** Oyuncunun ana birliği, klan kademesine göre ek klan partileri (asker mevcudu, maaş sınırı, tutumu: *Saldırgan / Savunmacı / Dengeli*) ve kervanlar.
+    3. **Tımarlar (`Fiefs`):** Klana ait şehirler, kaleler ve bağlı köyler; refah, sadakat, güvenlik, garnizon, vergi geliri ve vali (`assignSettlementGovernor`) ataması.
+    4. **Diğer (`Other`):** Klana ait **Atölyeler (`Workshops`)**, **Kervanlar (`Caravans`)** ve detaylı **Finans (Gelir / Gider / Net Bakiye) Dökümü**.
+  - `src/game/clanSystem.ts`, `src/components/ClanModal.tsx`, `scripts/probe-clan-system.ts` ve `verify:fast` ile doğrulandı.
+- [x] **11.6. Harita Üzeri AI-AI Lord Savaşları (`MapEvent`), Canlı Asker Erimesi ve Yardıma Gitme (`src/game/mapBattle.ts`, `src/components/WorldCanvas.tsx`, `src/components/MapBattleInterventionModal.tsx`):** *(2026-11-01 yapıldı)*
+  - **Canlı MapEvent Motoru (`src/game/mapBattle.ts`):** Düşman lordlar ve haydutlar harita üzerinde karşılaştığında anında tek satırda çözülmek yerine gerçek bir Bannerlord `MapBattleEvent` başlar. Savaşan ordular durdurulur ve savaşa kilitlenir.
+  - **Canlı Asker Erimesi (Attrition):** Zaman ölçeği (1x, 2x, 4x) aktıkça iki ordunun kuvvet oranına göre gerçek zamanlı asker zayiatı (`applyCasualtiesToRoster`) düşer; Kural 1 uyarınca ordu büyüklüğü ile birlik roster'ı her an %100 senkron tutulur. Asker sayısı <=4 altına inen taraf yenilip esir düşer ve dünya günlüğüne (`chronicle`) işlenir.
+  - **3B Harita Belirteci (Crossed Swords Billboard):** Savaşan orduların tam üstünde ekran projeksiyonlu, nabız gibi atan döner kılıçlar (`⚔️ Lord A (140) VS Lord B (92)`) belirir; tıklandığında oyuncu birliği savaşa yönelir.
+  - **Oyuncu Müdahalesi (`MapBattleInterventionModal.tsx`):** Oyuncu savaşa (<=4.2m) yaklaştığında oyun duraklar ve Bannerlord tarzı müdahale penceresi açılır: Kuvvet denge çubuğu, dost/düşman durumu ve eylemler (*Müttefikine Yardım Et / Savaşa Katıl / Uzaklaş*).
+  - **Savaş Sahnesi & Ödül Entegrasyonu:** Oyuncu müttefikine yardım ettiğinde savaş meydanında (`BattlefieldView`) düşmanla çarpışır; zafer kazanıldığında kurtarılan müttefik lord ile ilişki (+15) ve şan (+15) kazanılır.
+  - `scripts/probe-map-battle.ts` ve `verify:fast` zinciriyle %100 doğrulandı.
 - [ ] **11.7. Bannerlord Diplomacy Sistemi — Barış Paktı (Cooldown), Savaş Yorgunluğu (War Exhaustion) ve Dinamik Tazminat (Tribute) (`references/Bannerlord.Diplomacy`):**
   - *(Kullanıcı talimatıyla kayıt edildi — sırası gelince `references/Bannerlord.Diplomacy` dosyalarından aktarılacak)*
   - **1) Barış Paktı (`CooldownManager.cs`):** Bir krallıkla barış yapıldıktan hemen sonra (örneğin 5 saniye/1 gün sonra) tekrar savaş açılmasını engeller (örneğin 20 günlük barış paktı süresi).
@@ -379,5 +382,18 @@
   - *(Kullanıcı talimatıyla not edildi — hemen yapılmayacak, asker gelişimi ve terfi zincirinin savaş alanıyla bağlantısı kurulduktan sonra işlenecek)*
   - **1) Rütbeye Göre Zeka:** Düşük kademe askerler (T1 Acemi) taktik bilmeden hedefe dümdüz koşup saldırırken; elit/üst kademe askerler (T4-T6 Soylu) formasyonu koruma, okçuları siperleme, düşmanın hamlesine göre kalkan duvarı örme, feint ve yönlü blok yapma gibi çok daha mantıklı kararlar alacak.
   - **2) Oyuncuya Kilitli Dönme Hatasının Düzeltilmesi:** Oyuncu kendi etrafında döndüğünde tüm askerlerin de anında fırıldak gibi onunla beraber dönmesi engellenecek; askerler formasyon hattına ve karşı cepheye sadık kalacak.
+
+---
+
+## 🛒 BÖLÜM 8 — 2026-11-02 KULLANICI TALEPLERİ (PAZAR YERİ EŞYA GÖRSELLERİ, ZENGİN YİYECEK EKONOMİSİ VE PWA)
+
+- [ ] **12.1. Pazar Yeri Eşya Görselleri & Zengin Yiyecek Ekonomisi (Savaş/Barış ve Ticaret Hacmi Etkisi) (`src/components/BannerlordMarketModal.tsx`, `src/game/marketRules.ts`, `src/game/foodSystem.ts`, `src/game/market.ts`):**
+  - **1) Eşya Görselleri:** `BannerlordMarketModal.tsx` içindeki tüm pazar eşyası satırlarına `ItemIcon` (SVG) bileşeni eklenmesi; eşyaların türüne ve kalitesine göre otantik Bannerlord ikonlarıyla listelenmesi.
+  - **2) Yiyecek Çeşitliliği:** Yiyecek kalemlerinin genişletilmesi (`marketRules.ts`, `foodSystem.ts`): Tahıl, Balık, Peynir, Kurutulmuş Et, Üzüm, Zeytin, Bira, Şarap, Tereyağı, Hurma vb.
+  - **3) Dinamik Yiyecek Arzı & Barış/Savaş Etkisi:** Tıpkı Bannerlord'daki gibi bir yerleşim savaştan ne kadar uzaksa, etrafında kervanlar ne kadar serbest dolaşıyorsa ve refahı ne kadar yüksekse pazarındaki yiyecek miktarı ve çeşitliliği o kadar bollaşacak; kuşatılan, köyleri yağmalanan veya savaş bölgesinde kalan yerleşimlerde ise kıtlık baş gösterecek ve yiyecek çeşitliliği daralacak.
+- [ ] **12.2. PWA (Progressive Web App) Desteği (`public/manifest.webmanifest`, `index.html`, `src/main.tsx`):**
+  - Web Uygulama Bildirimi (`manifest.webmanifest`) ile tam ekran (`standalone`), tema rengi (`#b45309`), ekran yönlendirmesi (`landscape`) ve oyun ikonları.
+  - Service Worker kaydı ile temel varlıkların (sesler, dokular, arayüz) çevrimdışı önbelleklenmesi.
+  - Masaüstü ve mobil tarayıcılarda tek tıkla tam ekran yerel uygulama ("Uygulamayı Yükle") desteği.
 
 

@@ -638,6 +638,7 @@ export interface DailyHealthAndPrisonersResult {
   nextState: CampaignState;
   healedTroops: number;
   prisonersBecameReady: number;
+  dailyTrainingXpAwarded?: number;
 }
 
 /**
@@ -711,10 +712,24 @@ export function advanceDailyPartyHealthAndPrisoners(
     updatedHeroes = state.heroes.map((h) => (h.id === surgeonHero.id ? res.hero : h));
   }
 
+  // Bannerlord Günlük Talim & Birlik Tecrübesi (Passive Leadership Training / Raise the Meek):
+  // Liderlik becerisine göre T1-T3 acemi birlikler her gün pasif talim tecrübesi kazanır.
+  const dailyTrainingPool = Math.round(15 + Math.min(35, leadershipLevel * 0.25));
+  let dailyTrainingXpAwarded = 0;
+  const trainedTroopStacks = currentTroopStacks.map((stack) => {
+    const def = getTroopDefinition(stack.troopId);
+    if (!def || def.upgrades.length === 0 || def.tier > 3) return stack;
+    const maxCap = stack.count * def.upgradeXp;
+    if (stack.xp >= maxCap) return stack;
+    const gain = Math.min(dailyTrainingPool, maxCap - stack.xp);
+    dailyTrainingXpAwarded += gain;
+    return { ...stack, xp: stack.xp + gain };
+  });
+
   const nextState: CampaignState = {
     ...state,
     heroes: updatedHeroes,
-    troopStacks: currentTroopStacks,
+    troopStacks: trainedTroopStacks,
     prisonerStacks: currentPrisonerStacks,
   };
 
@@ -722,6 +737,7 @@ export function advanceDailyPartyHealthAndPrisoners(
     nextState,
     healedTroops,
     prisonersBecameReady,
+    dailyTrainingXpAwarded,
   };
 }
 

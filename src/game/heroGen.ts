@@ -113,18 +113,18 @@ function pickFrom<T>(list: T[], seed: number, salt: string): T {
  * Her krallığın Bannerlord askeri doktrinine göre özel birlik oranları ve
  * toplam asker sayısı (`armySize === getTotalTroops(roster)` garantili).
  */
-const CULTURE_TROOP_DOCTRINE: Record<
+export const CULTURE_TROOP_DOCTRINE: Record<
   FactionId,
   { baseSize: number; spread: number; ratios: [number, number, number, number] }
 > = {
   player: { baseSize: 22, spread: 10, ratios: [0.32, 0.28, 0.24, 0.16] },
-  empire: { baseSize: 24, spread: 14, ratios: [0.32, 0.26, 0.22, 0.20] }, // Lejyoner + Palatin + Katafrakt
-  vlandia: { baseSize: 25, spread: 14, ratios: [0.22, 0.28, 0.34, 0.16] }, // Şövalye Süvarisi + Arbaletçi
-  battania: { baseSize: 22, spread: 12, ratios: [0.28, 0.44, 0.10, 0.18] }, // Fian Şampiyon Okçuları + Yaban Süvarisi
-  sturgia: { baseSize: 24, spread: 13, ratios: [0.42, 0.18, 0.12, 0.28] }, // Ağır Kalkan Duvarı Piyadesi + Drujinnik
-  khuzait: { baseSize: 26, spread: 14, ratios: [0.16, 0.32, 0.42, 0.10] }, // Atlı Okçu + Kargılı Bozkır Süvarisi
-  aserai: { baseSize: 24, spread: 13, ratios: [0.24, 0.30, 0.30, 0.16] }, // Faris Süvarisi + Çöl Okçusu + Memlük
-  bandits: { baseSize: 16, spread: 9, ratios: [0.50, 0.28, 0.14, 0.08] }, // Haydut Çetesi
+  empire: { baseSize: 85, spread: 35, ratios: [0.32, 0.26, 0.22, 0.20] }, // Lejyoner + Palatin + Katafrakt
+  vlandia: { baseSize: 90, spread: 40, ratios: [0.22, 0.28, 0.34, 0.16] }, // Şövalye Süvarisi + Arbaletçi
+  battania: { baseSize: 82, spread: 32, ratios: [0.28, 0.44, 0.10, 0.18] }, // Fian Şampiyon Okçuları + Yaban Süvarisi
+  sturgia: { baseSize: 85, spread: 35, ratios: [0.42, 0.18, 0.12, 0.28] }, // Ağır Kalkan Duvarı Piyadesi + Drujinnik
+  khuzait: { baseSize: 90, spread: 40, ratios: [0.16, 0.32, 0.42, 0.10] }, // Atlı Okçu + Kargılı Bozkır Süvarisi
+  aserai: { baseSize: 85, spread: 35, ratios: [0.24, 0.30, 0.30, 0.16] }, // Faris Süvarisi + Çöl Okçusu + Memlük
+  bandits: { baseSize: 26, spread: 16, ratios: [0.50, 0.28, 0.14, 0.08] }, // Haydut Çetesi
 };
 
 function makeCultureRoster(faction: FactionId, targetSize: number): { roster: TroopRoster; armySize: number } {

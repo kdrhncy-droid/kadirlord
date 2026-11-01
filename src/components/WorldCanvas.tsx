@@ -16,6 +16,7 @@ import {
 } from '../game/rules';
 import {
   besiegedSettlementIdSet,
+  getBesiegingLords,
   getSiegeCampPoint,
   getSiegeCampSlotPoint,
 } from '../game/siegeEncounter';
@@ -67,6 +68,11 @@ import {
   getSettlementDiplomacyStance,
 } from '../game/mapDiplomacy';
 import { resolveLordBanditClash } from '../game/lordBanditAi';
+import {
+  type MapBattleEvent,
+  checkAiLordEngagements,
+  tickMapBattles,
+} from '../game/mapBattle';
 import type {
   BattleTelemetry,
   CameraControlActions,
@@ -130,6 +136,7 @@ interface WorldCanvasProps {
   onOpenSettlement: (settlement: Settlement) => void;
   onOpenDiplomacy: (lord: LordAgent) => void;
   onHostileEncounter?: (lord: LordAgent, scenario: EncounterScenario) => void;
+  onInterveneMapBattle?: (battle: MapBattleEvent) => void;
   onCampaignUpdate?: (next: CampaignState) => void;
   onToast?: (message: string) => void;
 }
@@ -192,6 +199,55 @@ function hideSiegeMapMarkers(markers: readonly SiegeMapMarker[]): void {
   markers.forEach(({ element }) => {
     element.style.display = 'none';
   });
+}
+
+interface BattleMapMarker {
+  element: HTMLDivElement;
+  battleId: string;
+  x: number;
+  y: number;
+  z: number;
+  lastHtml?: string;
+}
+
+function createBattleMapMarker(
+  battle: MapBattleEvent,
+  onClick: (battle: MapBattleEvent) => void,
+): BattleMapMarker {
+  const element = document.createElement('div');
+  element.dataset.role = 'map-battle-marker';
+  element.style.position = 'absolute';
+  element.style.top = '0';
+  element.style.left = '0';
+  element.style.transform = 'translate(-50%, -100%)';
+  element.style.cursor = 'pointer';
+  element.style.pointerEvents = 'auto';
+  element.style.display = 'none';
+  element.style.userSelect = 'none';
+  element.style.transition = 'transform 0.15s ease, filter 0.15s ease';
+  element.title = `⚔️ ${battle.attackerName} vs ${battle.defenderName} Meydan Muharebesi (Müdahale Etmek İçin Tıkla)`;
+
+  element.onmouseenter = () => {
+    element.style.transform = 'translate(-50%, -106%) scale(1.05)';
+    element.style.filter = 'brightness(1.18)';
+  };
+  element.onmouseleave = () => {
+    element.style.transform = 'translate(-50%, -100%) scale(1)';
+    element.style.filter = 'brightness(1)';
+  };
+
+  element.onclick = (e) => {
+    e.stopPropagation();
+    onClick(battle);
+  };
+
+  return {
+    element,
+    battleId: battle.id,
+    x: battle.x,
+    y: groundHeightAt(battle.x, battle.z) + 3.4,
+    z: battle.z,
+  };
 }
 
 function addCampBox(
@@ -849,6 +905,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
   onOpenSettlement,
   onOpenDiplomacy,
   onHostileEncounter,
+  onInterveneMapBattle,
   onCampaignUpdate,
   onToast,
 }) => {
@@ -869,6 +926,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     onOpenSettlement,
     onOpenDiplomacy,
     onHostileEncounter,
+    onInterveneMapBattle,
     onCampaignUpdate,
     onToast,
   });
@@ -889,6 +947,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       onOpenSettlement,
       onOpenDiplomacy,
       onHostileEncounter,
+      onInterveneMapBattle,
       onCampaignUpdate,
       onToast,
     };
@@ -928,7 +987,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     renderer.toneMappingExposure = 0.94;
     renderer.setPixelRatio(isHeadless ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = !isHeadless;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.setSize(
       container.clientWidth || window.innerWidth,
       container.clientHeight || window.innerHeight,
@@ -1206,6 +1265,18 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       });
     });
 
+    // Canlı AI-AI Meydan Muharebeleri (Bannerlord MapEvent)
+    const activeMapBattles: MapBattleEvent[] = [];
+    const battleMarkers = new Map<string, BattleMapMarker>();
+    let lastInterventionSec = 0;
+
+    const handleBattleMarkerClick = (b: MapBattleEvent) => {
+      overworldTargetPos = { x: b.x, z: b.z };
+      overworldWaypoints = computeLandPath(playerOverworldX, playerOverworldZ, b.x, b.z);
+      marchPathDirty = true;
+      stateRef.current.onToast?.(`⚔️ ${b.attackerName} vs ${b.defenderName} muharebesine doğru ilerleniyor...`);
+    };
+
     const initContinentView =
       typeof window !== 'undefined' &&
       new URLSearchParams(window.location.search).get('view') === 'continent';
@@ -1226,6 +1297,26 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     let followRepathTimer = 0;
     const encounterCooldowns = new Map<string, number>();
     let lastActiveTalkingLordId: string | null = null;
+    let smoothHour = typeof stateRef.current.campaign.hour === 'number' ? stateRef.current.campaign.hour : 9;
+
+    const _daySunColor = new THREE.Color(0xfffaed);
+    const _twilightSunColor = new THREE.Color(0xff853a);
+    const _nightSunColor = new THREE.Color(0x628ecb);
+
+    const _dayHemiSkyColor = new THREE.Color(0xbcd4e6);
+    const _twilightHemiSkyColor = new THREE.Color(0xb07858);
+    const _nightHemiSkyColor = new THREE.Color(0x18283c);
+
+    const _dayHemiGroundColor = new THREE.Color(0x3b3224);
+    const _twilightHemiGroundColor = new THREE.Color(0x281610);
+    const _nightHemiGroundColor = new THREE.Color(0x070b10);
+
+    const _daySkyFogColor = new THREE.Color(0x1e384b);
+    const _twilightSkyFogColor = new THREE.Color(0x271a24);
+    const _nightSkyFogColor = new THREE.Color(0x060b14);
+
+    const _tempColorA = new THREE.Color();
+    const _tempColorB = new THREE.Color();
 
     function setMarchDestination(
       tx: number,
@@ -1356,8 +1447,20 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       const clanStem = (clanGroups[lord.faction] ?? ['Sınır', 'Uzak', 'Gezgin'])[lordIndex % 3];
       const clanName = `${clanStem} ${lord.faction === 'bandits' ? 'Çetesi' : 'Hanedanı'}`;
 
-      const statusBadge = lord.isAtWarWithPlayer
-        ? '<span class="px-1.5 py-0.5 rounded bg-[#7f1d1d] text-[#fecaca] text-[9px] font-bold">SAVAŞTA</span>'
+      const isHostile = lord.isAtWarWithPlayer || lord.faction === 'bandits';
+      if (isHostile) {
+        tooltipCard.style.borderColor = 'rgba(239, 68, 68, 0.85)';
+        tooltipCard.style.borderTopColor = '#ef4444';
+        tooltipCard.style.boxShadow = '0 0 22px rgba(220, 38, 38, 0.5), 0 10px 25px -5px rgba(0, 0, 0, 0.85)';
+      } else {
+        tooltipCard.style.borderColor = 'rgba(198, 161, 91, 0.70)';
+        tooltipCard.style.borderTopColor = '#f59e0b';
+        tooltipCard.style.boxShadow = '0 10px 25px -5px rgba(0, 0, 0, 0.85)';
+      }
+
+      // SAVAŞTA metin rozeti kullanıcı talimatıyla kaldırıldı; kırmızı çerçeve ve parlama yeterlidir.
+      const statusBadge = isHostile
+        ? ''
         : lord.isAlliedWithPlayer || lord.relation >= 20
           ? '<span class="px-1.5 py-0.5 rounded bg-[#064e3b] text-[#a7f3d0] text-[9px] font-bold">DOST</span>'
           : '<span class="px-1.5 py-0.5 rounded bg-[#1e293b] text-[#fde68a] text-[9px] font-bold">TARAFSIZ</span>';
@@ -1428,7 +1531,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         ? `
           <div class="mb-2 p-2 rounded bg-[#2b1f14]/95 border-2 border-[#f59e0b] shadow-lg text-left">
             <div class="flex items-center justify-between text-[9px] font-mono text-[#fcd34d] font-bold uppercase tracking-wider">
-              <span>👑 MÜLK SAHİBİ (LORD / LEYDİ)</span>
+              <span>MÜLK SAHİBİ (LORD / LEYDİ)</span>
               <span class="px-1 py-0.2 rounded bg-[#1f2937] text-[#86efac] text-[8px]">${owner.isPlayerOwned ? 'OYUNCU MÜLKÜ' : 'DEREBEYİ'}</span>
             </div>
             <div class="mt-1 text-[13px] font-display font-bold text-[#fef08a] flex items-center justify-between">
@@ -1443,7 +1546,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             ${
               liveS.type === 'VILLAGE'
                 ? `<div class="mt-1 pt-1 border-t border-[#c6a15b]/25 text-[8px] text-[#fbbf24] italic">
-                     ℹ️ Bannerlord Mülkiyet Kuralı: Köyler bağımsız alınıp verilmez, bağlı olduğu ${owner.boundParentName || 'merkez yerleşkenin'} sahibine aittir.
+                     Bannerlord Mülkiyet Kuralı: Köyler bağımsız alınıp verilmez, bağlı olduğu ${owner.boundParentName || 'merkez yerleşkenin'} sahibine aittir.
                    </div>`
                 : ''
             }
@@ -1454,8 +1557,8 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       const fiefLine =
         liveS.type === 'VILLAGE'
           ? `<div class="text-[9px] text-[#fde68a]/90 mt-0.5">Bağlı Mülk: <span class="font-semibold">${owner.boundParentName || liveS.boundSettlementName || 'Bağımsız'}</span></div>
-             <div class="text-[9px] text-[#86efac] mt-0.5">Birincil Üretim: <span class="font-semibold">${liveProd?.icon ?? '🌾'} ${liveProd?.name ?? 'Tahıl'}</span></div>
-             <div class="text-[9px] text-[#d6c9b1] mt-0.5">Ocak (Hane): <span class="font-mono font-semibold">${liveS.hearths ?? Math.round(liveS.prosperity * 1.15)}</span> · Durum: <span class="font-semibold">${liveS.isRaided ? '🔥 Yağmalanmış' : 'Normal'}</span></div>`
+             <div class="text-[9px] text-[#86efac] mt-0.5">Birincil Üretim: <span class="font-semibold">${liveProd?.name ?? 'Tahıl'}</span></div>
+             <div class="text-[9px] text-[#d6c9b1] mt-0.5">Ocak (Hane): <span class="font-mono font-semibold">${liveS.hearths ?? Math.round(liveS.prosperity * 1.15)}</span> · Durum: <span class="font-semibold ${liveS.isRaided ? 'text-[#ef4444]' : 'text-[#86efac]'}">${liveS.isRaided ? 'Yağmalanmış' : 'Normal'}</span></div>`
           : boundVillages.length > 0
             ? `<div class="text-[9px] text-[#fde68a]/90 mt-0.5">Bağlı Köyler (${boundVillages.length}): <span class="font-semibold">${boundVillages.join(', ')}</span></div>`
             : '';
@@ -1501,6 +1604,27 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
            </div>`
         : '';
 
+      const besiegers = getBesiegingLords(stateRef.current.campaign, liveS.id);
+      const isBesieged = besiegers.length > 0 || stateRef.current.campaign.playerSiege?.settlementId === liveS.id;
+      const wallSecs = getWallSections(liveS);
+      const siegeIntelHtml = isBesieged
+        ? `
+          <div class="my-1.5 p-2 rounded bg-[#380e0e]/95 border border-[#ef4444] text-left shadow-lg">
+            <div class="flex items-center justify-between text-[10px] font-bold text-[#fca5a5] uppercase tracking-wider">
+              <span class="flex items-center gap-1"><span>🔥</span> <span>KUŞATMA ALTINDA</span></span>
+              <span class="px-1.5 py-0.5 rounded bg-[#7f1d1d] text-[#fee2e2] text-[8px] font-mono">MUHASARA</span>
+            </div>
+            <div class="mt-1 text-[11px] text-[#fef08a] font-semibold">
+              Kuşatan: ${besiegers.map((b) => `${b.title ? `${b.title} ` : ''}${b.name} (${getTotalTroops(b.roster) || b.armySize})`).join(', ') || 'Düşman Ordusu'}
+            </div>
+            <div class="text-[9px] text-[#fecaca] mt-0.5">
+              Savunan Garnizon: ${liveS.garrison} · Sol Sur: %${Math.round(wallSecs[0])} · Sağ Sur: %${Math.round(wallSecs[1])}
+            </div>
+            ${(liveS.siegeEngines ?? []).length > 0 ? `<div class="text-[8px] text-[#fde047] mt-0.5 font-mono">Kuşatma Silahları: ${(liveS.siegeEngines ?? []).join(', ')}</div>` : ''}
+          </div>
+        `
+        : '';
+
       tooltipCard.innerHTML = `
         ${altInspectionHeader}
         <div class="font-display font-bold text-xs text-[#fbbf24] border-b border-[#c6a15b]/30 pb-1 mb-1.5">
@@ -1510,6 +1634,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           Krallık: <span class="font-semibold text-[#fde68a]">${liveFac.name}</span> · Klan: <span class="font-semibold text-[#f8f0df]">${owner.clanName}</span>
         </div>
         ${fiefLine}
+        ${siegeIntelHtml}
         ${intelHtml}
         ${lordsHtml}
         ${altPromptFooter}
@@ -1541,6 +1666,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
       lastFaction: string;
       lastBesieged: boolean;
       lastStance?: DiplomacyStance;
+      lastScale?: number;
     }
 
     const settlementLabelRecords: SettlementLabelRecord[] = [];
@@ -1601,7 +1727,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           <span data-role="garrison-count" class="text-[9px] text-[#c6a15b] font-mono">
             ${s.garrison}
           </span>
-          <span data-role="siege-badge" style="display:none;color:#fecaca;font-size:8px;font-weight:800;letter-spacing:.06em">KUŞATMA ALTINDA</span>
+          <span data-role="siege-badge" style="display:none;color:#fee2e2;background:#7f1d1d;border:1px solid #ef4444;border-radius:3px;padding:1px 5px;font-size:8px;font-weight:800;letter-spacing:.04em;box-shadow:0 0 8px rgba(239,68,68,0.7);">🔥 KUŞATMA</span>
         </div>
       `;
 
@@ -1668,6 +1794,7 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         lastFaction: s.faction,
         lastBesieged: false,
         lastStance: sStance,
+        lastScale: 1.0,
       });
     });
 
@@ -2807,37 +2934,122 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           }
         }
 
-        // I-3. Lord vs Haydut Otomatik Muharebe (AI vs AI)
+        // I-3. Canlı AI vs AI Harita Muharebeleri (Bannerlord MapEvent Sistemi)
         if (!isWorldEffectivelyPaused && timeScale > 0) {
-          for (const lordItem of camp.lords) {
-            if (lordItem.faction === 'bandits' || lordItem.characterState === 'CAPTIVE' || lordItem.characterState === 'DEAD') continue;
-            const lRoute = lordLiveRoutes.get(lordItem.id);
-            if (!lRoute) continue;
+          // A. Aktif muharebelerde zaman akışı ve canlı asker erimesi
+          if (activeMapBattles.length > 0) {
+            const tickOutcome = tickMapBattles({
+              state: camp,
+              battles: activeMapBattles,
+              dt,
+              timeScale,
+            });
 
-            for (const banditItem of camp.lords) {
-              if (banditItem.faction !== 'bandits' || banditItem.characterState === 'CAPTIVE' || banditItem.characterState === 'DEAD') continue;
-              const bRoute = lordLiveRoutes.get(banditItem.id);
-              if (!bRoute) continue;
+            if (tickOutcome.nextState !== camp) {
+              stateRef.current.onCampaignUpdate?.(tickOutcome.nextState);
+            }
 
-              const d = Math.hypot(lRoute.x - bRoute.x, lRoute.z - bRoute.z);
-              if (d <= INTERCEPT_RADIUS) {
-                const clash = resolveLordBanditClash(camp, lordItem, banditItem);
-                encounterCooldowns.set(lordItem.id, elapsedTotal + 35);
-                encounterCooldowns.set(banditItem.id, elapsedTotal + 60);
+            activeMapBattles.length = 0;
+            activeMapBattles.push(...tickOutcome.nextBattles);
 
-                bRoute.x = -62;
-                bRoute.z = 102;
-                bRoute.waypoints = [];
-                bRoute.tacticalState = null;
-                bRoute.currentAction = 'Karageçit Hisarı eteklerinde toplanıyor';
-
-                lRoute.tacticalState = null;
-                lRoute.currentAction = `${banditItem.name} çetesini dağıttı`;
-
-                stateRef.current.onCampaignUpdate?.(clash.nextState);
-                stateRef.current.onToast?.(clash.summaryText);
-                break;
+            for (const concluded of tickOutcome.concludedBattles) {
+              const m = battleMarkers.get(concluded.battle.id);
+              if (m) {
+                m.element.remove();
+                battleMarkers.delete(concluded.battle.id);
               }
+              const winnerLord = camp.lords.find((l) => l.id === concluded.winnerId);
+              const loserLord = camp.lords.find((l) => l.id === concluded.loserId);
+              if (winnerLord && loserLord) {
+                const inSight = isWithinSpottingRange(
+                  playerOverworldX,
+                  playerOverworldZ,
+                  concluded.battle.x,
+                  concluded.battle.z,
+                  playerSpottingRange,
+                );
+                const playerFaction = camp.playerFaction || 'player';
+                const involvesPlayer =
+                  winnerLord.faction === playerFaction ||
+                  winnerLord.faction === 'player' ||
+                  loserLord.faction === playerFaction ||
+                  loserLord.faction === 'player';
+
+                if (inSight || involvesPlayer) {
+                  stateRef.current.onToast?.(
+                    `⚔️ Muharebe Sona Erdi: ${winnerLord.name}, ${loserLord.name} kuvvetlerini mağlup etti!`,
+                  );
+                }
+              }
+            }
+          }
+
+          // B. Yeni AI-AI orduları çarpışma tespiti
+          const engRes = checkAiLordEngagements({
+            state: camp,
+            lordPositions: lordLiveRoutes,
+            currentBattles: activeMapBattles,
+            cooldowns: encounterCooldowns,
+            nowSec: elapsedTotal,
+            engagementRadius: INTERCEPT_RADIUS,
+          });
+
+          for (const newBat of engRes.newEvents) {
+            activeMapBattles.push(newBat);
+            encounterCooldowns.set(newBat.attackerId, elapsedTotal + 45);
+            encounterCooldowns.set(newBat.defenderId, elapsedTotal + 45);
+
+            // Savaşan tarafların hareketini kilitler
+            const rA = lordLiveRoutes.get(newBat.attackerId);
+            const rB = lordLiveRoutes.get(newBat.defenderId);
+            if (rA) {
+              rA.waypoints = [];
+              rA.tacticalState = null;
+              rA.currentAction = `Savaşta (${newBat.defenderName})`;
+            }
+            if (rB) {
+              rB.waypoints = [];
+              rB.tacticalState = null;
+              rB.currentAction = `Savaşta (${newBat.attackerName})`;
+            }
+
+            const inSight = isWithinSpottingRange(
+              playerOverworldX,
+              playerOverworldZ,
+              newBat.x,
+              newBat.z,
+              playerSpottingRange,
+            );
+            const playerFaction = camp.playerFaction || 'player';
+            const attLord = camp.lords.find((l) => l.id === newBat.attackerId);
+            const defLord = camp.lords.find((l) => l.id === newBat.defenderId);
+            const involvesPlayer =
+              attLord?.faction === playerFaction ||
+              attLord?.faction === 'player' ||
+              defLord?.faction === playerFaction ||
+              defLord?.faction === 'player';
+
+            if (inSight || involvesPlayer) {
+              stateRef.current.onToast?.(
+                `⚔️ Meydan Muharebesi: ${newBat.attackerName} (${newBat.attackerArmy}) ile ${newBat.defenderName} (${newBat.defenderArmy}) savaşa tutuştu!`,
+              );
+            }
+          }
+        }
+
+        // I-4. Oyuncunun AI-AI Muharebesine Müdahalesi (Savaşa Katılma / Yardıma Gitme)
+        if (
+          !isWorldEffectivelyPaused &&
+          stateRef.current.onInterveneMapBattle &&
+          elapsedTotal - lastInterventionSec >= 10
+        ) {
+          for (const battle of activeMapBattles) {
+            const dist = Math.hypot(battle.x - playerOverworldX, battle.z - playerOverworldZ);
+            if (dist <= 4.2) {
+              lastInterventionSec = elapsedTotal;
+              stateRef.current.onSetTimeScale?.(0);
+              stateRef.current.onInterveneMapBattle(battle);
+              break;
             }
           }
         }
@@ -2971,62 +3183,61 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         const targetFocusY = Math.max(0, groundHeightAt(camFocusX, camFocusZ));
         camFocusY = THREE.MathUtils.lerp(camFocusY, targetFocusY, camDamp);
 
-        // Bannerlord 24-hour Celestial Day/Night Lighting Cycle
-        const currentHour = typeof camp.hour === 'number' ? camp.hour : 9;
-        const sunRadius = 180;
-        const sunAngle = ((currentHour - 6) / 24) * Math.PI * 2;
-        const sunElev = Math.sin((currentHour / 24) * Math.PI * 2 - Math.PI * 0.5);
-        const sunY = Math.max(14, sunElev * 125 + 28);
-        const sunX = Math.cos(sunAngle) * sunRadius;
-        sunLight.position.set(sunX, sunY, 95);
+        // Bannerlord 24-hour Celestial Day/Night Lighting Cycle (Continuous Floating-Point Sun & Shadow Kinematics)
+        if (!isWorldEffectivelyPaused && timeScale > 0) {
+          smoothHour += (dt * timeScale) / (16.0 / 24.0);
+        }
+        const targetHour = typeof camp.hour === 'number' ? camp.hour : 9;
+        let hourDiff = targetHour - (smoothHour % 24);
+        if (hourDiff < -12) hourDiff += 24;
+        if (hourDiff > 12) hourDiff -= 24;
+        smoothHour += hourDiff * Math.min(1, dt * 2.5);
+        while (smoothHour < 0) smoothHour += 24;
+        while (smoothHour >= 24) smoothHour -= 24;
 
-        if (currentHour >= 5 && currentHour < 8) {
-          // Dawn / Sunrise: warm peach & rising mist
-          const dawnT = (currentHour - 5) / 3;
-          sunLight.color.setHex(0xffaa66);
-          sunLight.intensity = 0.65 + dawnT * 0.45;
-          hemiLight.color.setHex(0xb09885);
-          hemiLight.groundColor.setHex(0x282018);
-          hemiLight.intensity = 0.42;
-          rimLight.intensity = 0.25;
-          (skyColor as THREE.Color).setHex(0x243344);
-          if (scene.fog) (scene.fog as THREE.FogExp2).color.setHex(0x243344);
-        } else if (currentHour >= 8 && currentHour < 17) {
-          // Midday: crisp golden illumination, deep blue horizon
-          sunLight.color.setHex(0xfffaed);
-          sunLight.intensity = 1.45;
-          hemiLight.color.setHex(0xbcd4e6);
-          hemiLight.groundColor.setHex(0x3b3224);
-          hemiLight.intensity = 0.58;
-          rimLight.intensity = 0.45;
-          (skyColor as THREE.Color).setHex(0x1e384b);
-          if (scene.fog) (scene.fog as THREE.FogExp2).color.setHex(0x1e384b);
-        } else if (currentHour >= 17 && currentHour < 20) {
-          // Dusk / Golden Hour: deep amber-crimson rim
-          const duskT = (currentHour - 17) / 3;
-          sunLight.color.setHex(0xff7034);
-          sunLight.intensity = 1.25 - duskT * 0.65;
-          hemiLight.color.setHex(0xa06040);
-          hemiLight.groundColor.setHex(0x241510);
-          hemiLight.intensity = 0.36;
-          rimLight.intensity = 0.16;
-          (skyColor as THREE.Color).setHex(0x271a24);
-          if (scene.fog) (scene.fog as THREE.FogExp2).color.setHex(0x271a24);
-        } else {
-          // Deep Night: realistic atmospheric dark night with subtle silvery moon glint
-          sunLight.color.setHex(0x4a6a9b);
-          sunLight.intensity = 0.08;
-          hemiLight.color.setHex(0x121c29);
-          hemiLight.groundColor.setHex(0x05070a);
-          hemiLight.intensity = 0.07;
-          rimLight.intensity = 0.02;
-          (skyColor as THREE.Color).setHex(0x03060c);
-          if (scene.fog) (scene.fog as THREE.FogExp2).color.setHex(0x03060c);
+        const celestialPhase = (smoothHour / 24) * Math.PI * 2;
+        const sunAngle = celestialPhase - Math.PI * 0.5;
+        const sunElev = -Math.cos(celestialPhase); // -1 at 00:00, 0 at 06:00, +1 at 12:00, 0 at 18:00
+
+        const sunRadius = 180;
+        const sunY = Math.max(12, sunElev * 115 + 24);
+        const sunX = Math.cos(sunAngle) * sunRadius;
+        const sunZ = 95;
+        sunLight.position.set(sunX, sunY, sunZ);
+
+        // Continuous daylight factor (0 at deep night, 1 at peak midday)
+        const dayFactor = THREE.MathUtils.smoothstep(sunElev, -0.22, 0.22);
+        // Twilight / golden hour warmth factor (peaks around sunrise and sunset when sun is near horizon)
+        const twilightFactor = Math.exp(-Math.pow(sunElev - 0.03, 2) / 0.04);
+
+        // 1. Sun light color & intensity
+        _tempColorA.copy(_nightSunColor).lerp(_daySunColor, dayFactor);
+        _tempColorB.copy(_twilightSunColor);
+        sunLight.color.copy(_tempColorA).lerp(_tempColorB, twilightFactor * 0.75);
+        sunLight.intensity = THREE.MathUtils.lerp(0.18, 1.45, dayFactor) + twilightFactor * 0.15;
+
+        // 2. Hemisphere ambient light
+        _tempColorA.copy(_nightHemiSkyColor).lerp(_dayHemiSkyColor, dayFactor);
+        hemiLight.color.copy(_tempColorA).lerp(_twilightHemiSkyColor, twilightFactor * 0.65);
+
+        _tempColorA.copy(_nightHemiGroundColor).lerp(_dayHemiGroundColor, dayFactor);
+        hemiLight.groundColor.copy(_tempColorA).lerp(_twilightHemiGroundColor, twilightFactor * 0.65);
+        hemiLight.intensity = THREE.MathUtils.lerp(0.15, 0.58, dayFactor);
+
+        // 3. Rim light
+        rimLight.intensity = THREE.MathUtils.lerp(0.04, 0.45, dayFactor);
+
+        // 4. Sky background and Fog
+        _tempColorA.copy(_nightSkyFogColor).lerp(_daySkyFogColor, dayFactor);
+        (skyColor as THREE.Color).copy(_tempColorA).lerp(_twilightSkyFogColor, twilightFactor * 0.65);
+        if (scene.fog) {
+          (scene.fog as THREE.FogExp2).color.copy(skyColor as THREE.Color);
         }
 
-        // Disable real-time directional shadow pass at macro continental zoom (> 290m) to save GPU vertex bandwidth
+        // 5. Directional shadow pass: keep castShadow enabled up to zoom distance 290m
+        // Do NOT toggle castShadow off at night — shadow naturally fades with low sunlight intensity, avoiding GPU pipeline hitching/strobing!
         if (!isHeadless) {
-          const wantShadows = camZoomDist <= 290 && currentHour >= 5 && currentHour < 20;
+          const wantShadows = camZoomDist <= 290;
           if (sunLight.castShadow !== wantShadows) {
             sunLight.castShadow = wantShadows;
           }
@@ -3089,6 +3300,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         const besiegedIds = besiegedSettlementIdSet(camp);
         const showSiegeCamp = camZoomDist <= 320;
         const showSiegeDetails = camZoomDist <= 175;
+
+        const labelScale =
+          camZoomDist > 300
+            ? Number((1.0 - Math.min(0.20, ((camZoomDist - 300) / 450) * 0.20)).toFixed(2))
+            : 1.0;
 
         for (let i = 0; i < settlementLabelRecords.length; i++) {
           const rec = settlementLabelRecords[i];
@@ -3306,7 +3522,28 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
           if (rec.lastBesieged !== isBesieged) {
             rec.lastBesieged = isBesieged;
             if (rec.siegeBadgeEl) {
-              rec.siegeBadgeEl.style.display = isBesieged ? 'inline' : 'none';
+              if (isBesieged) {
+                const besiegerLord = camp.lords.find(
+                  (lord) => lord.order?.kind === 'SIEGE' && lord.order.targetSettlementId === s.id,
+                );
+                const bCount = besiegerLord
+                  ? Math.max(1, getTotalTroops(besiegerLord.roster) || besiegerLord.armySize)
+                  : 0;
+                rec.siegeBadgeEl.textContent = besiegerLord
+                  ? `🔥 KUŞATMA: ${besiegerLord.name} (${bCount})`
+                  : '🔥 KUŞATMA';
+                rec.siegeBadgeEl.style.display = 'inline-block';
+                if (rec.boxEl) {
+                  rec.boxEl.style.borderColor = '#ef4444';
+                  rec.boxEl.style.boxShadow = '0 0 12px rgba(239, 68, 68, 0.75)';
+                }
+              } else {
+                rec.siegeBadgeEl.style.display = 'none';
+                if (rec.boxEl) {
+                  rec.boxEl.style.borderColor = '';
+                  rec.boxEl.style.boxShadow = '';
+                }
+              }
             }
           }
 
@@ -3316,10 +3553,11 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
             rec.visible = true;
             rec.el.style.display = 'flex';
           }
-          if (rec.lastSx !== sx || rec.lastSy !== screenY) {
+          if (rec.lastSx !== sx || rec.lastSy !== screenY || rec.lastScale !== labelScale) {
             rec.lastSx = sx;
             rec.lastSy = screenY;
-            rec.el.style.transform = `translate3d(${sx}px, ${screenY}px, 0) translate(-50%, -100%)`;
+            rec.lastScale = labelScale;
+            rec.el.style.transform = `translate3d(${sx}px, ${screenY}px, 0) translate(-50%, -100%) scale(${labelScale})`;
           }
         }
 
@@ -3464,6 +3702,62 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         } else if (playerLabelVisible) {
           playerLabelVisible = false;
           playerPartyEl.style.display = 'none';
+        }
+
+        // Project Active AI-AI Battlefield Markers (Crossed Swords Billboards)
+        const activeBattleIds = new Set(activeMapBattles.map((b) => b.id));
+        for (const [bId, marker] of battleMarkers.entries()) {
+          if (!activeBattleIds.has(bId)) {
+            marker.element.remove();
+            battleMarkers.delete(bId);
+          }
+        }
+        for (const battle of activeMapBattles) {
+          let marker = battleMarkers.get(battle.id);
+          if (!marker) {
+            marker = createBattleMapMarker(battle, handleBattleMarkerClick);
+            labelOverlay.appendChild(marker.element);
+            battleMarkers.set(battle.id, marker);
+          }
+
+          // Bannerlord Fog of War: AI-AI battles are only visible if within player scouting/spotting range
+          const inSight =
+            camZoomDist <= 280 &&
+            isWithinSpottingRange(
+              playerOverworldX,
+              playerOverworldZ,
+              battle.x,
+              battle.z,
+              playerSpottingRange,
+            );
+
+          _projVec.set(marker.x, marker.y, marker.z).project(camera);
+          const onScreen =
+            _projVec.z >= -1 &&
+            _projVec.z <= 1 &&
+            Math.abs(_projVec.x) <= 1.05 &&
+            Math.abs(_projVec.y) <= 1.05;
+
+          if (!inSight || !onScreen) {
+            marker.element.style.display = 'none';
+          } else {
+            const nextHtml = `
+              <div style="display:flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;background:rgba(20,14,10,0.96);border:1px solid #f59e0b;box-shadow:0 0 14px rgba(245,158,11,0.5),0 4px 10px rgba(0,0,0,0.8);cursor:pointer;white-space:nowrap;">
+                <span style="font-size:13px;filter:drop-shadow(0 0 4px #f59e0b);">⚔️</span>
+                <span style="color:#fef08a;font-weight:700;font-size:10px;">${battle.attackerName} (${battle.attackerArmy})</span>
+                <span style="color:#ef4444;font-size:9px;font-weight:900;">VS</span>
+                <span style="color:#fef08a;font-weight:700;font-size:10px;">${battle.defenderName} (${battle.defenderArmy})</span>
+              </div>
+            `;
+            if (marker.lastHtml !== nextHtml) {
+              marker.lastHtml = nextHtml;
+              marker.element.innerHTML = nextHtml;
+            }
+            const mx = Math.round(((_projVec.x + 1) / 2) * cw);
+            const my = Math.round(((-_projVec.y + 1) / 2) * ch);
+            marker.element.style.display = 'flex';
+            marker.element.style.transform = `translate3d(${mx}px, ${my}px, 0) translate(-50%, -100%)`;
+          }
         }
 
         // Sync campaign HUD telemetry for bottom dock (throttled during active zoom to avoid React render contention)

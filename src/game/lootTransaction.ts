@@ -16,10 +16,13 @@
  */
 import {
   addInventoryStackQuantity,
+  calculateBattleCombatXp,
+  distributeCombatXpToTroopStacks,
   ensureBannerlordFoundation,
   getTroopDefinition,
   inventoryItemQuantity,
   previewDiscardDonation,
+  reconcileTroopStacks,
   transferInventoryQuantity,
   type DiscardPreview,
   type InventoryTransferResult,
@@ -58,6 +61,7 @@ export interface PendingBattleLoot {
   goldLoot: number;
   renownGain: number;
   prisonersGain: number;
+  combatXpEarned?: number;
   lootItems: InventoryItem[];
   isSiegeVictory: boolean;
   defeatedFaction: FactionId;
@@ -110,6 +114,16 @@ export function prepareBattleLoot(
   );
   const prisonersGain = Math.max(1, Math.floor(enemiesDefeated * 0.35));
 
+  let avgEnemyTier = 2.0;
+  if (enemyLord) {
+    avgEnemyTier = Math.max(2.5, Math.min(4.5, 2.0 + Math.min(2.5, enemyLord.armySize / 40)));
+  } else if (conqueredSettlementId) {
+    avgEnemyTier = 3.0;
+  } else {
+    avgEnemyTier = 1.8;
+  }
+  const combatXpEarned = calculateBattleCombatXp(enemiesDefeated, avgEnemyTier);
+
   const rolled = rollBattleLoot(state, {
     enemyFaction: defeatedFaction,
     defeated: enemiesDefeated,
@@ -125,6 +139,7 @@ export function prepareBattleLoot(
     goldLoot,
     renownGain,
     prisonersGain,
+    combatXpEarned,
     lootItems: rolled,
     isSiegeVictory: isSiege,
     defeatedFaction,
@@ -259,6 +274,7 @@ export interface CommitBattleLootResult {
   renownGained: number;
   prisonersGained: number;
   itemsKeptCount: number;
+  combatXpAwarded: number;
   discardXpAwarded: number;
   enemyLordFate?: 'CAPTURE' | 'RELEASE';
 }
@@ -358,9 +374,19 @@ export function commitBattleLoot(
     });
   }
 
-  // 5. Discard XP dağıtımı (solda kalan eşyalar)
+  // 1b. Zayiat sonrası hayatta kalan birlik yığınları
+  let nextTroopStacks = reconcileTroopStacks(state.troopStacks, nextRoster);
+
+  // 5. Muharebe Tecrübesi (Combat XP) dağıtımı
+  let combatXpAwarded = 0;
+  if ((pendingLoot.combatXpEarned ?? 0) > 0) {
+    const combatDist = distributeCombatXpToTroopStacks(nextTroopStacks, pendingLoot.combatXpEarned ?? 0);
+    nextTroopStacks = combatDist.nextStacks;
+    combatXpAwarded = combatDist.xpDistributed;
+  }
+
+  // 5b. Discard XP dağıtımı (solda kalan eşyalar)
   let discardXpAwarded = 0;
-  let nextTroopStacks = [...(state.troopStacks ?? [])];
   if (applyDiscard && leftoverLootItems.length > 0) {
     const preview = previewLootDiscard(state, leftoverLootItems);
     let xpLeft = preview.acceptedXp;
@@ -426,6 +452,7 @@ export function commitBattleLoot(
     renownGained: pendingLoot.renownGain,
     prisonersGained: pendingLoot.prisonersGain,
     itemsKeptCount,
+    combatXpAwarded,
     discardXpAwarded,
     enemyLordFate,
   };

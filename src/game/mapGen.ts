@@ -1150,10 +1150,10 @@ export function isSettlementLabelVisible(
   zoomDist: number,
 ): boolean {
   if (type === 'VILLAGE') {
-    return zoomDist <= 190;
+    return zoomDist <= 140;
   }
   if (type === 'CASTLE') {
-    return zoomDist <= 380;
+    return zoomDist <= 320;
   }
   return true;
 }

@@ -31,6 +31,7 @@ export type UiLayer =
   | 'inventory'
   | 'party'
   | 'market'
+  | 'clan'
   | 'kingdom'
   | 'dialogue'
   | 'settlement'
@@ -44,6 +45,7 @@ export const UI_LAYER_ORDER: readonly UiLayer[] = [
   'inventory',
   'party',
   'market',
+  'clan',
   'kingdom',
   'dialogue',
   'settlement',

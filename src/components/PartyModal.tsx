@@ -38,6 +38,10 @@ import {
 import { FACTION_INFO, calculateClanTier, getPlayerPartyHeadcount } from '../game/rules.ts';
 import { HeroMannequin, type HeroMannequinVisualOptions } from './HeroMannequin.tsx';
 import { deriveRigVisualOptionsFromEquipment } from '../game/characterRig.ts';
+import {
+  getTroopLoadoutForRole,
+  normalizeArsenalFactionId,
+} from '../game/factionTroopLoadouts.ts';
 
 interface PartyModalProps {
   campaign: CampaignState;
@@ -65,20 +69,18 @@ function romanNumeral(tier: number): string {
 }
 
 function deriveTroopVisuals(def: TroopDefinition): HeroMannequinVisualOptions {
+  const arsenalFaction = normalizeArsenalFactionId(def.culture);
   const faction = def.culture as FactionId;
   const color = FACTION_INFO[faction]?.color ?? '#b45309';
 
-  let weaponText = 'Thamaskene İmparatorluk Spathası (Kesici: 84)';
-  if (def.battleClass === 'archer') weaponText = 'Bozkır Refleks Yayı (Yay)';
-  else if (def.battleClass === 'cavalry') weaponText = 'Ağır Kontos Kargısı (Mızrak)';
-  else if (def.battleClass === 'horseArcher') weaponText = 'Bozkır Refleks Yayı ve At (Atlı Okçu)';
+  const role: 'INFANTRY' | 'ARCHERS' | 'CAVALRY' =
+    def.battleClass === 'archer'
+      ? 'ARCHERS'
+      : def.battleClass === 'cavalry' || def.battleClass === 'horseArcher' || def.isMounted
+        ? 'CAVALRY'
+        : 'INFANTRY';
 
-  const armorText =
-    def.tier >= 4
-      ? 'Ağır Katafrakt Zırhı (+64 Gövde Zırhı)'
-      : def.tier >= 3
-        ? 'Zincir Zırhlı Süvari Yeleği (+40 Gövde)'
-        : 'Deri Zırh (+22 Gövde)';
+  const loadout = getTroopLoadoutForRole(arsenalFaction, role, def.tier);
 
   const helmetText =
     def.tier >= 4
@@ -90,19 +92,27 @@ function deriveTroopVisuals(def: TroopDefinition): HeroMannequinVisualOptions {
   const syntheticEquipment = {
     HEAD: helmetText,
     SHOULDER: def.tier >= 4 ? 'Pullu Omuzluk' : 'Basit Pelerin',
-    BODY: armorText,
+    BODY: def.tier >= 4 ? 'Ağır Katafrakt Zırhı' : def.tier >= 3 ? 'Zincir Zırhlı Süvari Yeleği' : 'Deri Zırh',
     GLOVES: 'Deri Eldiven',
     LEG: def.tier >= 4 ? 'Çelik Çizme' : 'Deri Bot',
     MOUNT: def.isMounted ? 'Savaş Küheylanı' : 'Yok',
     HARNESS: def.isMounted && def.tier >= 4 ? 'Pullu At Zırhı' : 'Yok',
     BANNER: 'Sancak',
-    WEAPON1: weaponText,
-    WEAPON2: def.battleClass === 'archer' || def.battleClass === 'horseArcher' ? 'Ok Sadağı' : 'Yok',
+    WEAPON1: loadout.primaryWeaponId ?? 'Kılıç',
+    WEAPON2: loadout.shieldId ?? (role === 'ARCHERS' ? 'Ok Sadağı' : 'Yok'),
     WEAPON3: 'Yok',
     WEAPON4: 'Yok',
   };
 
-  return deriveRigVisualOptionsFromEquipment(syntheticEquipment, color);
+  const baseOpts = deriveRigVisualOptionsFromEquipment(syntheticEquipment, color);
+  return {
+    ...baseOpts,
+    factionWeaponId: loadout.primaryWeaponId,
+    factionShieldId: loadout.shieldId ?? undefined,
+    factionArmorId: loadout.armorId,
+    factionHorseId: def.isMounted ? (loadout.horseId ?? undefined) : undefined,
+    factionQuality: loadout.defaultQuality,
+  };
 }
 
 export const PartyModal: React.FC<PartyModalProps> = ({
@@ -115,6 +125,7 @@ export const PartyModal: React.FC<PartyModalProps> = ({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [hoveredTroopId, setHoveredTroopId] = useState<string | null>(null);
   const [confirmExecuteLordId, setConfirmExecuteLordId] = useState<string | null>(null);
+  const [previewUpgradeTargetId, setPreviewUpgradeTargetId] = useState<string | null>(null);
 
   // Garnizon taslağı (yerleşim varsa)
   const [garrisonStacks, setGarrisonStacks] = useState<TroopStack[]>(() => {
@@ -204,8 +215,14 @@ export const PartyModal: React.FC<PartyModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  // Seçili varlığın 3B manken verisi
+  // Seçili varlığın veya önizlenen terfinin 3B manken verisi
   const visualOptions = useMemo<HeroMannequinVisualOptions>(() => {
+    if (previewUpgradeTargetId) {
+      const previewDef = getTroopDefinition(previewUpgradeTargetId);
+      if (previewDef) {
+        return deriveTroopVisuals(previewDef);
+      }
+    }
     if (selectedEntity.kind === 'HERO') {
       const activeSet = selectedEntity.hero.activeEquipmentSet ?? 'BATTLE';
       const eqMap = selectedEntity.hero.equipment?.[activeSet] ?? {};
@@ -233,9 +250,13 @@ export const PartyModal: React.FC<PartyModalProps> = ({
       return selectedEntity.lord.morphDNA ? { ...baseOpts, morphDNA: selectedEntity.lord.morphDNA } : baseOpts;
     }
     return deriveTroopVisuals(selectedEntity.definition);
-  }, [selectedEntity]);
+  }, [selectedEntity, previewUpgradeTargetId]);
 
   const isSelectedMounted = useMemo(() => {
+    if (previewUpgradeTargetId) {
+      const previewDef = getTroopDefinition(previewUpgradeTargetId);
+      if (previewDef) return previewDef.isMounted;
+    }
     if (selectedEntity.kind === 'HERO') {
       const activeSet = selectedEntity.hero.activeEquipmentSet ?? 'BATTLE';
       return Boolean(selectedEntity.hero.equipment?.[activeSet]?.MOUNT);
@@ -244,7 +265,7 @@ export const PartyModal: React.FC<PartyModalProps> = ({
       return false;
     }
     return selectedEntity.definition.isMounted;
-  }, [selectedEntity]);
+  }, [selectedEntity, previewUpgradeTargetId]);
 
   // Terfi Seçenekleri
   const upgradeOptions = useMemo<TroopUpgradeOption[]>(() => {
@@ -260,6 +281,7 @@ export const PartyModal: React.FC<PartyModalProps> = ({
       return;
     }
     setDraftCampaign(res.nextState);
+    setPreviewUpgradeTargetId(null);
     const targetDef = getTroopDefinition(targetTroopId);
     setFeedback(`+${count} × ${targetDef?.name ?? targetTroopId} terfi ettirildi (-${res.goldSpent} Dinar).`);
 
@@ -560,35 +582,51 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                 className="absolute inset-0"
               />
 
-              {/* Seçili Varlık Başlık Rozeti */}
+              {/* Seçili Varlık veya Terfi Önizleme Başlık Rozeti */}
               <div className="absolute top-3 left-3 bg-[#18110b]/90 backdrop-blur-sm px-3 py-2 rounded border border-[#855e2d]/40 shadow-lg max-w-[280px]">
-                <div className="text-[10px] text-[#d4af37] uppercase tracking-wider font-semibold">
-                  {selectedEntity.kind === 'HERO'
-                    ? selectedEntity.hero.kind === 'PLAYER'
-                      ? 'Parti Lideri'
-                      : 'Yoldaş / Kahraman'
-                    : selectedEntity.kind === 'CAPTIVE_LORD'
-                      ? 'Zincirli Tutsak Komutan'
-                      : selectedEntity.kind === 'PRISONER'
-                        ? 'Tutsak Asker'
-                        : 'Muvazzaf Asker'}
-                </div>
-                <div className="text-base font-bold text-white truncate">
-                  {selectedEntity.kind === 'HERO'
-                    ? selectedEntity.hero.name
-                    : selectedEntity.kind === 'CAPTIVE_LORD'
-                      ? `${selectedEntity.lord.title} ${selectedEntity.lord.name}`
-                      : selectedEntity.definition.name}
-                </div>
-                {selectedEntity.kind === 'CAPTIVE_LORD' ? (
-                  <div className="text-xs text-[#a89274]">
-                    {FACTION_INFO[selectedEntity.lord.faction]?.name ?? selectedEntity.lord.faction} · Esaret: {selectedEntity.lord.daysCaptive ?? 0} Gün
-                  </div>
-                ) : selectedEntity.kind !== 'HERO' ? (
-                  <div className="text-xs text-[#a89274]">
-                    Kademe {romanNumeral(selectedEntity.definition.tier)} · {FACTION_INFO[selectedEntity.definition.culture]?.name}
-                  </div>
-                ) : null}
+                {previewUpgradeTargetId ? (
+                  <>
+                    <div className="text-[10px] text-amber-300 uppercase tracking-wider font-semibold">
+                      Terfi Hedefi
+                    </div>
+                    <div className="text-base font-bold text-amber-100 truncate">
+                      {getTroopDefinition(previewUpgradeTargetId)?.name}
+                    </div>
+                    <div className="text-xs text-amber-400 font-mono">
+                      Kademe {romanNumeral(getTroopDefinition(previewUpgradeTargetId)?.tier ?? 1)} · {FACTION_INFO[getTroopDefinition(previewUpgradeTargetId)?.culture ?? 'vlandia']?.name}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-[10px] text-[#d4af37] uppercase tracking-wider font-semibold">
+                      {selectedEntity.kind === 'HERO'
+                        ? selectedEntity.hero.kind === 'PLAYER'
+                          ? 'Parti Lideri'
+                          : 'Yoldaş / Kahraman'
+                        : selectedEntity.kind === 'CAPTIVE_LORD'
+                          ? 'Zincirli Tutsak Komutan'
+                          : selectedEntity.kind === 'PRISONER'
+                            ? 'Tutsak Asker'
+                            : 'Muvazzaf Asker'}
+                    </div>
+                    <div className="text-base font-bold text-white truncate">
+                      {selectedEntity.kind === 'HERO'
+                        ? selectedEntity.hero.name
+                        : selectedEntity.kind === 'CAPTIVE_LORD'
+                          ? `${selectedEntity.lord.title} ${selectedEntity.lord.name}`
+                          : selectedEntity.definition.name}
+                    </div>
+                    {selectedEntity.kind === 'CAPTIVE_LORD' ? (
+                      <div className="text-xs text-[#a89274]">
+                        {FACTION_INFO[selectedEntity.lord.faction]?.name ?? selectedEntity.lord.faction} · Esaret: {selectedEntity.lord.daysCaptive ?? 0} Gün
+                      </div>
+                    ) : selectedEntity.kind !== 'HERO' ? (
+                      <div className="text-xs text-[#a89274]">
+                        Kademe {romanNumeral(selectedEntity.definition.tier)} · {FACTION_INFO[selectedEntity.definition.culture]?.name}
+                      </div>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
 
@@ -648,60 +686,75 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                       </p>
                     ) : (
                       <div className="space-y-1.5">
-                        {upgradeOptions.map((opt) => (
-                          <div
-                            key={opt.targetDefinition.id}
-                            className="flex items-center justify-between p-2 rounded bg-[#241b12] border border-[#855e2d]/30"
-                          >
-                            <div>
-                              <div className="font-bold text-white flex items-center gap-2">
-                                {opt.targetDefinition.name}
-                                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#382a1c] text-[#d4af37]">
-                                  Kademe {romanNumeral(opt.targetDefinition.tier)}
-                                </span>
-                              </div>
-                              <div className="text-[10px] text-[#a89274] flex items-center gap-2">
-                                <span>Ücret: {opt.goldCost} Dinar</span>
-                                {opt.horseRequirement !== 'NONE' && (
-                                  <span className={opt.hasHorse ? 'text-emerald-400' : 'text-red-400 font-bold'}>
-                                    🐎 {opt.horseRequirement === 'WAR_HORSE' ? 'Savaş Atı' : 'Binek Atı'}
+                        {upgradeOptions.map((opt) => {
+                          const isPreviewing = previewUpgradeTargetId === opt.targetDefinition.id;
+                          return (
+                            <div
+                              key={opt.targetDefinition.id}
+                              data-testid={`upgrade-option-${opt.targetDefinition.id}`}
+                              onMouseEnter={() => setPreviewUpgradeTargetId(opt.targetDefinition.id)}
+                              onMouseLeave={() => setPreviewUpgradeTargetId(null)}
+                              onClick={() =>
+                                setPreviewUpgradeTargetId((cur) =>
+                                  cur === opt.targetDefinition.id ? null : opt.targetDefinition.id,
+                                )
+                              }
+                              className={`flex items-center justify-between p-2 rounded transition-all border cursor-pointer ${
+                                isPreviewing
+                                  ? 'bg-[#3b2a1a] border-amber-400 ring-1 ring-amber-400/50 shadow-md'
+                                  : 'bg-[#241b12] border-[#855e2d]/30 hover:border-[#855e2d]/60'
+                              }`}
+                            >
+                              <div className="flex-1">
+                                <div className="font-bold text-white flex items-center gap-2">
+                                  {opt.targetDefinition.name}
+                                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#382a1c] text-[#d4af37]">
+                                    Kademe {romanNumeral(opt.targetDefinition.tier)}
                                   </span>
+                                </div>
+                                <div className="text-[10px] text-[#a89274] flex items-center gap-2 mt-0.5">
+                                  <span>Ücret: {opt.goldCost} Dinar</span>
+                                  {opt.horseRequirement !== 'NONE' && (
+                                    <span className={opt.hasHorse ? 'text-emerald-400' : 'text-red-400 font-bold'}>
+                                      🐎 {opt.horseRequirement === 'WAR_HORSE' ? 'Savaş Atı' : 'Binek Atı'}
+                                    </span>
+                                  )}
+                                </div>
+                                {!opt.canUpgrade && opt.blockedReason && (
+                                  <div className="text-[10px] text-amber-400 font-medium mt-0.5">
+                                    {opt.blockedReason}
+                                  </div>
                                 )}
                               </div>
-                              {!opt.canUpgrade && opt.blockedReason && (
-                                <div className="text-[10px] text-amber-400 font-medium">
-                                  {opt.blockedReason}
-                                </div>
-                              )}
-                            </div>
 
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                disabled={!opt.canUpgrade}
-                                onClick={() => handleUpgradeAction(opt.targetDefinition.id, 1)}
-                                className={`px-2.5 py-1 rounded text-xs font-bold transition-colors ${
-                                  opt.canUpgrade
-                                    ? 'bg-[#d97706] hover:bg-[#b45309] text-white shadow'
-                                    : 'bg-[#2a2016] text-[#6b5842] cursor-not-allowed'
-                                }`}
-                              >
-                                Terfi Et (+1)
-                              </button>
-                              {opt.readyCount > 1 && (
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                                 <button
                                   type="button"
                                   disabled={!opt.canUpgrade}
-                                  onClick={() => handleUpgradeAction(opt.targetDefinition.id, opt.readyCount)}
-                                  className="px-2 py-1 rounded text-xs font-bold bg-[#78350f] hover:bg-[#92400e] text-[#fde68a]"
-                                  title={`Mevcut ${opt.readyCount} askerin tamamını terfi ettir`}
+                                  onClick={() => handleUpgradeAction(opt.targetDefinition.id, 1)}
+                                  className={`px-2.5 py-1 rounded text-xs font-bold transition-colors ${
+                                    opt.canUpgrade
+                                      ? 'bg-[#d97706] hover:bg-[#b45309] text-white shadow'
+                                      : 'bg-[#2a2016] text-[#6b5842] cursor-not-allowed'
+                                  }`}
                                 >
-                                  Tümü ({opt.readyCount})
+                                  ⮝ Terfi Et (+1)
                                 </button>
-                              )}
+                                {opt.readyCount > 1 && (
+                                  <button
+                                    type="button"
+                                    disabled={!opt.canUpgrade}
+                                    onClick={() => handleUpgradeAction(opt.targetDefinition.id, opt.readyCount)}
+                                    className="px-2 py-1 rounded text-xs font-bold bg-[#78350f] hover:bg-[#92400e] text-[#fde68a]"
+                                    title={`Mevcut ${opt.readyCount} askerin tamamını terfi ettir`}
+                                  >
+                                    Tümü ({opt.readyCount})
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

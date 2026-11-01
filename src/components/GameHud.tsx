@@ -67,6 +67,7 @@ interface GameHudProps {
   onOpenEncyclopedia?: () => void;
   onOpenPartyModal?: () => void;
   onOpenCharacterModal?: () => void;
+  onOpenClanModal?: () => void;
   onOpenArmyModal?: () => void;
 }
 
@@ -131,6 +132,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   onOpenEncyclopedia,
   onOpenPartyModal,
   onOpenCharacterModal,
+  onOpenClanModal,
   onOpenArmyModal,
 }) => {
   const [dockCollapsed, setDockCollapsed] = useState(false);
@@ -190,7 +192,11 @@ export const GameHud: React.FC<GameHudProps> = ({
       } else if (e.code === 'KeyL') {
         // Bannerlord'da L klan ekranını açar.
         e.preventDefault();
-        onOpenKingdomModal?.();
+        if (onOpenClanModal) {
+          onOpenClanModal();
+        } else if (onOpenKingdomModal) {
+          onOpenKingdomModal();
+        }
       } else if (e.code === 'KeyJ') {
         // Bannerlord'da J görev günlüğünü açar.
         e.preventDefault();
@@ -1199,12 +1205,12 @@ export const GameHud: React.FC<GameHudProps> = ({
                     </button>
 
                     {/* #5 Klan [L] */}
-                    {onOpenKingdomModal && (
+                    {(onOpenClanModal || onOpenKingdomModal) && (
                       <button
                         type="button"
                         data-testid="hud-open-clan"
                         title="Klan Menüsü (L) — Yoldaşlar, aile üyeleri, mülkler ve atölyeler"
-                        onClick={onOpenKingdomModal}
+                        onClick={onOpenClanModal || onOpenKingdomModal}
                         className="relative w-10 h-10 rounded-full bg-gradient-to-b from-[#2a2217] to-[#14100b] hover:from-[#3a2f20] hover:to-[#1e1811] border border-[#c6a15b]/60 hover:border-[#fbbf24] text-[#fde68a] flex items-center justify-center transition shadow-md group"
                       >
                         <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current" aria-hidden="true">

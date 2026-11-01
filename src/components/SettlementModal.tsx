@@ -841,7 +841,9 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                   {settlement.name}
                 </h2>
                 <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-[#fde68a]">
-                  <span className="text-sm">👑</span>
+                  <svg className="w-3.5 h-3.5 text-[#fbbf24] shrink-0 inline-block" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M5 19h14a1 1 0 0 0 1-1v-1a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1zm14.5-9.5-3 4.5-4.5-6-4.5 6-3-4.5L3 17h18l-1.5-7.5z" />
+                  </svg>
                   <span className="text-[#a89b84]">Sahibi:</span>
                   <span className="font-bold text-[#fef08a]">
                     {ownerDetails.heroTitle ? `${ownerDetails.heroTitle} ` : ''}
@@ -2444,7 +2446,12 @@ export const SettlementModal: React.FC<SettlementModalProps> = ({
                         {/* BOUND VILLAGE RAW MATERIAL SUPPLY BAR */}
                         <div className="p-2.5 rounded bg-[#1c1812] border border-[#8b6b36]/40">
                           <div className="text-[11px] font-bold text-[#fef08a] mb-1 flex items-center justify-between">
-                            <span>🌾 Bağlı Köylerin Hammadde Tedariki</span>
+                            <span className="flex items-center gap-1.5">
+                              <svg className="w-3.5 h-3.5 text-[#fbbf24] shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                              </svg>
+                              Bağlı Köylerin Hammadde Tedariki
+                            </span>
                             <span className="text-[10px] font-normal text-[#c6a15b]">
                               Yerel Tedarik Primi: <span className="text-green-400 font-bold">+35 D/gün</span>
                             </span>

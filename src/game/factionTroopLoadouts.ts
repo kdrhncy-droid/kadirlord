@@ -1236,6 +1236,108 @@ export function getTroopLoadoutsByFaction(
   return FACTION_TROOP_LOADOUTS.filter((l) => l.faction === faction);
 }
 
+export function normalizeArsenalFactionId(faction?: string): ArsenalFactionId {
+  const f = (faction || 'empire').toLowerCase();
+  if (f.includes('vlan')) return 'vlandia';
+  if (f.includes('sturg')) return 'sturgia';
+  if (f.includes('khuz')) return 'khuzait';
+  if (f.includes('ase')) return 'aserai';
+  if (f.includes('bat')) return 'battania';
+  return 'empire';
+}
+
+export function getTroopLoadoutForRole(
+  factionId?: string,
+  division: 'INFANTRY' | 'ARCHERS' | 'CAVALRY' = 'INFANTRY',
+  tier = 3,
+): FactionTroopRankLoadout {
+  const fac = normalizeArsenalFactionId(factionId);
+  const troops = getTroopLoadoutsByFaction(fac);
+
+  if (division === 'CAVALRY') {
+    const cav =
+      troops.find((t) => t.horseId && (tier >= 5 ? t.tierNumber >= 5 : true)) ||
+      troops.find((t) => t.horseId) ||
+      troops.find((t) => t.rankStage === 'T6_CHAMPION');
+    if (cav) return cav;
+  } else if (division === 'ARCHERS') {
+    const archer =
+      troops.find(
+        (t) =>
+          (t.roleTr.includes('Okçu') ||
+            t.roleTr.includes('Menzilli') ||
+            t.roleTr.includes('Arbalet')) &&
+          (tier >= 4 ? t.tierNumber >= 4 : true),
+      ) ||
+      troops.find(
+        (t) =>
+          t.roleTr.includes('Okçu') ||
+          t.roleTr.includes('Menzilli') ||
+          t.roleTr.includes('Arbalet'),
+      );
+    if (archer) return archer;
+  }
+
+  const targetStage: TroopRankStageId =
+    tier <= 1
+      ? 'T1_RECRUIT'
+      : tier === 2
+        ? 'T2_MILITIA'
+        : tier === 3
+          ? 'T3_REGULAR'
+          : tier === 4
+            ? 'T4_VETERAN'
+            : tier === 5
+              ? 'T5_ELITE'
+              : 'T6_CHAMPION';
+
+  const inf =
+    troops.find((t) => t.rankStage === targetStage && !t.horseId) ||
+    troops.find((t) => !t.horseId && t.tierNumber === tier) ||
+    troops.find((t) => t.rankStage === 'T3_REGULAR') ||
+    troops[0];
+
+  return inf;
+}
+
+export function getLordLoadout(factionId?: string, isRuler = false): FactionTroopRankLoadout {
+  const fac = normalizeArsenalFactionId(factionId);
+  const stage: TroopRankStageId = isRuler ? 'FACTION_RULER' : 'FACTION_LORD';
+  const found = FACTION_TROOP_LOADOUTS.find((l) => l.faction === fac && l.rankStage === stage);
+  if (found) return found;
+  return (
+    FACTION_TROOP_LOADOUTS.find((l) => l.faction === fac && l.rankStage === 'FACTION_LORD') ||
+    FACTION_TROOP_LOADOUTS[0]
+  );
+}
+
+export function findArsenalWeaponByTextOrId(str?: string): FactionWeaponDef | undefined {
+  if (!str) return undefined;
+  const cleanId = str.startsWith('mkt_') ? str.slice(4) : str;
+  const byId = getArsenalWeaponById(cleanId) || getArsenalWeaponById(str);
+  if (byId) return byId;
+  const lower = str.toLowerCase();
+  return FACTION_WEAPONS.find((w) => w.nameTr.toLowerCase() === lower || lower.includes(w.nameTr.toLowerCase()));
+}
+
+export function findArsenalArmorByTextOrId(str?: string): FactionArmorDef | undefined {
+  if (!str) return undefined;
+  const cleanId = str.startsWith('mkt_') ? str.slice(4) : str;
+  const byId = getArsenalArmorById(cleanId) || getArsenalArmorById(str);
+  if (byId) return byId;
+  const lower = str.toLowerCase();
+  return FACTION_ARMORS.find((a) => a.nameTr.toLowerCase() === lower || lower.includes(a.nameTr.toLowerCase()));
+}
+
+export function findArsenalHorseByTextOrId(str?: string): FactionHorseDef | undefined {
+  if (!str) return undefined;
+  const cleanId = str.startsWith('mkt_') ? str.slice(4) : str;
+  const byId = getArsenalHorseById(cleanId) || getArsenalHorseById(str);
+  if (byId) return byId;
+  const lower = str.toLowerCase();
+  return FACTION_HORSES.find((h) => h.nameTr.toLowerCase() === lower || lower.includes(h.nameTr.toLowerCase()));
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    3. PAZAR YERİ (MARKETPLACE) ENTEGRASYON KÖPRÜSÜ
    ═══════════════════════════════════════════════════════════════════════ */

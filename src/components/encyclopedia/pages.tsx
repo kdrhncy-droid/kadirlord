@@ -562,7 +562,9 @@ export const SettlementDetailPage: React.FC<PageProps & { settlementId?: string 
 
         {settlement.type === 'VILLAGE' && (
           <div className="rounded border border-[#c6a15b]/30 bg-[#251b10]/70 p-2.5 mb-3 flex items-start gap-2.5 text-[11px] text-[#fde68a]">
-            <span className="text-base shrink-0">🌾</span>
+            <svg className="w-4 h-4 text-[#fbbf24] shrink-0 mt-0.5" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+            </svg>
             <div className="leading-relaxed">
               <span className="font-bold text-[#fef08a]">Bannerlord Mülkiyet Kuralı:</span> Köyler bağımsız alınıp verilmez. Bu köy, bağlı olduğu{' '}
               <strong className="text-[#f8f0df]">{owner.boundParentName || 'merkez yerleşkenin'}</strong> mülk sahibi olan{' '}

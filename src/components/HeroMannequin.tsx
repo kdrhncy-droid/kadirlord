@@ -10,6 +10,10 @@ import {
   updateRigAnimation,
   updateWarHorseAnimation,
 } from '../game/characterRig.ts';
+import {
+  buildFactionWarHorseRig,
+  getArsenalHorseById,
+} from '../armory/FactionArsenal.ts';
 
 export type HeroMannequinVisualOptions = ReturnType<typeof deriveRigVisualOptionsFromEquipment>;
 
@@ -31,6 +35,17 @@ interface HeroMannequinProps {
  * Bu sayede onlarca kez eşya alınıp satılsa bile tarayıcının WebGL context
  * havuzu asla tükenmez ve beyaz ekran çökmesi oluşmaz.
  */
+function makeMannequinHorse(visualOptions: HeroMannequinVisualOptions): WarHorseRig {
+  if (visualOptions.factionHorseId) {
+    const def = getArsenalHorseById(visualOptions.factionHorseId);
+    if (def) return buildFactionWarHorseRig(def, 'STANDARD');
+  }
+  return createWarHorseRig({
+    factionColor: visualOptions.factionColor,
+    armoredBarding: true,
+  });
+}
+
 export const HeroMannequin: React.FC<HeroMannequinProps> = ({
   visualOptions,
   showMount = false,
@@ -119,12 +134,7 @@ export const HeroMannequin: React.FC<HeroMannequinProps> = ({
     stage.add(heroRig.root);
     heroRigRef.current = heroRig;
 
-    const horseRig = showMount
-      ? createWarHorseRig({
-          factionColor: visualOptions.factionColor,
-          armoredBarding: true,
-        })
-      : null;
+    const horseRig = showMount ? makeMannequinHorse(visualOptions) : null;
     if (horseRig) {
       horseRig.root.position.set(0.68, 0, -0.22);
       horseRig.root.rotation.y = -0.72;
@@ -134,12 +144,15 @@ export const HeroMannequin: React.FC<HeroMannequinProps> = ({
     }
 
     let animationFrameId = 0;
-    const clock = new THREE.Clock();
+    let lastTime = performance.now();
+    let elapsed = 0;
     const renderLoop = () => {
       animationFrameId = requestAnimationFrame(renderLoop);
       if (isContextLost) return;
-      const delta = clock.getDelta();
-      const elapsed = clock.getElapsedTime();
+      const now = performance.now();
+      const delta = Math.min(0.1, Math.max(0.001, (now - lastTime) / 1000));
+      lastTime = now;
+      elapsed += delta;
       if (!draggingRef.current) rotationRef.current += delta * 0.25;
       stage.rotation.y = rotationRef.current;
       if (heroRigRef.current) {
@@ -224,10 +237,7 @@ export const HeroMannequin: React.FC<HeroMannequinProps> = ({
     heroRig.root.position.x = showMount ? -0.68 : 0;
 
     if (showMount && !horseRigRef.current) {
-      const horseRig = createWarHorseRig({
-        factionColor: visualOptions.factionColor,
-        armoredBarding: true,
-      });
+      const horseRig = makeMannequinHorse(visualOptions);
       horseRig.root.position.set(0.68, 0, -0.22);
       horseRig.root.rotation.y = -0.72;
       horseRig.root.scale.setScalar(0.72);
@@ -237,7 +247,7 @@ export const HeroMannequin: React.FC<HeroMannequinProps> = ({
       stage.remove(horseRigRef.current.root);
       horseRigRef.current = null;
     }
-  }, [showMount, visualOptions.factionColor]);
+  }, [showMount, visualOptions.factionColor, visualOptions.factionHorseId]);
 
   return <div ref={mountRef} className={className} data-testid={testId} aria-hidden="true" />;
 };

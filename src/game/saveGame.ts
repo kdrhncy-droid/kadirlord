@@ -8,7 +8,7 @@
  * Kural: bozuk/eski/eksik kayıt **asla çökme sebebi olmaz**; `readSave` sessizce
  * `null` döner ve oyun yeni sefer açar.
  */
-import type { CampaignState } from './rules';
+import { buildCanonicalCalradiaSettlements, type CampaignState } from './rules';
 import type { KingdomMacroState } from './kingdomSystem';
 import { ensureWorld } from './worldSim';
 import { ensureNotables } from './notables';
@@ -129,20 +129,40 @@ export function parseSave(raw: string | null | undefined): SaveData | null {
   if (version < MIN_SUPPORTED_VERSION || version > SAVE_VERSION) return null;
   if (!isValidCampaign(parsed.campaign)) return null;
   if (!isValidMacroState(parsed.macroState)) return null;
-  // Göç: dünya durumu ve ileri gelenler eksikse tamamlanır (sürümden bağımsız,
-  // çünkü elle düzenlenmiş bir kayıt da eksik alanla gelebilir).
+  // Göç: dünya durumu ve ileri gelenler eksikse tamamlanır
   const world = ensureWorld(parsed.campaign);
-  const settlements = ensureNotables(parsed.campaign.settlements, world.seed);
-  const needsWorld = version < 2 || !parsed.campaign.world;
-  const needsNotables = settlements !== parsed.campaign.settlements;
-  const campaignWithWorld: CampaignState =
-    needsWorld || needsNotables
-      ? {
-          ...parsed.campaign,
-          ...(needsWorld ? { world } : {}),
-          ...(needsNotables ? { settlements } : {}),
-        }
-      : parsed.campaign;
+  const baseSettlements = ensureNotables(parsed.campaign.settlements, world.seed);
+
+  // Kanonik harita senkronizasyonu: Eski kayıtlardaki yerleşim koordinatlarını (x, z)
+  // daima güncel kanonik kurallarla eşitler ve eksik yerleşimleri tamamlar.
+  // Bu sayede eski save dosyaları haritayı asla bozamaz!
+  const canonicalList = buildCanonicalCalradiaSettlements();
+  const canonicalMap = new Map(canonicalList.map((c) => [c.id, c]));
+  const canonicalByName = new Map(canonicalList.map((c) => [c.name, c]));
+
+  const settlements = baseSettlements.map((s) => {
+    const canonical = canonicalMap.get(s.id) ?? canonicalByName.get(s.name);
+    if (!canonical) return s;
+    return {
+      ...s,
+      x: canonical.x,
+      z: canonical.z,
+      boundSettlementId: canonical.boundSettlementId ?? s.boundSettlementId,
+      boundSettlementName: canonical.boundSettlementName ?? s.boundSettlementName,
+    };
+  });
+  const existingIds = new Set(settlements.map((s) => s.id));
+  for (const c of canonicalList) {
+    if (!existingIds.has(c.id)) {
+      settlements.push({ ...c });
+    }
+  }
+
+  const campaignWithWorld: CampaignState = {
+    ...parsed.campaign,
+    world,
+    settlements,
+  };
   const migratedCampaign = ensureBannerlordFoundation(campaignWithWorld);
   const metHeroIds = Array.isArray(parsed.metHeroIds)
     ? parsed.metHeroIds.filter((id): id is string => typeof id === 'string')
