@@ -153,6 +153,51 @@ const PATHS: Record<ItemIconKey, React.ReactNode> = {
       <circle cx="16" cy="14" r="1" />
     </>
   ),
+  butter: (
+    <>
+      <rect x="4" y="9" width="16" height="9" rx="1.5" />
+      <path d="M4 13h16" />
+      <path d="M7 6h8l2 3H5l2-3z" />
+    </>
+  ),
+  grapes: (
+    <>
+      <path d="M12 3v3" />
+      <path d="M12 4c2-2 5-1 6 1" />
+      <circle cx="9" cy="8" r="2" />
+      <circle cx="15" cy="8" r="2" />
+      <circle cx="12" cy="11" r="2" />
+      <circle cx="8" cy="13" r="2" />
+      <circle cx="16" cy="13" r="2" />
+      <circle cx="10" cy="16" r="2" />
+      <circle cx="14" cy="16" r="2" />
+      <circle cx="12" cy="19" r="1.8" />
+    </>
+  ),
+  olives: (
+    <>
+      <ellipse cx="9" cy="13" rx="4" ry="5" transform="rotate(-15 9 13)" />
+      <ellipse cx="15" cy="12" rx="4" ry="5" transform="rotate(20 15 12)" />
+      <path d="M9 8c0-3 3-5 6-5" />
+      <path d="M12 5c2-2 5-2 7 0" />
+    </>
+  ),
+  beer: (
+    <>
+      <rect x="5" y="7" width="10" height="13" rx="2" />
+      <path d="M15 10h3a2 2 0 012 2v3a2 2 0 01-2 2h-3" />
+      <path d="M5 7c0-2 2-3 5-3s5 1 5 3" />
+      <path d="M8 10v6M12 10v6" />
+    </>
+  ),
+  dates: (
+    <>
+      <ellipse cx="8" cy="10" rx="3" ry="4.5" transform="rotate(-20 8 10)" />
+      <ellipse cx="14" cy="9" rx="3" ry="4.5" transform="rotate(15 14 9)" />
+      <ellipse cx="11" cy="16" rx="3" ry="4.5" transform="rotate(5 11 16)" />
+      <path d="M11 4v3" />
+    </>
+  ),
   oil: (
     <>
       <path d="M9 3h6v3l2 4v10H7V10l2-4V3z" />

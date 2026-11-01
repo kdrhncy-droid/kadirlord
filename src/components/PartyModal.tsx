@@ -1016,13 +1016,19 @@ export const PartyModal: React.FC<PartyModalProps> = ({
                           </div>
                         </div>
 
-                        {/* XP İlerleme Çubuğu */}
+                        {/* XP İlerleme Çubuğu ve Sayısal Gösterge */}
                         {def.upgrades.length > 0 && (
-                          <div className="mt-1.5 w-full bg-[#120e0a] h-1 rounded-full overflow-hidden">
-                            <div
-                              className="bg-gradient-to-r from-[#d97706] to-[#fde68a] h-full transition-all duration-300"
-                              style={{ width: `${xpProgress}%` }}
-                            />
+                          <div className="mt-1.5 space-y-0.5">
+                            <div className="flex items-center justify-between text-[9px] font-mono text-[#a89274]">
+                              <span>{Math.floor(stack.xp ?? 0)} / {stack.count * def.upgradeXp} XP</span>
+                              <span className={readyCount > 0 ? 'text-[#fbbf24] font-bold' : ''}>%{xpProgress}</span>
+                            </div>
+                            <div className="w-full bg-[#120e0a] h-1.5 rounded-full overflow-hidden border border-[#855e2d]/25">
+                              <div
+                                className="bg-gradient-to-r from-[#d97706] to-[#fde68a] h-full transition-all duration-300"
+                                style={{ width: `${xpProgress}%` }}
+                              />
+                            </div>
                           </div>
                         )}
                       </div>

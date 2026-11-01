@@ -1,0 +1,26 @@
+{
+  "name": "Sancak-ı Kalradya: Taht ve Kılıç",
+  "short_name": "Kalradya",
+  "description": "Mount & Blade II: Bannerlord kurgusunda 3B orta çağ aksiyon-RPG ve strateji oyunu.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0d0c0a",
+  "theme_color": "#b45309",
+  "categories": ["games", "strategy", "roleplaying"],
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

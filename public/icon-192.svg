@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <radialGradient id="bgGrad192" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stopColor="#1e1710" />
+      <stop offset="100%" stopColor="#0d0c0a" />
+    </radialGradient>
+    <linearGradient id="goldGrad192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stopColor="#fde68a" />
+      <stop offset="45%" stopColor="#fbbf24" />
+      <stop offset="100%" stopColor="#b45309" />
+    </linearGradient>
+    <linearGradient id="bladeGrad192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stopColor="#ffffff" />
+      <stop offset="50%" stopColor="#cbd5e1" />
+      <stop offset="100%" stopColor="#64748b" />
+    </linearGradient>
+  </defs>
+
+  <rect width="192" height="192" rx="38" fill="url(#bgGrad192)" />
+  <circle cx="96" cy="96" r="78" fill="none" stroke="url(#goldGrad192)" stroke-width="3" />
+
+  <!-- Crossed Swords -->
+  <path d="M45 147 L135 57 L144 48 L135 39 L126 48 L54 120 Z" fill="url(#bladeGrad192)" />
+  <path d="M147 147 L57 57 L48 48 L57 39 L66 48 L138 120 Z" fill="url(#bladeGrad192)" />
+
+  <!-- Shield Core -->
+  <path d="M96 60 L124 75 C124 116 96 135 96 135 C96 135 68 116 68 75 Z" fill="#18120c" stroke="url(#goldGrad192)" stroke-width="3" />
+  <path d="M82 105 L87 86 L96 96 L105 86 L110 105 Z" fill="url(#goldGrad192)" />
+</svg>

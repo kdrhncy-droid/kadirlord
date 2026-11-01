@@ -121,18 +121,59 @@ export function buildMarketStock(
   profile: MarketProfile,
 ): MarketStock[] {
   const seed = hash32(profile.settlementId);
+  const prosperity = profile.prosperity ?? 5000;
+  // Refah ve barış katsayısı (Bannerlord ölçeği: 2.000 refah altı kıtlık, 7.000+ bolluk)
+  const prosperityRatio = Math.max(0.3, Math.min(2.5, prosperity / 4500));
+  // modifier > 1.15 genellikle yağma, yüksek vergi veya savaş kıtlığına işaret eder
+  const isStressedOrRaided = profile.modifier > 1.16;
+
   return items
     .filter((item) => {
-      if (item.category === 'FOOD') return true; // erzak her yerde bulunur
+      if (item.category === 'FOOD') {
+        // Temel erzak (tahıl, et, balık) her şartta tezgâhta yer alır
+        if (
+          item.id === 'mkt_grain_sack' ||
+          item.id === 'mkt_cured_meat' ||
+          item.id === 'mkt_smoked_fish'
+        ) {
+          return true;
+        }
+        // Yağmalanmış / ağır savaş gören yerleşimlerde lüks ve taze gıdalar tezgâhtan silinir
+        if (isStressedOrRaided) {
+          return (hash32(`${seed}:food_stress:${item.id}`) % 100) < 20;
+        }
+        // Barış içindeki müreffeh şehirlerde çeşitlilik tavan yapar
+        const hFood = hash32(`${seed}:food:${item.id}`) % 100;
+        return hFood < Math.min(95, profile.stockFactor * 100 + prosperityRatio * 20);
+      }
       const h = hash32(`${seed}:${item.id}`) % 100;
       return h < profile.stockFactor * 100;
     })
-    .map((item) => ({
-      item,
-      buyPrice: buyPriceAt(item, profile),
-      quantity: 1 + (hash32(`${seed}:q:${item.id}`) % 3),
-      tone: priceTone(buyPriceAt(item, profile), item.value),
-    }));
+    .map((item) => {
+      let quantity = 1 + (hash32(`${seed}:q:${item.id}`) % 3);
+      if (item.category === 'FOOD') {
+        if (item.id === 'mkt_grain_sack') {
+          quantity = isStressedOrRaided
+            ? 3 + (hash32(`${seed}:fg:${item.id}`) % 6)
+            : Math.round((20 + (hash32(`${seed}:fg:${item.id}`) % 30)) * prosperityRatio);
+        } else if (item.id === 'mkt_cured_meat' || item.id === 'mkt_smoked_fish') {
+          quantity = isStressedOrRaided
+            ? 1 + (hash32(`${seed}:fm:${item.id}`) % 4)
+            : Math.round((10 + (hash32(`${seed}:fm:${item.id}`) % 16)) * prosperityRatio);
+        } else {
+          // Peynir, tereyağı, üzüm, zeytin, bira, hurma
+          quantity = isStressedOrRaided
+            ? 1 + (hash32(`${seed}:fo:${item.id}`) % 3)
+            : Math.max(2, Math.round((6 + (hash32(`${seed}:fo:${item.id}`) % 10)) * prosperityRatio));
+        }
+      }
+      return {
+        item,
+        buyPrice: buyPriceAt(item, profile),
+        quantity,
+        tone: priceTone(buyPriceAt(item, profile), item.value),
+      };
+    });
 }
 
 export interface Rumour {

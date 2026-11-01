@@ -4096,6 +4096,11 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
               const medSkill = campaign?.skills?.medicine?.level ?? 35;
               const split = splitBattleCasualties(allyCasualtiesRef.current, medSkill);
               const defeatedCount = units.filter((u) => u.team === 'ENEMY' && (!u.alive || u.routed)).length;
+              const totalEnemiesDefeated = Math.max(
+                defeatedCount,
+                killsCountRef.current,
+                units.filter((u) => u.team === 'ENEMY').length,
+              );
               sound.playVictoryFanfare();
               aliveAllies.forEach((a) => {
                 a.animator.setMove(0, 0);
@@ -4103,7 +4108,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
               });
               setBattleOutcome({
                 victory: true,
-                enemiesDefeated: killsCountRef.current || defeatedCount,
+                enemiesDefeated: totalEnemiesDefeated,
                 losses: split.killed,
                 wounded: split.wounded,
                 survivalRate: split.survivalRate,
@@ -4121,6 +4126,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           // Oyuncu da düştü ve tüm müttefikler elendi/kaçtı: YENİLGİ & ESARET
           const medSkill = campaign?.skills?.medicine?.level ?? 35;
           const split = splitBattleCasualties(allyCasualtiesRef.current, medSkill);
+          const enemyCasualties = units.filter((u) => u.team === 'ENEMY' && (!u.alive || u.routed)).length;
           sound.playDefeatSting();
           aliveEnemies.forEach((e) => {
             e.animator.setMove(0, 0);
@@ -4128,7 +4134,7 @@ export const CharacterArenaView: React.FC<CharacterArenaViewProps> = ({
           });
           setBattleOutcome({
             victory: false,
-            enemiesDefeated: killsCountRef.current,
+            enemiesDefeated: Math.max(enemyCasualties, killsCountRef.current),
             losses: split.killed,
             wounded: split.wounded,
             survivalRate: split.survivalRate,

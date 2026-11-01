@@ -3280,11 +3280,13 @@ export function applyFactionArmorToRig(
 
   applyEquipmentToRig(rig, {
     ...rig.currentOptions,
+    factionArmorId: undefined, // Özyinelemeli döngüyü (stack overflow) engelle
     factionColor: facInfo.accentHex,
     factionId: armorDef.faction,
     armorTier: baseTier,
     helmetType: 'NONE', // Miğferi aşağıda krallığa özel kalibre edilmiş olarak kuracağız
   });
+  rig.currentOptions.factionArmorId = armorDef.id;
 
   // 3) Gövde kabuğu (`armorChest`) üzerine krallığa özel dış katmanları ekle:
   const chestGroup = rig.chestArmorSocket.getObjectByName('armorChest') as THREE.Group | undefined;

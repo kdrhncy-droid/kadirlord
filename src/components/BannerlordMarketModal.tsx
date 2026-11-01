@@ -61,8 +61,8 @@ interface BannerlordMarketModalProps {
   onOpenArenaTest?: () => void;
 }
 
-function validIconKey(icon: string): ItemIconKey {
-  return ITEM_ICON_KEYS.includes(icon as ItemIconKey) ? (icon as ItemIconKey) : 'crate';
+function validIconKey(icon?: string): ItemIconKey {
+  return icon && ITEM_ICON_KEYS.includes(icon as ItemIconKey) ? (icon as ItemIconKey) : 'crate';
 }
 
 function definitionArmorTotal(definition: ItemDefinition): number {
@@ -295,11 +295,11 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
 
   // Derive Character Visual Options from equipped items of selected hero
   const visualOptions = useMemo(() => {
-    if (!playerHero) return deriveRigVisualOptionsFromEquipment(campaign.equipment, '#b45309');
+    if (!playerHero) return deriveRigVisualOptionsFromEquipment(draftCampaign.equipment, '#b45309');
     const eqText: Partial<Record<EquipmentSlotId, string>> = {};
     const setObj = playerHero.equipment[activeSet];
     for (const [slotKey, defId] of Object.entries(setObj)) {
-      const def = resolveItemDefinition(campaign, defId);
+      const def = resolveItemDefinition(draftCampaign, defId);
       if (def) {
         eqText[slotKey as EquipmentSlotId] = def.statBonus
           ? `${def.name} (${def.statBonus})`
@@ -307,7 +307,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
       }
     }
     return deriveRigVisualOptionsFromEquipment(eqText, '#b45309');
-  }, [activeSet, campaign, playerHero]);
+  }, [activeSet, draftCampaign, playerHero]);
 
   const healthyTroops =
     (draftCampaign.troopStacks ?? []).reduce((sum, s) => sum + s.count, 0) || 20;
@@ -441,7 +441,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
   // Equip handler
   const handleEquip = (itemId: string) => {
     const res = equipInventoryItemForHero(
-      campaign,
+      draftCampaign,
       playerHero?.id ?? PLAYER_HERO_ID,
       itemId,
       activeSet,
@@ -458,7 +458,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
   // Unequip handler
   const handleUnequip = (slot: EquipmentSlotId) => {
     const res = unequipHeroEquipmentSlot(
-      campaign,
+      draftCampaign,
       playerHero?.id ?? PLAYER_HERO_ID,
       slot,
       activeSet,
@@ -467,6 +467,7 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
       setFeedback(res.reason || 'Çıkarılamadı.');
       return;
     }
+    sound.playUiClick();
     setDraftCampaign(res.nextState);
     setFeedback('Eşya taslakta çıkarıldı ve sırt çantasına alındı.');
   };
@@ -987,6 +988,9 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                     : item.value;
                   const quantity = inventoryItemQuantity(item);
                   const totalWeight = item.weight * quantity;
+                  const rowIconKey = validIconKey(
+                    definition?.icon || item.icon || (CATEGORY_ICON_KEYS[item.category as keyof typeof CATEGORY_ICON_KEYS] ?? 'crate'),
+                  );
                   return (
                     <div
                       key={item.id}
@@ -1002,6 +1006,9 @@ export const BannerlordMarketModal: React.FC<BannerlordMarketModalProps> = ({
                       >
                         &lt;
                       </button>
+                      <span className="shrink-0 p-1.5 rounded bg-[#2a2219] text-[#e8d9b5] flex items-center justify-center">
+                        <ItemIcon iconKey={rowIconKey} size={18} />
+                      </span>
                       <div className="min-w-0 flex-1">
                         <div className="text-xs font-semibold text-[#f8f0df] truncate">
                           {item.name} <span className="text-[#fbbf24]">×{quantity}</span>

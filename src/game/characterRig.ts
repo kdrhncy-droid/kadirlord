@@ -1938,10 +1938,27 @@ export function deriveRigVisualOptionsFromEquipment(
   const w4Str = eq.WEAPON4 || '';
   const mountStr = eq.MOUNT || '';
 
-  // 1. 6 Krallık Cephanelik Eşleşmeleri
-  const matchedWeapon = findArsenalWeaponByTextOrId(w1Str);
-  const matchedShield = findArsenalWeaponByTextOrId(w2Str) || findArsenalWeaponByTextOrId(w3Str);
-  const matchedArmor = findArsenalArmorByTextOrId(bodyStr) || findArsenalArmorByTextOrId(headStr);
+  // 1. 6 Krallık Cephanelik & Donanım Eşleşmeleri
+  const weaponSlots = [w1Str, w2Str, w3Str, w4Str].filter(Boolean);
+  let matchedWeapon = findArsenalWeaponByTextOrId(w1Str);
+  let matchedShield: ReturnType<typeof findArsenalWeaponByTextOrId> = undefined;
+
+  for (const wStr of weaponSlots) {
+    const item = findArsenalWeaponByTextOrId(wStr);
+    if (!item) continue;
+    if (item.kind === 'shield') {
+      if (!matchedShield) matchedShield = item;
+    } else {
+      if (!matchedWeapon) matchedWeapon = item;
+    }
+  }
+
+  const matchedArmor =
+    findArsenalArmorByTextOrId(bodyStr) ||
+    findArsenalArmorByTextOrId(headStr) ||
+    findArsenalArmorByTextOrId(eq.SHOULDER || '') ||
+    findArsenalArmorByTextOrId(eq.LEG || '') ||
+    findArsenalArmorByTextOrId(eq.GLOVES || '');
   const matchedHorse = findArsenalHorseByTextOrId(mountStr);
 
   let helmetType: HelmetType = 'SPANGENHELM';
@@ -1975,17 +1992,17 @@ export function deriveRigVisualOptionsFromEquipment(
     armorTier = 'PLATE';
   }
 
-  const shieldCandidate = `${w2Str} ${w3Str}`;
+  const allWeaponsText = weaponSlots.join(' ');
   let shieldType: ShieldType = 'ROUND_SHIELD';
   if (matchedShield && matchedShield.kind === 'shield') {
     shieldType = matchedShield.nameTr.includes('Damla') || matchedShield.nameTr.includes('Kite')
       ? 'KITE_SHIELD'
       : (matchedShield.nameTr.includes('Pavise') ? 'PAVISE' : 'ROUND_SHIELD');
-  } else if (shieldCandidate.includes('Damla') || shieldCandidate.includes('Kite') || shieldCandidate.includes('Süvari Kalkan')) {
+  } else if (allWeaponsText.includes('Damla') || allWeaponsText.includes('Kite') || allWeaponsText.includes('Süvari Kalkan')) {
     shieldType = 'KITE_SHIELD';
-  } else if (shieldCandidate.includes('Pavise') || shieldCandidate.includes('Kule Kalkan')) {
+  } else if (allWeaponsText.includes('Pavise') || allWeaponsText.includes('Kule Kalkan')) {
     shieldType = 'PAVISE';
-  } else if (w2Str.includes('Boş') || !shieldCandidate.includes('Kalkan')) {
+  } else if (!allWeaponsText.includes('Kalkan')) {
     shieldType = 'NONE';
   }
 
@@ -2006,17 +2023,16 @@ export function deriveRigVisualOptionsFromEquipment(
       weaponType = 'ONE_HANDED_SWORD';
     }
   } else if (
-    w1Str.includes('Falx') ||
-    w1Str.includes('İki Elli') ||
-    w1Str.includes('Çift Elli') ||
-    w1Str.includes('Balta')
+    weaponSlots.some((s) =>
+      s.includes('Falx') || s.includes('İki Elli') || s.includes('Çift Elli') || s.includes('Büyük Balta'),
+    )
   ) {
     weaponType = 'TWO_HANDED_SWORD';
-  } else if (w1Str.includes('Yay') || (w4Str.includes('Yay') && w1Str.includes('Boş'))) {
+  } else if (weaponSlots.some((s) => s.includes('Yay') || s.includes('Kundaklı'))) {
     weaponType = 'BOW';
-  } else if (w1Str.includes('Kargı') || w1Str.includes('Mızrak') || w1Str.includes('Kontos')) {
+  } else if (weaponSlots.some((s) => s.includes('Kargı') || s.includes('Mızrak') || s.includes('Kontos'))) {
     weaponType = 'SPEAR';
-  } else if (w1Str.includes('Silahsız')) {
+  } else if (weaponSlots.length === 0 || w1Str.includes('Silahsız')) {
     weaponType = 'UNARMED';
   }
 

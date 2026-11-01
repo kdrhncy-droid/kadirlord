@@ -22,6 +22,15 @@ createRoot(document.getElementById('root')!).render(
   </ErrorBoundary>,
 );
 
+// PWA Service Worker kaydı (üretimde çevrimdışı ve tam ekran desteği)
+if ('serviceWorker' in navigator && !import.meta.env.DEV) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('[PWA] Service worker registration failed:', err);
+    });
+  });
+}
+
 /**
  * BannerForge teşhis kancası — konsoldan görsel/ses katmanını kıyaslayın:
  *

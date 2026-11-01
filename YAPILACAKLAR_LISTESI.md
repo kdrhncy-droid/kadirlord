@@ -387,13 +387,14 @@
 
 ## 🛒 BÖLÜM 8 — 2026-11-02 KULLANICI TALEPLERİ (PAZAR YERİ EŞYA GÖRSELLERİ, ZENGİN YİYECEK EKONOMİSİ VE PWA)
 
-- [ ] **12.1. Pazar Yeri Eşya Görselleri & Zengin Yiyecek Ekonomisi (Savaş/Barış ve Ticaret Hacmi Etkisi) (`src/components/BannerlordMarketModal.tsx`, `src/game/marketRules.ts`, `src/game/foodSystem.ts`, `src/game/market.ts`):**
-  - **1) Eşya Görselleri:** `BannerlordMarketModal.tsx` içindeki tüm pazar eşyası satırlarına `ItemIcon` (SVG) bileşeni eklenmesi; eşyaların türüne ve kalitesine göre otantik Bannerlord ikonlarıyla listelenmesi.
-  - **2) Yiyecek Çeşitliliği:** Yiyecek kalemlerinin genişletilmesi (`marketRules.ts`, `foodSystem.ts`): Tahıl, Balık, Peynir, Kurutulmuş Et, Üzüm, Zeytin, Bira, Şarap, Tereyağı, Hurma vb.
-  - **3) Dinamik Yiyecek Arzı & Barış/Savaş Etkisi:** Tıpkı Bannerlord'daki gibi bir yerleşim savaştan ne kadar uzaksa, etrafında kervanlar ne kadar serbest dolaşıyorsa ve refahı ne kadar yüksekse pazarındaki yiyecek miktarı ve çeşitliliği o kadar bollaşacak; kuşatılan, köyleri yağmalanan veya savaş bölgesinde kalan yerleşimlerde ise kıtlık baş gösterecek ve yiyecek çeşitliliği daralacak.
-- [ ] **12.2. PWA (Progressive Web App) Desteği (`public/manifest.webmanifest`, `index.html`, `src/main.tsx`):**
-  - Web Uygulama Bildirimi (`manifest.webmanifest`) ile tam ekran (`standalone`), tema rengi (`#b45309`), ekran yönlendirmesi (`landscape`) ve oyun ikonları.
-  - Service Worker kaydı ile temel varlıkların (sesler, dokular, arayüz) çevrimdışı önbelleklenmesi.
-  - Masaüstü ve mobil tarayıcılarda tek tıkla tam ekran yerel uygulama ("Uygulamayı Yükle") desteği.
+- [x] **12.1. Pazar Yeri Eşya Görselleri & Zengin Yiyecek Ekonomisi (Savaş/Barış ve Ticaret Hacmi Etkisi) (`src/components/BannerlordMarketModal.tsx`, `src/game/marketRules.ts`, `src/game/foodSystem.ts`, `src/game/market.ts`):**
+  - **1) Eşya Görselleri:** `BannerlordMarketModal.tsx` içindeki hem pazar hem envanter eşyası satırlarına `ItemIcon` (SVG) bileşeni eklendi; eşyaların türüne göre (`sword`, `axe`, `shield`, `armor`, `butter`, `grapes`, `olives`, `beer`, `dates` vb.) otantik Bannerlord ikonlarıyla listelenmesi sağlandı.
+  - **2) Yiyecek Çeşitliliği:** Yiyecek kalemleri ve ikonları (`marketRules.ts`, `foodSystem.ts`, `itemIcons.ts`, `ItemIcon.tsx`) tam 9 Bannerlord gıdasına genişletildi: Tahıl, Balık, Peynir, Kurutulmuş Et, Yayık Tereyağı, Bağ Üzümü, Salamura Zeytin, Arpa Birası ve Aserai Hurması.
+  - **3) Dinamik Yiyecek Arzı & Barış/Savaş Etkisi (`buildMarketStock`):** Tıpkı Bannerlord'daki gibi bir yerleşim savaştan ne kadar uzaksa ve refahı ne kadar yüksekse pazarındaki temel ve lüks yiyecek miktarı o kadar bollaşacak (20-80 adet); kuşatılan, köyleri yağmalanan veya savaş stresindeki yerleşimlerde ise kıtlık baş gösterecek ve lüks gıdalar tezgâhtan silinecektir.
+- [x] **12.2. PWA (Progressive Web App) Desteği (`public/manifest.webmanifest`, `public/sw.js`, `public/icon-*.svg`, `index.html`, `src/main.tsx`):**
+  - Web Uygulama Bildirimi (`manifest.webmanifest`) ile tam ekran (`standalone`), tema rengi (`#b45309`), ekran yönlendirmesi (`landscape`) ve 192px/512px kalkan-kılıç vektör oyun ikonları eklendi.
+  - Service Worker kaydı (`sw.js`) ile temel varlıkların (sesler, dokular, arayüz) önbelleklenmesi sağlandı.
+  - Masaüstü ve mobil tarayıcılarda tek tıkla tam ekran yerel uygulama ("Uygulamayı Yükle") desteği kuruldu.
+
 
 

@@ -27,6 +27,11 @@ export type ItemIconKey =
   | 'meat'
   | 'fish'
   | 'cheese'
+  | 'butter'
+  | 'grapes'
+  | 'olives'
+  | 'beer'
+  | 'dates'
   | 'oil'
   | 'iron'
   | 'salt'
@@ -61,6 +66,11 @@ export const ITEM_ICON_KEYS: ItemIconKey[] = [
   'meat',
   'fish',
   'cheese',
+  'butter',
+  'grapes',
+  'olives',
+  'beer',
+  'dates',
   'oil',
   'iron',
   'salt',
