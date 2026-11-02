@@ -2422,6 +2422,40 @@ test('Bannerlord troop XP & progression: battle combat XP distribution, shared p
   assert.ok(trainedRecruit.xp > 0, 'Recruit yığını günlük talimden tecrübe kazanmalı');
 });
 
+test('Bannerlord unified 24-hour campaign clock: 4x speed timing, midnight day rollover, and monotonic celestial dial angle', async () => {
+  const {
+    getCampaignHourIntervalMs,
+    stepCampaignClockHour,
+    computeCelestialDialAngleDeg,
+    advanceSmoothCelestialHour,
+  } = await import('./uiSession.ts');
+
+  assert.equal(getCampaignHourIntervalMs(0), null);
+  assert.equal(getCampaignHourIntervalMs(1), 4000);
+  assert.equal(getCampaignHourIntervalMs(2), 2000);
+  assert.equal(getCampaignHourIntervalMs(4), 1000);
+
+  let hour = 9;
+  let midnightRollovers = 0;
+  for (let i = 0; i < 24; i++) {
+    const res = stepCampaignClockHour(hour);
+    hour = res.nextHour;
+    if (res.crossedMidnight) midnightRollovers++;
+  }
+  assert.equal(hour, 9, '24 saatlik tam döngü sonunda saat tekrar 09:00 olmalı');
+  assert.equal(midnightRollovers, 1, '24 saatlik döngüde tam 1 kez gece yarısı (yeni gün) geçilmeli');
+
+  const d1h23 = computeCelestialDialAngleDeg(1, 23);
+  const d2h00 = computeCelestialDialAngleDeg(2, 0);
+  assert.equal(d2h00 - d1h23, 15, 'Gece yarısı geçişinde kadran açısı geriye sarmadan +15° ilerlemeli');
+
+  let smooth = 23.5;
+  for (let i = 0; i < 60; i++) {
+    smooth = advanceSmoothCelestialHour(smooth, 0, 1 / 60, 4, false);
+  }
+  assert.ok(smooth >= 0 && smooth < 2, `Gece yarısı etrafında smoothHour [0, 24) aralığında pürüzsüz sarmalı: ${smooth}`);
+});
+
 
 
 

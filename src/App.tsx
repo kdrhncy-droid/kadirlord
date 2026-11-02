@@ -135,8 +135,10 @@ import {
 import type { CharacterMorphDNA } from './game/characterMorph';
 import {
   countLayers,
+  getCampaignHourIntervalMs,
   speedAfterUi,
   speedBeforeUi,
+  stepCampaignClockHour,
   topLayer,
   type TimeScale,
   type UiLayer,
@@ -1232,39 +1234,46 @@ export default function App() {
     saveInfo,
   ]);
 
-  // Living World Periodic Tick scaled by campaignTimeScale (Faz 11: canlı dünya)
-  useEffect(() => {
-    if (gameState !== 'playing' || subMode !== 'overworld' || campaignTimeScale === 0) return;
-    const intervalMs = Math.round(16000 / campaignTimeScale);
-    const timer = setInterval(() => {
-      setCampaign((prev) => {
-        const tick = advanceWorldDay(prev, {
-          lordPositions: lordPositionsRef.current,
-          clans: macroStateRef.current?.clans,
-          playerPos: { x: prev.playerX, z: prev.playerZ },
-        });
-        // Fetih bildirimi, vakayinameye düşen en yeni olaydan türetilir (aşağıdaki effect).
-        const next = tick.state;
-        // Gönüllü üretimi günlük tik içindedir (10.7); toplu tazeleme yok.
-        return { ...next, settlements: refreshRecruitPools(next.settlements, next.day) };
-      });
-    }, intervalMs);
-    return () => clearInterval(timer);
-  }, [gameState, subMode, campaignTimeScale]);
+  // Unified Bannerlord 24-Hour Campaign Clock & Daily Living World Tick
+  // (1x = 4s/saat -> 96s/gün, 2x = 2s/saat -> 48s/gün, 4x = 1s/saat -> 24s/gün)
+  const settlementWaitRef = useRef<{
+    isWaiting: boolean;
+    settlementId: string | null;
+  }>({
+    isWaiting: false,
+    settlementId: null,
+  });
+  settlementWaitRef.current = {
+    isWaiting: isWaitingInSettlement,
+    settlementId: activeSettlementModal?.id ?? null,
+  };
 
-  // 24-Hour Continuous Clock & Settlement Waiting Progression (Bannerlord Clock)
   useEffect(() => {
-    if (gameState !== 'playing' || subMode !== 'overworld' || campaignTimeScale === 0) return;
-    const hourIntervalMs = Math.max(70, Math.round(667 / campaignTimeScale));
+    if (gameState !== 'playing' || subMode !== 'overworld') return;
+    const hourIntervalMs = getCampaignHourIntervalMs(campaignTimeScale);
+    if (hourIntervalMs === null) return;
+
     const timer = setInterval(() => {
       setCampaign((prev) => {
         let next = prev;
-        const currentHour = typeof next.hour === 'number' ? next.hour : 9;
-        const nextHour = (currentHour + 1) % 24;
+        const { nextHour, crossedMidnight } = stepCampaignClockHour(next.hour);
 
-        if (isWaitingInSettlement && activeSettlementModal) {
-          const restRes = advanceSettlementHourlyRest(next, activeSettlementModal.id);
+        const waitInfo = settlementWaitRef.current;
+        if (waitInfo.isWaiting && waitInfo.settlementId) {
+          const restRes = advanceSettlementHourlyRest(next, waitInfo.settlementId);
           next = restRes.nextState;
+        }
+
+        if (crossedMidnight) {
+          const tick = advanceWorldDay(next, {
+            lordPositions: lordPositionsRef.current,
+            clans: macroStateRef.current?.clans,
+            playerPos: { x: next.playerX, z: next.playerZ },
+          });
+          next = {
+            ...tick.state,
+            settlements: refreshRecruitPools(tick.state.settlements, tick.state.day),
+          };
         }
 
         return {
@@ -1274,7 +1283,7 @@ export default function App() {
       });
     }, hourIntervalMs);
     return () => clearInterval(timer);
-  }, [gameState, subMode, campaignTimeScale, isWaitingInSettlement, activeSettlementModal]);
+  }, [gameState, subMode, campaignTimeScale]);
 
   // Settlement wait interruption when hostile army approaches
   useEffect(() => {

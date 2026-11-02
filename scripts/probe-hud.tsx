@@ -127,8 +127,12 @@ ok(
   'Sancak Birliği ipucunda 2 Kahraman (Sen & Aile/Yoldaş) ve 0 Asker ayrımı var',
 );
 
-/* 7. Zaman kontrolü korunuyor */
+/* 7. Zaman kontrolü ve Bannerlord alt-orta tarih/güneş-ay madalyonu korunuyor */
 ok(html.includes('▶▶▶') && html.includes('||'), 'zaman ölçeği düğmeleri duruyor');
+ok(
+  text.includes('Yaz 1, 1084') && !text.includes('Saat 09:00 · Gündüz'),
+  'alt orta zaman barında yalnız mevsim/gün/yıl ("Yaz 1, 1084") yazar; sürekli titreyen saat metni yalnız ipucundadır',
+);
 
 /* 8. Faz 11: canlı dünya panosu (WorldWarPanel) */
 const warHtml = renderToStaticMarkup(React.createElement(WorldWarPanel, { campaign }));

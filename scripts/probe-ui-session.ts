@@ -8,10 +8,16 @@
  *  2. Esc yalnız iki modalı kapatıyordu; pazar/divan/yaratıcı açık kalıyordu.
  */
 import {
+  BANNERLORD_HOUR_MS_AT_1X,
+  BANNERLORD_HOUR_SECONDS_AT_1X,
   UI_LAYER_ORDER,
+  advanceSmoothCelestialHour,
+  computeCelestialDialAngleDeg,
   countLayers,
+  getCampaignHourIntervalMs,
   speedAfterUi,
   speedBeforeUi,
+  stepCampaignClockHour,
   topLayer,
   type TimeScale,
   type UiLayerFlags,
@@ -91,5 +97,37 @@ ok(
   'her katman tek başına açıkken kendini döndürür',
 );
 
+/* ── 6. Bannerlord 24 Saatlik Birleşik Sefer Saati & Kadran Monotonluğu ── */
+ok(BANNERLORD_HOUR_SECONDS_AT_1X === 4 && BANNERLORD_HOUR_MS_AT_1X === 4000, '1x hızda 1 oyun saati = 4 sn (96 sn/gün)');
+ok(getCampaignHourIntervalMs(0) === null, '0x hızda saat zamanlayıcısı durur');
+ok(getCampaignHourIntervalMs(1) === 4000, '1x hızda saat adımı 4000 ms');
+ok(getCampaignHourIntervalMs(2) === 2000, '2x hızda saat adımı 2000 ms');
+ok(getCampaignHourIntervalMs(4) === 1000, '4x hızda saat adımı 1000 ms (24 sn/gün, flaşlama yok)');
+
+const step22 = stepCampaignClockHour(22);
+ok(step22.nextHour === 23 && !step22.crossedMidnight, '22:00 -> 23:00 gece yarısını geçmez');
+const step23 = stepCampaignClockHour(23);
+ok(step23.nextHour === 0 && step23.crossedMidnight, '23:00 -> 00:00 gece yarısını geçer ve yeni günü tetikler');
+
+const angleDay1Hour23 = computeCelestialDialAngleDeg(1, 23);
+const angleDay2Hour0 = computeCelestialDialAngleDeg(2, 0);
+ok(
+  angleDay2Hour0 - angleDay1Hour23 === 15,
+  'gece yarısı geçişinde Güneş/Ay kadranı -345° geriye sarmak yerine +15° ileri döner',
+  `${angleDay1Hour23}° -> ${angleDay2Hour0}°`,
+);
+
+// 4x hızda 1 saniye boyunca (60 kare) smoothHour ~1 saat ilerlemeli (6 saat değil!)
+let smooth = 9.0;
+for (let i = 0; i < 60; i++) {
+  smooth = advanceSmoothCelestialHour(smooth, 9, 1 / 60, 4, false);
+}
+ok(
+  smooth > 9.7 && smooth < 10.3,
+  '4x hızda 1 gerçek saniyede 3B güneş saati ~1 oyun saati ilerler',
+  `smoothHour=${smooth.toFixed(2)}`,
+);
+
 console.log(fails === 0 ? '\n✅ ZAMAN VE KATMAN YÖNETİMİ DOĞRU' : `\n❌ ${fails} hata`);
 process.exit(fails === 0 ? 0 : 1);
+

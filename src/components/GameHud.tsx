@@ -30,6 +30,7 @@ import {
   daysLeft,
   questProgress,
 } from '../game/quests';
+import { computeCelestialDialAngleDeg } from '../game/uiSession';
 
 interface GameHudProps {
   subMode: 'overworld' | 'battle';
@@ -253,7 +254,7 @@ export const GameHud: React.FC<GameHudProps> = ({
       : seasonCycle[Math.floor(((campaign.day - 1) % 84) / 21)] ?? campaign.season;
   const hourOfDay = campaign.hour ?? 9;
   const isNightTime = hourOfDay >= 20 || hourOfDay < 6;
-  const dialAngleDeg = Math.round((hourOfDay / 24) * 360 - 90);
+  const dialAngleDeg = computeCelestialDialAngleDeg(campaign.day, hourOfDay);
 
   // Ekonomik özet (Altın & Erzak & Moral hover kırılımları için)
   const playerOwnedCount = campaign.settlements.filter((s) => s.faction === 'player').length;
@@ -1247,33 +1248,32 @@ export const GameHud: React.FC<GameHudProps> = ({
                   {/* 2. Bottom-Center: Authentic Bannerlord Circular Sun/Moon Medallion Dial (#8, #9, #10) */}
                   <div
                     data-testid="hud-time-dial"
+                    data-hour={hourOfDay}
+                    data-time-of-day={isNightTime ? 'night' : 'day'}
                     className="absolute left-1/2 -translate-x-1/2 bottom-0 hud-panel rounded-t-3xl px-5 py-1.5 flex items-center gap-3 border-t-2 border-t-[#d4af37] shadow-2xl z-30 pointer-events-auto"
                   >
-                    {/* #9 Mevsim ve Yıl Gösterimi (1 Mevsim = 21 Gün, 1 Yıl = 84 Gün) */}
+                    {/* #9 Mevsim ve Yıl Gösterimi (bl-town-menu.jpg referansı: yalnız "Yaz 1, 1084"; saat detayı ipucundadır) */}
                     <div
-                      className="relative group cursor-help flex flex-col items-end"
-                      title={`Sefer Günü ${campaign.day} · Saat ${hourOfDay}:00 (1 Mevsim = 21 Gün, 1 Yıl = 84 Gün)`}
+                      className="relative group cursor-help flex items-center min-w-[96px] justify-end"
+                      title={`Sefer Günü ${campaign.day} · Saat ${String(hourOfDay).padStart(2, '0')}:00 (${isNightTime ? 'Gece' : 'Gündüz'} · 1 Mevsim = 21 Gün, 1 Yıl = 84 Gün)`}
                     >
-                      <span className="font-display font-bold text-xs text-[#f5ebd6] whitespace-nowrap tracking-wide">
+                      <span className="font-display font-bold text-xs text-[#f5ebd6] whitespace-nowrap tracking-wide font-mono-tabular">
                         {calendarSeason} {dayInSeason}, {yearNumber}
-                      </span>
-                      <span className="text-[9.5px] font-mono text-[#c6a15b]">
-                        Saat {String(hourOfDay).padStart(2, '0')}:00 · {isNightTime ? 'Gece' : 'Gündüz'}
                       </span>
                     </div>
 
                     {/* #8 Dönen Göksel Güneş / Ay Kadranı (Celestial Medallion) */}
                     <div
-                      title={isNightTime ? 'Gece Vakti (Görüş ve hız düşer)' : 'Gündüz Vakti (Tam görüş)'}
-                      className={`relative w-10 h-10 rounded-full border-2 border-[#d4af37] flex items-center justify-center shadow-inner shrink-0 overflow-hidden transition-colors ${
+                      title={`${isNightTime ? 'Gece Vakti (Görüş ve hız düşer)' : 'Gündüz Vakti (Tam görüş)'} · Saat ${String(hourOfDay).padStart(2, '0')}:00`}
+                      className={`relative w-10 h-10 rounded-full border-2 border-[#d4af37] flex items-center justify-center shadow-inner shrink-0 overflow-hidden transition-colors duration-700 ${
                         isNightTime
-                          ? 'bg-gradient-to-b from-[#090d16] via-[#111827] to-[#1e1b4b]'
+                          ? 'bg-gradient-to-b from-[#0f172a] via-[#1e293b] to-[#1e1b4b]'
                           : 'bg-gradient-to-b from-[#1d4ed8] via-[#1e3a8a] to-[#172554]'
                       }`}
                     >
                       <div
                         style={{ transform: `rotate(${dialAngleDeg}deg)` }}
-                        className="w-full h-full flex items-center justify-between px-1 transition-transform duration-500"
+                        className="w-full h-full flex items-center justify-between px-1 transition-transform duration-700 ease-linear"
                       >
                         <div className="w-4 h-4 rounded-full bg-[#fbbf24] shadow-[0_0_8px_#f59e0b] border border-[#fef08a]" />
                         <div className="w-3 h-3 rounded-full bg-[#e2e8f0] shadow-[0_0_5px_#94a3b8]" />

@@ -23,6 +23,7 @@ import {
 import { getPlayerArmy } from '../game/armySystem';
 import { getLordPartyStrength } from '../game/encounter';
 import { getSettlementOwnerDetails } from '../game/settlementOwnership';
+import { advanceSmoothCelestialHour } from '../game/uiSession';
 import {
   CONTINENTAL_LANDMARKS,
   MAP_HEIGHT,
@@ -568,20 +569,20 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
     let smoothHour = typeof stateRef.current.campaign.hour === 'number' ? stateRef.current.campaign.hour : 9;
 
     const _daySunColor = new THREE.Color(0xfffaed);
-    const _twilightSunColor = new THREE.Color(0xff853a);
-    const _nightSunColor = new THREE.Color(0x628ecb);
+    const _twilightSunColor = new THREE.Color(0xff9b54);
+    const _nightSunColor = new THREE.Color(0x88b0e4);
 
     const _dayHemiSkyColor = new THREE.Color(0xbcd4e6);
-    const _twilightHemiSkyColor = new THREE.Color(0xb07858);
-    const _nightHemiSkyColor = new THREE.Color(0x18283c);
+    const _twilightHemiSkyColor = new THREE.Color(0xb58363);
+    const _nightHemiSkyColor = new THREE.Color(0x415f82);
 
     const _dayHemiGroundColor = new THREE.Color(0x3b3224);
-    const _twilightHemiGroundColor = new THREE.Color(0x281610);
-    const _nightHemiGroundColor = new THREE.Color(0x070b10);
+    const _twilightHemiGroundColor = new THREE.Color(0x2d1e15);
+    const _nightHemiGroundColor = new THREE.Color(0x1e2530);
 
     const _daySkyFogColor = new THREE.Color(0x1e384b);
-    const _twilightSkyFogColor = new THREE.Color(0x271a24);
-    const _nightSkyFogColor = new THREE.Color(0x060b14);
+    const _twilightSkyFogColor = new THREE.Color(0x28212d);
+    const _nightSkyFogColor = new THREE.Color(0x152638);
 
     const _tempColorA = new THREE.Color();
     const _tempColorB = new THREE.Color();
@@ -2452,52 +2453,49 @@ export const WorldCanvas: React.FC<WorldCanvasProps> = ({
         camFocusY = THREE.MathUtils.lerp(camFocusY, targetFocusY, camDamp);
 
         // Bannerlord 24-hour Celestial Day/Night Lighting Cycle (Continuous Floating-Point Sun & Shadow Kinematics)
-        if (!isWorldEffectivelyPaused && timeScale > 0) {
-          smoothHour += (dt * timeScale) / (16.0 / 24.0);
-        }
-        const targetHour = typeof camp.hour === 'number' ? camp.hour : 9;
-        let hourDiff = targetHour - (smoothHour % 24);
-        if (hourDiff < -12) hourDiff += 24;
-        if (hourDiff > 12) hourDiff -= 24;
-        smoothHour += hourDiff * Math.min(1, dt * 2.5);
-        while (smoothHour < 0) smoothHour += 24;
-        while (smoothHour >= 24) smoothHour -= 24;
+        smoothHour = advanceSmoothCelestialHour(
+          smoothHour,
+          camp.hour,
+          dt,
+          timeScale,
+          isWorldEffectivelyPaused,
+        );
 
         const celestialPhase = (smoothHour / 24) * Math.PI * 2;
         const sunAngle = celestialPhase - Math.PI * 0.5;
         const sunElev = -Math.cos(celestialPhase); // -1 at 00:00, 0 at 06:00, +1 at 12:00, 0 at 18:00
 
         const sunRadius = 180;
-        const sunY = Math.max(12, sunElev * 115 + 24);
+        const sunY = Math.max(22, sunElev * 110 + 32);
         const sunX = Math.cos(sunAngle) * sunRadius;
         const sunZ = 95;
         sunLight.position.set(sunX, sunY, sunZ);
 
-        // Continuous daylight factor (0 at deep night, 1 at peak midday)
-        const dayFactor = THREE.MathUtils.smoothstep(sunElev, -0.22, 0.22);
+        // Continuous daylight factor (0 at moonlit night, 1 at peak midday; wide smoothstep prevents sudden brightness snaps)
+        const dayFactor = THREE.MathUtils.smoothstep(sunElev, -0.38, 0.38);
         // Twilight / golden hour warmth factor (peaks around sunrise and sunset when sun is near horizon)
-        const twilightFactor = Math.exp(-Math.pow(sunElev - 0.03, 2) / 0.04);
+        const twilightFactor = Math.exp(-Math.pow(sunElev - 0.02, 2) / 0.06);
 
-        // 1. Sun light color & intensity
+        // 1. Sun/Moon directional light color & intensity (moonlit strategic map remains clearly readable at night)
         _tempColorA.copy(_nightSunColor).lerp(_daySunColor, dayFactor);
         _tempColorB.copy(_twilightSunColor);
-        sunLight.color.copy(_tempColorA).lerp(_tempColorB, twilightFactor * 0.75);
-        sunLight.intensity = THREE.MathUtils.lerp(0.18, 1.45, dayFactor) + twilightFactor * 0.15;
+        sunLight.color.copy(_tempColorA).lerp(_tempColorB, twilightFactor * 0.55);
+        sunLight.intensity = THREE.MathUtils.lerp(0.68, 1.42, dayFactor) + twilightFactor * 0.1;
 
         // 2. Hemisphere ambient light
         _tempColorA.copy(_nightHemiSkyColor).lerp(_dayHemiSkyColor, dayFactor);
-        hemiLight.color.copy(_tempColorA).lerp(_twilightHemiSkyColor, twilightFactor * 0.65);
+        hemiLight.color.copy(_tempColorA).lerp(_twilightHemiSkyColor, twilightFactor * 0.5);
 
         _tempColorA.copy(_nightHemiGroundColor).lerp(_dayHemiGroundColor, dayFactor);
-        hemiLight.groundColor.copy(_tempColorA).lerp(_twilightHemiGroundColor, twilightFactor * 0.65);
-        hemiLight.intensity = THREE.MathUtils.lerp(0.15, 0.58, dayFactor);
+        hemiLight.groundColor.copy(_tempColorA).lerp(_twilightHemiGroundColor, twilightFactor * 0.5);
+        hemiLight.intensity = THREE.MathUtils.lerp(0.4, 0.58, dayFactor);
 
         // 3. Rim light
-        rimLight.intensity = THREE.MathUtils.lerp(0.04, 0.45, dayFactor);
+        rimLight.intensity = THREE.MathUtils.lerp(0.2, 0.45, dayFactor);
 
         // 4. Sky background and Fog
         _tempColorA.copy(_nightSkyFogColor).lerp(_daySkyFogColor, dayFactor);
-        (skyColor as THREE.Color).copy(_tempColorA).lerp(_twilightSkyFogColor, twilightFactor * 0.65);
+        (skyColor as THREE.Color).copy(_tempColorA).lerp(_twilightSkyFogColor, twilightFactor * 0.5);
         if (scene.fog) {
           (scene.fog as THREE.FogExp2).color.copy(skyColor as THREE.Color);
         }
