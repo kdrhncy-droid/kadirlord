@@ -141,7 +141,7 @@ export function countPartyAnimals(
       horseKind === 'PACK' ||
       item.id.includes('mule') ||
       lowerName.includes('katır') ||
-      lowerName.includes('yük atı');
+      lowerName.includes('yük');
 
     const isMount =
       !isPack &&

@@ -1834,11 +1834,11 @@ function buildCultureTree(culture: FactionId): TroopDefinition[] {
   }
   return specs.map((spec) => {
     const parent = parentOf.get(spec.suffix);
-    // Ata ilk kez binen birlik at ister; T4/T6 atlıları savaş atı ister.
+    // Ata ilk kez binen birlik binek atı ister; T5/T6 ve soylu T4+ ağır atlıları savaş atı ister.
     let horseRequirement: TroopDefinition['horseRequirement'] = 'NONE';
     if (spec.horse && parent) {
       if (!parent.horse) horseRequirement = 'HORSE';
-      else if (spec.tier === 4 || spec.tier === 6) horseRequirement = 'WAR_HORSE';
+      else if (spec.tier >= 5 || (spec.noble && spec.tier >= 4)) horseRequirement = 'WAR_HORSE';
     }
     return makeTroopDefinition({
       culture,

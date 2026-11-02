@@ -6,7 +6,7 @@ import {
   computeFormationSlots,
 } from './tacticalFormation.ts';
 
-export type BattleScaleId = 'SKIRMISH_50' | 'BATTLE_250' | 'EPIC_500';
+export type BattleScaleId = 'SKIRMISH_50' | 'CLASH_150' | 'BATTLE_250' | 'EPIC_500';
 
 export interface BattleScalePreset {
   id: BattleScaleId;
@@ -31,6 +31,17 @@ export const BATTLE_SCALE_PRESETS: Record<BattleScaleId, BattleScalePreset> = {
     arrowPoolCapacity: 10000,
     corpsePoolCapacity: 10000,
     recommendedSpec: 'Entegre GPU / Dizüstü (60 FPS Garantili)',
+  },
+  CLASH_150: {
+    id: 'CLASH_150',
+    label: '150 vs 150 (300 Asker)',
+    subtitle: 'Büyük Kalradya Meydan Muharebesi · 150v150 Ordu',
+    alliesCount: 150,
+    enemiesCount: 150,
+    totalSoldiers: 300,
+    arrowPoolCapacity: 10000,
+    corpsePoolCapacity: 10000,
+    recommendedSpec: 'Standart Sistemler (60 FPS Akıcı)',
   },
   BATTLE_250: {
     id: 'BATTLE_250',
